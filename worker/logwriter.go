@@ -135,6 +135,11 @@ func (l *WorkerLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
 
+	// DEBUG 级别日志仅本地输出，不通过 WebSocket 发送
+	if level == LevelDebug {
+		return
+	}
+
 	// 通过WebSocket立即发送（不缓冲）
 	if l.wsClient != nil && l.wsClient.IsConnected() {
 		if err := l.wsClient.SendLogImmediate("", level, msg); err != nil {
@@ -189,6 +194,11 @@ func (l *TaskLoggerWS) log(level, format string, args ...interface{}) {
 
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
+
+	// DEBUG 级别日志仅本地输出，不通过 WebSocket 发送（避免指纹探测等大量 DEBUG 日志导致日志爆炸）
+	if level == LevelDebug {
+		return
+	}
 
 	if l.wsClient == nil {
 		return

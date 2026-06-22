@@ -971,7 +971,7 @@ func (c *WorkerWSClient) SendLogImmediate(taskId, level, message string) error {
 	}
 	payloadData, _ := json.Marshal(payload)
 
-	logx.Infof("[WSClient] SendLogImmediate: taskId=%s, level=%s, msg=%s", taskId, level, message)
+	logx.Debugf("[WSClient] SendLogImmediate: taskId=%s, level=%s, msg=%s", taskId, level, message)
 
 	return c.sendMessage(&WSMessage{
 		Type:    WSTypeLog,

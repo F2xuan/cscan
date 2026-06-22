@@ -594,6 +594,45 @@ func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
 	return true
 }
 
+// triggerReconnect 主动触发重连（供 writePump 等调用）
+func (c *WorkerWSClient) triggerReconnect() {
+	// 关闭旧连接
+	c.connMu.Lock()
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
+	c.connMu.Unlock()
+
+	c.connected.Store(false)
+	c.authenticated.Store(false)
+
+	// CAS 避免重复触发重连
+	if !c.reconnecting.CompareAndSwap(false, true) {
+		return // 已有重连在进行中
+	}
+
+	go func() {
+		defer c.reconnecting.Store(false)
+
+		reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
+		defer reconnectCancel()
+
+		go func() {
+			select {
+			case <-c.closeChan:
+				reconnectCancel()
+			case <-reconnectCtx.Done():
+			}
+		}()
+
+		time.Sleep(time.Second)
+		if err := c.connectWithRetry(reconnectCtx, true); err != nil {
+			logx.Infof("[WSClient] Reconnect from writePump failed: %v", err)
+		}
+	}()
+}
+
 // writePump 写入消息循环
 func (c *WorkerWSClient) writePump(ctx context.Context) {
 	defer c.wg.Done()
@@ -621,7 +660,7 @@ func (c *WorkerWSClient) writePump(ctx context.Context) {
 			if err := conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout)); err != nil {
 				c.connMu.RUnlock()
 				logx.Infof("[WSClient] SetWriteDeadline error: %v", err)
-				c.connected.Store(false)
+				c.triggerReconnect()
 				continue
 			}
 
@@ -630,8 +669,7 @@ func (c *WorkerWSClient) writePump(ctx context.Context) {
 
 			if err != nil {
 				logx.Infof("[WSClient] Write error: %v", err)
-				// 触发重连
-				c.connected.Store(false)
+				c.triggerReconnect()
 			}
 		}
 	}
@@ -644,8 +682,8 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 	ticker := time.NewTicker(c.config.PingInterval)
 	defer ticker.Stop()
 
-	// 心跳超时阈值：2倍心跳间�?
-	heartbeatTimeout := c.config.PingInterval * 2
+	// 心跳超时阈值：3倍心跳间隔（低配机器 CPU 过载时需要更长容忍时间）
+	heartbeatTimeout := c.config.PingInterval * 3
 
 	for {
 		select {

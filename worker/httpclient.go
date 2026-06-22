@@ -653,7 +653,8 @@ func (c *WorkerHTTPClient) SaveVulResult(ctx context.Context, req *VulResultReq)
 
 // Heartbeat 心跳
 func (c *WorkerHTTPClient) Heartbeat(ctx context.Context, req *HeartbeatReq) (*HeartbeatResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/heartbeat", req)
+	// 心跳不做内部重试（调用方 sendHeartbeatWithRetry 已有重试逻辑）
+	respBody, err := c.doRequestOnce(ctx, http.MethodPost, "/api/v1/worker/heartbeat", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1032,7 +1033,8 @@ func (c *WorkerHTTPClient) GetTaskControlSignals(ctx context.Context, taskIds []
 		TaskIds:    taskIds,
 	}
 
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/control", req)
+	// 任务控制轮询不做内部重试（调用方 controlPollingLoop 已有周期性重试）
+	respBody, err := c.doRequestOnce(ctx, http.MethodPost, "/api/v1/worker/task/control", req)
 	if err != nil {
 		return nil, err
 	}

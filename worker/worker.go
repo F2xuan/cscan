@@ -3067,7 +3067,7 @@ func (w *Worker) sendHeartbeat() {
 
 // controlPollingLoop HTTP轮询控制信号循环（内部方法，作为WebSocket的备份方案）
 func (w *Worker) controlPollingLoop() {
-	ticker := time.NewTicker(2 * time.Second) // 每2秒轮询一次
+	ticker := time.NewTicker(5 * time.Second) // 每5秒轮询一次（从2s增加到5s，减少CPU过载时的请求堆积）
 	defer ticker.Stop()
 
 	for {
@@ -3082,7 +3082,7 @@ func (w *Worker) controlPollingLoop() {
 			}
 
 			// 通过HTTP轮询获取控制信号（始终执行，作为WebSocket的备份）
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			resp, err := w.httpClient.GetTaskControlSignals(ctx, taskIds)
 			cancel()
 

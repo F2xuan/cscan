@@ -185,6 +185,12 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		opts.Concurrent = 5
 	}
 
+	// 限制单端口超时上限为 30s（端口识别不需要长时间等待）
+	if opts.Timeout > 30 {
+		logWarn("Nmap timeout %ds exceeds maximum 30s for port identification, limiting to 30s", opts.Timeout)
+		opts.Timeout = 30
+	}
+
 	// 检查nmap是否安装
 	if !checkNmapInstalled() {
 		logError("nmap not installed, falling back to tcp scan")

@@ -154,11 +154,11 @@ func DefaultAdaptiveSchedulerConfig(baseConcurrency int) *AdaptiveSchedulerConfi
 		ProcessMemHighThresholdMB:     processMemHighMB,
 		ProcessMemCriticalThresholdMB: processMemCriticalMB,
 		SampleInterval:                time.Second,
-		AdjustInterval:                5 * time.Second,
+		AdjustInterval:                15 * time.Second, // 从 5s 增加到 15s，减少振荡频率
 		HistorySize:                   60,
 		SmoothingFactor:               0.3,
 		ScaleUpCooldown:               30 * time.Second,
-		ScaleDownCooldown:             10 * time.Second,
+		ScaleDownCooldown:             15 * time.Second, // 从 10s 增加到 15s，与扩容冷却更平衡
 		MinPullInterval:               3 * time.Second,
 		MaxPullInterval:               10 * time.Second,
 		IdleMultiplier:                2.0,
@@ -186,6 +186,10 @@ type AdaptiveScheduler struct {
 	// 冷却时间
 	lastScaleUp   time.Time
 	lastScaleDown time.Time
+
+	// 日志抑制：连续相同模式时降频输出
+	consecutiveModeCount int       // 当前模式连续出现次数
+	lastModeLogTime      time.Time // 上次输出模式变更日志的时间
 
 	// 统计信息
 	stats SchedulerStats
@@ -416,26 +420,57 @@ func (s *AdaptiveScheduler) adjustConcurrency() {
 	s.stats.CurrentConcurrency = s.currentConcurrency
 	s.stats.LastAdjustTime = now
 
-	// 记录变化
+	// 记录变化（连续相同模式时降频输出，避免日志泛滥）
 	if oldMode != newMode || oldConcurrency != s.currentConcurrency {
-		s.log("INFO", "Scheduler adjusted: mode %s->%s, concurrency %d->%d (CPU:%.1f%%, SysMem:%.1f%%, ProcMem:%dMB)",
-			oldMode, newMode, oldConcurrency, s.currentConcurrency, s.smoothedCPU, s.smoothedMem, s.getLatestProcessMemMB())
+		if newMode == s.currentMode && newMode == ModeCritical {
+			// 连续 critical 模式，每 5 次或每 2 分钟才输出一次日志
+			s.consecutiveModeCount++
+			if s.consecutiveModeCount%5 == 0 || now.Sub(s.lastModeLogTime) >= 2*time.Minute {
+				s.log("INFO", "Scheduler adjusted: mode %s->%s, concurrency %d->%d (CPU:%.1f%%, SysMem:%.1f%%, ProcMem:%dMB) [%d consecutive critical adjustments]",
+					oldMode, newMode, oldConcurrency, s.currentConcurrency, s.smoothedCPU, s.smoothedMem, s.getLatestProcessMemMB(), s.consecutiveModeCount)
+				s.lastModeLogTime = now
+			}
+		} else {
+			// 模式变更或非 critical 模式，正常输出
+			s.consecutiveModeCount = 1
+			s.lastModeLogTime = now
+			s.log("INFO", "Scheduler adjusted: mode %s->%s, concurrency %d->%d (CPU:%.1f%%, SysMem:%.1f%%, ProcMem:%dMB)",
+				oldMode, newMode, oldConcurrency, s.currentConcurrency, s.smoothedCPU, s.smoothedMem, s.getLatestProcessMemMB())
+		}
 	}
 }
 
 // determineMode 确定调度模式
 // 使用加权评分代替 OR 逻辑，避免单指标异常导致过度降级
+// 增加滞回区间（Hysteresis）：已在 critical 模式时，需要资源降到更低阈值才退出
 func (s *AdaptiveScheduler) determineMode() ScheduleMode {
 	cpu := s.smoothedCPU
 	mem := s.smoothedMem
 	processMemMB := s.getLatestProcessMemMB()
 
-	// 1. 快速路径：任一指标超过危急阈值立即进入 critical（安全兜底）
+	// 滞回区间：退出 critical 的阈值比进入时低 10%，避免在边界反复切换
+	exitCriticalCPU := s.config.CPUCriticalThreshold - 10.0
+	exitCriticalMem := s.config.MemCriticalThreshold - 8.0
+
+	// 1. 已在 critical 模式时，使用更低的退出阈值（滞回）
+	if s.currentMode == ModeCritical {
+		// 仍然超过进入阈值，保持 critical
+		if cpu >= s.config.CPUCriticalThreshold || mem >= s.config.MemCriticalThreshold || processMemMB >= s.config.ProcessMemCriticalThresholdMB {
+			return ModeCritical
+		}
+		// 在退出阈值以上，保持 critical（滞回区间）
+		if cpu >= exitCriticalCPU || mem >= exitCriticalMem {
+			return ModeCritical
+		}
+		// 低于退出阈值，可以降级
+	}
+
+	// 2. 快速路径：任一指标超过危急阈值立即进入 critical（安全兜底）
 	if cpu >= s.config.CPUCriticalThreshold || mem >= s.config.MemCriticalThreshold || processMemMB >= s.config.ProcessMemCriticalThresholdMB {
 		return ModeCritical
 	}
 
-	// 2. 加权评分：综合考量 CPU、系统内存、进程内存
+	// 3. 加权评分：综合考量 CPU、系统内存、进程内存
 	// 每个指标 0-100 分，越高表示压力越大
 	cpuScore := s.computePressureScore(cpu, s.config.CPULowThreshold, s.config.CPUHighThreshold)
 	memScore := s.computePressureScore(mem, s.config.MemLowThreshold, s.config.MemHighThreshold)
@@ -444,7 +479,7 @@ func (s *AdaptiveScheduler) determineMode() ScheduleMode {
 	// 加权平均：CPU 权重 0.4，系统内存 0.3，进程内存 0.3
 	weightedScore := cpuScore*0.4 + memScore*0.3 + processMemScore*0.3
 
-	// 3. 根据综合评分确定模式
+	// 4. 根据综合评分确定模式
 	if weightedScore >= 70 {
 		return ModeConservative
 	}

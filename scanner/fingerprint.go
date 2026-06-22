@@ -1675,7 +1675,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 	// 记录每个目标的超时次数，超过阈值则跳过
 	timeoutCounter := make(map[string]int)
 	var timeoutMu sync.Mutex
-	const maxTimeoutCount = 15
+	const maxTimeoutCount = 8 // 降低超时阈值，减少对不可达目标的无效探测
 
 	// 并发控制
 	concurrency := 10
@@ -1795,10 +1795,12 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 						timeoutCounter[baseURL]++
 						timeoutMu.Unlock()
 						atomic.AddInt32(&failCount, 1)
-						if taskLog != nil {
-							taskLog("DEBUG", "Active fingerprint request failed: %s, error: %v", fullURL, err)
-						} else {
-							logx.Debugf("Active fingerprint request failed: %s, error: %v", fullURL, err)
+
+						// 连接被拒绝时快速失败：该目标不可达，跳过后续探测
+						if isConnectionRefused(err) {
+							timeoutMu.Lock()
+							timeoutCounter[baseURL] = maxTimeoutCount // 直接标记为达到上限
+							timeoutMu.Unlock()
 						}
 						return
 					}
@@ -1858,4 +1860,15 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 	if taskLog != nil {
 		taskLog("INFO", "Active fingerprint: scan completed, requests=%d, success=%d, fail=%d", requestCount, successCount, failCount)
 	}
+}
+
+// isConnectionRefused 检查错误是否为连接被拒绝（目标不可达）
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no route to host") ||
+		strings.Contains(errStr, "network is unreachable")
 }

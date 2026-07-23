@@ -31,7 +31,9 @@ type TaskQueueItem struct {
 // TaskQueueManager 任务队列管理器
 // 实现优先级队列，防止任务堆积导致内存溢出
 type TaskQueueManager struct {
-	mu sync.RWMutex
+	// mu 改为 sync.Mutex 以便 sync.Cond 绑定(GetStats/Size 等读路径使用同一锁,RLock 取消)
+	// 内部读多写少场景下 Mutex 与 RWMutex 开销可忽略,而 cond 必须绑定同一锁
+	mu sync.Mutex
 
 	// 队列配置
 	maxQueueSize int           // 最大队列长度
@@ -49,6 +51,11 @@ type TaskQueueManager struct {
 
 	// 控制
 	stopChan chan struct{}
+	stopOnce sync.Once
+
+	// 修复 H5:用 sync.Cond 替代 worker 侧 50ms 空轮询
+	// cond 守护同一把 mu;Enqueue 后 Signal 唤醒等待者,Stop 时 Broadcast 解除所有 DequeueWait
+	cond *sync.Cond
 
 	// 日志回调
 	logger func(level, format string, args ...interface{})
@@ -63,7 +70,7 @@ func NewTaskQueueManager(maxQueueSize int, maxWaitTime time.Duration) *TaskQueue
 		maxWaitTime = 5 * time.Minute // 默认最大等待5分钟
 	}
 
-	return &TaskQueueManager{
+	m := &TaskQueueManager{
 		maxQueueSize: maxQueueSize,
 		maxWaitTime:  maxWaitTime,
 		queues: map[TaskPriority][]*TaskQueueItem{
@@ -74,6 +81,9 @@ func NewTaskQueueManager(maxQueueSize int, maxWaitTime time.Duration) *TaskQueue
 		},
 		stopChan: make(chan struct{}),
 	}
+	// sync.Cond 绑定到 m.mu,保证 Enqueue 的 Signal 与 DequeueWait 的 Wait/Lock 互斥可见
+	m.cond = sync.NewCond(&m.mu)
+	return m
 }
 
 // SetLogger 设置日志回调
@@ -93,8 +103,17 @@ func (m *TaskQueueManager) Start(ctx context.Context) {
 }
 
 // Stop 停止队列管理器
+// 修复 C-11：原直接 close(stopChan)，重复调用会 panic（close of closed channel）
+// 现使用 sync.Once 保证只关闭一次
+// 修复 H5：Stop 同时 Broadcast cond,解除所有 DequeueWait 的阻塞,使其返回 nil 让 worker 退出
 func (m *TaskQueueManager) Stop() {
-	close(m.stopChan)
+	m.stopOnce.Do(func() {
+		close(m.stopChan)
+		// 唤醒所有 DequeueWait 等待者,避免 worker 永久阻塞在 cond.Wait
+		m.mu.Lock()
+		m.cond.Broadcast()
+		m.mu.Unlock()
+	})
 }
 
 // cleanupLoop 清理过期任务循环
@@ -170,11 +189,15 @@ func (m *TaskQueueManager) Enqueue(task *scheduler.TaskInfo, priority TaskPriori
 	atomic.AddInt32(&m.currentSize, 1)
 	atomic.AddInt64(&m.totalEnqueued, 1)
 
+	// 修复 H5：唤醒一个等待 DequeueWait 的 worker,替代 worker 侧 50ms 空轮询
+	m.cond.Signal()
+
 	return true
 }
 
 // Dequeue 出队任务（按优先级）
-func (m *TaskQueueManager) Dequeue() *scheduler.TaskInfo {
+// 返回任务及入队时确定的优先级，避免出队时重新解析 Config 导致 metric label 不一致
+func (m *TaskQueueManager) Dequeue() (*scheduler.TaskInfo, TaskPriority) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -191,17 +214,78 @@ func (m *TaskQueueManager) Dequeue() *scheduler.TaskInfo {
 			atomic.AddInt32(&m.currentSize, -1)
 			atomic.AddInt64(&m.totalDequeued, 1)
 
-			return item.Task
+			return item.Task, item.Priority
 		}
 	}
 
-	return nil // 队列为空
+	return nil, PriorityNormal // 队列为空
+}
+
+// DequeueWait 阻塞出队,直到有任务、Stop 被调用或 ctx 取消
+// 修复 H5：用 sync.Cond 替代 worker 侧 50ms 空轮询,空队列时挂起等待 Signal
+// 返回 (task, priority, ok)，ok=false 表示因 Stop 或 ctx 取消而退出,调用方应结束循环
+//
+// sync.Cond 本身不感知 context,这里启动一个协程在 ctx.Done 时 Broadcast 解除等待
+func (m *TaskQueueManager) DequeueWait(ctx context.Context) (*scheduler.TaskInfo, TaskPriority, bool) {
+	// ctx 已取消则直接退出,避免启动无谓的唤醒协程
+	if err := ctx.Err(); err != nil {
+		return nil, PriorityNormal, false
+	}
+
+	// 启动 ctx-cancelled 唤醒协程。m.mu 锁住后再 Broadcast,确保 DequeueWait 在 Wait 中被唤醒
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			m.mu.Lock()
+			m.cond.Broadcast()
+			m.mu.Unlock()
+		case <-ctxDone:
+		}
+	}()
+	defer close(ctxDone)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	priorities := []TaskPriority{PriorityUrgent, PriorityHigh, PriorityNormal, PriorityLow}
+	for {
+		// 退出条件 1: Stop 被调用(stopChan 已关闭)
+		select {
+		case <-m.stopChan:
+			return nil, PriorityNormal, false
+		default:
+		}
+		// 退出条件 2: ctx 已取消
+		if err := ctx.Err(); err != nil {
+			return nil, PriorityNormal, false
+		}
+
+		// 尝试按优先级出队
+		for _, priority := range priorities {
+			queue := m.queues[priority]
+			if len(queue) > 0 {
+				item := queue[0]
+				m.queues[priority] = queue[1:]
+
+				atomic.AddInt32(&m.currentSize, -1)
+				atomic.AddInt64(&m.totalDequeued, 1)
+
+				return item.Task, item.Priority, true
+			}
+		}
+
+		// 队列空,挂起等待 Enqueue 的 Signal 或 Stop/ctx 的 Broadcast
+		m.cond.Wait()
+	}
 }
 
 // dropLowPriorityTaskLocked 丢弃低优先级任务（需要持有锁）
+// 修复 M2：当所有低优先级队列均空但 Urgent 队列有任务时，丢弃最新的 Urgent 任务
+// （丢新不丢旧：旧任务可能已积累部分上下文，重新入队代价更高）
 func (m *TaskQueueManager) dropLowPriorityTaskLocked() bool {
 	// 按优先级从低到高尝试丢弃任务
-	priorities := []TaskPriority{PriorityLow, PriorityNormal, PriorityHigh}
+	priorities := []TaskPriority{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent}
 
 	for _, priority := range priorities {
 		queue := m.queues[priority]
@@ -235,8 +319,8 @@ func (m *TaskQueueManager) IsEmpty() bool {
 
 // GetStats 获取队列统计信息
 func (m *TaskQueueManager) GetStats() TaskQueueStats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	queueSizes := make(map[string]int)
 	for priority, queue := range m.queues {

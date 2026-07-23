@@ -36,6 +36,13 @@ type WorkerConfig struct {
 	InstallKey  string `json:"installKey"` // 安装密钥
 	Concurrency int    `json:"concurrency"`
 	Timeout     int    `json:"timeout"`
+
+	// Phase 2 客户端优先级队列管理器（默认关闭，保持向后兼容）
+	// 开启后 taskChan 退化为预留槽位计数器，任务实际进入 TaskQueueManager
+	// 由 GetTaskPriority 推断优先级，按 Urgent>High>Normal>Low 顺序出队
+	EnableTaskQueueManager bool          `json:"enableTaskQueueManager"`
+	MaxQueueSize           int           `json:"maxQueueSize"`  // 0 表示默认 100
+	MaxWaitTime            time.Duration `json:"maxWaitTime"`   // 0 表示默认 5 分钟
 }
 
 // Worker 工作节点
@@ -52,6 +59,12 @@ type Worker struct {
 	stopOnce   sync.Once
 	wg         sync.WaitGroup
 	mu         sync.Mutex
+
+	// Phase 2 客户端优先级队列管理器
+	// 当 config.EnableTaskQueueManager=true 时启用
+	// taskChan 此时退化为预留槽位计数器（len(taskChan) 用于检查并发槽位）
+	// 任务实体存放在 taskQueue 的 4 级优先级 slice 中
+	taskQueue *TaskQueueManager
 
 	taskStarted   int
 	taskExecuted  int
@@ -281,6 +294,21 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		stopChan:         make(chan struct{}),
 		logger:           NewWorkerLoggerLocal(config.Name), // 使用本地日志
 		sysInfoCollector: NewSysInfoCollector(config.Name, config.IP, workerVersion),
+	}
+
+	// Phase 2: 按需启用客户端优先级队列管理器
+	// 关闭时保持原 taskChan FIFO 行为；开启时 taskQueue 接管任务排队，taskChan 仅作为并发槽位计数
+	if config.EnableTaskQueueManager {
+		w.taskQueue = NewTaskQueueManager(config.MaxQueueSize, config.MaxWaitTime)
+		w.taskQueue.SetLogger(func(level, format string, args ...interface{}) {
+			if level == "WARN" {
+				w.logger.Warn("[TaskQueue] "+format, args...)
+			} else {
+				w.logger.Info("[TaskQueue] "+format, args...)
+			}
+		})
+		logx.Infof("[Worker] TaskQueueManager enabled: maxQueueSize=%d, maxWaitTime=%v",
+			config.MaxQueueSize, config.MaxWaitTime)
 	}
 
 	// 创建 WebSocket 客户端
@@ -589,6 +617,11 @@ func (w *Worker) Start() {
 	// Worker 启动时恢复之前未完成的任务
 	w.recoverOrphanedTasks()
 
+	// Phase 2: 启用客户端优先级队列管理器时启动过期清理协程
+	if w.taskQueue != nil {
+		w.taskQueue.Start(w.ctx)
+	}
+
 	// 启动任务处理协程
 	for i := 0; i < w.config.Concurrency; i++ {
 		w.wg.Add(1)
@@ -650,27 +683,69 @@ func (w *Worker) processTaskWithRecovery(workerId int) {
 
 // processTaskLoop 任务处理循环（内部方法）
 func (w *Worker) processTaskLoop() {
+	// 构造随 stopChan 取消的 ctx,供 DequeueWait 使用
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-w.stopChan:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	// Phase 2: 启用 taskQueue 时从优先级队列出队，否则从 taskChan 读取
 	for {
 		select {
 		case <-w.stopChan:
 			w.logger.Info("processTaskLoop: received stop signal, exiting")
 			return
-		case task := <-w.taskChan:
-			w.logger.Info("processTaskLoop: received task %s from channel", task.TaskId)
-			// 在执行前检查任务是否已被停止
-			ctx := context.Background()
-			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
-				w.taskLog(task.TaskId, LevelInfo, "Task %s skipped because it was stopped while waiting in queue", task.TaskId)
-				w.cleanupTaskLogger(task.TaskId)
-				// 队列内被丢弃时一次性发出本批次应有的全部增量，避免 sub_task_done 永远到不了 sub_task_count
-				w.incrSubTaskDone(ctx, task, "完成", true, w.expectedTaskIncr(task.Config))
-				continue
-			}
-			w.logger.Info("processTaskLoop: calling executeTask for task %s", task.TaskId)
-			w.executeTask(task)
-			w.logger.Info("processTaskLoop: executeTask completed for task %s", task.TaskId)
+		default:
 		}
+
+		var task *scheduler.TaskInfo
+		if w.taskQueue != nil {
+			// 启用优先级队列：DequeueWait 用 sync.Cond 挂起等待,替代 50ms 空轮询
+			var priority TaskPriority
+			var ok bool
+			task, priority, ok = w.taskQueue.DequeueWait(ctx)
+			if !ok {
+				// Stop 或 ctx 取消,退出循环
+				return
+			}
+			_ = priority
+		} else {
+			// 原 taskChan 路径
+			select {
+			case <-w.stopChan:
+				w.logger.Info("processTaskLoop: received stop signal, exiting")
+				return
+			case t := <-w.taskChan:
+				task = t
+			}
+		}
+
+		w.logger.Info("processTaskLoop: received task %s from %s", task.TaskId, w.taskSource())
+		taskCtx := context.Background()
+		if ctrl := w.checkTaskControl(taskCtx, task.TaskId); ctrl == "STOP" {
+			w.taskLog(task.TaskId, LevelInfo, "Task %s skipped because it was stopped while waiting in queue", task.TaskId)
+			w.cleanupTaskLogger(task.TaskId)
+			// 队列内被丢弃时一次性发出本批次应有的全部增量，避免 sub_task_done 永远到不了 sub_task_count
+			w.incrSubTaskDone(taskCtx, task, "完成", true, w.expectedTaskIncr(task.Config))
+			continue
+		}
+		w.logger.Info("processTaskLoop: calling executeTask for task %s", task.TaskId)
+		w.executeTask(task)
+		w.logger.Info("processTaskLoop: executeTask completed for task %s", task.TaskId)
 	}
+}
+
+// taskSource 返回当前任务来源标签，用于日志
+func (w *Worker) taskSource() string {
+	if w.taskQueue != nil {
+		return "taskQueue"
+	}
+	return "taskChan"
 }
 
 // fetchTasksWithRecovery 带 panic 恢复的任务拉取
@@ -836,22 +911,24 @@ func (w *Worker) pullTask() bool {
 	ctx := context.Background()
 
 	// 检查是否有空闲槽位
-	if len(w.taskChan) >= w.config.Concurrency {
+	// Phase 2: 启用 taskQueue 时，槽位 = 已入队但未出队的任务数 + taskChan 中的任务数（taskChan 仍保留槽位计数语义）
+	// 关闭 taskQueue 时，直接看 taskChan 长度（原行为）
+	pendingCount := len(w.taskChan)
+	if w.taskQueue != nil {
+		pendingCount += w.taskQueue.Size()
+	}
+	if pendingCount >= w.config.Concurrency {
 		return false
 	}
 
-	// 优先使用自适应调度器检查是否可以接受新任务
+	// 使用自适应调度器检查是否可以接受新任务
+	// Phase 3 清理：移除 ResourceManager fallback（adaptiveScheduler 总是非 nil）
 	if w.adaptiveScheduler != nil {
 		if !w.adaptiveScheduler.CanAcceptTask() {
 			return false
 		}
-	} else if w.resourceManager != nil {
-		// 回退到旧版资源管理器
-		if !w.resourceManager.CanAcceptTask() {
-			return false
-		}
 	} else if w.isCPUOverloaded() {
-		// 最后回退到简单的CPU检查
+		// adaptiveScheduler 未初始化时回退到简单 CPU 检查（仅测试场景）
 		return false
 	}
 
@@ -872,6 +949,20 @@ func (w *Worker) pullTask() bool {
 			TaskName:    "scan",
 			Config:      resp.Config,
 		}
+
+		// Phase 2: 启用客户端优先级队列时走 TaskQueueManager
+		// 否则保持原 taskChan FIFO 路径
+		if w.taskQueue != nil {
+			priority := GetTaskPriority(task)
+			if !w.taskQueue.Enqueue(task, priority) {
+				w.logger.Warn("pullTask: task %s rejected by TaskQueue (full or low-priority dropped)", task.TaskId)
+				return false
+			}
+			w.logger.Info("pullTask: task %s enqueued with priority %d (queue size: %d/%d)",
+				task.TaskId, priority, w.taskQueue.Size(), w.config.Concurrency)
+			return true
+		}
+
 		w.logger.Info("pullTask: pushing task %s to taskChan (channel size: %d/%d)", task.TaskId, len(w.taskChan), cap(w.taskChan))
 		w.taskChan <- task
 		w.logger.Info("pullTask: task %s pushed to taskChan successfully", task.TaskId)
@@ -915,6 +1006,11 @@ func (w *Worker) Stop() {
 	// 停止本地结果队列
 	if w.resultQueue != nil {
 		w.resultQueue.Stop()
+	}
+
+	// Phase 2: 停止客户端优先级队列管理器
+	if w.taskQueue != nil {
+		w.taskQueue.Stop()
 	}
 
 	// 通知服务器Worker即将离线，删除Redis状态数据
@@ -975,7 +1071,13 @@ func (w *Worker) notifyOffline() {
 }
 
 // SubmitTask 提交任务
+// Phase 2: 启用 taskQueue 时走优先级入队，否则保持原 taskChan 路径
 func (w *Worker) SubmitTask(task *scheduler.TaskInfo) {
+	if w.taskQueue != nil {
+		priority := GetTaskPriority(task)
+		w.taskQueue.Enqueue(task, priority)
+		return
+	}
 	w.taskChan <- task
 }
 
@@ -1107,11 +1209,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// 添加函数入口日志
 	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s", task.TaskId, task.MainTaskId)
 
-	// 获取资源槽位（优先使用自适应调度器）
+	// 获取资源槽位（使用自适应调度器）
+	// Phase 3 清理：移除 ResourceManager fallback（adaptiveScheduler 总是非 nil）
 	if w.adaptiveScheduler != nil {
 		w.adaptiveScheduler.AcquireSlot()
-	} else if w.resourceManager != nil {
-		w.resourceManager.AcquireSlot()
 	}
 
 	w.mu.Lock()
@@ -1144,11 +1245,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		// 清理任务日志记录器，flush 残余缓冲
 		w.cleanupTaskLogger(task.TaskId)
 
-		// 释放资源槽位（优先使用自适应调度器）
+		// 释放资源槽位（使用自适应调度器）
+		// Phase 3 清理：移除 ResourceManager fallback
 		if w.adaptiveScheduler != nil {
 			w.adaptiveScheduler.ReleaseSlot()
-		} else if w.resourceManager != nil {
-			w.resourceManager.ReleaseSlot()
 		}
 	}()
 
@@ -2709,6 +2809,72 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 	}
 }
 
+// 资产分批的 OOM 硬约束：
+//
+//   - maxBatchSize=50 为条数硬上限（来自 project_memory 强约束），不可调高。
+//   - maxBatchBytes=1MB 为单批字节上限；累计 JSON 字节超过此值则切分新批。
+//   - maxItemSize=20KB 为单条资产字节上限；超过则该条独占一批（避免一条压垮整批）。
+//
+// 在低内存 Worker 上，按条数切分（如 500/批）会同时驻留多批资产副本与
+// HTTP 序列化缓冲，极易触发 OOM；按字节切分可限制单批驻留内存。
+const (
+	maxBatchSize  = 50
+	maxBatchBytes = 1 << 20 // 1MB
+	maxItemSize   = 20 * 1024
+)
+
+// assetBatchRange 描述一个批次在原切片中的 [start, end) 区间
+type assetBatchRange struct {
+	start, end int
+}
+
+// estimateAssetBytes 估算单个 Asset 序列化后的字节数（仅累加大字段，避免全量 marshal 开销）
+func estimateAssetBytes(a *scanner.Asset) int {
+	if a == nil {
+		return 0
+	}
+	// 基础开销：覆盖 host/title/server/category 等短字段
+	const baseOverhead = 1024
+	return baseOverhead +
+		len(a.HttpBody) + len(a.Screenshot) + len(a.IconData) +
+		len(a.Banner) + len(a.HttpHeader) + len(a.Cert)
+}
+
+// calculateAssetBatchBoundaries 按字节+条数双重约束计算批次边界
+// 规则：单条 > maxItemSize 时该条独占一批；否则累计到 maxBatchBytes 或 maxBatchSize 即切分
+func calculateAssetBatchBoundaries(assets []*scanner.Asset) []assetBatchRange {
+	if len(assets) == 0 {
+		return nil
+	}
+	boundaries := make([]assetBatchRange, 0, (len(assets)/maxBatchSize)+1)
+	start := 0
+	totalBytes := 0
+	for i := 0; i < len(assets); i++ {
+		sz := estimateAssetBytes(assets[i])
+		// 单条过大：独占一批，避免一条压垮整批
+		if sz > maxItemSize {
+			if i > start {
+				boundaries = append(boundaries, assetBatchRange{start: start, end: i})
+			}
+			boundaries = append(boundaries, assetBatchRange{start: i, end: i + 1})
+			start = i + 1
+			totalBytes = 0
+			continue
+		}
+		// 累计字节超限或条数达上限：切分
+		if i > start && (totalBytes+sz > maxBatchBytes || (i-start) >= maxBatchSize) {
+			boundaries = append(boundaries, assetBatchRange{start: start, end: i})
+			start = i
+			totalBytes = 0
+		}
+		totalBytes += sz
+	}
+	if start < len(assets) {
+		boundaries = append(boundaries, assetBatchRange{start: start, end: len(assets)})
+	}
+	return boundaries
+}
+
 // saveAssetResult 保存资产结果
 func (w *Worker) saveAssetResult(ctx context.Context, workspaceId, mainTaskId, orgId string, assets []*scanner.Asset) {
 	// 添加 panic 恢复机制
@@ -2722,21 +2888,20 @@ func (w *Worker) saveAssetResult(ctx context.Context, workspaceId, mainTaskId, o
 		return
 	}
 
-	// 分批保存，每批最多500个
-	batchSize := 500
+	// OOM 约束：maxBatchSize=50 为硬上限，避免大批次在低内存场景下加剧内存压力；
+	// 同时按字节切分（累计 ≤ 1MB，单条 ≤ 20KB），取较小者，防止单批过大。
 	totalAssets := len(assets)
-	totalBatches := (totalAssets + batchSize - 1) / batchSize
+	boundaries := calculateAssetBatchBoundaries(assets)
+	totalBatches := len(boundaries)
 
-	w.taskLog(mainTaskId, LevelInfo, "Saving %d assets in %d batches", totalAssets, totalBatches)
+	w.taskLog(mainTaskId, LevelInfo, "Saving %d assets in %d batches (maxBatchSize=%d, maxBatchBytes=%d)",
+		totalAssets, totalBatches, maxBatchSize, maxBatchBytes)
 
 	var totalNew, totalUpdate int32
 
 	for batchIdx := 0; batchIdx < totalBatches; batchIdx++ {
-		start := batchIdx * batchSize
-		end := start + batchSize
-		if end > totalAssets {
-			end = totalAssets
-		}
+		start := boundaries[batchIdx].start
+		end := boundaries[batchIdx].end
 
 		batchAssets := assets[start:end]
 		httpAssets := make([]AssetDocument, 0, len(batchAssets))
@@ -2873,14 +3038,43 @@ func (w *Worker) saveVulResult(ctx context.Context, workspaceId, mainTaskId stri
 
 	w.taskLog(mainTaskId, LevelInfo, "[SaveVul] Calling HTTP API to save %d vulnerabilities, workspaceId=%s", len(httpVuls), workspaceId)
 
-	// 通过 HTTP 接口保存漏洞结果
-	resp, err := w.httpClient.SaveVulResult(ctx, &VulResultReq{
-		WorkspaceId: workspaceId,
-		MainTaskId:  mainTaskId,
-		Vuls:        httpVuls,
-	})
+	// 修复 C-02：与 saveAssetResult 对称，增加重试 + 本地队列回退，避免 API 不可用时漏洞永久丢失
+	const maxVulRetry = 3
+	var resp *VulResultResp
+	var err error
+	for attempt := 1; attempt <= maxVulRetry; attempt++ {
+		batchCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		resp, err = w.httpClient.SaveVulResult(batchCtx, &VulResultReq{
+			WorkspaceId: workspaceId,
+			MainTaskId:  mainTaskId,
+			Vuls:        httpVuls,
+		})
+		cancel()
+		if err == nil {
+			break
+		}
+		if attempt < maxVulRetry {
+			w.taskLog(mainTaskId, LevelWarn, "[SaveVul] save attempt %d/%d failed: %v", attempt, maxVulRetry, err)
+			time.Sleep(time.Duration(attempt*2) * time.Second)
+		}
+	}
+
 	if err != nil {
-		w.taskLog(mainTaskId, LevelError, "[SaveVul] HTTP request failed: %v", err)
+		// API 不可用时，将漏洞结果入队到本地队列（复用 resultQueue，封装为 TaskResultReq 兼容格式）
+		if w.resultQueue != nil {
+			// 将漏洞序列化为 JSON 存入 TaskResultReq 的扩展字段不现实，
+			// 改为直接落盘到独立的漏洞队列文件
+			queueErr := w.enqueueVulResult(workspaceId, mainTaskId, httpVuls)
+			if queueErr != nil {
+				w.taskLog(mainTaskId, LevelError, "[SaveVul] save failed after %d attempts and queue failed: %v (queue error: %v)",
+					maxVulRetry, err, queueErr)
+			} else {
+				w.taskLog(mainTaskId, LevelWarn, "[SaveVul] save failed after %d attempts, queued for retry: %v",
+					maxVulRetry, err)
+			}
+		} else {
+			w.taskLog(mainTaskId, LevelError, "[SaveVul] save failed after %d attempts: %v", maxVulRetry, err)
+		}
 		return
 	}
 
@@ -2889,6 +3083,23 @@ func (w *Worker) saveVulResult(ctx context.Context, workspaceId, mainTaskId stri
 	} else {
 		w.taskLog(mainTaskId, LevelWarn, "[SaveVul] HTTP API response is nil")
 	}
+}
+
+// enqueueVulResult 将漏洞结果落盘到本地队列文件，供 API 恢复后重放
+// 修复 C-02：避免 API 不可用时漏洞结果永久丢失
+func (w *Worker) enqueueVulResult(workspaceId, mainTaskId string, vuls []VulDocument) error {
+	if w.resultQueue == nil {
+		return fmt.Errorf("result queue not initialized")
+	}
+	// 复用 resultQueue 的目录结构，漏洞结果用 "vul" 后缀区分
+	queueReq := &TaskResultReq{
+		WorkspaceId: workspaceId,
+		MainTaskId:  mainTaskId,
+	}
+	// 将漏洞数据序列化后作为资产队列条目存入（resultQueue 内部按 JSON 文件持久化）
+	// 这里用 mainTaskId 标记，重放时会调用 replayFn，由 replayFn 内部判断是否为漏洞
+	// 简化方案：直接写入 resultQueue 的目录，文件名带 vul 标记
+	return w.resultQueue.EnqueueVul(queueReq, vuls)
 }
 
 // reportResultLoop 上报结果循环（内部方法）

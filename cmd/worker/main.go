@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,6 +49,12 @@ func getEnvIntOrDefault(key string, defaultVal int) int {
 }
 
 // validateInstallKey 验证安装密钥
+// 修复 C-38：原使用 http.Post（http.DefaultClient 无超时），API 服务故障时 worker 启动会挂起。
+// 现使用 http.Client 设置 10s 超时，避免长时间阻塞启动流程。
+// 修复 C-39：原 defer resp.Body.Close() 在 for 循环中导致 body 资源累积到函数返回才释放；
+// 且重试间隔无 jitter，与服务器重启风暴容易形成同步重试。
+// 现在每次迭代内立即关闭 body，并使用 jitter 退避；
+// 区分 503（基础设施故障，可重试）与 401（密钥无效，立即失败）。
 func validateInstallKey(apiServer, key, name string) error {
 	reqBody := map[string]string{
 		"installKey": key,
@@ -61,17 +68,36 @@ func validateInstallKey(apiServer, key, name string) error {
 	// 构建API地址
 	url := fmt.Sprintf("%s/api/v1/worker/validate", apiServer)
 
+	// 带超时的 client，避免 API 故障时 worker 启动挂起
+	client := &http.Client{Timeout: 10 * time.Second}
+
 	// 发送验证请求，带重试
+	var lastErr error
 	for i := 0; i < 3; i++ {
-		resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+		if i > 0 {
+			// 指数退避 + jitter，避免服务器重启后多 worker 同步重试
+			backoff := time.Duration(1<<uint(i)) * time.Second
+			jitter := time.Duration(rand.Int63n(int64(time.Second)))
+			time.Sleep(backoff + jitter)
+		}
+
+		resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
+			lastErr = err
 			logx.Infof("⚠️  Validation attempt %d failed: %v, retrying...", i+1, err)
-			time.Sleep(time.Duration(i+1) * time.Second)
 			continue
 		}
-		defer resp.Body.Close()
-
+		// 修复 C-39：每次迭代内立即关闭 body，避免 defer 在循环中累积
 		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// 503 表示 Redis 等基础设施故障，可重试；401 表示密钥无效，立即失败
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			lastErr = fmt.Errorf("server temporarily unavailable (503)")
+			logx.Infof("⚠️  Validation attempt %d: server unavailable, retrying...", i+1)
+			continue
+		}
+
 		var result struct {
 			Code  int    `json:"code"`
 			Msg   string `json:"msg"`
@@ -79,22 +105,27 @@ func validateInstallKey(apiServer, key, name string) error {
 		}
 		json.Unmarshal(body, &result)
 		if result.Code != 0 || !result.Valid {
+			// 密钥无效属于业务错误，重试无意义
 			return fmt.Errorf("validation failed: %s", result.Msg)
 		}
 		return nil
 	}
-	return fmt.Errorf("validation failed after 3 attempts")
+	if lastErr == nil {
+		lastErr = fmt.Errorf("validation failed after 3 attempts")
+	}
+	return lastErr
 }
 
 func main() {
 	flag.Parse()
 	logx.MustSetup(logx.LogConf{
-		ServiceName: "cscan-worker",
-		Mode:        "console",  // 开启控制台颜色
-		Encoding:    "plain",    // 纯文本格式
-		TimeFormat:  "15:04:05", // 简洁时间格式
-		Level:       "info",     // 日志级别
-		Stat:        false,      // 关闭资源统计
+		ServiceName:         "cscan-worker",
+		Mode:                "console",           // 开启控制台颜色
+		Encoding:            "plain",             // 纯文本格式
+		TimeFormat:          "15:04:05",          // 简洁时间格式
+		Level:               "info",              // 日志级别
+		Stat:                false,               // 关闭资源统计
+		MaxContentLength:    uint32(getEnvIntOrDefault("CSCAN_WORKER_LOG_MAX_CONTENT_LENGTH", 4096)), // 6/29 OOM 修复：单条日志最大4KB，截断超长内容（如完整HTTP响应体）；可通过环境变量调整
 	})
 	// 禁用额外的统计输出
 	stat.DisableLog()

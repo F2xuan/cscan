@@ -105,17 +105,18 @@ func DefaultAdaptiveSchedulerConfig(baseConcurrency int) *AdaptiveSchedulerConfi
 
 	switch profile {
 	case scanner.ProfileLow:
-		// 低配 (<=4核 或 <=4GB): 大幅放宽阈值，避免频繁限流
+		// 低配 (<=4核 或 <=4GB): 适当放宽阈值避免频繁限流
 		// 注意: Go 程序 1.5GB RSS 是正常的，阈值必须高于此值
+		// 6/29 OOM 事故修复：阈值下调，提前介入避免内存突破临界点
 		cpuLow = 50.0
 		cpuHigh = 85.0
 		cpuCritical = 95.0
 		memLow = 65.0
-		memHigh = 85.0
-		memCritical = 95.0
+		memHigh = 80.0     // 从 85 下调到 80
+		memCritical = 88.0 // 从 95 下调到 88，避免接近 OOM 才触发
 		processMemLowMB = 1024
-		processMemHighMB = 1536     // 允许 1.5GB 不触发降级
-		processMemCriticalMB = 2048 // 2GB 才触发 critical
+		processMemHighMB = 1280     // 从 1536 下调到 1280
+		processMemCriticalMB = 1536 // 从 2048 下调到 1536，对 7551MB 总内存的 worker 更合理
 	case scanner.ProfileMedium:
 		// 中配 (<=8核 且 <=16GB): 适度放宽
 		cpuLow = 45.0
@@ -190,6 +191,10 @@ type AdaptiveScheduler struct {
 	// 日志抑制：连续相同模式时降频输出
 	consecutiveModeCount int       // 当前模式连续出现次数
 	lastModeLogTime      time.Time // 上次输出模式变更日志的时间
+
+	// GC 触发标志：防止在 critical 模式下每个采样周期都触发 STW GC，导致自反馈恶化
+	// 仅在首次跨越 80% 阈值时触发一次，退出 critical 后重置
+	gcTriggered bool
 
 	// 统计信息
 	stats SchedulerStats
@@ -438,6 +443,24 @@ func (s *AdaptiveScheduler) adjustConcurrency() {
 				oldMode, newMode, oldConcurrency, s.currentConcurrency, s.smoothedCPU, s.smoothedMem, s.getLatestProcessMemMB())
 		}
 	}
+
+	// 主动 GC：当进程内存首次跨越 critical 阈值的 80% 时，触发一次 GC 释放内存
+	// 修复 C3：原逻辑每个采样周期都触发 runtime.GC()，在 critical 模式下造成 STW 自反馈恶化
+	// （GC 拖慢任务执行→任务积压→内存不释放→继续 critical→继续 GC）
+	// 改为：仅首次跨越阈值时触发一次，退出 critical 后重置标志
+	latestProcMem := s.getLatestProcessMemMB()
+	gcThreshold := uint64(float64(s.config.ProcessMemCriticalThresholdMB) * 0.8)
+	if latestProcMem > 0 && latestProcMem >= gcThreshold && !s.gcTriggered {
+		runtime.GC()
+		s.gcTriggered = true
+		s.log("WARN", "Triggered GC at %dMB (threshold %dMB), will not trigger again until exiting critical mode",
+			latestProcMem, gcThreshold)
+	}
+
+	// 退出 critical 模式时重置 GC 触发标志，允许下次再次触发
+	if oldMode == ModeCritical && newMode != ModeCritical {
+		s.gcTriggered = false
+	}
 }
 
 // determineMode 确定调度模式
@@ -562,6 +585,8 @@ func (s *AdaptiveScheduler) calculateTargetConcurrency(mode ScheduleMode) int {
 }
 
 // CanAcceptTask 检查是否可以接受新任务
+// 注：critical 模式下直接拒收新任务，任务仍保留在服务端队列中，
+// 等 worker 恢复到 normal/high 模式后下次轮询会继续拉取执行，不会丢失
 func (s *AdaptiveScheduler) CanAcceptTask() bool {
 	s.mu.RLock()
 	mode := s.currentMode
@@ -570,8 +595,9 @@ func (s *AdaptiveScheduler) CanAcceptTask() bool {
 
 	currentTasks := int(atomic.LoadInt32(&s.currentTasks))
 
-	// 危急模式下，如果已有任务在执行，拒绝新任务
-	if mode == ModeCritical && currentTasks > 0 {
+	// critical 模式下直接拒收所有新任务，避免内存继续增长
+	// 任务在 API 端仍处于 pending 状态，等内存恢复后继续执行
+	if mode == ModeCritical {
 		atomic.AddInt64(&s.stats.TotalTasksRejected, 1)
 		return false
 	}
@@ -609,13 +635,14 @@ func (s *AdaptiveScheduler) isResourceCritical() bool {
 }
 
 // AcquireSlot 获取任务槽位
+// critical 模式下直接拒绝（任务保留在服务端队列，等恢复后继续）
 func (s *AdaptiveScheduler) AcquireSlot() bool {
 	s.mu.RLock()
 	mode := s.currentMode
 	maxConcurrency := s.currentConcurrency
 	s.mu.RUnlock()
 
-	if mode == ModeCritical && atomic.LoadInt32(&s.currentTasks) > 0 {
+	if mode == ModeCritical {
 		atomic.AddInt64(&s.stats.TotalTasksRejected, 1)
 		return false
 	}

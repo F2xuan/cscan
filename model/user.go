@@ -23,12 +23,22 @@ type User struct {
 	Password           string             `bson:"password" json:"-"`
 	Role               string             `bson:"role,omitempty" json:"role"`
 	Status             string             `bson:"status" json:"status"`
+	Avatar             string             `bson:"avatar,omitempty" json:"avatar"`
+	Email              string             `bson:"email,omitempty" json:"email,omitempty"`
+	Phone              string             `bson:"phone,omitempty" json:"phone,omitempty"`
 	WorkspaceIds       []string           `bson:"workspace_ids" json:"workspaceIds"`
 	ScanConfig         string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
 	LastLoginTime      *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
 	CreateTime         time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime         time.Time          `bson:"update_time" json:"updateTime"`
 	MustChangePassword bool               `bson:"must_change_password,omitempty" json:"mustChangePassword"`
+}
+
+const AdminUsername = "admin"
+
+// IsAdmin 判断用户是否为内建管理员账号（状态受保护，禁止禁用/删除）
+func (u *User) IsAdmin() bool {
+	return u != nil && u.Username == AdminUsername
 }
 
 type UserModel struct {
@@ -74,13 +84,18 @@ func (m *UserModel) FindById(ctx context.Context, id string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
+	return m.FindByObjectId(ctx, oid)
+}
+
+// FindByObjectId 通过 ObjectID 查询用户（中间件 / PAT 路径使用）
+func (m *UserModel) FindByObjectId(ctx context.Context, oid primitive.ObjectID) (*User, error) {
 	var doc User
-	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
+	err := m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, nil // 用户不存在，返回nil而不是错误
+			return nil, nil
 		}
-		return nil, err // 其他错误
+		return nil, err
 	}
 	return &doc, nil
 }
@@ -151,6 +166,39 @@ func (m *UserModel) UpdateScanConfig(ctx context.Context, id string, config stri
 	return err
 }
 
+// UpdateAvatar 更新用户头像（avatar 为相对路径或空串）
+func (m *UserModel) UpdateAvatar(ctx context.Context, id string, avatar string) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	update := bson.M{
+		"avatar":      avatar,
+		"update_time": time.Now(),
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	return err
+}
+
+// UpdateProfile 更新当前用户个人信息（仅允许 username/email/phone/avatar 字段）
+func (m *UserModel) UpdateProfile(ctx context.Context, id string, username, email, phone, avatar string) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	set := bson.M{"update_time": time.Now()}
+	if username != "" {
+		set["username"] = username
+	}
+	set["email"] = email
+	set["phone"] = phone
+	if avatar != "" {
+		set["avatar"] = avatar
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": set})
+	return err
+}
+
 func (m *UserModel) GetScanConfig(ctx context.Context, id string) (string, error) {
 	user, err := m.FindById(ctx, id)
 	if err != nil {
@@ -185,21 +233,29 @@ func (m *UserModel) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-func (m *UserModel) VerifyPassword(ctx context.Context, username, password string) (*User, bool) {
+// VerifyPassword 验证用户名和密码。
+// 返回值：
+//   - user: 用户信息（认证成功时非 nil）
+//   - ok: 认证是否成功（用户存在 + 密码正确 + 用户启用）
+//   - err: 非 nil 表示基础设施错误（如 MongoDB 故障、context 超时），调用方必须将其与认证失败区分开
+//
+// 重要：err != nil 时 ok 一定为 false，但 ok == false 不代表 err != nil。
+// 调用方应优先检查 err，再检查 ok。
+func (m *UserModel) VerifyPassword(ctx context.Context, username, password string) (*User, bool, error) {
 	user, err := m.FindByUsername(ctx, username)
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
 	if user == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	if !CheckPassword(password, user.Password) {
-		return nil, false
+		return nil, false, nil
 	}
 	if user.Status != StatusEnable {
-		return nil, false
+		return nil, false, nil
 	}
-	return user, true
+	return user, true, nil
 }
 
 func HashPassword(password string) (string, error) {

@@ -11,10 +11,11 @@ import (
 )
 
 // SubfinderProvider Subfinder数据源配置
+// 安全说明:Keys 是敏感凭证,使用 json:"-" 永不序列化,调用方需显式脱敏
 type SubfinderProvider struct {
 	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Provider    string             `bson:"provider" json:"provider"`       // 数据源名称: binaryedge, censys, shodan, github等
-	Keys        []string           `bson:"keys" json:"keys"`               // API密钥列表（支持多个）
+	Keys        []string           `bson:"keys" json:"-"`                  // API密钥列表,永不序列化
 	Status      string             `bson:"status" json:"status"`           // enable/disable
 	Description string             `bson:"description" json:"description"` // 描述
 	CreateTime  time.Time          `bson:"create_time" json:"createTime"`
@@ -58,7 +59,13 @@ func (m *SubfinderProviderModel) Insert(ctx context.Context, doc *SubfinderProvi
 func (m *SubfinderProviderModel) FindByProvider(ctx context.Context, provider string) (*SubfinderProvider, error) {
 	var doc SubfinderProvider
 	err := m.coll.FindOne(ctx, bson.M{"provider": provider}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 // FindAll 查找所有配置

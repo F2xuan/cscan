@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -188,6 +189,49 @@ func DefaultDomainBlacklist() []string {
 		"google-analytics.com",
 		"googletagmanager.com",
 		"vite.dev",
+		// —— 以下为补充：规范文档/标准草案/浏览器Bug追踪器等外链，不应作为未授权扫描对象 ——
+		"tc39.es", // ECMA-262 等规范
+		"tc39.github.io",
+		"github.com/tc39",
+		"w3c.github.io", // W3C 规范草案
+		"w3.org",
+		"html.spec.whatwg.org", // HTML Living Standard
+		"whatwg.org",
+		"whatwg.cn",
+		"spec.whatwg.org",
+		"bugs.chromium.org", // Chromium bug tracker
+		"chromium.googlesource.com",
+		"crbug.com",
+		"developer.mozilla.org", // MDN
+		"developer.chrome.com",
+		"web.dev",
+		"developers.google.com",
+		"datatracker.ietf.org",
+		"tools.ietf.org",
+		"rfc-editor.org",
+		"ietf.org",
+		"www.iana.org",
+		"iana.org",
+		"mozilla.org",
+		"www.mozilla.org",
+		"wiki.mozilla.org",
+		"support.mozilla.org",
+		"bugzilla.mozilla.org",
+		"dxr.mozilla.org",
+		"searchfox.org",
+		"chromereleases.googleblog.com",
+		"blog.chromium.org",
+		"web.archive.org",
+		"archive.org",
+		"wikipedia.org",
+		"en.wikipedia.org",
+		"zh.wikipedia.org",
+		"schema.org",
+		"www.schema.org",
+		"openid.net",
+		"oauth.net",
+		"jwt.io",
+		"www.rfc-editor.org",
 	}
 }
 
@@ -253,4 +297,37 @@ func (m *JSFinderConfigModel) EnsureDefault(ctx context.Context) error {
 		return nil
 	}
 	return m.Save(ctx, NewDefaultJSFinderConfig())
+}
+
+// MergeMissingDomainBlacklist 合并补充黑名单条目（幂等）
+// 仅追加 DefaultDomainBlacklist 中存在但数据库记录中缺失的条目，保留用户自定义条目
+func (m *JSFinderConfigModel) MergeMissingDomainBlacklist(ctx context.Context) error {
+	doc, err := m.Get(ctx)
+	if err != nil {
+		return err
+	}
+
+	existing := make(map[string]bool, len(doc.DomainBlacklist))
+	for _, d := range doc.DomainBlacklist {
+		existing[strings.ToLower(strings.TrimSpace(d))] = true
+	}
+
+	var added []string
+	for _, d := range DefaultDomainBlacklist() {
+		if !existing[strings.ToLower(d)] {
+			added = append(added, d)
+		}
+	}
+
+	if len(added) == 0 {
+		return nil
+	}
+
+	merged := append(append([]string{}, doc.DomainBlacklist...), added...)
+	update := bson.M{
+		"domain_blacklist": merged,
+		"update_time":      time.Now(),
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": doc.Id}, bson.M{"$set": update})
+	return err
 }

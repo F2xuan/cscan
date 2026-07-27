@@ -46,6 +46,12 @@ type Vul struct {
 	FirstSeenTime time.Time `bson:"first_seen_time,omitempty" json:"firstSeenTime,omitempty"`
 	LastSeenTime  time.Time `bson:"last_seen_time,omitempty" json:"lastSeenTime,omitempty"`
 	ScanCount     int       `bson:"scan_count,omitempty" json:"scanCount,omitempty"`
+
+	// 风险层标记：is_risk=true 时该漏洞计入"风险"视角，false 时仅在暴露面视角展示
+	// 缺失字段视为 false（暴露面视角默认）；risk 层查询显式 filter is_risk=true
+	IsRisk         bool      `bson:"is_risk,omitempty" json:"isRisk,omitempty"`
+	RiskAssessedAt time.Time `bson:"risk_assessed_at,omitempty" json:"riskAssessedAt,omitempty"`
+	RiskSource    string     `bson:"risk_source,omitempty" json:"riskSource,omitempty"` // manual / auto:cvss / auto:weakpass / auto:info-leak
 }
 
 type VulModel struct {
@@ -76,7 +82,13 @@ func (m *VulModel) FindById(ctx context.Context, id string) (*Vul, error) {
 	}
 	var doc Vul
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *VulModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Vul, error) {
@@ -86,6 +98,13 @@ func (m *VulModel) Find(ctx context.Context, filter bson.M, page, pageSize int) 
 		opts.SetLimit(int64(pageSize))
 	}
 	opts.SetSort(bson.D{{Key: "create_time", Value: -1}})
+	// 列表场景排除超大字段（请求/响应/curl 命令），列表接口不需要这些证据链数据
+	// 详情接口应使用 FindById 获取完整字段
+	opts.SetProjection(bson.D{
+		{Key: "request", Value: 0},
+		{Key: "response", Value: 0},
+		{Key: "curl_command", Value: 0},
+	})
 
 	cursor, err := m.coll.Find(ctx, filter, opts)
 	if err != nil {
@@ -102,6 +121,11 @@ func (m *VulModel) Find(ctx context.Context, filter bson.M, page, pageSize int) 
 
 func (m *VulModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 	return m.coll.CountDocuments(ctx, filter)
+}
+
+// EstimatedCount 使用集合元数据快速估算文档总数（O(1)），仅适用于空 filter 场景
+func (m *VulModel) EstimatedCount(ctx context.Context) (int64, error) {
+	return m.coll.EstimatedDocumentCount(ctx)
 }
 
 type VulSeverityStats struct {
@@ -224,6 +248,15 @@ func (m *VulModel) Upsert(ctx context.Context, doc *Vul) error {
 	opts := options.Update().SetUpsert(true)
 	_, err := m.coll.UpdateOne(ctx, filter, update, opts)
 	return err
+}
+
+// DeleteByFilter 按条件批量删除漏洞
+func (m *VulModel) DeleteByFilter(ctx context.Context, filter bson.M) (int64, error) {
+	res, err := m.coll.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, nil
 }
 
 // BatchDelete 批量删除漏洞

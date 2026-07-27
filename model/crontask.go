@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -47,7 +48,9 @@ func NewCronTaskModel(db *mongo.Database) *CronTaskModel {
 		{Keys: bson.D{{Key: "status", Value: 1}}},
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 	}
-	ensureIndexes(coll, indexes)
+	if err := ensureIndexes(coll, indexes); err != nil {
+		logx.Errorf("[CronTaskModel] create indexes failed for %s: %v", coll.Name(), err)
+	}
 
 	return &CronTaskModel{coll: coll}
 }

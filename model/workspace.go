@@ -48,7 +48,13 @@ func (m *WorkspaceModel) FindById(ctx context.Context, id string) (*Workspace, e
 	}
 	var doc Workspace
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *WorkspaceModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Workspace, error) {

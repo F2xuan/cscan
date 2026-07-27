@@ -60,6 +60,11 @@ func (m *IndexManager) EnsureAllIndexes(ctx context.Context, workspaceId string)
 		logx.Errorf("[IndexManager] Failed to create asset history indexes: %v", err)
 	}
 
+	// 顶层资产元信息索引
+	if err := m.ensureAssetTargetMetaIndexes(ctx, workspaceId); err != nil {
+		logx.Errorf("[IndexManager] Failed to create asset target meta indexes: %v", err)
+	}
+
 	// 任务索引
 	if err := m.ensureTaskIndexes(ctx, workspaceId); err != nil {
 		logx.Errorf("[IndexManager] Failed to create task indexes: %v", err)
@@ -216,6 +221,11 @@ func (m *IndexManager) ensureVulIndexes(ctx context.Context, workspaceId string)
 			Keys:    bson.D{{Key: "severity", Value: 1}, {Key: "create_time", Value: -1}},
 			Options: options.Index().SetBackground(true).SetName("idx_severity_createTime"),
 		},
+		// 风险层标记索引：风险层视角 filter is_risk=true
+		{
+			Keys:    bson.D{{Key: "is_risk", Value: 1}, {Key: "create_time", Value: -1}},
+			Options: options.Index().SetBackground(true).SetName("idx_is_risk_createTime"),
+		},
 	}
 
 	return m.createIndexes(ctx, coll, indexes)
@@ -307,6 +317,38 @@ func (m *IndexManager) ensureAssetHistoryIndexes(ctx context.Context, workspaceI
 	return m.createIndexes(ctx, coll, indexes)
 }
 
+// ensureAssetTargetMetaIndexes 创建顶层资产元信息索引
+func (m *IndexManager) ensureAssetTargetMetaIndexes(ctx context.Context, workspaceId string) error {
+	collName := fmt.Sprintf("%s_asset_target_meta", workspaceId)
+	coll := m.db.Collection(collName)
+
+	indexes := []mongo.IndexModel{
+		// _id 默认唯一索引（target_id 编码 "{type}:{value}"）
+		// target_type + target_value 复合索引，用于按类型过滤
+		{
+			Keys:    bson.D{{Key: "target_type", Value: 1}, {Key: "target_value", Value: 1}},
+			Options: options.Index().SetUnique(true).SetBackground(true).SetName("idx_target_type_value_unique"),
+		},
+		// 标签索引
+		{
+			Keys:    bson.D{{Key: "labels", Value: 1}},
+			Options: options.Index().SetBackground(true).SetName("idx_labels"),
+		},
+		// 最后扫描时间索引
+		{
+			Keys:    bson.D{{Key: "last_scan_time", Value: -1}},
+			Options: options.Index().SetBackground(true).SetName("idx_last_scan_time"),
+		},
+		// 更新时间索引
+		{
+			Keys:    bson.D{{Key: "update_time", Value: -1}},
+			Options: options.Index().SetBackground(true).SetName("idx_update_time"),
+		},
+	}
+
+	return m.createIndexes(ctx, coll, indexes)
+}
+
 // ensureTaskIndexes 创建任务相关索引
 func (m *IndexManager) ensureTaskIndexes(ctx context.Context, workspaceId string) error {
 	collName := fmt.Sprintf("%s_maintask", workspaceId)
@@ -332,6 +374,16 @@ func (m *IndexManager) ensureTaskIndexes(ctx context.Context, workspaceId string
 		{
 			Keys:    bson.D{{Key: "status", Value: 1}, {Key: "create_time", Value: -1}},
 			Options: options.Index().SetBackground(true).SetName("idx_status_createTime"),
+		},
+		// 更新时间索引（assetgroupslogic 等按 update_time 排序查询任务列表）
+		{
+			Keys:    bson.D{{Key: "update_time", Value: -1}},
+			Options: options.Index().SetBackground(true).SetName("idx_update_time"),
+		},
+		// 复合索引：状态 + 更新时间（按状态筛选并按更新时间排序）
+		{
+			Keys:    bson.D{{Key: "status", Value: 1}, {Key: "update_time", Value: -1}},
+			Options: options.Index().SetBackground(true).SetName("idx_status_updateTime"),
 		},
 	}
 

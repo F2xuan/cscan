@@ -51,7 +51,13 @@ func (m *OrganizationModel) FindById(ctx context.Context, id string) (*Organizat
 	}
 	var doc Organization
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *OrganizationModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Organization, error) {
@@ -77,6 +83,11 @@ func (m *OrganizationModel) Find(ctx context.Context, filter bson.M, page, pageS
 
 func (m *OrganizationModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 	return m.coll.CountDocuments(ctx, filter)
+}
+
+// EstimatedCount 使用集合元数据快速估算文档总数（O(1)），仅适用于空 filter 场景
+func (m *OrganizationModel) EstimatedCount(ctx context.Context) (int64, error) {
+	return m.coll.EstimatedDocumentCount(ctx)
 }
 
 func (m *OrganizationModel) Update(ctx context.Context, id string, update bson.M) error {

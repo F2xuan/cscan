@@ -117,6 +117,10 @@ func (m *BaseModel[T]) Insert(ctx context.Context, doc *T) error {
 }
 
 // FindById 根据ID查找
+// 返回值约定：
+//   - (doc, nil): 找到记录
+//   - (nil, nil): 记录不存在（业务层"不存在"，非基础设施故障）
+//   - (nil, err): 基础设施故障（DB连接失败等），调用方应返回 503
 func (m *BaseModel[T]) FindById(ctx context.Context, id string) (*T, error) {
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -125,16 +129,23 @@ func (m *BaseModel[T]) FindById(ctx context.Context, id string) (*T, error) {
 	var doc T
 	err = m.Coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
 	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &doc, nil
 }
 
 // FindOne 查找单个文档
+// 返回值约定同 FindById：NotFound 返回 (nil, nil)，基础设施故障返回 (nil, err)
 func (m *BaseModel[T]) FindOne(ctx context.Context, filter bson.M) (*T, error) {
 	var doc T
 	err := m.Coll.FindOne(ctx, filter).Decode(&doc)
 	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &doc, nil
@@ -175,6 +186,12 @@ func (m *BaseModel[T]) FindAll(ctx context.Context) ([]T, error) {
 // Count 统计数量
 func (m *BaseModel[T]) Count(ctx context.Context, filter bson.M) (int64, error) {
 	return m.Coll.CountDocuments(ctx, filter)
+}
+
+// EstimatedCount 使用集合元数据快速估算文档总数（O(1)），仅适用于空 filter 场景
+// 用于列表分页总数统计，比 CountDocuments(bson.M{}) 快几个数量级
+func (m *BaseModel[T]) EstimatedCount(ctx context.Context) (int64, error) {
+	return m.Coll.EstimatedDocumentCount(ctx)
 }
 
 // UpdateById 根据ID更新

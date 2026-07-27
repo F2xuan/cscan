@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -89,8 +90,14 @@ func NewMainTaskModel(db *mongo.Database, workspaceId string) *MainTaskModel {
 		{Keys: bson.D{{Key: "status", Value: 1}}},
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 		{Keys: bson.D{{Key: "tags", Value: 1}}},
+		// update_time 索引：assetgroupslogic 等按 update_time 排序查询任务列表，避免 in-memory sort 报错
+		{Keys: bson.D{{Key: "update_time", Value: -1}}},
+		// 复合索引：status + update_time（按状态筛选并按更新时间排序）
+		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "update_time", Value: -1}}},
 	}
-	ensureIndexes(coll, indexes)
+	if err := ensureIndexes(coll, indexes); err != nil {
+		logx.Errorf("[MainTaskModel] create indexes failed for %s: %v", coll.Name(), err)
+	}
 
 	return &MainTaskModel{
 		coll: coll,
@@ -116,13 +123,25 @@ func (m *MainTaskModel) FindById(ctx context.Context, id string) (*MainTask, err
 	}
 	var doc MainTask
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *MainTaskModel) FindByTaskId(ctx context.Context, taskId string) (*MainTask, error) {
 	var doc MainTask
 	err := m.coll.FindOne(ctx, bson.M{"task_id": taskId}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *MainTaskModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]MainTask, error) {
@@ -147,9 +166,14 @@ func (m *MainTaskModel) Find(ctx context.Context, filter bson.M, page, pageSize 
 }
 
 // FindAllWithSort 查询所有匹配的任务，支持自定义排序
+// 排除 task_state/config 大字段（仅在任务详情/恢复时按需查询）
 func (m *MainTaskModel) FindAllWithSort(ctx context.Context, filter bson.M, sort bson.D) ([]MainTask, error) {
 	opts := options.Find()
 	opts.SetSort(sort)
+	opts.SetProjection(bson.D{
+		{Key: "task_state", Value: 0},
+		{Key: "config", Value: 0},
+	})
 
 	cursor, err := m.coll.Find(ctx, filter, opts)
 	if err != nil {
@@ -164,8 +188,46 @@ func (m *MainTaskModel) FindAllWithSort(ctx context.Context, filter bson.M, sort
 	return docs, nil
 }
 
+// FindRecent 返回最近 N 条任务（按 update_time 降序），仅投影分组状态推断所需的最小字段集。
+// 用于 assetgroupslogic 推断每个域名的最新任务状态，避免全表扫描。
+func (m *MainTaskModel) FindRecent(ctx context.Context, limit int) ([]MainTask, error) {
+	opts := options.Find().
+		SetSort(bson.D{{Key: "update_time", Value: -1}}).
+		SetProjection(bson.D{
+			{Key: "task_state", Value: 0},
+			{Key: "config", Value: 0},
+			{Key: "result", Value: 0},
+			{Key: "sub_task_count", Value: 0},
+			{Key: "sub_task_done", Value: 0},
+			{Key: "batch_count", Value: 0},
+			{Key: "current_phase", Value: 0},
+			{Key: "cron_rule", Value: 0},
+			{Key: "cron_status", Value: 0},
+		})
+	if limit > 0 {
+		opts.SetLimit(int64(limit))
+	}
+
+	cursor, err := m.coll.Find(ctx, bson.M{}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []MainTask
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	return docs, nil
+}
+
 func (m *MainTaskModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 	return m.coll.CountDocuments(ctx, filter)
+}
+
+// EstimatedCount 使用集合元数据快速估算文档总数（O(1)），仅适用于空 filter 场景
+func (m *MainTaskModel) EstimatedCount(ctx context.Context) (int64, error) {
+	return m.coll.EstimatedDocumentCount(ctx)
 }
 
 func (m *MainTaskModel) Update(ctx context.Context, id string, update bson.M) error {
@@ -401,7 +463,13 @@ func (m *TaskProfileModel) FindById(ctx context.Context, id string) (*TaskProfil
 	}
 	var doc TaskProfile
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *TaskProfileModel) Insert(ctx context.Context, doc *TaskProfile) error {

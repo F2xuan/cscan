@@ -95,13 +95,25 @@ func (m *TagMappingModel) FindById(ctx context.Context, id string) (*TagMapping,
 	}
 	var doc TagMapping
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *TagMappingModel) FindByAppName(ctx context.Context, appName string) (*TagMapping, error) {
 	var doc TagMapping
 	err := m.coll.FindOne(ctx, bson.M{"app_name": appName}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *TagMappingModel) Update(ctx context.Context, id string, doc *TagMapping) error {
@@ -237,7 +249,13 @@ func (m *CustomPocModel) FindById(ctx context.Context, id string) (*CustomPoc, e
 	}
 	var doc CustomPoc
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 // FindByTemplateId 根据模板ID查找自定义POC
@@ -245,6 +263,9 @@ func (m *CustomPocModel) FindByTemplateId(ctx context.Context, templateId string
 	var doc CustomPoc
 	err := m.coll.FindOne(ctx, bson.M{"template_id": templateId}).Decode(&doc)
 	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &doc, nil
@@ -386,7 +407,29 @@ func (m *NucleiTemplateModel) Upsert(ctx context.Context, doc *NucleiTemplate) e
 	doc.SyncTime = time.Now()
 
 	filter := bson.M{"template_id": doc.TemplateId}
-	update := bson.M{"$set": doc}
+	// $set 不能包含 _id，否则已存在文档更新会报错（_id 不可变）
+	update := bson.M{
+		"$set": bson.M{
+			"template_id":  doc.TemplateId,
+			"name":         doc.Name,
+			"author":       doc.Author,
+			"severity":     doc.Severity,
+			"description":  doc.Description,
+			"tags":         doc.Tags,
+			"category":     doc.Category,
+			"file_path":    doc.FilePath,
+			"content":      doc.Content,
+			"enabled":      doc.Enabled,
+			"sync_time":    doc.SyncTime,
+			"cvss_score":   doc.CvssScore,
+			"cvss_metrics": doc.CvssMetrics,
+			"cve_ids":      doc.CveIds,
+			"cwe_ids":      doc.CweIds,
+			"references":   doc.References,
+			"remediation":  doc.Remediation,
+		},
+		"$setOnInsert": bson.M{"_id": doc.Id},
+	}
 	opts := options.Update().SetUpsert(true)
 	_, err := m.coll.UpdateOne(ctx, filter, update, opts)
 	return err
@@ -406,7 +449,29 @@ func (m *NucleiTemplateModel) BulkUpsert(ctx context.Context, docs []*NucleiTemp
 		doc.SyncTime = now
 
 		filter := bson.M{"template_id": doc.TemplateId}
-		update := bson.M{"$set": doc}
+		// $set 不能包含 _id，否则已存在文档更新会报错（_id 不可变）
+		update := bson.M{
+			"$set": bson.M{
+				"template_id":  doc.TemplateId,
+				"name":         doc.Name,
+				"author":       doc.Author,
+				"severity":     doc.Severity,
+				"description":  doc.Description,
+				"tags":         doc.Tags,
+				"category":     doc.Category,
+				"file_path":    doc.FilePath,
+				"content":      doc.Content,
+				"enabled":      doc.Enabled,
+				"sync_time":    doc.SyncTime,
+				"cvss_score":   doc.CvssScore,
+				"cvss_metrics": doc.CvssMetrics,
+				"cve_ids":      doc.CveIds,
+				"cwe_ids":      doc.CweIds,
+				"references":   doc.References,
+				"remediation":  doc.Remediation,
+			},
+			"$setOnInsert": bson.M{"_id": doc.Id},
+		}
 		models = append(models, mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(update).SetUpsert(true))
 	}
 
@@ -447,6 +512,9 @@ func (m *NucleiTemplateModel) FindByTemplateId(ctx context.Context, templateId s
 	var doc NucleiTemplate
 	err := m.coll.FindOne(ctx, bson.M{"template_id": templateId}).Decode(&doc)
 	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &doc, nil

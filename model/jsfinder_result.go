@@ -99,6 +99,8 @@ func (m *JSFinderResultModel) EnsureIndexes(ctx context.Context) error {
 		{Keys: bson.D{{Key: "main_task_id", Value: 1}}},
 		{Keys: bson.D{{Key: "severity", Value: 1}}},
 		{Keys: bson.D{{Key: "url", Value: 1}}},
+		// create_time 降序索引：JSFinder 列表按 create_time:-1 排序分页，避免 in-memory sort
+		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 		// 唯一索引含 result 字段，允许同类型同来源的不同发现共存
 		{
 			Keys: bson.D{
@@ -129,9 +131,28 @@ func (m *JSFinderResultModel) Find(ctx context.Context, filter bson.M, opt *opti
 	return results, nil
 }
 
+// FindByID 按 _id 取单条 JSFinder 结果（含 request/response/curl_command 等大字段），
+// 供详情按需加载：列表查询已投影排除大字段，详情走本方法避免全量回传。
+func (m *JSFinderResultModel) FindByID(ctx context.Context, id string) (*JSFinderResult, error) {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return nil, err
+	}
+	var doc JSFinderResult
+	if err := m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc); err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
 // Count 计数
 func (m *JSFinderResultModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 	return m.coll.CountDocuments(ctx, filter)
+}
+
+// EstimatedCount 使用集合元数据快速估算文档总数（O(1)），仅适用于空 filter 场景
+func (m *JSFinderResultModel) EstimatedCount(ctx context.Context) (int64, error) {
+	return m.coll.EstimatedDocumentCount(ctx)
 }
 
 // DeleteMany 批量删除

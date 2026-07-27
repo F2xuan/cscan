@@ -77,14 +77,26 @@ func (m *NotifyConfigModel) FindById(ctx context.Context, id string) (*NotifyCon
 	}
 	var doc NotifyConfig
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 // FindByProvider 根据提供者类型查找
 func (m *NotifyConfigModel) FindByProvider(ctx context.Context, provider string) (*NotifyConfig, error) {
 	var doc NotifyConfig
 	err := m.coll.FindOne(ctx, bson.M{"provider": provider, "status": "enable"}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 // FindAll 查找所有配置

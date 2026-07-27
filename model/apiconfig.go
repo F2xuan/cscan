@@ -10,12 +10,14 @@ import (
 )
 
 // APIConfig API配置
+// 安全说明:Key/Secret 是敏感凭证,使用 json:"-" 永不序列化到 JSON 响应中,
+// 调用方必须显式构造脱敏后的展示对象(如 types.APIConfig + maskSecret)
 type APIConfig struct {
 	Id         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Platform   string             `bson:"platform" json:"platform"` // fofa/hunter/quake
-	Key        string             `bson:"key" json:"key"`
-	Secret     string             `bson:"secret" json:"secret"`
-	Version    string             `bson:"version" json:"version"` // fofa版本: v4/v5
+	Key        string             `bson:"key" json:"-"`             // 凭证,永不序列化
+	Secret     string             `bson:"secret" json:"-"`          // 凭证,永不序列化
+	Version    string             `bson:"version" json:"version"`   // fofa版本: v4/v5
 	Status     string             `bson:"status" json:"status"`
 	CreateTime time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime time.Time          `bson:"update_time" json:"updateTime"`
@@ -47,7 +49,13 @@ func (m *APIConfigModel) Insert(ctx context.Context, doc *APIConfig) error {
 func (m *APIConfigModel) FindByPlatform(ctx context.Context, platform string) (*APIConfig, error) {
 	var doc APIConfig
 	err := m.coll.FindOne(ctx, bson.M{"platform": platform, "status": "enable"}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *APIConfigModel) FindAll(ctx context.Context) ([]APIConfig, error) {

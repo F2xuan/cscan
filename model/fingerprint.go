@@ -122,13 +122,25 @@ func (m *HttpServiceMappingModel) FindById(ctx context.Context, id string) (*Htt
 	}
 	var doc HttpServiceMapping
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *HttpServiceMappingModel) FindByServiceName(ctx context.Context, serviceName string) (*HttpServiceMapping, error) {
 	var doc HttpServiceMapping
 	err := m.coll.FindOne(ctx, bson.M{"service_name": serviceName}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *HttpServiceMappingModel) Update(ctx context.Context, id string, doc *HttpServiceMapping) error {
@@ -295,7 +307,37 @@ func (m *FingerprintModel) Upsert(ctx context.Context, doc *Fingerprint) error {
 
 	// 使用 name + rule 作为去重条件，只有两者都相同才视为重复
 	filter := bson.M{"name": doc.Name, "rule": doc.Rule}
-	update := bson.M{"$set": doc}
+	// $set 不能包含 _id，否则已存在文档更新会报错（_id 不可变）
+	update := bson.M{
+		"$set": bson.M{
+			"name":         doc.Name,
+			"category":     doc.Category,
+			"website":      doc.Website,
+			"icon":         doc.Icon,
+			"description":  doc.Description,
+			"type":         doc.Type,
+			"active_paths": doc.ActivePaths,
+			"headers":      doc.Headers,
+			"cookies":      doc.Cookies,
+			"html":         doc.HTML,
+			"scripts":      doc.Scripts,
+			"scriptSrc":    doc.ScriptSrc,
+			"js":           doc.JS,
+			"meta":         doc.Meta,
+			"css":          doc.CSS,
+			"url":          doc.URL,
+			"dom":          doc.Dom,
+			"rule":         doc.Rule,
+			"implies":      doc.Implies,
+			"excludes":     doc.Excludes,
+			"cpe":          doc.CPE,
+			"source":       doc.Source,
+			"is_builtin":   doc.IsBuiltin,
+			"enabled":      doc.Enabled,
+			"update_time":  doc.UpdateTime,
+		},
+		"$setOnInsert": bson.M{"_id": doc.Id, "create_time": doc.CreateTime},
+	}
 	opts := options.Update().SetUpsert(true)
 	_, err := m.coll.UpdateOne(ctx, filter, update, opts)
 	return err
@@ -387,13 +429,25 @@ func (m *FingerprintModel) FindById(ctx context.Context, id string) (*Fingerprin
 	}
 	var doc Fingerprint
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *FingerprintModel) FindByName(ctx context.Context, name string) (*Fingerprint, error) {
 	var doc Fingerprint
 	err := m.coll.FindOne(ctx, bson.M{"name": name}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 // FindByNames 批量按名称查询指纹（用于主动指纹关联被动指纹规则）
@@ -540,7 +594,37 @@ func (m *FingerprintModel) BulkUpsert(ctx context.Context, docs []*Fingerprint) 
 
 		// 使用 name + rule 作为去重条件，只有两者都相同才视为重复
 		filter := bson.M{"name": doc.Name, "rule": doc.Rule}
-		update := bson.M{"$set": doc}
+		// $set 不能包含 _id，否则已存在文档更新会报错（_id 不可变）
+		update := bson.M{
+			"$set": bson.M{
+				"name":         doc.Name,
+				"category":     doc.Category,
+				"website":      doc.Website,
+				"icon":         doc.Icon,
+				"description":  doc.Description,
+				"type":         doc.Type,
+				"active_paths": doc.ActivePaths,
+				"headers":      doc.Headers,
+				"cookies":      doc.Cookies,
+				"html":         doc.HTML,
+				"scripts":      doc.Scripts,
+				"scriptSrc":    doc.ScriptSrc,
+				"js":           doc.JS,
+				"meta":         doc.Meta,
+				"css":          doc.CSS,
+				"url":          doc.URL,
+				"dom":          doc.Dom,
+				"rule":         doc.Rule,
+				"implies":      doc.Implies,
+				"excludes":     doc.Excludes,
+				"cpe":          doc.CPE,
+				"source":       doc.Source,
+				"is_builtin":   doc.IsBuiltin,
+				"enabled":      doc.Enabled,
+				"update_time":  doc.UpdateTime,
+			},
+			"$setOnInsert": bson.M{"_id": doc.Id, "create_time": doc.CreateTime},
+		}
 		model := mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(update).SetUpsert(true)
 		models = append(models, model)
 	}
@@ -684,13 +768,25 @@ func (m *ActiveFingerprintModel) FindById(ctx context.Context, id string) (*Acti
 	}
 	var doc ActiveFingerprint
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *ActiveFingerprintModel) FindByName(ctx context.Context, name string) (*ActiveFingerprint, error) {
 	var doc ActiveFingerprint
 	err := m.coll.FindOne(ctx, bson.M{"name": name}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *ActiveFingerprintModel) Count(ctx context.Context, filter bson.M) (int64, error) {

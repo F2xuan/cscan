@@ -92,7 +92,13 @@ func (m *SubdomainDictModel) FindById(ctx context.Context, id string) (*Subdomai
 	}
 	var doc SubdomainDict
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *SubdomainDictModel) FindByIds(ctx context.Context, ids []string) ([]SubdomainDict, error) {
@@ -124,7 +130,13 @@ func (m *SubdomainDictModel) FindByIds(ctx context.Context, ids []string) ([]Sub
 func (m *SubdomainDictModel) FindByName(ctx context.Context, name string) (*SubdomainDict, error) {
 	var doc SubdomainDict
 	err := m.coll.FindOne(ctx, bson.M{"name": name}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *SubdomainDictModel) Update(ctx context.Context, id string, doc *SubdomainDict) error {

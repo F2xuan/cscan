@@ -70,6 +70,11 @@ func (m *DirScanDictModel) Count(ctx context.Context) (int64, error) {
 	return m.coll.CountDocuments(ctx, bson.M{})
 }
 
+// EstimatedCount 使用集合元数据快速估算文档总数（O(1)）
+func (m *DirScanDictModel) EstimatedCount(ctx context.Context) (int64, error) {
+	return m.coll.EstimatedDocumentCount(ctx)
+}
+
 func (m *DirScanDictModel) FindEnabled(ctx context.Context) ([]DirScanDict, error) {
 	opts := options.Find().SetSort(bson.D{{Key: "is_builtin", Value: -1}, {Key: "name", Value: 1}})
 	cursor, err := m.coll.Find(ctx, bson.M{"enabled": true}, opts)
@@ -92,7 +97,13 @@ func (m *DirScanDictModel) FindById(ctx context.Context, id string) (*DirScanDic
 	}
 	var doc DirScanDict
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *DirScanDictModel) FindByIds(ctx context.Context, ids []string) ([]DirScanDict, error) {
@@ -124,7 +135,13 @@ func (m *DirScanDictModel) FindByIds(ctx context.Context, ids []string) ([]DirSc
 func (m *DirScanDictModel) FindByName(ctx context.Context, name string) (*DirScanDict, error) {
 	var doc DirScanDict
 	err := m.coll.FindOne(ctx, bson.M{"name": name}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *DirScanDictModel) Update(ctx context.Context, id string, doc *DirScanDict) error {

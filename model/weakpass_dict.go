@@ -263,7 +263,13 @@ func (m *WeakpassDictModel) FindById(ctx context.Context, id string) (*WeakpassD
 	}
 	var doc WeakpassDict
 	err = m.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *WeakpassDictModel) FindByIds(ctx context.Context, ids []string) ([]WeakpassDict, error) {
@@ -295,7 +301,13 @@ func (m *WeakpassDictModel) FindByIds(ctx context.Context, ids []string) ([]Weak
 func (m *WeakpassDictModel) FindByName(ctx context.Context, name string) (*WeakpassDict, error) {
 	var doc WeakpassDict
 	err := m.coll.FindOne(ctx, bson.M{"name": name}).Decode(&doc)
-	return &doc, err
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (m *WeakpassDictModel) Update(ctx context.Context, id string, doc *WeakpassDict) error {

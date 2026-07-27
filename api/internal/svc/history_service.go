@@ -270,10 +270,16 @@ func (s *HistoryService) CompareVersions(ctx context.Context, req *CompareVersio
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch version 1: %w", err)
 	}
+	if version1 == nil {
+		return nil, fmt.Errorf("version 1 not found: %s", req.VersionId1)
+	}
 
 	version2, err := historyModel.FindByVersionId(ctx, req.WorkspaceId, req.VersionId2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch version 2: %w", err)
+	}
+	if version2 == nil {
+		return nil, fmt.Errorf("version 2 not found: %s", req.VersionId2)
 	}
 
 	// Calculate differences

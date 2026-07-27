@@ -9,6 +9,7 @@ import (
 	"cscan/api/internal/config"
 	svcsync "cscan/api/internal/svc/sync"
 	"cscan/model"
+	"cscan/pkg/cache"
 	"cscan/rpc/task/pb"
 	"cscan/scheduler"
 
@@ -27,6 +28,7 @@ type ServiceContext struct {
 	RedisClient             *redis.Client
 	TaskRpcClient           pb.TaskServiceClient
 	UserModel               *model.UserModel
+	UserTokenModel          *model.UserTokenModel
 	WorkspaceModel          *model.WorkspaceModel
 	OrganizationModel       *model.OrganizationModel
 	ProfileModel            *model.TaskProfileModel
@@ -54,11 +56,18 @@ type ServiceContext struct {
 	ScanResultService *ScanResultService
 	HistoryService    *HistoryService
 
+	// Docker 容器服务(可选;docker.sock 不可达时为 nil,容器接口返回 503)
+	DockerService *DockerService
+
 	// 缓存的模板元数据（并发安全）
 	templateMu         sync.RWMutex
 	TemplateCategories []string
 	TemplateTags       []string
 	TemplateStats      map[string]int
+
+	// 查询聚合结果缓存（filterOptions/iconStat/appStat/siteStat/vulStat/assetStat/workspaceIds/orgMap）
+	// 短 TTL（30~60s）+ singleflight 防击穿，扫描完成可主动失效
+	QueryCache *cache.LocalCache
 }
 
 func NewServiceContext(c config.Config) (*ServiceContext, error) {
@@ -128,6 +137,7 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		RedisClient:             rdb,
 		TaskRpcClient:           taskRpcClient,
 		UserModel:               model.NewUserModel(mongoDB),
+		UserTokenModel:          model.NewUserTokenModel(mongoDB),
 		WorkspaceModel:          model.NewWorkspaceModel(mongoDB),
 		OrganizationModel:       model.NewOrganizationModel(mongoDB),
 		ProfileModel:            model.NewTaskProfileModel(mongoDB),
@@ -150,6 +160,14 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		TemplateCategories:      []string{},
 		TemplateTags:            []string{},
 		TemplateStats:           map[string]int{},
+		QueryCache:              cache.NewLocalCache(60 * time.Second),
+	}
+
+	// 初始化 Docker 服务(可选,失败仅记录告警)
+	if ds, err := NewDockerService(c.Docker); err != nil {
+		logx.Errorf("[Docker] service unavailable: %v", err)
+	} else {
+		svcCtx.DockerService = ds
 	}
 
 	// 初始化同步服务
@@ -213,6 +231,14 @@ func (s *ServiceContext) GetAssetHistoryModel(workspaceId string) *model.AssetHi
 		workspaceId = "default"
 	}
 	return model.NewAssetHistoryModel(s.MongoDB, workspaceId)
+}
+
+// GetAssetTargetMetaModel 根据workspaceId获取顶层资产元信息模型
+func (s *ServiceContext) GetAssetTargetMetaModel(workspaceId string) *model.AssetTargetMetaModel {
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+	return model.NewAssetTargetMetaModel(s.MongoDB, workspaceId)
 }
 
 // GetDirScanResultModel 获取目录扫描结果模型

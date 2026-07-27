@@ -10,6 +10,7 @@ Log:
   Mode: console
   Encoding: plain
   TimeFormat: "15:04:05"
+  MaxContentLength: 4096  # 6/29 OOM 修复：单条日志最大4KB，截断超长内容
   
 Auth:
   # JWT Secret: 优先从环境变量 CSCAN_JWT_SECRET 读取
@@ -30,3 +31,11 @@ TaskRpc:
   Endpoints:
     - 127.0.0.1:9000
   Timeout: 30000
+
+Docker:
+  Host: ""
+  ContainerPrefix: "cscan"
+  ImageRegistry: "registry.cn-hangzhou.aliyuncs.com/txf7/"
+  ExtraNames:
+    - cscan_mongodb_dev
+    - cscan_redis_dev

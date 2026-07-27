@@ -212,6 +212,9 @@ func (s *AssetAggregationService) getSingleAssetSummary(ctx context.Context, wor
 	if err != nil {
 		return nil, err
 	}
+	if asset == nil {
+		return nil, fmt.Errorf("asset not found: %s", assetId)
+	}
 
 	// 并发查询关联数据
 	var (

@@ -231,7 +231,11 @@ func (s *ScanResultService) GetScanResultSummary(ctx context.Context, req *GetSc
 		// Fetch asset to get authority, host, port
 		asset, err := assetModel.FindById(ctx, assetId)
 		if err != nil {
-			// Skip assets that can't be found
+			// Skip assets that can't be fetched due to infra error
+			continue
+		}
+		if asset == nil {
+			// Skip assets that don't exist
 			continue
 		}
 

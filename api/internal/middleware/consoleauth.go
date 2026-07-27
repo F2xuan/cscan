@@ -33,31 +33,48 @@ func (m *ConsoleAuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// 记录控制台访问日志
-		go m.recordConsoleAccess(r)
+		// 修复 C-10：原实现 go m.recordConsoleAccess(r) 在 goroutine 中访问 *http.Request，
+		// 但 net/http 在 handler 返回后会回收 Request 对象，导致 goroutine 读到被复用/篡改的数据
+		// （data race）。现先在当前 goroutine 提取所有需要的字段，再传给后台 goroutine。
+		accessInfo := consoleAccessInfo{
+			userId:    GetUserId(r.Context()),
+			username:  GetUsername(r.Context()),
+			path:      r.URL.Path,
+			method:    r.Method,
+			clientIP:  getClientIPFromRequest(r),
+			userAgent: r.UserAgent(),
+		}
+		go m.recordConsoleAccess(accessInfo)
 
 		next(w, r)
 	}
 }
 
+// consoleAccessInfo 从 Request 中提取的访问信息快照
+// 避免 goroutine 持有 *http.Request 导致访问已回收对象
+type consoleAccessInfo struct {
+	userId    string
+	username  string
+	path      string
+	method    string
+	clientIP  string
+	userAgent string
+}
+
 // recordConsoleAccess 记录控制台访问日志
-func (m *ConsoleAuthMiddleware) recordConsoleAccess(r *http.Request) {
+func (m *ConsoleAuthMiddleware) recordConsoleAccess(info consoleAccessInfo) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	// 获取用户信息
-	userId := GetUserId(r.Context())
-	username := GetUsername(r.Context())
 
 	// 构建访问日志
 	accessLog := map[string]interface{}{
 		"type":      "console_access",
-		"userId":    userId,
-		"username":  username,
-		"path":      r.URL.Path,
-		"method":    r.Method,
-		"clientIP":  getClientIPFromRequest(r),
-		"userAgent": r.UserAgent(),
+		"userId":    info.userId,
+		"username":  info.username,
+		"path":      info.path,
+		"method":    info.method,
+		"clientIP":  info.clientIP,
+		"userAgent": info.userAgent,
 		"timestamp": time.Now().UnixMilli(),
 	}
 

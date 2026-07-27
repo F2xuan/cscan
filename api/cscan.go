@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -33,16 +34,26 @@ func main() {
 
 	conf.MustLoad(*configFile, &c)
 
+	// H-13 修复：必须在任何 logx 调用之前初始化 logger，否则日志可能丢失或格式错误
+	logx.MustSetup(c.Log)
+	logx.DisableStat()
+
 	// 从环境变量加载 JWT secret（优先级高于配置文件）
 	c.LoadSecretFromEnv()
 	if c.Auth.AccessSecret == "" {
-		logx.Error("JWT secret not configured. Set CSCAN_JWT_SECRET environment variable.")
-		c.Auth.AccessSecret = uuid.New().String()
-		logx.Error("Using auto-generated JWT secret (NOT suitable for production)")
+		// 允许显式声明开发环境（CSCAN_DEV=1）时使用随机 secret，方便本地调试。
+		// 生产环境若未配置 CSCAN_JWT_SECRET，直接拒绝启动：
+		// 历史事故表明，随机 secret 会导致 API 重启后所有已登录用户 token 失效，
+		// 且每次重启 secret 不同，多副本部署时 token 互相不认。
+		if os.Getenv("CSCAN_DEV") == "1" {
+			c.Auth.AccessSecret = uuid.New().String()
+			logx.Error("WARNING: CSCAN_DEV=1, using auto-generated JWT secret (NOT suitable for production)")
+		} else {
+			logx.Error("JWT secret not configured. Set CSCAN_JWT_SECRET environment variable.")
+			logx.Error("For local development only, set CSCAN_DEV=1 to allow auto-generated secret.")
+			os.Exit(1)
+		}
 	}
-
-	logx.MustSetup(c.Log)
-	logx.DisableStat()
 
 	fmt.Println(`
    ______ _____  ______          _   _ 
@@ -66,6 +77,9 @@ func main() {
 	// 创建HTTP服务器
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
+
+	logx.Infof("Swagger UI: http://%s:%d/swagger-ui", c.Host, c.Port)
+	logx.Infof("Swagger JSON: http://%s:%d/swagger/doc.json", c.Host, c.Port)
 
 	handler.RegisterHandlers(server, svcCtx)
 
@@ -216,9 +230,28 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 	if targetCount <= minBatch {
 		batchSize = targetCount
 	}
+
+	// 6/29 OOM 修复：针对"大目标 × 多模块"场景降低 batchSize
+	// 当 targets × modules > 10000（如 2741×7=19187）时，单批 200 目标 × 7 模块
+	// 会让 worker 单批任务内存压力过大（JSFinder 抓取外链累积响应缓冲）
+	// 此类场景下降低单批到 50 目标，避免触发 worker OOM
+	totalScanUnits := targetCount * enabledModules
+	oomUnsafe := totalScanUnits > 10000
+	if oomUnsafe && batchSize > 50 {
+		batchSize = 50
+		logx.Infof("Cron task %s: large scale (targets=%d × modules=%d = %d > 10000), reducing batchSize to %d",
+			newTaskId, targetCount, enabledModules, totalScanUnits, batchSize)
+	}
+
 	// 如果用户显式设置了 batchSize > 0，优先使用
+	// 修复 M1：但若处于 OOM 不安全场景且用户值 > 50，强制限制为 50，避免 OOM 保护被静默绕过
 	if bs, ok := taskConfig["batchSize"].(float64); ok && bs > 0 {
-		batchSize = int(bs)
+		if oomUnsafe && int(bs) > 50 {
+			logx.Errorf("Cron task %s: user batchSize=%d exceeds safe limit (50) for large scale (%d units), overriding to 50",
+				newTaskId, int(bs), totalScanUnits)
+		} else {
+			batchSize = int(bs)
+		}
 	}
 	logx.Infof("Cron task %s: auto-calculated batchSize=%d (targets=%d, modules=%d)", newTaskId, batchSize, targetCount, enabledModules)
 

@@ -20,7 +20,12 @@ func InitJSFinderConfig(m *model.JSFinderConfigModel) {
 		logx.Errorf("[JSFinderInit] EnsureDefault error: %v", err)
 		return
 	}
-	logx.Info("[JSFinderInit] JSFinder config ensured")
+	// 合并补充黑名单条目（幂等：仅追加新增条目，不覆盖用户自定义）
+	if err := m.MergeMissingDomainBlacklist(ctx); err != nil {
+		logx.Errorf("[JSFinderInit] MergeMissingDomainBlacklist error: %v", err)
+	} else {
+		logx.Info("[JSFinderInit] JSFinder config ensured (domain blacklist merged)")
+	}
 }
 
 // MigrateBuiltinTemplatesAddJSFinder 为已存在的内置模板补全 jsfinder 字段（幂等）

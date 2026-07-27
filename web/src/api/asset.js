@@ -110,6 +110,15 @@ export function importAssets(data) {
   })
 }
 
+// 手动添加资产
+export function saveAsset(data) {
+  return request({
+    url: '/asset/save',
+    method: 'post',
+    data
+  })
+}
+
 // 导出资产
 export function exportAssets(data) {
   return request({
@@ -178,6 +187,47 @@ export function getAssetDirScans(data) {
 export function getAssetVulnScans(data) {
   return request({
     url: '/assets/vulnscans',
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 顶层资产 (target) API — Phase 4
+ * 资产 = 主机 IP 或主域名，以 "{type}:{value}" 编码为 targetId
+ */
+
+// 顶层资产分页列表（含 exposure/risk 气泡字段）
+export function getAssetTargetList(data) {
+  return request({
+    url: '/asset/target/list',
+    method: 'post',
+    data
+  })
+}
+
+// 顶层资产详情（实时 exposure + risk + sensitive top-N）
+export function getAssetTargetDetail(data) {
+  return request({
+    url: '/asset/target/detail',
+    method: 'post',
+    data
+  })
+}
+
+// 更新顶层资产元信息（labels / memo / colorTag）
+export function updateAssetTarget(data) {
+  return request({
+    url: '/asset/target/update',
+    method: 'post',
+    data
+  })
+}
+
+// 删除顶层资产（可选级联删除底层 asset + vul）
+export function deleteAssetTarget(data) {
+  return request({
+    url: '/asset/target/delete',
     method: 'post',
     data
   })

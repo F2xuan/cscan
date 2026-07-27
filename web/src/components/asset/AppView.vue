@@ -96,7 +96,7 @@ const appColumns = computed(() => [
 ])
 
 const searchItems = computed(() => [
-  { label: '关联资产', prop: 'assets', type: 'input' },
+  { label: t('asset.appView.filters.assets'), prop: 'assets', type: 'input' },
   {
     label: t('asset.appView.filters.organization'), prop: 'orgId', type: 'select',
     options: [{ label: t('asset.appView.filters.allOrganizations'), value: '' }, ...organizations.value.map(org => ({ label: org.name, value: org.id }))]

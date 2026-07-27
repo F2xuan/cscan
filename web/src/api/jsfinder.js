@@ -14,3 +14,8 @@ export function saveJSFinderConfig(data) {
 export function resetJSFinderConfig() {
   return request.post('/jsfinder/config/reset')
 }
+
+// 获取单条 JSFinder 结果详情（含 request/response/curl_command 大字段）
+export function getJSFinderDetail(data) {
+  return request.post('/jsfinder/detail', data)
+}

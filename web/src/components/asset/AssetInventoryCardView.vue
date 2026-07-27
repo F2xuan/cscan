@@ -386,6 +386,7 @@ import {
 } from '@element-plus/icons-vue'
 import { getAssetInventory, getAssetStat, updateAssetLabels, getAssetFilterOptions, deleteAsset, getAssetHistory, getAssetExposures, clearAssets } from '@/api/asset'
 import { formatScreenshotUrl, handleScreenshotError } from '@/utils/screenshot'
+import { getIconDataUrl, handleIconError } from '@/utils/icon'
 import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
 
 const { t } = useI18n()
@@ -681,33 +682,6 @@ function truncateText(text, maxLen = 100) {
   if (!text) return ''
   if (text.length > maxLen) return text.substring(0, maxLen) + '...'
   return text
-}
-
-const handleIconError = (e) => {
-  if (e && e.target) {e.target.style.opacity = '0'
-    e.target.style.width = '16px'
-  }
-}
-
-function getIconDataUrl(iconData) {
-  if (!iconData || iconData.length === 0) return ''
-  if (typeof iconData === 'string' && iconData.startsWith('data:')) return iconData
-  const base64Str = (typeof iconData === 'string' ? iconData : '').replace(/[\s]/g, '')
-  if (!base64Str) return ''
-  try {
-    // 只允许已知的图片格式前缀通过（白名单模式）
-    if (base64Str.startsWith('iVBOR')) return `data:image/png;base64,${base64Str}`
-    if (base64Str.startsWith('/9j/')) return `data:image/jpeg;base64,${base64Str}`
-    if (base64Str.startsWith('R0lG')) return `data:image/gif;base64,${base64Str}`
-    if (base64Str.startsWith('AAABAA')) return `data:image/x-icon;base64,${base64Str}`
-    if (base64Str.startsWith('AAABAAEAEBAAAAEAIAAo')) return `data:image/x-icon;base64,${base64Str}`
-    if (base64Str.startsWith('PHN2Zy')) return `data:image/svg+xml;base64,${base64Str}`
-    if (base64Str.startsWith('Qk0')) return `data:image/bmp;base64,${base64Str}`
-    if (base64Str.startsWith('UklGR')) return `data:image/webp;base64,${base64Str}`
-
-    // 不在白名单中的数据不作为图片处理（防止 HTML/JSON/XML 等被误识别）
-    return ''
-  } catch (e) { return '' }
 }
 
 const applyFilters = () => {

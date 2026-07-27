@@ -13,89 +13,177 @@
           <el-icon><Search /></el-icon>
         </template>
       </el-input>
-      
-      <!-- 过滤按钮 -->
-      <el-dropdown @command="handleFilterCommand">
+
+      <!-- 类型过滤（域名 / IP） -->
+      <el-dropdown @command="handleTypeCommand">
         <el-button>
           <el-icon><Filter /></el-icon>
-          {{ t('asset.assetGroupsTab.filter') }}
+          {{ currentTypeLabel }}
           <el-icon class="el-icon--right"><ArrowDown /></el-icon>
         </el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="all">{{ t('asset.assetGroupsTab.allStatus') }}</el-dropdown-item>
-            <el-dropdown-item command="starting" divided>{{ t('asset.assetGroupsTab.starting') }}</el-dropdown-item>
-            <el-dropdown-item command="running">{{ t('asset.assetGroupsTab.running') }}</el-dropdown-item>
-            <el-dropdown-item command="finished">{{ t('asset.assetGroupsTab.finished') }}</el-dropdown-item>
-            <el-dropdown-item command="stopped">{{ t('asset.assetGroupsTab.stopped') }}</el-dropdown-item>
-            <el-dropdown-item command="failed">{{ t('asset.assetGroupsTab.failed') }}</el-dropdown-item>
+            <el-dropdown-item command="all">{{ t('asset.assetGroupsTab.typeAll') }}</el-dropdown-item>
+            <el-dropdown-item command="domain" divided>{{ t('asset.assetGroupsTab.typeDomain') }}</el-dropdown-item>
+            <el-dropdown-item command="ip">{{ t('asset.assetGroupsTab.typeIp') }}</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      
+
       <!-- 删除按钮 -->
       <el-button @click="handleBatchDelete" :disabled="selectedRows.length === 0">
         <el-icon><Delete /></el-icon>
         {{ t('common.delete') }}
       </el-button>
-      
+
       <!-- 刷新按钮 -->
       <el-button @click="refreshData">
         <el-icon><Refresh /></el-icon>
       </el-button>
     </div>
 
-    <!-- 分组表格 -->
+    <!-- 顶层资产表格 -->
     <el-table
       v-loading="loading"
-      :data="filteredGroups"
+      :data="targets"
       style="width: 100%"
       class="groups-table"
+      row-key="id"
       @selection-change="handleSelectionChange"
       @row-click="handleRowClick"
     >
-      <el-table-column type="selection" width="55" />
-      
-      <el-table-column :label="t('asset.assetGroupsTab.groupName')" min-width="250">
+      <el-table-column type="selection" width="55" reserve-selection />
+
+      <el-table-column :label="t('asset.assetGroupsTab.assetTarget')" min-width="260">
         <template #default="{ row }">
           <div class="group-name-cell">
-            <!-- 状态图标 -->
-            <el-icon :class="['status-icon', `status-${row.status}`]">
-              <component :is="getStatusIcon(row.status)" />
-            </el-icon>
-            <div class="group-info">
-              <div class="group-name">{{ row.domain }}</div>
-            </div>
+            <el-tag
+              size="small"
+              :type="row.targetType === 'ip' ? 'warning' : 'primary'"
+              class="type-badge"
+            >
+              {{ row.targetType === 'ip' ? t('asset.assetGroupsTab.typeIp') : t('asset.assetGroupsTab.typeDomain') }}
+            </el-tag>
+            <span class="group-name">{{ row.targetValue }}</span>
           </div>
         </template>
       </el-table-column>
-      
-      <el-table-column :label="t('asset.assetGroupsTab.servicesCount')" width="150" align="center">
+
+      <el-table-column :label="t('asset.assetGroupsTab.exposure')" min-width="280">
         <template #default="{ row }">
-          <div class="services-cell">
-            <span class="stat-number">{{ row.totalServices }}</span>
-            <span class="stat-label">{{ t('asset.services') }}</span>
+          <div class="bubble-row" @click.stop>
+            <el-tag
+              v-if="row.exposureSubdomains"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'subdomain')"
+            >{{ t('asset.assetGroupsTab.expSubdomains') }} {{ row.exposureSubdomains }}</el-tag>
+            <el-tag
+              v-if="row.exposureIps"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'ip')"
+            >{{ t('asset.assetGroupsTab.expIps') }} {{ row.exposureIps }}</el-tag>
+            <el-tag
+              v-if="row.exposurePorts"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'port')"
+            >{{ t('asset.assetGroupsTab.expPorts') }} {{ row.exposurePorts }}</el-tag>
+            <el-tag
+              v-if="row.exposureSites"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'site')"
+            >{{ t('asset.assetGroupsTab.expSites') }} {{ row.exposureSites }}</el-tag>
+            <el-tag
+              v-if="row.exposureIcons"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'icon')"
+            >{{ t('asset.assetGroupsTab.expIcons') }} {{ row.exposureIcons }}</el-tag>
+            <el-tag
+              v-if="row.exposureApps"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'app')"
+            >{{ t('asset.assetGroupsTab.expApps') }} {{ row.exposureApps }}</el-tag>
+            <el-tag
+              v-if="row.exposureDirs"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'dir')"
+            >{{ t('asset.assetGroupsTab.expDirs') }} {{ row.exposureDirs }}</el-tag>
+            <el-tag
+              v-if="row.exposureJs"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'js')"
+            >{{ t('asset.assetGroupsTab.expJs') }} {{ row.exposureJs }}</el-tag>
+            <el-tag
+              v-if="row.exposureScreenshots"
+              size="small"
+              type="info"
+              class="bubble clickable"
+              @click="goExposure(row, 'screenshot')"
+            >{{ t('asset.assetGroupsTab.expScreenshots') }} {{ row.exposureScreenshots }}</el-tag>
+            <span v-if="!hasAnyExposure(row)" class="bubble-empty">-</span>
           </div>
         </template>
       </el-table-column>
-      
-      <el-table-column :label="t('asset.assetGroupsTab.duration')" width="150">
+
+      <el-table-column :label="t('asset.assetGroupsTab.risk')" min-width="260">
         <template #default="{ row }">
-          <div class="duration-cell">
-            <el-icon><Clock /></el-icon>
-            <span>{{ row.duration }}</span>
+          <div class="bubble-row" @click.stop>
+            <el-tag
+              v-if="row.riskVulnTotal"
+              size="small"
+              :type="row.riskVulnHigh > 0 ? 'danger' : 'warning'"
+              class="bubble clickable"
+              @click="goRisk(row, 'vuln')"
+            >{{ t('asset.assetGroupsTab.riskVulnTotal') }} {{ row.riskVulnTotal }}</el-tag>
+            <el-tag
+              v-if="row.riskVulnHigh"
+              size="small"
+              type="danger"
+              class="bubble clickable"
+              @click="goRisk(row, 'vuln')"
+            >{{ t('asset.assetGroupsTab.riskVulnHigh') }} {{ row.riskVulnHigh }}</el-tag>
+            <el-tag
+              v-if="row.riskSensitiveInfo"
+              size="small"
+              type="warning"
+              class="bubble clickable"
+              @click="goRisk(row, 'vuln')"
+            >{{ t('asset.assetGroupsTab.riskSensitiveInfo') }} {{ row.riskSensitiveInfo }}</el-tag>
+            <el-tag
+              v-if="row.riskSensitiveDir"
+              size="small"
+              type="warning"
+              class="bubble clickable"
+              @click="goRisk(row, 'sensitive-dir')"
+            >{{ t('asset.assetGroupsTab.riskSensitiveDir') }} {{ row.riskSensitiveDir }}</el-tag>
+            <span v-if="!hasAnyRisk(row)" class="bubble-empty">-</span>
           </div>
         </template>
       </el-table-column>
-      
-      <el-table-column :label="t('asset.assetGroupsTab.lastUpdated')" width="150" sortable>
+
+      <el-table-column :label="t('asset.assetGroupsTab.lastUpdated')" width="180" sortable>
         <template #default="{ row }">
           <div class="time-cell">
-            {{ row.lastUpdated }}
+            {{ formatTimestamp(row.lastScanTime) }}
           </div>
         </template>
       </el-table-column>
-      
+
       <el-table-column :label="t('asset.assetGroupsTab.operations')" width="80" fixed="right" align="center">
         <template #default="{ row }">
           <div @click.stop>
@@ -147,86 +235,49 @@ import {
   Refresh,
   Delete,
   ArrowDown,
-  Clock,
   MoreFilled,
-  View,
-  CircleCheck,
-  Loading,
-  CircleClose,
-  Warning
+  View
 } from '@element-plus/icons-vue'
-import { getAssetGroups, deleteAssetGroup } from '@/api/asset'
+import { getAssetTargetList, deleteAssetTarget } from '@/api/asset'
 
 const { t } = useI18n()
-
 const router = useRouter()
+
 const loading = ref(false)
 const searchQuery = ref('')
-const statusFilter = ref('all')
+const targetTypeFilter = ref('') // '' | 'domain' | 'ip'
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
-const groups = ref([])
+const targets = ref([])
 const selectedRows = ref([])
 
-// 模拟数据（用于开发测试）
-const useMockData = false
-
-const mockGroups = [
-  {
-    id: '1',
-    domain: 'txf7.cn',
-    source: 'Auto Discovery',
-    status: 'finished',
-    totalServices: 4,
-    duration: '4m26s',
-    lastUpdated: '23h ago'
-  },
-  {
-    id: '2',
-    domain: 'leapmotor.com',
-    source: 'Auto Discovery',
-    status: 'running',
-    totalServices: 103,
-    duration: '7h21s',
-    lastUpdated: '8mo ago'
-  }
-]
-
-const filteredGroups = computed(() => {
-  let result = groups.value
-  
-  // 搜索过滤
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(g =>
-      g.domain?.toLowerCase().includes(query) ||
-      g.source?.toLowerCase().includes(query)
-    )
-  }
-  
-  // 状态过滤
-  if (statusFilter.value !== 'all') {
-    result = result.filter(g => g.status === statusFilter.value)
-  }
-  
-  return result
+const currentTypeLabel = computed(() => {
+  if (targetTypeFilter.value === 'domain') return t('asset.assetGroupsTab.typeDomain')
+  if (targetTypeFilter.value === 'ip') return t('asset.assetGroupsTab.typeIp')
+  return t('asset.assetGroupsTab.typeAll')
 })
 
-// 获取状态图标
-const getStatusIcon = (status) => {
-  const iconMap = {
-    finished: CircleCheck,
-    running: Loading,
-    stopped: CircleClose,
-    failed: Warning,
-    starting: Loading
-  }
-  return iconMap[status] || CircleCheck
+const hasAnyExposure = (row) =>
+  (row.exposureSubdomains || 0) + (row.exposureIps || 0) +
+  (row.exposurePorts || 0) + (row.exposureSites || 0) +
+  (row.exposureIcons || 0) + (row.exposureApps || 0) +
+  (row.exposureDirs || 0) + (row.exposureJs || 0) +
+  (row.exposureScreenshots || 0) > 0
+
+const hasAnyRisk = (row) =>
+  (row.riskVulnTotal || 0) + (row.riskVulnHigh || 0) +
+  (row.riskSensitiveInfo || 0) + (row.riskSensitiveDir || 0) > 0
+
+const formatTimestamp = (ms) => {
+  if (!ms) return '-'
+  const d = new Date(ms)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-const handleFilterCommand = (command) => {
-  statusFilter.value = command
+const handleTypeCommand = (command) => {
+  targetTypeFilter.value = command === 'all' ? '' : command
   currentPage.value = 1
   loadData()
 }
@@ -236,7 +287,6 @@ const handleSelectionChange = (selection) => {
 }
 
 const handleRowClick = (row) => {
-  // 点击行跳转到资产清单
   viewAssets(row)
 }
 
@@ -244,13 +294,13 @@ const handleAction = (command, row) => {
   if (command === 'view') {
     viewAssets(row)
   } else if (command === 'delete') {
-    deleteGroup(row)
+    deleteTarget(row)
   }
 }
 
 const handleBatchDelete = async () => {
   if (selectedRows.value.length === 0) return
-  
+
   try {
     await ElMessageBox.confirm(
       t('asset.assetGroupsTab.confirmBatchDelete', { count: selectedRows.value.length }),
@@ -261,63 +311,50 @@ const handleBatchDelete = async () => {
         type: 'warning'
       }
     )
-    
-    // 批量调用删除API
+
     loading.value = true
     try {
       let totalDeleted = 0
-      const promises = selectedRows.value.map(row => 
-        deleteAssetGroup({ domain: row.domain })
+      const results = await Promise.all(
+        selectedRows.value.map(row =>
+          deleteAssetTarget({ targetId: row.id, deleteAssets: true })
+        )
       )
-      
-      const results = await Promise.all(promises)
-      
       results.forEach(res => {
         if (res.code === 0) {
           totalDeleted += res.deletedCount || 0
         }
       })
-      
-      ElMessage.success(t('asset.assetGroupsTab.deleteSuccess') + ` (${t('asset.assetGroupsTab.deletedCount')}: ${totalDeleted})`)
-      // 重新加载数据
+      ElMessage.success(`${t('asset.assetGroupsTab.deleteSuccess')} (${t('asset.assetGroupsTab.deletedCount')}: ${totalDeleted})`)
+      selectedRows.value = []
       await loadData()
     } catch (error) {
-      console.error('批量删除失败:', error)
       ElMessage.error(t('asset.assetGroupsTab.deleteFailed'))
     } finally {
       loading.value = false
     }
   } catch {
-    // 用户取消
+    // cancelled
   }
 }
 
 const loadData = async () => {
   loading.value = true
   try {
-    if (useMockData) {
-      // 使用模拟数据
-      groups.value = mockGroups
-      total.value = mockGroups.length
+    const res = await getAssetTargetList({
+      page: currentPage.value,
+      pageSize: pageSize.value,
+      query: searchQuery.value || undefined,
+      targetType: targetTypeFilter.value || undefined
+    })
+    if (res.code === 0) {
+      targets.value = res.list || []
+      total.value = res.total || 0
     } else {
-      // 调用真实 API
-      const res = await getAssetGroups({
-        page: currentPage.value,
-        pageSize: pageSize.value,
-        query: searchQuery.value,
-        status: statusFilter.value !== 'all' ? statusFilter.value : undefined
-      })
-      
-      if (res.code === 0) {
-        groups.value = res.list || []
-        total.value = res.total || 0
-      } else {
-        ElMessage.error(res.msg || '加载失败')
-      }
+      ElMessage.error(res.msg || t('common.loadFailed'))
     }
   } catch (error) {
-    console.error('加载失败:', error)
-    ElMessage.error('加载失败，请稍后重试')
+    ElMessage.error(t('common.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -333,46 +370,70 @@ const refreshData = () => {
   ElMessage.success(t('asset.assetGroupsTab.refreshSuccess'))
 }
 
+defineExpose({ refreshData, loadData })
+
 const viewAssets = (row) => {
-  // 跳转到资产清单标签页并传递域名过滤
-  router.push({
-    path: '/asset-management',
-    query: { tab: 'inventory', domain: row.domain }
-  })
+  // 按顶层目标类型跳到对应暴露面页，并把目标值作为预过滤参数
+  if (row.targetType === 'ip') {
+    router.push({
+      path: '/asset-management/exposure/ip',
+      query: { ip: row.targetValue }
+    })
+  } else {
+    router.push({
+      path: '/asset-management/exposure/subdomain',
+      query: { rootDomain: row.targetValue }
+    })
+  }
 }
 
-const deleteGroup = async (row) => {
+const goExposure = (row, type) => {
+  const query = {}
+  if (type === 'subdomain' || type === 'site') {
+    query.rootDomain = row.targetValue
+  } else if (type === 'ip') {
+    query.ip = row.targetValue
+  }
+  router.push({ path: `/asset-management/exposure/${type}`, query })
+}
+
+const goRisk = (row, type) => {
+  const query = {}
+  if (row.targetType === 'domain') {
+    query.rootDomain = row.targetValue
+  } else {
+    query.ip = row.targetValue
+  }
+  router.push({ path: `/asset-management/risk/${type}`, query })
+}
+
+const deleteTarget = async (row) => {
   try {
     await ElMessageBox.confirm(
-      t('asset.assetGroupsTab.confirmDelete', { name: row.domain }), 
-      t('common.warning'), 
+      t('asset.assetGroupsTab.confirmDelete', { name: row.targetValue }),
+      t('common.warning'),
       {
         confirmButtonText: t('common.confirm'),
         cancelButtonText: t('common.cancel'),
         type: 'warning'
       }
     )
-    
-    // 调用删除API
     loading.value = true
     try {
-      const res = await deleteAssetGroup({ domain: row.domain })
-      
+      const res = await deleteAssetTarget({ targetId: row.id, deleteAssets: true })
       if (res.code === 0) {
-        ElMessage.success(t('asset.assetGroupsTab.deleteSuccess') + ` (${t('asset.assetGroupsTab.deletedCount')}: ${res.deletedCount})`)
-        // 重新加载数据
+        ElMessage.success(`${t('asset.assetGroupsTab.deleteSuccess')} (${t('asset.assetGroupsTab.deletedCount')}: ${res.deletedCount || 0})`)
         await loadData()
       } else {
         ElMessage.error(res.msg || t('asset.assetGroupsTab.deleteFailed'))
       }
     } catch (error) {
-      console.error('删除资产分组失败:', error)
       ElMessage.error(t('asset.assetGroupsTab.deleteFailed'))
     } finally {
       loading.value = false
     }
   } catch {
-    // 用户取消
+    // cancelled
   }
 }
 
@@ -387,25 +448,24 @@ onMounted(() => {
     display: flex;
     gap: 12px;
     margin-bottom: 16px;
-    
+
     .search-input {
       flex: 1;
       max-width: 400px;
     }
   }
-  
+
   .groups-table {
     margin-bottom: 16px;
-    
+
     :deep(.el-table__row) {
       cursor: pointer;
-      
+
       &:hover {
         background-color: hsl(var(--muted) / 0.5);
       }
     }
-    
-    // 操作列样式 - 移除白框
+
     :deep(.el-table__cell) {
       .cell {
         > div {
@@ -413,97 +473,56 @@ onMounted(() => {
         }
       }
     }
-    
+
     .group-name-cell {
       display: flex;
       align-items: center;
-      gap: 12px;
-      
-      .status-icon {
-        font-size: 20px;
+      gap: 10px;
+
+      .type-badge {
         flex-shrink: 0;
-        
-        &.status-finished {
-          color: #52c41a;
-        }
-        
-        &.status-running {
-          color: #1890ff;
-          animation: rotate 1s linear infinite;
-        }
-        
-        &.status-stopped {
-          color: #ff4d4f;
-        }
-        
-        &.status-failed {
-          color: #faad14;
-        }
-        
-        &.status-starting {
-          color: #1890ff;
-          animation: rotate 1s linear infinite;
-        }
       }
-      
-      .group-info {
-        flex: 1;
-        min-width: 0;
-      }
-      
+
       .group-name {
         font-weight: 500;
         color: hsl(var(--foreground));
         font-size: 14px;
+        word-break: break-all;
       }
     }
-    
-    .services-cell {
+
+    .bubble-row {
       display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      
-      .stat-number {
-        font-weight: 600;
-        font-size: 18px;
-        color: hsl(var(--foreground));
-      }
-      
-      .stat-label {
-        font-size: 12px;
-        color: hsl(var(--muted-foreground));
-      }
-    }
-    
-    .duration-cell {
-      display: flex;
-      align-items: center;
+      flex-wrap: wrap;
       gap: 6px;
-      color: hsl(var(--muted-foreground));
-      
-      .el-icon {
-        font-size: 14px;
+    }
+
+    .bubble {
+      font-variant-numeric: tabular-nums;
+
+      &.clickable {
+        cursor: pointer;
+
+        &:hover {
+          opacity: 0.8;
+          text-decoration: underline;
+        }
       }
     }
-    
+
+    .bubble-empty {
+      color: hsl(var(--muted-foreground));
+      font-size: 13px;
+    }
+
     .time-cell {
       color: hsl(var(--muted-foreground));
       font-size: 13px;
     }
   }
-  
+
   .pagination {
     margin-top: 16px;
-  }
-}
-
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 </style>

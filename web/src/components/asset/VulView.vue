@@ -9,6 +9,7 @@
       :columns="vulColumns"
       :searchItems="vulSearchItems"
       :statLabels="statLabels"
+      :extraParams="extraParams"
       selection
       :searchPlaceholder="$t('vul.targetPlaceholder')"
       :searchKeys="['authority', 'url', 'pocFile', 'vulName']"
@@ -131,6 +132,15 @@ import ProTable from '@/components/common/ProTable.vue'
 
 const { t } = useI18n()
 const emit = defineEmits(['data-changed'])
+
+// 允许父页面（如敏感信息/敏感目录页）注入固定过滤参数：
+// { isRisk: true, riskSource: 'auto:info-leak', keywordAny: [...] }
+const props = defineProps({
+  extraParams: {
+    type: Object,
+    default: () => ({})
+  }
+})
 
 const proTableRef = ref(null)
 const detailVisible = ref(false)
@@ -344,84 +354,29 @@ function refresh() {
 }
 
 const jsfinderTagMap = {
-  'high-risk': { label: '高危风险', en: 'High Risk', type: 'danger' },
-  'risk': { label: '风险', en: 'Risk', type: 'warning' },
-  'sensitive': { label: '敏感信息', en: 'Sensitive', type: 'warning' },
-  'info-leak': { label: '信息泄漏', en: 'Info Leak', type: 'info' },
-  'unauth': { label: '未授权', en: 'Unauthorized', type: 'danger' },
-  'js-file': { label: 'JS文件', en: 'JS File', type: '' },
-  'url-list': { label: 'API路径', en: 'API Paths', type: '' },
-  'absurl-list': { label: 'URL清单', en: 'URL List', type: '' }
+  'high-risk': { labelKey: 'vul.tagHighRisk', type: 'danger' },
+  'risk': { labelKey: 'vul.tagRisk', type: 'warning' },
+  'sensitive': { labelKey: 'vul.tagSensitive', type: 'warning' },
+  'info-leak': { labelKey: 'vul.tagInfoLeak', type: 'info' },
+  'unauth': { labelKey: 'vul.tagUnauth', type: 'danger' },
+  'js-file': { labelKey: 'vul.tagJsFile', type: '' },
+  'url-list': { labelKey: 'vul.tagUrlList', type: '' },
+  'absurl-list': { labelKey: 'vul.tagAbsurlList', type: '' }
 }
 
-// 匹配规则详情映射（中文描述 + 正则表达式）
+// 匹配规则详情映射
 const matcherDetailMap = {
-  // JS IPv4 地址提取
-  'JS IPv4 Regex': {
-    zh: 'JS 内嵌 IPv4 地址正则',
-    en: 'Extract IPv4 Addresses from JS',
-    regex: '\\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\\b'
-  },
-  // JS 邮箱提取
-  'JS Email Regex': {
-    zh: 'JS 内嵌邮箱地址正则',
-    en: 'Extract Email Addresses from JS',
-    regex: '\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b'
-  },
-  // JS 手机号提取
-  'JS Phone Number Regex': {
-    zh: 'JS 内嵌手机号正则（中国大陆）',
-    en: 'Extract Phone Numbers from JS',
-    regex: '\\b1[3-9][0-9]{9}\\b'
-  },
-  // JS 身份证号提取
-  'JS ID Card Regex': {
-    zh: 'JS 内嵌身份证号正则',
-    en: 'Extract ID Card Numbers from JS',
-    regex: '\\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\\b'
-  },
-  // JS JWT Token 提取
-  'JS JWT Token Regex': {
-    zh: 'JS 内嵌 JWT Token 正则',
-    en: 'Extract JWT Tokens from JS',
-    regex: 'eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+'
-  },
-  // JS 硬编码密钥提取
-  'JS Hard-coded Secret Regex': {
-    zh: 'JS 硬编码密钥正则',
-    en: 'Extract Hard-coded Secrets from JS',
-    regex: '(?i)(access[_\\-]?key|api[_\\-]?key|secret[_\\-]?key|secret[_\\-]?token|app[_\\-]?key|app[_\\-]?secret|auth[_\\-]?token|access[_\\-]?token|client[_\\-]?secret|private[_\\-]?key|aws[_\\-]?secret)'
-  },
-  // JS 相对路径提取
-  'JS Relative Path Regex': {
-    zh: 'JS 相对路径/API 提取正则',
-    en: 'Extract Relative Paths and APIs from JS',
-    regex: '["\'`](\\/[a-zA-Z0-9_\\-/.?=&%~+#@:]{1,256})["\'`]'
-  },
-  // JS 绝对 URL 提取
-  'JS Absolute URL Regex': {
-    zh: 'JS 绝对 URL 提取正则',
-    en: 'Extract Absolute URLs from JS',
-    regex: 'https?://[a-zA-Z0-9._\\-]+(?::\\d+)?(?:/[a-zA-Z0-9_\\-/.?=&%~+#@:]*)?'
-  },
-  // JS Script 标签提取
-  'JS Script Src Extractor': {
-    zh: 'JS Script 标签 src 属性提取',
-    en: 'Extract Script Tag src Attributes',
-    regex: '<script[^>]+src\\s*=\\s*["\']([^"\']+)["\']'
-  },
-  // 未授权访问检测
-  'JS API Unauth Check': {
-    zh: 'JS API 未授权访问检测',
-    en: 'Unauthenticated API Access Detection',
-    keywords: 'Response-based keyword matching'
-  },
-  // 敏感关键词检测
-  'JS Sensitive Keyword Detection': {
-    zh: '敏感关键词检测',
-    en: 'Sensitive Keyword Detection',
-    keywords: 'password, token, mobile, api_key, secret, phone, email, idcard, jwt, credit_card, AKID, AccessKeyId, etc.'
-  }
+  'JS IPv4 Regex': { key: 'vul.matcherIpv4', regex: '\\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\\b' },
+  'JS Email Regex': { key: 'vul.matcherEmail', regex: '\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b' },
+  'JS Phone Number Regex': { key: 'vul.matcherPhone', regex: '\\b1[3-9][0-9]{9}\\b' },
+  'JS ID Card Regex': { key: 'vul.matcherIdCard', regex: '\\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\\b' },
+  'JS JWT Token Regex': { key: 'vul.matcherIpv4', regex: 'eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+' },
+  'JS Hard-coded Secret Regex': { key: 'vul.matcherSecret', regex: '(?i)(access[_\\-]?key|api[_\\-]?key|secret[_\\-]?key|secret[_\\-]?token|app[_\\-]?key|app[_\\-]?secret|auth[_\\-]?token|access[_\\-]?token|client[_\\-]?secret|private[_\\-]?key|aws[_\\-]?secret)' },
+  'JS Relative Path Regex': { key: 'vul.matcherRelPath', regex: '["\'`](\\/[a-zA-Z0-9_\\-/.?=&%~+#@:]{1,256})["\'`]' },
+  'JS Absolute URL Regex': { key: 'vul.matcherAbsUrl', regex: 'https?://[a-zA-Z0-9._\\-]+(?::\\d+)?(?:/[a-zA-Z0-9_\\-/.?=&%~+#@:]*)?' },
+  'JS Script Src Extractor': { key: 'vul.matcherIpv4', regex: '<script[^>]+src\\s*=\\s*["\']([^"\']+)["\']' },
+  'JS API Unauth Check': { key: 'vul.matcherUnauth', keywords: 'Response-based keyword matching' },
+  'JS Sensitive Keyword Detection': { key: 'vul.matcherSensitive', keywords: 'password, token, mobile, api_key, secret, phone, email, idcard, jwt, credit_card, AKID, AccessKeyId, etc.' }
 }
 
 // 默认敏感关键词列表
@@ -446,9 +401,9 @@ function getMatcherDetail(matcherName) {
   if (matcherDetailMap[matcherName]) {
     const detail = matcherDetailMap[matcherName]
     if (detail.regex) {
-      return `${detail.zh} (${detail.en})\n正则: ${detail.regex}`
+      return `${t(detail.key)}\n${t('vul.matcherDetailRegex')}: ${detail.regex}`
     } else if (detail.keywords) {
-      return `${detail.zh} (${detail.en})\n关键词: ${detail.keywords}`
+      return `${t(detail.key)}\n${t('vul.matcherDetailKeywords')}: ${detail.keywords}`
     }
   }
   // 模糊匹配（包含关系）
@@ -456,15 +411,15 @@ function getMatcherDetail(matcherName) {
     if (matcherName.includes(key) || key.includes(matcherName)) {
       const detail = matcherDetailMap[key]
       if (detail.regex) {
-        return `${detail.zh} (${detail.en})\n正则: ${detail.regex}`
+        return `${t(detail.key)}\n${t('vul.matcherDetailRegex')}: ${detail.regex}`
       } else if (detail.keywords) {
-        return `${detail.zh} (${detail.en})\n关键词: ${detail.keywords}`
+        return `${t(detail.key)}\n${t('vul.matcherDetailKeywords')}: ${detail.keywords}`
       }
     }
   }
   // 如果匹配名称是敏感关键词（如 password, token, mobile）
   if (defaultSensitiveKeywords.includes(matcherName.toLowerCase())) {
-    return `敏感关键词检测 (Sensitive Keyword)\n命中关键词: ${matcherName}`
+    return `${t('vul.matcherSensitive')}\n${t('vul.matcherDetailKeywords')}: ${matcherName}`
   }
   return ''
 }
@@ -476,8 +431,7 @@ function getJsfinderTagType(tag) {
 function getJsfinderTagLabel(tag) {
   const mapped = jsfinderTagMap[tag]
   if (mapped) {
-    const locale = t('jsfinder.tag' + tag.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(''))
-    return locale !== ('jsfinder.tag' + tag.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('')) ? locale : mapped.label
+    return t(mapped.labelKey)
   }
   return tag
 }

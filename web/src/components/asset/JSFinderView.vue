@@ -169,6 +169,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { getJSFinderDetail } from '@/api/jsfinder'
 import ProTable from '@/components/common/ProTable.vue'
 
 const { t } = useI18n()
@@ -268,16 +269,16 @@ function getSeverityLabel(severity) {
 
 // 标签显示逻辑
 const riskTagMap = {
-  'high-risk': { label: '高危风险', type: 'danger', en: 'High Risk' },
-  'risk': { label: '风险', type: 'warning', en: 'Risk' },
-  'sensitive': { label: '敏感信息', type: 'warning', en: 'Sensitive' },
-  'info-leak': { label: '信息泄漏', type: 'info', en: 'Info Leak' },
-  'unauth': { label: '未授权', type: 'danger', en: 'Unauth' },
-  'js-file': { label: 'JS文件', type: 'info', en: 'JS File' },
-  'url': { label: 'API路径', type: 'info', en: 'API Path' },
-  'absurl': { label: '绝对URL', type: 'info', en: 'Absolute URL' },
-  'url-list': { label: 'API路径', type: 'info', en: 'API Paths' },
-  'absurl-list': { label: 'URL清单', type: 'info', en: 'URL List' }
+  'high-risk': { labelKey: 'jsfinder.tagHighRisk', type: 'danger' },
+  'risk': { labelKey: 'jsfinder.tagRisk', type: 'warning' },
+  'sensitive': { labelKey: 'jsfinder.tagSensitive', type: 'warning' },
+  'info-leak': { labelKey: 'jsfinder.tagInfoLeak', type: 'info' },
+  'unauth': { labelKey: 'jsfinder.tagUnauth', type: 'danger' },
+  'js-file': { labelKey: 'jsfinder.tagJsFile', type: 'info' },
+  'url': { labelKey: 'jsfinder.tagInfoLeak', type: 'info' },
+  'absurl': { labelKey: 'jsfinder.tagInfoLeak', type: 'info' },
+  'url-list': { labelKey: 'jsfinder.tagInfoLeak', type: 'info' },
+  'absurl-list': { labelKey: 'jsfinder.tagInfoLeak', type: 'info' }
 }
 
 function getDisplayTags(tags) {
@@ -287,80 +288,25 @@ function getDisplayTags(tags) {
     .map(tag => {
       const mapped = riskTagMap[tag]
       if (mapped) {
-        return { value: tag, label: mapped.label, type: mapped.type }
+        return { value: tag, label: t(mapped.labelKey), type: mapped.type }
       }
       return { value: tag, label: tag, type: 'info' }
     })
 }
 
-// 匹配规则详情映射（中文描述 + 正则表达式）
+// 匹配规则详情映射
 const matcherDetailMap = {
-  // JS IPv4 地址提取
-  'JS IPv4 Regex': {
-    zh: 'JS 内嵌 IPv4 地址正则',
-    en: 'Extract IPv4 Addresses from JS',
-    regex: '\\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\\b'
-  },
-  // JS 邮箱提取
-  'JS Email Regex': {
-    zh: 'JS 内嵌邮箱地址正则',
-    en: 'Extract Email Addresses from JS',
-    regex: '\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b'
-  },
-  // JS 手机号提取
-  'JS Phone Number Regex': {
-    zh: 'JS 内嵌手机号正则（中国大陆）',
-    en: 'Extract Phone Numbers from JS',
-    regex: '\\b1[3-9][0-9]{9}\\b'
-  },
-  // JS 身份证号提取
-  'JS ID Card Regex': {
-    zh: 'JS 内嵌身份证号正则',
-    en: 'Extract ID Card Numbers from JS',
-    regex: '\\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\\b'
-  },
-  // JS JWT Token 提取
-  'JS JWT Token Regex': {
-    zh: 'JS 内嵌 JWT Token 正则',
-    en: 'Extract JWT Tokens from JS',
-    regex: 'eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+'
-  },
-  // JS 硬编码密钥提取
-  'JS Hard-coded Secret Regex': {
-    zh: 'JS 硬编码密钥正则',
-    en: 'Extract Hard-coded Secrets from JS',
-    regex: '(?i)(access[_\\-]?key|api[_\\-]?key|secret[_\\-]?key|secret[_\\-]?token|app[_\\-]?key|app[_\\-]?secret|auth[_\\-]?token|access[_\\-]?token|client[_\\-]?secret|private[_\\-]?key|aws[_\\-]?secret)'
-  },
-  // JS 相对路径提取
-  'JS Relative Path Regex': {
-    zh: 'JS 相对路径/API 提取正则',
-    en: 'Extract Relative Paths and APIs from JS',
-    regex: '["\'`](\\/[a-zA-Z0-9_\\-/.?=&%~+#@:]{1,256})["\'`]'
-  },
-  // JS 绝对 URL 提取
-  'JS Absolute URL Regex': {
-    zh: 'JS 绝对 URL 提取正则',
-    en: 'Extract Absolute URLs from JS',
-    regex: 'https?://[a-zA-Z0-9._\\-]+(?::\\d+)?(?:/[a-zA-Z0-9_\\-/.?=&%~+#@:]*)?'
-  },
-  // JS Script 标签提取
-  'JS Script Src Extractor': {
-    zh: 'JS Script 标签 src 属性提取',
-    en: 'Extract Script Tag src Attributes',
-    regex: '<script[^>]+src\\s*=\\s*["\']([^"\']+)["\']'
-  },
-  // 未授权访问检测
-  'JS API Unauth Check': {
-    zh: 'JS API 未授权访问检测',
-    en: 'Unauthenticated API Access Detection',
-    keywords: 'Response-based keyword matching'
-  },
-  // 敏感关键词检测（命中的关键词会显示在这里）
-  'JS Sensitive Keyword Detection': {
-    zh: '敏感关键词检测',
-    en: 'Sensitive Keyword Detection',
-    keywords: 'password, token, mobile, api_key, secret, phone, email, idcard, jwt, credit_card, AKID, AccessKeyId, etc.'
-  }
+  'JS IPv4 Regex': { key: 'vul.matcherIpv4', regex: '\\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\\b' },
+  'JS Email Regex': { key: 'vul.matcherEmail', regex: '\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b' },
+  'JS Phone Number Regex': { key: 'vul.matcherPhone', regex: '\\b1[3-9][0-9]{9}\\b' },
+  'JS ID Card Regex': { key: 'vul.matcherIdCard', regex: '\\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\\b' },
+  'JS JWT Token Regex': { key: 'vul.matcherIpv4', regex: 'eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+' },
+  'JS Hard-coded Secret Regex': { key: 'vul.matcherSecret', regex: '(?i)(access[_\\-]?key|api[_\\-]?key|secret[_\\-]?key|secret[_\\-]?token|app[_\\-]?key|app[_\\-]?secret|auth[_\\-]?token|access[_\\-]?token|client[_\\-]?secret|private[_\\-]?key|aws[_\\-]?secret)' },
+  'JS Relative Path Regex': { key: 'vul.matcherRelPath', regex: '["\'`](\\/[a-zA-Z0-9_\\-/.?=&%~+#@:]{1,256})["\'`]' },
+  'JS Absolute URL Regex': { key: 'vul.matcherAbsUrl', regex: 'https?://[a-zA-Z0-9._\\-]+(?::\\d+)?(?:/[a-zA-Z0-9_\\-/.?=&%~+#@:]*)?' },
+  'JS Script Src Extractor': { key: 'vul.matcherIpv4', regex: '<script[^>]+src\\s*=\\s*["\']([^"\']+)["\']' },
+  'JS API Unauth Check': { key: 'vul.matcherUnauth', keywords: 'Response-based keyword matching' },
+  'JS Sensitive Keyword Detection': { key: 'vul.matcherSensitive', keywords: 'password, token, mobile, api_key, secret, phone, email, idcard, jwt, credit_card, AKID, AccessKeyId, etc.' }
 }
 
 // 默认敏感关键词列表
@@ -370,7 +316,7 @@ const defaultSensitiveKeywords = [
   'private_key', 'privatekey', 'client_secret', 'clientsecret',
   'AKID', 'AccessKeyId', 'SecretAccessKey',
   'phone', 'mobile', 'telephone',
-  'idcard', 'id_card', 'identity_card', '身份证',
+  'idcard', 'id_card', 'identity_card',
   'email', 'mail',
   'openid', 'unionid',
   'jwt', 'bearer',
@@ -385,9 +331,9 @@ function getMatcherDetail(matcherName) {
   if (matcherDetailMap[matcherName]) {
     const detail = matcherDetailMap[matcherName]
     if (detail.regex) {
-      return `${detail.zh} (${detail.en})\n正则: ${detail.regex}`
+      return `${t(detail.key)}\n${t('vul.matcherDetailRegex')}: ${detail.regex}`
     } else if (detail.keywords) {
-      return `${detail.zh} (${detail.en})\n关键词: ${detail.keywords}`
+      return `${t(detail.key)}\n${t('vul.matcherDetailKeywords')}: ${detail.keywords}`
     }
   }
   // 模糊匹配（包含关系）
@@ -395,20 +341,20 @@ function getMatcherDetail(matcherName) {
     if (matcherName.includes(key) || key.includes(matcherName)) {
       const detail = matcherDetailMap[key]
       if (detail.regex) {
-        return `${detail.zh} (${detail.en})\n正则: ${detail.regex}`
+        return `${t(detail.key)}\n${t('vul.matcherDetailRegex')}: ${detail.regex}`
       } else if (detail.keywords) {
-        return `${detail.zh} (${detail.en})\n关键词: ${detail.keywords}`
+        return `${t(detail.key)}\n${t('vul.matcherDetailKeywords')}: ${detail.keywords}`
       }
     }
   }
   // 如果匹配名称是敏感关键词（如 password, token, mobile）
   if (defaultSensitiveKeywords.includes(matcherName.toLowerCase())) {
-    return `敏感关键词检测 (Sensitive Keyword)\n命中关键词: ${matcherName}`
+    return `${t('vul.matcherSensitive')}\n${t('vul.matcherDetailKeywords')}: ${matcherName}`
   }
   // 处理 "keyword:xxx" 格式的动态匹配规则
   if (matcherName.startsWith('keyword:')) {
     const keyword = matcherName.substring(8)
-    return `Response-based keyword matching\n命中关键词: ${keyword}`
+    return `${t('vul.matcherUnauth')}\n${t('vul.matcherDetailKeywords')}: ${keyword}`
   }
   return ''
 }
@@ -493,8 +439,25 @@ function escapeRegexChars(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function showDetail(row) {
-  currentVul.value = row
+async function showDetail(row) {
+  // 列表查询已投影排除 request/response/curl_command 大字段，需要按需回填
+  if (!row.request && !row.response && row.id) {
+    try {
+      const res = await getJSFinderDetail({
+        workspaceId: row.workspaceId || '',
+        id: row.id
+      })
+      if (res.code === 0 && res.data) {
+        currentVul.value = res.data
+      } else {
+        currentVul.value = row
+      }
+    } catch {
+      currentVul.value = row
+    }
+  } else {
+    currentVul.value = row
+  }
   detailVisible.value = true
 }
 

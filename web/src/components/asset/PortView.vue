@@ -63,7 +63,7 @@
 
       <!-- 列: 操作 -->
       <template #operation="{ row }">
-        <el-button type="primary" link size="small" @click="viewAssets(row)">查看资产</el-button>
+        <el-button type="primary" link size="small" @click="viewAssets(row)">{{ $t('asset.portView.viewAssets') }}</el-button>
       </template>
     </ProTable>
   </div>
@@ -98,19 +98,19 @@ const {
 const searchPortPlaceholder = computed(() => t('asset.portNumber') || '搜索端口')
 
 const portColumns = computed(() => [
-  { label: '端口', prop: 'port', slot: 'port', width: 120 },
-  { label: '资产数量', prop: 'assetCount', slot: 'assetCount', width: 100 },
-  { label: '关联服务', prop: 'services', slot: 'services', width: 180 },
-  { label: '关联主机', prop: 'hosts', slot: 'hosts', minWidth: 250 },
-  { label: t('domain.organization'), prop: 'orgName', slot: 'org', width: 120 },
-  { label: t('common.createTime'), prop: 'createTime', width: 160 },
-  { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
-  { label: t('common.operation'), slot: 'operation', width: 100, fixed: 'right' }
+  { label: t('asset.portView.columns.port'), prop: 'port', slot: 'port', width: 120 },
+  { label: t('asset.portView.columns.assetCount'), prop: 'assetCount', slot: 'assetCount', width: 100 },
+  { label: t('asset.portView.columns.services'), prop: 'services', slot: 'services', width: 180 },
+  { label: t('asset.portView.columns.hosts'), prop: 'hosts', slot: 'hosts', minWidth: 250 },
+  { label: t('asset.portView.columns.organization'), prop: 'orgName', slot: 'org', width: 120 },
+  { label: t('asset.portView.columns.createTime'), prop: 'createTime', width: 160 },
+  { label: t('asset.portView.columns.updateTime'), prop: 'updateTime', width: 160 },
+  { label: t('asset.portView.columns.operation'), slot: 'operation', width: 100, fixed: 'right' }
 ])
 
 const searchItems = computed(() => [
-  { label: '端口号', prop: 'port', type: 'input', inputType: 'number' },
-  { label: '主机或IP', prop: 'host', type: 'input' },
+  { label: t('asset.portView.filters.port'), prop: 'port', type: 'input', inputType: 'number' },
+  { label: t('asset.portView.filters.host'), prop: 'host', type: 'input' },
   {
     label: t('domain.organization'),
     prop: 'orgId',

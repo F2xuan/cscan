@@ -1,11 +1,14 @@
 package scanner
 
 import (
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
 
 	"cscan/pkg/utils"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // TargetParseResult 目标解析结果
@@ -447,6 +450,7 @@ func incIP(ip net.IP) bool {
 }
 
 // expandIPRange 展开IP范围
+// 加上限保护防止 OOM（参照 expandCIDR 的 MaxTargetCount 限制）
 func expandIPRange(ipRange string) []string {
 	var ips []string
 	parts := strings.Split(ipRange, "-")
@@ -460,15 +464,138 @@ func expandIPRange(ipRange string) []string {
 		return ips
 	}
 
+	count := 0
 	for ip := startIP; !ip.Equal(endIP); {
+		count++
+		if count > MaxTargetCount {
+			logx.Errorf("expandIPRange: range %s exceeded MaxTargetCount %d, truncating", ipRange, MaxTargetCount)
+			break
+		}
 		ips = append(ips, ip.String())
 		if incIP(ip) {
 			break
 		}
 	}
-	ips = append(ips, endIP.String())
+	// 只要没超限就追加 endIP
+	if count <= MaxTargetCount {
+		ips = append(ips, endIP.String())
+	}
 
 	return ips
+}
+
+// ValidateIPList 验证逗号分隔的 IP/CIDR 列表
+// 只允许 IP 或 CIDR 格式，拒绝含 --、空格、分号等特殊字符的输入
+// 用于 masscan --exclude 等参数的校验，防止参数注入
+func ValidateIPList(s string) error {
+	if s == "" {
+		return nil
+	}
+	// 整体字符集快速拒绝危险字符（防止参数注入）
+	if strings.ContainsAny(s, ";`\n\r\"'\\$|&<>(){}[]!") {
+		return fmt.Errorf("ip list contains forbidden characters")
+	}
+	if strings.Contains(s, "--") {
+		return fmt.Errorf("ip list contains '--' which could be interpreted as a flag")
+	}
+
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// 拒绝含内部空格/tab的项
+		if strings.ContainsAny(part, " \t") {
+			return fmt.Errorf("invalid IP/CIDR %q: contains whitespace", part)
+		}
+		// 必须是 IP 或 CIDR
+		if strings.Contains(part, "/") {
+			if _, _, err := net.ParseCIDR(part); err != nil {
+				return fmt.Errorf("invalid CIDR %q: %v", part, err)
+			}
+		} else {
+			if net.ParseIP(part) == nil {
+				return fmt.Errorf("invalid IP %q", part)
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateNmapArgs 验证 nmap 额外参数，防止参数注入
+// 只允许已知安全前缀的参数，拒绝含 --script、-i、-o、--data-dir 等危险参数
+func ValidateNmapArgs(args string) error {
+	if args == "" {
+		return nil
+	}
+
+	// 危险参数前缀黑名单（不区分大小写，作为防御深度）
+	dangerousPrefixes := []string{
+		"--script", "--data-dir", "--datadir",
+		"--servicedb", "--versiondb",
+		"--exclude", "-iL", "-iR",
+		"-oN", "-oX", "-oG", "-oA", "-oM", "-oS",
+		"--iflist", "--interactive", "--resume", "--append-output",
+	}
+
+	// 允许的 flag 白名单（精确匹配，支持 =value 后缀）
+	allowedFlags := map[string]bool{
+		"-p": true, "--top-ports": true,
+		"-sV": true, "-sS": true, "-sT": true, "-sU": true,
+		"-sA": true, "-sW": true, "-sM": true, "-sN": true, "-sF": true,
+		"-T0": true, "-T1": true, "-T2": true, "-T3": true, "-T4": true, "-T5": true,
+		"-Pn": true, "-n": true, "-v": true, "-vv": true,
+		"-A": true, "-O": true, "-F": true,
+		"--open": true, "--reason": true, "-r": true,
+		"--version-intensity": true, "--version-light": true, "--version-trace": true,
+		"--osscan-limit": true, "--osscan-guess": true,
+		"--min-rate": true, "--max-rate": true,
+		"--min-parallelism": true, "--max-parallelism": true,
+		"--min-hostgroup": true, "--max-hostgroup": true,
+		"--host-timeout": true,
+		"--max-rtt-timeout": true, "--min-rtt-timeout": true,
+		"--initial-rtt-timeout": true,
+		"--scan-delay": true, "--max-scan-delay": true,
+		"-f": true, "--mtu": true, "-g": true, "--source-port": true,
+		"--data-length": true, "--ip-options": true, "--ttl": true,
+		"--spoof-mac": true, "--badsum": true,
+	}
+
+	tokens := strings.Fields(args)
+	for _, token := range tokens {
+		if !strings.HasPrefix(token, "-") {
+			continue // 非参数（值），跳过
+		}
+		// 提取 flag 部分（去掉 =value 后缀）
+		flagPart := token
+		if idx := strings.Index(token, "="); idx >= 0 {
+			flagPart = token[:idx]
+		}
+
+		// 检查危险前缀（防御深度）
+		lowerFlag := strings.ToLower(flagPart)
+		for _, prefix := range dangerousPrefixes {
+			if strings.HasPrefix(lowerFlag, strings.ToLower(prefix)) {
+				return fmt.Errorf("nmap args contains forbidden flag %q (matches dangerous prefix %q)", token, prefix)
+			}
+		}
+		// 拒绝 -i 和 -o 单独作为 flag（防止 -iL/-oN 等变体绕过前缀检查）
+		if lowerFlag == "-i" || lowerFlag == "-o" {
+			return fmt.Errorf("nmap args contains forbidden flag %q", token)
+		}
+
+		// 特殊处理 -p<ports> 组合形式（如 -p80, -p80,443）
+		if strings.HasPrefix(token, "-p") && token != "-p" && !strings.Contains(token, "=") {
+			continue
+		}
+
+		if !allowedFlags[flagPart] {
+			return fmt.Errorf("nmap args contains disallowed flag %q (not in whitelist)", token)
+		}
+	}
+
+	return nil
 }
 
 // GetTop100Ports 获取Top100端口

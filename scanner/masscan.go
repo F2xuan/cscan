@@ -138,6 +138,14 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 
 	logx.Infof("Masscan Scan config - Ports: %s, Rate: %d, Timeout: %d, PortThreshold: %d, ExcludeHosts: %s", opts.Ports, opts.Rate, opts.Timeout, opts.PortThreshold, opts.ExcludeHosts)
 
+	// P0-5: 校验 ExcludeHosts，防止参数注入（拒绝 -- 、空格、分号等特殊字符）
+	if opts.ExcludeHosts != "" {
+		if err := ValidateIPList(opts.ExcludeHosts); err != nil {
+			logx.Errorf("Invalid ExcludeHosts %q: %v", opts.ExcludeHosts, err)
+			return nil, fmt.Errorf("invalid excludeHosts: %w", err)
+		}
+	}
+
 	// 检查masscan是否安装
 	if !checkMasscanInstalled() {
 		logx.Error("masscan not installed, falling back to tcp scan")

@@ -35,7 +35,7 @@ func (p *PostgreSQLPlugin) Brute(ctx context.Context, host string, port int, use
 			default:
 			}
 
-			ok := testPostgreSQL(host, port, username, password, timeout)
+			ok := testPostgreSQL(ctx, host, port, username, password, timeout)
 			if ok {
 				return &BruteResult{
 					Host:     host,
@@ -53,7 +53,7 @@ func (p *PostgreSQLPlugin) Brute(ctx context.Context, host string, port int, use
 }
 
 // testPostgreSQL 测试PostgreSQL连接
-func testPostgreSQL(host string, port int, username, password string, timeout int) bool {
+func testPostgreSQL(ctx context.Context, host string, port int, username, password string, timeout int) bool {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=disable connect_timeout=%d",
 		host, port, username, password, timeout)
 
@@ -64,7 +64,7 @@ func testPostgreSQL(host string, port int, username, password string, timeout in
 	defer db.Close()
 	db.SetConnMaxLifetime(time.Duration(timeout) * time.Second)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {

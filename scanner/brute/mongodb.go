@@ -30,10 +30,10 @@ func (p *MongoDBPlugin) Probe(ctx context.Context, host string, port int) bool {
 }
 
 func (p *MongoDBPlugin) Brute(ctx context.Context, host string, port int, usernames, passwords []string, timeout int) *BruteResult {
-	logx.Infof("[MongoDB Brute] Starting brute force for %s:%d, usernames=%v, passwords=%v, timeout=%d", host, port, usernames, passwords, timeout)
+	logx.Infof("[MongoDB Brute] Starting brute force for %s:%d, usernames=%d, passwords=%d, timeout=%d", host, port, len(usernames), len(passwords), timeout)
 
 	// MongoDB: 先尝试无认证检测
-	ok, debugMsg := testMongoDBNoAuth(host, port, timeout)
+	ok, debugMsg := testMongoDBNoAuth(ctx, host, port, timeout)
 	logx.Infof("[MongoDB Brute] Testing no-auth for %s:%d - Result: %v, Debug: %s", host, port, ok, debugMsg)
 	if ok {
 		return &BruteResult{
@@ -66,8 +66,8 @@ func (p *MongoDBPlugin) Brute(ctx context.Context, host string, port int, userna
 			default:
 			}
 
-			ok := testMongoDBWithAuth(host, port, username, password, timeout)
-			logx.Infof("[MongoDB Brute] Testing '%s:%s' for %s:%d - Result: %v", username, password, host, port, ok)
+			ok := testMongoDBWithAuth(ctx, host, port, username, password, timeout)
+			logx.Infof("[MongoDB Brute] Testing '%s' with password(len=%d) for %s:%d - Result: %v", username, len(password), host, port, ok)
 			if ok {
 				return &BruteResult{
 					Host:     host,
@@ -86,8 +86,8 @@ func (p *MongoDBPlugin) Brute(ctx context.Context, host string, port int, userna
 
 // testMongoDBNoAuth 测试MongoDB无认证访问
 // 返回: 是否成功, 调试信息
-func testMongoDBNoAuth(host string, port int, timeout int) (bool, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+func testMongoDBNoAuth(ctx context.Context, host string, port int, timeout int) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	// 使用 MongoDB 官方驱动检测无认证访问
@@ -121,8 +121,8 @@ func testMongoDBNoAuth(host string, port int, timeout int) (bool, string) {
 }
 
 // testMongoDBWithAuth 测试MongoDB带认证访问
-func testMongoDBWithAuth(host string, port int, username, password string, timeout int) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+func testMongoDBWithAuth(ctx context.Context, host string, port int, username, password string, timeout int) bool {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	// 使用 MongoDB 官方驱动检测认证访问

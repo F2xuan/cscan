@@ -235,19 +235,25 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	logInfo := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("INFO", format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
 		logx.Infof(format, args...)
 	}
 	logWarn := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("WARN", format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
-		logx.Infof(format, args...)
+		// 修复 M3：原 logx.Infof 导致 WARN 日志以 INFO 级别落盘，无法按级别过滤
+		logx.Errorf(format, args...)
 	}
 	logDebug := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("DEBUG", format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
+		// logx 默认不输出 Debug 级别，保留 Infof 让用户可按需开启
+		// 这里保持 logx.Infof 是有意为之：避免无 TaskLogger 时 DEBUG 日志静默丢失
 		logx.Infof(format, args...)
 	}
 

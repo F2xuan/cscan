@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -175,12 +176,14 @@ func (s *JSFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRe
 	logInfo := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("INFO", format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
 		logx.Infof(format, args...)
 	}
 	logWarn := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("WARN", format, args...)
+			return
 		}
 		logx.Errorf(format, args...)
 	}
@@ -721,6 +724,13 @@ func runUnauthChecks(ctx context.Context, client *http.Client, urls []string, op
 	results := make([]*jsFinderUnauthResult, 0)
 	var mu sync.Mutex
 
+	// 负向结果日志限流：避免单任务输出上千条"不存在未授权访问"
+	// 前 negativeLogHead 条正常输出，之后每 negativeLogSample 条采样输出1条
+	// 修复 m2：原 int32 在百万级 URL 场景下会溢出，改为 int64
+	var negativeCount int64
+	const negativeLogHead = 20
+	const negativeLogSample = 200
+
 	workers := opts.Threads
 	if workers <= 0 {
 		workers = 10
@@ -762,7 +772,15 @@ func runUnauthChecks(ctx context.Context, client *http.Client, urls []string, op
 				}
 				low := strings.ToLower(string(body))
 				if status == 401 || status == 403 || containsKeyword(low, opts.AuthRequiredKeywords) {
-					logInfo("[JSFinder] [-] %s 不存在未授权访问", u)
+					// 限流输出：前N条正常输出，之后采样输出
+					n := atomic.AddInt64(&negativeCount, 1)
+					if n <= negativeLogHead || n%negativeLogSample == 0 {
+						if n > negativeLogHead {
+							logInfo("[JSFinder] [-] 已跳过 %d 条负向日志，最新: %s 不存在未授权访问", n-negativeLogHead, u)
+						} else {
+							logInfo("[JSFinder] [-] %s 不存在未授权访问", u)
+						}
+					}
 					continue
 				}
 				if status >= 200 && status < 300 {

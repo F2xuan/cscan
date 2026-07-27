@@ -139,9 +139,11 @@ var (
 )
 
 // GetGlobalAdaptiveConfig 获取全局自适应配置（单例，首次调用时初始化，线程安全）
-func GetGlobalAdaptiveConfig() *AdaptiveScanConfig {
+// 返回值拷贝，防止调用方修改全局单例字段导致数据竞争（修复 P0-30）
+func GetGlobalAdaptiveConfig() AdaptiveScanConfig {
 	globalAdaptiveConfigOnce.Do(func() {
 		globalAdaptiveConfig = GetAdaptiveScanConfig()
 	})
-	return globalAdaptiveConfig
+	// 返回值拷贝，调用方对返回值的修改不会影响全局单例
+	return *globalAdaptiveConfig
 }

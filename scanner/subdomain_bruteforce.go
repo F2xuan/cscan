@@ -1068,6 +1068,12 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 	// 创建输出文件（保存到 output 目录）
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_output_%s_%s.txt", domain, timestamp))
 
+	// 修复 C-31：函数返回时清理临时字典文件和输出文件，避免长期运行后磁盘累积
+	defer func() {
+		os.Remove(dictFile)
+		os.Remove(outputFile)
+	}()
+
 	// 构建ksubdomain命令
 	// ksubdomain e -d example.com -f dict.txt --wild-filter-mode advanced -o output.txt
 	args := []string{
@@ -1206,6 +1212,12 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 
 	// 创建输出文件（保存到 output 目录）
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_output_%s_%s.txt", domain, timestamp))
+
+	// 修复 C-31：函数返回时清理临时字典文件和输出文件，避免长期运行后磁盘累积
+	defer func() {
+		os.Remove(dictFile)
+		os.Remove(outputFile)
+	}()
 
 	// 构建ksubdomain命令
 	args := []string{

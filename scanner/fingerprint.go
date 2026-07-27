@@ -202,6 +202,7 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	taskLog := func(level, format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger(level, format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
 		logx.Infof(format, args...)
 	}

@@ -35,7 +35,7 @@ func (p *MySQLPlugin) Brute(ctx context.Context, host string, port int, username
 			default:
 			}
 
-			ok := testMySQL(host, port, username, password, timeout)
+			ok := testMySQL(ctx, host, port, username, password, timeout)
 			if ok {
 				return &BruteResult{
 					Host:     host,
@@ -53,7 +53,7 @@ func (p *MySQLPlugin) Brute(ctx context.Context, host string, port int, username
 }
 
 // testMySQL 测试MySQL连接
-func testMySQL(host string, port int, username, password string, timeout int) bool {
+func testMySQL(ctx context.Context, host string, port int, username, password string, timeout int) bool {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?timeout=%ds&interpolateParams=false",
 		username, password, host, port, timeout)
 
@@ -64,7 +64,7 @@ func testMySQL(host string, port int, username, password string, timeout int) bo
 	defer db.Close()
 	db.SetConnMaxLifetime(time.Duration(timeout) * time.Second)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {

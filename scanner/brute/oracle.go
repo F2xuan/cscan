@@ -41,7 +41,7 @@ func (p *OraclePlugin) Brute(ctx context.Context, host string, port int, usernam
 			default:
 			}
 
-			ok, sn := testOracle(host, port, username, password, timeout)
+			ok, sn := testOracle(ctx, host, port, username, password, timeout)
 			if ok {
 				return &BruteResult{
 					Host:      host,
@@ -60,9 +60,9 @@ func (p *OraclePlugin) Brute(ctx context.Context, host string, port int, usernam
 }
 
 // testOracle 测试Oracle连接，自动遍历常见服务名
-func testOracle(host string, port int, username, password string, timeout int) (bool, string) {
+func testOracle(ctx context.Context, host string, port int, username, password string, timeout int) (bool, string) {
 	for _, sn := range oracleServiceNames {
-		ok := oracleConnect(host, port, username, password, sn, timeout)
+		ok := oracleConnect(ctx, host, port, username, password, sn, timeout)
 		if ok {
 			return true, sn
 		}
@@ -71,7 +71,7 @@ func testOracle(host string, port int, username, password string, timeout int) (
 }
 
 // oracleConnect 使用 go-ora 驱动尝试连接 Oracle
-func oracleConnect(host string, port int, username, password, serviceName string, timeout int) bool {
+func oracleConnect(ctx context.Context, host string, port int, username, password, serviceName string, timeout int) bool {
 	urlOptions := map[string]string{
 		"CONNECTION TIMEOUT": strconv.Itoa(timeout),
 	}
@@ -87,7 +87,7 @@ func oracleConnect(host string, port int, username, password, serviceName string
 	conn.SetConnMaxIdleTime(time.Duration(timeout) * time.Second)
 	conn.SetMaxIdleConns(0)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	err = conn.PingContext(ctx)

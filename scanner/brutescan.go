@@ -39,7 +39,8 @@ type BruteScanConfig struct {
 }
 
 // Validate 验证 BruteScanConfig 配置
-func (c BruteScanConfig) Validate() error {
+// 使用指针接收者，确保对字段的修改能反映到原始配置（修复 P0-29）
+func (c *BruteScanConfig) Validate() error {
 	if c.Threads < 1 {
 		c.Threads = 10
 	}
@@ -112,20 +113,11 @@ func (s *BruteScanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	for svc, entries := range bruteConfig.ServiceDicts {
 		logHelper(taskLogger, "INFO", "[BruteScan]   ServiceDicts[%s] has %d entries", svc, len(entries))
 	}
-	if bruteConfig.Threads < 1 {
-		bruteConfig.Threads = 10
-	}
-	if bruteConfig.Threads > 100 {
-		bruteConfig.Threads = 100
-	}
-	if bruteConfig.Timeout < 1 {
-		bruteConfig.Timeout = 5
-	}
-	if bruteConfig.Timeout > 60 {
-		bruteConfig.Timeout = 60
-	}
-	if bruteConfig.DelayMs < 0 {
-		bruteConfig.DelayMs = 0
+
+	// P0-29: 调用指针接收者 Validate，确保对 Threads/Timeout/DelayMs 的默认值修正生效
+	if err := bruteConfig.Validate(); err != nil {
+		logHelper(taskLogger, "ERROR", "[BruteScan] Invalid brute config: %v", err)
+		return nil, err
 	}
 
 	// 解析字典

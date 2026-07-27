@@ -126,18 +126,22 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	logInfo := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("INFO", format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
 		logx.Infof(format, args...)
 	}
 	logWarn := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("WARN", format, args...)
+			return // 已由 TaskLogger 统一输出，避免双写
 		}
-		logx.Infof(format, args...)
+		// 修复 M3：原 logx.Infof 导致 WARN 日志以 INFO 级别落盘，无法按级别过滤
+		logx.Errorf(format, args...)
 	}
 	logError := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger("ERROR", format, args...)
+			return
 		}
 		logx.Errorf(format, args...)
 	}
@@ -191,6 +195,14 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		opts.Timeout = 30
 	}
 
+	// P0-5: 校验额外参数 Args，防止参数注入（拒绝 --script、-i、-o、--data-dir 等危险参数）
+	if opts.Args != "" {
+		if err := ValidateNmapArgs(opts.Args); err != nil {
+			logError("Invalid nmap args %q: %v", opts.Args, err)
+			return nil, fmt.Errorf("invalid nmap args: %w", err)
+		}
+	}
+
 	// 检查nmap是否安装
 	if !checkNmapInstalled() {
 		logError("nmap not installed, falling back to tcp scan")
@@ -238,7 +250,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	opts.Ports = portsToString(ports)
 
 	// 执行nmap扫描
-	assets := s.runNmapWithLogger(targets, opts, config.OnProgress, logInfo, logWarn, logError)
+	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnProgress, logInfo, logWarn, logError)
 
 	return &ScanResult{
 		WorkspaceId: config.WorkspaceId,
@@ -250,7 +262,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 // runNmapWithLogger 运行nmap（带日志回调）
 // 优化为每个端口一个进程，通过并发控制降低扫描影响
 // 注意：每个端口使用独立的超时context，不会因为一个端口超时影响其他端口
-func (s *NmapScanner) runNmapWithLogger(targets []string, opts *NmapOptions, onProgress func(int, string), logInfo, _ logFunc, logError logFunc) []*Asset {
+func (s *NmapScanner) runNmapWithLogger(ctx context.Context, targets []string, opts *NmapOptions, onProgress func(int, string), logInfo, _ logFunc, logError logFunc) []*Asset {
 	var assets []*Asset
 	var mu sync.Mutex
 	var finishedCount int32
@@ -283,7 +295,7 @@ func (s *NmapScanner) runNmapWithLogger(targets []string, opts *NmapOptions, onP
 			defer wg.Done()
 			for task := range taskChan {
 				// 每个端口使用独立的超时context，互不影响
-				result := s.scanSinglePortWithLogger(targets, task.port, opts, logInfo, logError)
+				result := s.scanSinglePortWithLogger(ctx, targets, task.port, opts, logInfo, logError)
 				if len(result) > 0 {
 					mu.Lock()
 					assets = append(assets, result...)
@@ -313,7 +325,7 @@ func (s *NmapScanner) runNmapWithLogger(targets []string, opts *NmapOptions, onP
 }
 
 // scanSinglePortWithLogger 扫描单个端口（带日志回调）
-func (s *NmapScanner) scanSinglePortWithLogger(targets []string, port int, opts *NmapOptions, logInfo, logError logFunc) []*Asset {
+func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logError logFunc) []*Asset {
 	var assets []*Asset
 
 	// 构建nmap命令
@@ -335,7 +347,8 @@ func (s *NmapScanner) scanSinglePortWithLogger(targets []string, port int, opts 
 	logInfo("Nmap: executing nmap -Pn -p %d %s", port, strings.Join(targets, " "))
 
 	// 为单个端口创建独立的超时context，避免一个端口超时导致所有扫描停止
-	portCtx, portCancel := context.WithTimeout(context.Background(), time.Duration(opts.Timeout)*time.Second)
+	// 修复 C-32：原使用 context.Background() 忽略父级 ctx，任务取消时 nmap 不会终止
+	portCtx, portCancel := context.WithTimeout(ctx, time.Duration(opts.Timeout)*time.Second)
 	defer portCancel()
 
 	cmd := exec.CommandContext(portCtx, "nmap", args...)
@@ -445,8 +458,11 @@ func (s *NmapScanner) scanSinglePortWithLogger(targets []string, port int, opts 
 }
 
 // checkNmapInstalled 检查nmap是否安装
+// 修复 C-32：原 exec.Command 无 context，nmap 异常时会永久阻塞
 func checkNmapInstalled() bool {
-	cmd := exec.Command("nmap", "--version")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "nmap", "--version")
 	err := cmd.Run()
 	return err == nil
 }

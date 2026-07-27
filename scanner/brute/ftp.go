@@ -65,10 +65,10 @@ func testFTP(host string, port int, username, password string, timeout int) bool
 
 	err = conn.Login(username, password)
 	if err != nil {
-		logx.Infof("[FTP Brute] Login failed for %s:%s@%s: %v", username, password, addr, err)
+		logx.Infof("[FTP Brute] Login failed for %s with password(len=%d)@%s: %v", username, len(password), addr, err)
 		return false
 	}
 
-	logx.Infof("[FTP Brute] Login successful for %s:%s@%s", username, password, addr)
+	logx.Infof("[FTP Brute] Login successful for %s with password(len=%d)@%s", username, len(password), addr)
 	return true
 }

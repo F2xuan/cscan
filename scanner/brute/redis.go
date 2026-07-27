@@ -29,7 +29,7 @@ func (p *RedisPlugin) Probe(ctx context.Context, host string, port int) bool {
 }
 
 func (p *RedisPlugin) Brute(ctx context.Context, host string, port int, usernames, passwords []string, timeout int) *BruteResult {
-	logx.Infof("[Redis Brute] Starting brute force for %s:%d, usernames=%v, passwords=%v, timeout=%d", host, port, usernames, passwords, timeout)
+	logx.Infof("[Redis Brute] Starting brute force for %s:%d, usernames=%d, passwords=%d, timeout=%d", host, port, len(usernames), len(passwords), timeout)
 
 	// Redis: 先尝试无密码检测
 	ok, debugMsg := testRedisNoAuth(ctx, host, port, timeout)
@@ -61,7 +61,7 @@ func (p *RedisPlugin) Brute(ctx context.Context, host string, port int, username
 		}
 
 		ok := testRedisWithPassword(ctx, host, port, password, timeout)
-		logx.Infof("[Redis Brute] Testing password '%s' for %s:%d - Result: %v", password, host, port, ok)
+		logx.Infof("[Redis Brute] Testing password(len=%d) for %s:%d - Result: %v", len(password), host, port, ok)
 		if ok {
 			return &BruteResult{
 				Host:     host,

@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"time"
+	"unicode/utf16"
 
 	"golang.org/x/crypto/md4"
 )
@@ -394,14 +395,18 @@ func encodeLength(n int) []byte {
 }
 
 // computeNTLMHash computes the NTLM hash (MD4 of UTF-16LE password)
+// 使用 unicode/utf16 包正确处理非 BMP 字符（代理对，4 字节），
+// 避免 rune > 0xFFFF 时缓冲区不足导致越界 panic（修复 P0-32）
 func computeNTLMHash(password string) []byte {
-	utf16 := make([]byte, len(password)*2)
-	for i, c := range password {
-		utf16[i*2] = byte(c & 0xFF)
-		utf16[i*2+1] = byte(c >> 8)
+	// utf16.Encode 正确处理代理对，返回 []uint16
+	encoded := utf16.Encode([]rune(password))
+	// 转为小端序 []byte
+	buf := make([]byte, len(encoded)*2)
+	for i, v := range encoded {
+		binary.LittleEndian.PutUint16(buf[i*2:], v)
 	}
 	h := md4.New()
-	h.Write(utf16)
+	h.Write(buf)
 	return h.Sum(nil)
 }
 

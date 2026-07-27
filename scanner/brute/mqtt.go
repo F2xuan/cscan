@@ -110,24 +110,42 @@ func buildMQTTConnectPacket(clientID, username, password string) []byte {
 	payload = append(payload, 0x00, 0x3C)
 
 	// Client ID
-	payload = append(payload, 0x00, byte(len(clientID)))
+	payload = append(payload, byte(len(clientID)>>8), byte(len(clientID)&0xFF))
 	payload = append(payload, []byte(clientID)...)
 
 	// Username (if present)
 	if username != "" {
-		payload = append(payload, 0x00, byte(len(username)))
+		payload = append(payload, byte(len(username)>>8), byte(len(username)&0xFF))
 		payload = append(payload, []byte(username)...)
 	}
 
 	// Password (if present)
 	if password != "" {
-		payload = append(payload, 0x00, byte(len(password)))
+		payload = append(payload, byte(len(password)>>8), byte(len(password)&0xFF))
 		payload = append(payload, []byte(password)...)
 	}
 
-	// Fixed header
+	// Fixed header: 使用 VBI 编码 remainingLength，避免 > 255 时截断（修复 P0-33）
 	remainingLength := len(payload)
-	header := []byte{0x10, byte(remainingLength)}
+	header := append([]byte{0x10}, encodeMQTTRemainingLength(remainingLength)...)
 
 	return append(header, payload...)
+}
+
+// encodeMQTTRemainingLength 编码 MQTT Variable Length Integer (VBI)
+// 每字节低 7 位是数据，最高位为 1 表示还有后续字节，1-4 字节
+func encodeMQTTRemainingLength(n int) []byte {
+	var b []byte
+	for {
+		digit := byte(n % 128)
+		n /= 128
+		if n > 0 {
+			digit |= 0x80
+		}
+		b = append(b, digit)
+		if n == 0 {
+			break
+		}
+	}
+	return b
 }

@@ -35,7 +35,7 @@ func (p *MSSQLPlugin) Brute(ctx context.Context, host string, port int, username
 			default:
 			}
 
-			ok := testMSSQL(host, port, username, password, timeout)
+			ok := testMSSQL(ctx, host, port, username, password, timeout)
 			if ok {
 				return &BruteResult{
 					Host:     host,
@@ -53,7 +53,7 @@ func (p *MSSQLPlugin) Brute(ctx context.Context, host string, port int, username
 }
 
 // testMSSQL 测试MSSQL连接
-func testMSSQL(host string, port int, username, password string, timeout int) bool {
+func testMSSQL(ctx context.Context, host string, port int, username, password string, timeout int) bool {
 	dsn := fmt.Sprintf("server=%s;port=%d;database=master;user id=%s;password=%s;encrypt=disable;TrustServerCertificate=true;Connection Timeout=%d",
 		host, port, username, password, timeout)
 
@@ -64,7 +64,7 @@ func testMSSQL(host string, port int, username, password string, timeout int) bo
 	defer db.Close()
 	db.SetConnMaxLifetime(time.Duration(timeout) * time.Second)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {

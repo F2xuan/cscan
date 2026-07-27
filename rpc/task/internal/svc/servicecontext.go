@@ -20,6 +20,7 @@ type ServiceContext struct {
 	MongoClient             *mongo.Client
 	MongoDB                 *mongo.Database
 	RedisClient             *redis.Client
+	Scheduler               *scheduler.Scheduler            // 任务调度器（NewTask 统一入口，修复优先级失效问题）
 	NucleiTemplateModel     *model.NucleiTemplateModel
 	FingerprintModel        *model.FingerprintModel
 	CustomPocModel          *model.CustomPocModel
@@ -35,7 +36,17 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(c.Mongo.Uri))
+	// 配置 MongoDB 连接池参数，避免高并发下连接耗尽
+	//   MaxPoolSize=100：单个客户端最多复用 100 个连接（mongo-driver 默认 100，显式声明）
+	//   MinPoolSize=10：保持 10 个空闲连接，减少突发流量下的握手开销
+	//   MaxConnIdleTime=5min：空闲连接超过 5 分钟回收，避免长时间占用资源
+	clientOpts := options.Client().
+		ApplyURI(c.Mongo.Uri).
+		SetMaxPoolSize(100).
+		SetMinPoolSize(10).
+		SetMaxConnIdleTime(5 * time.Minute)
+
+	mongoClient, err := mongo.Connect(ctx, clientOpts)
 	if err != nil {
 		return nil, fmt.Errorf("connect MongoDB: %w", err)
 	}
@@ -62,8 +73,14 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 	}
 	logx.Info("Redis connected successfully")
 
-	// 创建任务恢复管理器
-	recoveryManager := scheduler.NewTaskRecoveryManager(rdb, context.Background())
+	// 创建任务调度器（NewTask 通过此入口推送任务，确保优先级分数计算一致）
+	// 修复历史问题：原 NewTaskLogic 直接 ZAdd，绕过 calculatePriorityScore，Priority 字段失效
+	taskScheduler := scheduler.NewScheduler(rdb)
+
+	// 创建任务恢复管理器，共享 scheduler 实例
+	// 修复历史问题：原 recoverTask 用 time.Now().Unix()，高优先级任务恢复后降级
+	// 共享 scheduler 后可复用 calculatePriorityScore，保留原优先级
+	recoveryManager := scheduler.NewTaskRecoveryManager(rdb, context.Background(), taskScheduler)
 	recoveryManager.Start()
 	logx.Info("Task recovery manager started")
 
@@ -72,6 +89,7 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		MongoClient:             mongoClient,
 		MongoDB:                 mongoDB,
 		RedisClient:             rdb,
+		Scheduler:               taskScheduler,
 		NucleiTemplateModel:     model.NewNucleiTemplateModel(mongoDB),
 		FingerprintModel:        model.NewFingerprintModel(mongoDB),
 		CustomPocModel:          model.NewCustomPocModel(mongoDB),
@@ -116,4 +134,13 @@ func (s *ServiceContext) GetAssetHistoryModel(workspaceId string) *model.AssetHi
 		workspaceId = "default"
 	}
 	return model.NewAssetHistoryModel(s.MongoDB, workspaceId)
+}
+
+// GetAssetTargetMetaModel 顶层资产元信息模型（per-workspace 集合 {wsId}_asset_target_meta）。
+// 扫描结果保存时调用 EnsureForAsset 登记/刷新顶层资产，否则资产页只见手动新增。
+func (s *ServiceContext) GetAssetTargetMetaModel(workspaceId string) *model.AssetTargetMetaModel {
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+	return model.NewAssetTargetMetaModel(s.MongoDB, workspaceId)
 }

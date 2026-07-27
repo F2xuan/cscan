@@ -46,6 +46,12 @@ func (l *GetPocByIdLogic) GetPocById(in *pb.GetPocByIdReq) (*pb.GetPocByIdResp, 
 				Message: "获取自定义POC失败: " + err.Error(),
 			}, nil
 		}
+		if poc == nil {
+			return &pb.GetPocByIdResp{
+				Success: false,
+				Message: "自定义POC不存在",
+			}, nil
+		}
 
 		return &pb.GetPocByIdResp{
 			Success:    true,
@@ -85,6 +91,12 @@ func (l *GetPocByIdLogic) GetPocById(in *pb.GetPocByIdReq) (*pb.GetPocByIdResp, 
 		return &pb.GetPocByIdResp{
 			Success: false,
 			Message: "获取Nuclei模板失败: " + err.Error(),
+		}, nil
+	}
+	if template2 == nil {
+		return &pb.GetPocByIdResp{
+			Success: false,
+			Message: "Nuclei模板不存在",
 		}, nil
 	}
 

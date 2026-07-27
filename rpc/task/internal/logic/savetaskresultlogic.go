@@ -2,8 +2,6 @@ package logic
 
 import (
 	"context"
-	"sort"
-	"strings"
 	"time"
 
 	"cscan/model"
@@ -15,98 +13,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
-
-// compareAssetChanges 比较资产变更，返回变更详情列表
-func compareAssetChanges(old *model.Asset, new *model.Asset) []model.FieldChange {
-	var changes []model.FieldChange
-
-	// 比较标题
-	if old.Title != new.Title {
-		changes = append(changes, model.FieldChange{
-			Field:    "title",
-			OldValue: truncateForChange(old.Title, 200),
-			NewValue: truncateForChange(new.Title, 200),
-		})
-	}
-
-	// 比较服务
-	if old.Service != new.Service {
-		changes = append(changes, model.FieldChange{
-			Field:    "service",
-			OldValue: old.Service,
-			NewValue: new.Service,
-		})
-	}
-
-	// 比较HTTP状态码
-	if old.HttpStatus != new.HttpStatus {
-		changes = append(changes, model.FieldChange{
-			Field:    "httpStatus",
-			OldValue: old.HttpStatus,
-			NewValue: new.HttpStatus,
-		})
-	}
-
-	// 比较指纹/应用
-	oldApps := sortedJoin(old.App)
-	newApps := sortedJoin(new.App)
-	if oldApps != newApps {
-		changes = append(changes, model.FieldChange{
-			Field:    "app",
-			OldValue: truncateForChange(oldApps, 500),
-			NewValue: truncateForChange(newApps, 500),
-		})
-	}
-
-	// 比较IconHash
-	if old.IconHash != new.IconHash {
-		changes = append(changes, model.FieldChange{
-			Field:    "iconHash",
-			OldValue: old.IconHash,
-			NewValue: new.IconHash,
-		})
-	}
-
-	// 比较Server
-	if old.Server != new.Server {
-		changes = append(changes, model.FieldChange{
-			Field:    "server",
-			OldValue: old.Server,
-			NewValue: new.Server,
-		})
-	}
-
-	// 比较Banner（截断）
-	if old.Banner != new.Banner {
-		changes = append(changes, model.FieldChange{
-			Field:    "banner",
-			OldValue: truncateForChange(old.Banner, 200),
-			NewValue: truncateForChange(new.Banner, 200),
-		})
-	}
-
-	return changes
-}
-
-// sortedJoin 排序后拼接字符串数组
-func sortedJoin(arr []string) string {
-	if len(arr) == 0 {
-		return ""
-	}
-	sorted := make([]string, len(arr))
-	copy(sorted, arr)
-	sort.Strings(sorted)
-	return strings.Join(sorted, ", ")
-}
-
-// truncateForChange 截断字符串用于变更记录
-func truncateForChange(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen]) + "..."
-}
 
 type SaveTaskResultLogic struct {
 	ctx    context.Context
@@ -137,6 +43,9 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 	}
 
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	targetMetaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
+	// 登记顶层资产 meta 的 host 去重集合：同一次 SaveTaskResult 内同一目标只登记一次。
+	seenTargets := make(map[string]struct{})
 
 	var totalAsset, newAsset, updateAsset int32
 	now := time.Now()
@@ -315,6 +224,7 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 			asset.UpdateTime = now
 			asset.IsNewAsset = true
 			asset.IsUpdated = false
+			asset.FirstSeenTime = now
 			asset.LastTaskId = ""                 // 新资产没有上一个任务
 			asset.FirstSeenTaskId = in.MainTaskId // 记录首次发现的任务ID
 			asset.LastStatusChangeTime = now      // 记录状态变化时间
@@ -338,30 +248,15 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				// 检查是否已存在同一任务的历史记录（避免重复）
 				exists, _ := historyModel.ExistsByAssetIdAndTaskId(l.ctx, existing.Id.Hex(), existing.TaskId)
 				if !exists {
-					// 计算变更详情
-					changes := compareAssetChanges(existing, asset)
+					// 使用 helper 的统一 diff，覆盖 header/body/screenshot/cert 等大字段
+					changes := model.DiffAssetChanges(existing, asset, model.AssetWriteOptions{
+						IsDifferentTask: true,
+						TaskId:          in.MainTaskId,
+					})
 
 					// 只有当有实际变更时才保存历史记录
 					if len(changes) > 0 {
-						// 保存上一次扫描的状态作为历史记录
-						history := &model.AssetHistory{
-							AssetId:    existing.Id.Hex(),
-							Authority:  existing.Authority,
-							Host:       existing.Host,
-							Port:       existing.Port,
-							Service:    existing.Service,
-							Title:      existing.Title,
-							App:        existing.App,
-							HttpStatus: existing.HttpStatus,
-							HttpHeader: existing.HttpHeader,
-							HttpBody:   existing.HttpBody,
-							IconHash:   existing.IconHash,
-							Screenshot: existing.Screenshot,
-							Banner:     existing.Banner,
-							TaskId:     existing.TaskId,     // 使用旧的任务ID
-							CreateTime: existing.UpdateTime, // 使用旧的更新时间
-							Changes:    changes,             // 记录变更详情
-						}
+						history := model.SnapshotFromAsset(existing, existing.TaskId, existing.UpdateTime, changes)
 						if err := historyModel.Insert(l.ctx, history); err != nil {
 							l.Logger.Errorf("Insert asset history failed: %v", err)
 							// 继续更新资产，不中断
@@ -373,81 +268,42 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				}
 			}
 
-			// 更新资产
-			updateFields := map[string]interface{}{
-				"authority":   asset.Authority,
-				"service":     asset.Service,
-				"title":       asset.Title,
-				"status":      asset.HttpStatus,
-				"header":      asset.HttpHeader,
-				"body":        asset.HttpBody,
-				"icon_hash":   asset.IconHash,
-				"screenshot":  asset.Screenshot,
-				"server":      asset.Server,
-				"banner":      asset.Banner,
-				"is_http":     asset.IsHTTP,
-				"taskId":      asset.TaskId,
-				"update_time": now,
+			// 使用共享 helper 构造更新文档，统一空值守护 / 状态字段 / update_time 门控
+			opts := model.AssetWriteOptions{
+				TaskId:          in.MainTaskId,
+				IsDifferentTask: isDifferentTask,
 			}
+			update, _ := model.BuildAssetUpdateDoc(asset, existing, opts)
 
-			// 只有不同任务更新时才设置更新标签
-			if isDifferentTask {
-				updateFields["update"] = true
-				updateFields["new"] = false
-				updateFields["last_task_id"] = existing.TaskId // 记录上一个任务ID
-				updateFields["last_status_change_time"] = now  // 记录状态变化时间
-				updateAsset++
-			}
-			// 同一任务内的更新不改变 new/update 标签
-
-			// 更新 IconData
-			if len(asset.IconHashBytes) > 0 {
-				updateFields["icon_hash_bytes"] = asset.IconHashBytes
-			}
-
-			// 更新IP信息
-			if len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0 {
-				updateFields["ip"] = asset.Ip
-			}
-
-			// 更新CName
-			if asset.CName != "" {
-				updateFields["cname"] = asset.CName
-			}
-
-			// 更新Domain
-			if asset.Domain != "" {
-				updateFields["domain"] = asset.Domain
-			}
-
-			// 更新OrgId
-			if asset.OrgId != "" {
-				updateFields["org_id"] = asset.OrgId
-			}
-
-			// 更新Source
-			if asset.Source != "" {
-				updateFields["source"] = asset.Source
-			}
-
-			// 更新Category
-			if asset.Category != "" {
-				updateFields["category"] = asset.Category
-			}
-
-			rawUpdate := bson.M{"$set": updateFields}
-			if len(asset.App) > 0 {
-				rawUpdate["$addToSet"] = bson.M{
-					"app": bson.M{"$each": asset.App},
-				}
-			}
-
-			if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), rawUpdate); err != nil {
+			if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), update); err != nil {
 				l.Logger.Errorf("Update asset failed: %v", err)
 				continue
 			}
+			if isDifferentTask {
+				updateAsset++
+			}
 		}
 		totalAsset++
+
+		// 登记/刷新顶层资产 meta，使扫描产出的资产出现在资产页顶层资产列表。
+		// 同一批内同 (host,domain) 去重；labels 传 nil 保留既有标签。
+		targetKey := asset.Host + "\x00" + asset.Domain
+		if _, ok := seenTargets[targetKey]; ok {
+			continue
+		}
+		seenTargets[targetKey] = struct{}{}
+		if err := targetMetaModel.EnsureForAsset(l.ctx, workspaceId, asset.Host, asset.Domain, nil); err != nil {
+			l.Logger.Errorf("[SaveTaskResult] upsert target meta host=%s fail: %v", asset.Host, err)
+			continue
+		}
+		// 推进 last_scan_time：EnsureForAsset 仅在新建时写入，此处确保每次扫描也刷新时间戳
+		tType, tValue := model.ResolveAssetTarget(asset.Host, asset.Domain)
+		if tType != "" && tValue != "" {
+			targetId := model.EncodeTargetID(tType, tValue)
+			if err := targetMetaModel.UpdateLastScanTime(l.ctx, targetId, now); err != nil {
+				l.Logger.Errorf("[SaveTaskResult] update last_scan_time id=%s fail: %v", targetId, err)
+			}
+		}
 	}
 
 	l.Logger.Infof("SaveTaskResult: total=%d, new=%d, update=%d", totalAsset, newAsset, updateAsset)

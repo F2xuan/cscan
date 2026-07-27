@@ -32,6 +32,10 @@ func NewIncrSubTaskDoneLogic(ctx context.Context, svcCtx *svc.ServiceContext) *I
 // 递增子任务完成数（模块级别）
 // 每完成一个扫描模块即递增计数器，subTaskCount = 目标数 × 模块数
 func (l *IncrSubTaskDoneLogic) IncrSubTaskDone(in *pb.IncrSubTaskDoneReq) (*pb.IncrSubTaskDoneResp, error) {
+	// MongoDB 操作使用 5s 超时（局部 ctx，不回写 l.ctx，避免 defer cancel 后逃逸使用拿到已取消 ctx）
+	ctx, cancel := context.WithTimeout(l.ctx, 5*time.Second)
+	defer cancel()
+
 	l.Logger.Infof("IncrSubTaskDone: taskId=%s, mainTaskId=%s, phase=%s, isCompleted=%v", in.TaskId, in.MainTaskId, in.Phase, in.IsCompleted)
 
 	if in.WorkspaceId == "" || in.MainTaskId == "" {
@@ -48,7 +52,7 @@ func (l *IncrSubTaskDoneLogic) IncrSubTaskDone(in *pb.IncrSubTaskDoneReq) (*pb.I
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
-	task, incremented, err := taskModel.IncrSubTaskDoneAtomic(l.ctx, in.MainTaskId, incrAmount)
+	task, incremented, err := taskModel.IncrSubTaskDoneAtomic(ctx, in.MainTaskId, incrAmount)
 	if err != nil {
 		l.Logger.Errorf("IncrSubTaskDone: failed to incr atomic, mainTaskId=%s, error=%v", in.MainTaskId, err)
 		return &pb.IncrSubTaskDoneResp{
@@ -70,7 +74,7 @@ func (l *IncrSubTaskDoneLogic) IncrSubTaskDone(in *pb.IncrSubTaskDoneReq) (*pb.I
 	progress := calculateProgress(task.SubTaskDone, task.SubTaskCount)
 
 	// 更新任务进度和当前阶段
-	if err := taskModel.Update(l.ctx, in.MainTaskId, bson.M{
+	if err := taskModel.Update(ctx, in.MainTaskId, bson.M{
 		"progress":      progress,
 		"current_phase": in.Phase,
 	}); err != nil {
@@ -87,7 +91,7 @@ func (l *IncrSubTaskDoneLogic) IncrSubTaskDone(in *pb.IncrSubTaskDoneReq) (*pb.I
 
 	// 如果全部完成，使用原子操作更新状态
 	if allDone {
-		updated, err := taskModel.MarkTaskCompleted(l.ctx, in.MainTaskId)
+		updated, err := taskModel.MarkTaskCompleted(ctx, in.MainTaskId)
 		if err != nil {
 			l.Logger.Errorf("IncrSubTaskDone: failed to mark completed, mainTaskId=%s, error=%v", in.MainTaskId, err)
 		} else if updated {
@@ -127,6 +131,10 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 	task, err := taskModel.FindById(l.ctx, mainTaskId)
 	if err != nil {
 		l.Logger.Errorf("sendTaskNotification: failed to get task, mainTaskId=%s, error=%v", mainTaskId, err)
+		return
+	}
+	if task == nil {
+		l.Logger.Errorf("sendTaskNotification: task not found, mainTaskId=%s", mainTaskId)
 		return
 	}
 

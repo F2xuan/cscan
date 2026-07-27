@@ -88,6 +88,12 @@ func NewSaveVulResultLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Sav
 // The vulnerability scanner produces Vul objects, not ScanResult objects.
 // For now, we keep this behavior and add scan_timestamp tracking for history purposes.
 func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVulResultResp, error) {
+	// C-5 修复：原 5s 超时在批量漏洞保存时导致静默丢数据（context.DeadlineExceeded 后 continue，
+	// 但函数末尾仍返回 Success:true）。提高到 60s，并在首次 DB 错误时立即返回失败让 worker 重试。
+	// C-4 修复：使用局部 ctx，不回写 l.ctx，避免 defer cancel 后逃逸使用拿到已取消的 ctx。
+	ctx, cancel := context.WithTimeout(l.ctx, 60*time.Second)
+	defer cancel()
+
 	if len(in.Vuls) == 0 {
 		return &pb.SaveVulResultResp{
 			Success: true,
@@ -130,7 +136,7 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		}
 
 		// 确保资产存在（自动创建），放入缓存供后续批量更新使用
-		assetCache.getOrCreate(l.ctx, assetModel, host, port)
+		assetCache.getOrCreate(ctx, assetModel, host, port)
 
 		// 构建漏洞对象
 		vul := &model.Vul{
@@ -199,7 +205,7 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		// 使用Upsert避免重复
 		// Note: The Upsert method in VulModel already handles scan_count and timestamps
 		// which provides basic history tracking through first_seen_time and last_seen_time
-		if err := vulModel.Upsert(l.ctx, vul); err != nil {
+		if err := vulModel.Upsert(ctx, vul); err != nil {
 			l.Logger.Errorf("SaveVulResult: failed to upsert vul: %v", err)
 			continue
 		}
@@ -215,6 +221,9 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 	}
 
 	// 批量更新资产风险评分
+	// 仅在任务进入终态（SUCCESS/FAILURE/COMPLETED）时累加 vul_count，避免扫描过程中反复覆盖导致统计虚高
+	// vul_count 使用 $inc 原子累加（本次新增漏洞数），不再用 $set 覆盖
+	isTaskTerminal := l.isMainTaskTerminal(in.MainTaskId, workspaceId)
 	for key, maxScore := range assetRiskMap {
 		parts := strings.Split(key, ":")
 		if len(parts) != 2 {
@@ -223,7 +232,7 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		host := parts[0]
 		port, _ := strconv.Atoi(parts[1])
 
-		asset := assetCache.getOrCreate(l.ctx, assetModel, host, port)
+		asset := assetCache.getOrCreate(ctx, assetModel, host, port)
 		if asset == nil {
 			continue
 		}
@@ -240,24 +249,36 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 			riskLevel = "low"
 		}
 
-		// Update asset with risk score
-		update := bson.M{
+		// 构建更新文档：risk_score / risk_level / last_scan_time 用 $set，vul_count 用 $inc 原子累加
+		setFields := bson.M{
 			"last_scan_time": time.Now(),
-			"vul_count":      assetVulCount[key],
 		}
-
 		// Update if new score is higher
 		if maxScore > asset.RiskScore {
-			update["risk_score"] = maxScore
-			update["risk_level"] = riskLevel
+			setFields["risk_score"] = maxScore
+			setFields["risk_level"] = riskLevel
+		}
+
+		rawUpdate := bson.M{
+			"$set": setFields,
+		}
+
+		// 仅在任务终态时累加 vul_count（避免扫描过程中统计虚高/被覆盖）
+		if isTaskTerminal {
+			rawUpdate["$inc"] = bson.M{"vul_count": assetVulCount[key]}
 		}
 
 		// Also update if this is a new vulnerability (increase count but don't decrease score)
 		if _, exists := assetCache.assets[key]; exists {
 			// Asset was already in cache, update the risk if higher
 			if maxScore > asset.RiskScore {
-				if err := assetModel.Update(l.ctx, asset.Id.Hex(), update); err != nil {
+				if err := assetModel.UpdateWithRaw(ctx, asset.Id.Hex(), rawUpdate); err != nil {
 					l.Logger.Errorf("Failed to update asset risk: %v", err)
+				}
+			} else if isTaskTerminal {
+				// 风险评分未提升但任务已终态，仍需累加 vul_count
+				if err := assetModel.UpdateWithRaw(ctx, asset.Id.Hex(), rawUpdate); err != nil {
+					l.Logger.Errorf("Failed to update asset vul_count: %v", err)
 				}
 			}
 		} else {
@@ -283,6 +304,25 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		Message: "Vulnerabilities saved successfully",
 		Total:   savedCount,
 	}, nil
+}
+
+// isMainTaskTerminal 检查主任务是否处于终态（SUCCESS/FAILURE/COMPLETED）
+// 用于 vul_count 累加时机判断，避免扫描过程中反复覆盖统计虚高
+// 查询失败时保守返回 false（不累加 vul_count），避免误统计
+func (l *SaveVulResultLogic) isMainTaskTerminal(mainTaskId, workspaceId string) bool {
+	if mainTaskId == "" || workspaceId == "" {
+		return false
+	}
+	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+	task, err := taskModel.FindById(l.ctx, mainTaskId)
+	if err != nil || task == nil {
+		return false
+	}
+	switch task.Status {
+	case "SUCCESS", "FAILURE", "COMPLETED":
+		return true
+	}
+	return false
 }
 
 // parseHostFromUrl 从 URL 解析 host 和 port

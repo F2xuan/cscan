@@ -14,6 +14,8 @@ import (
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type UpdateTaskLogic struct {
@@ -32,6 +34,10 @@ func NewUpdateTaskLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Update
 
 // 更新任务状态
 func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, error) {
+	// C-4 修复：使用局部 ctx，不回写 l.ctx，避免 defer cancel 后逃逸使用拿到已取消的 ctx。
+	ctx, cancel := context.WithTimeout(l.ctx, 5*time.Second)
+	defer cancel()
+
 	taskId := in.TaskId
 	state := in.State
 
@@ -45,21 +51,29 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 		}
 	}
 
-	// 从处理中集合移除
+	// 从处理中集合移除（检查 Redis 错误，避免静默吞掉）
 	processingKey := "cscan:task:processing"
-	l.svcCtx.RedisClient.SRem(l.ctx, processingKey, taskId)
+	if err := l.svcCtx.RedisClient.SRem(ctx, processingKey, taskId).Err(); err != nil {
+		l.Logger.Errorf("UpdateTask: failed to SRem processing set, taskId=%s, error=%v", taskId, err)
+		return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+	}
 
 	// 如果任务完成或失败，清理执行记录
 	if state == "SUCCESS" || state == "FAILURE" || state == "COMPLETED" {
 		if err := l.svcCtx.TaskRecoveryManager.RemoveTaskExecution(taskId); err != nil {
 			l.Logger.Errorf("UpdateTask: failed to remove task execution: %v", err)
 		}
-		// 清理任务信息
+		// 清理任务信息（检查 Redis 错误）
 		taskInfoKey := "cscan:task:info:" + taskId
-		l.svcCtx.RedisClient.Del(l.ctx, taskInfoKey)
+		if err := l.svcCtx.RedisClient.Del(ctx, taskInfoKey).Err(); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to Del taskInfo, taskId=%s, error=%v", taskId, err)
+			return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+		}
 	}
 
 	// 更新任务状态到Redis（包含当前阶段）
+	// 修复 M-31：原 TTL=0（永不过期），任务结束后 statusKey 残留导致 Redis 内存持续增长。
+	// 现使用 24h TTL，与 taskInfo 保持一致；任务运行中每次 UpdateTask 会刷新 TTL。
 	statusKey := "cscan:task:status:" + taskId
 	statusData := map[string]interface{}{
 		"taskId": taskId,
@@ -69,7 +83,10 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 		"phase":  in.Phase,
 	}
 	statusJson, _ := json.Marshal(statusData)
-	l.svcCtx.RedisClient.Set(l.ctx, statusKey, statusJson, 0)
+	if err := l.svcCtx.RedisClient.Set(ctx, statusKey, statusJson, 24*time.Hour).Err(); err != nil {
+		l.Logger.Errorf("UpdateTask: failed to Set status, taskId=%s, error=%v", taskId, err)
+		return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+	}
 
 	// 更新进度信息到Redis（用于前端实时获取当前阶段）
 	if in.Phase != "" {
@@ -78,7 +95,10 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 			"currentPhase": in.Phase,
 		}
 		progressJson, _ := json.Marshal(progressData)
-		l.svcCtx.RedisClient.Set(l.ctx, progressKey, progressJson, 24*time.Hour)
+		if err := l.svcCtx.RedisClient.Set(ctx, progressKey, progressJson, 24*time.Hour).Err(); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to Set progress, taskId=%s, error=%v", taskId, err)
+			return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+		}
 	}
 
 	// 如果任务完成或失败，添加到完成集合
@@ -88,7 +108,10 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 			TaskId: taskId,
 		}
 		taskJson, _ := json.Marshal(taskInfo)
-		l.svcCtx.RedisClient.SAdd(l.ctx, completedKey, string(taskJson))
+		if err := l.svcCtx.RedisClient.SAdd(ctx, completedKey, string(taskJson)).Err(); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to SAdd completed set, taskId=%s, error=%v", taskId, err)
+			return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+		}
 	}
 
 	// 更新数据库中的任务状态（包括开始时间、结束时间、进度、当前阶段）
@@ -167,6 +190,10 @@ func (l *UpdateTaskLogic) updateTaskInDBWithPhase(taskId, state, result, phase s
 			l.Logger.Errorf("UpdateTask: failed to find task, mainTaskId=%s, error=%v", mainTaskId, err)
 			// 查询失败时仍然尝试更新状态和开始时间
 			update["start_time"] = now
+		} else if task == nil {
+			// 主任务不存在，仅记录日志，不更新状态
+			l.Logger.Errorf("UpdateTask: main task not found, mainTaskId=%s", mainTaskId)
+			update["start_time"] = now
 		} else if task.Status == "STARTED" {
 			// 主任务已经是STARTED状态，只更新阶段（如果有）
 			if phase != "" {
@@ -234,6 +261,10 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 	task, err := taskModel.FindById(l.ctx, mainTaskId)
 	if err != nil {
 		l.Logger.Errorf("sendTaskNotification: failed to get task, mainTaskId=%s, error=%v", mainTaskId, err)
+		return
+	}
+	if task == nil {
+		l.Logger.Errorf("sendTaskNotification: task not found, mainTaskId=%s", mainTaskId)
 		return
 	}
 

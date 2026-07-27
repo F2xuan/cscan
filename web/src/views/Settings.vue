@@ -349,6 +349,55 @@
       </template>
     </el-drawer>
 
+    <!-- 品牌配置：Logo / 标题 -->
+    <el-card v-if="activeTab === 'branding'">
+      <template #header>
+        <div class="card-header">
+          <span>{{ $t('navigation.brandingConfig') }}</span>
+        </div>
+      </template>
+      <el-alert type="info" :closable="false" style="margin-bottom: 20px">
+        <template #title>{{ $t('settings.brandingTip') }}</template>
+      </el-alert>
+
+      <el-form label-width="120px" style="max-width: 560px;">
+        <el-form-item :label="$t('settings.brandingLogo')">
+          <div class="branding-logo-editor">
+            <div class="branding-logo-preview">
+              <img :src="brandingPreviewSrc" alt="logo" />
+            </div>
+            <div class="branding-logo-actions">
+              <el-upload
+                :show-file-list="false"
+                :before-upload="handleBrandingLogoBeforeUpload"
+                :http-request="handleBrandingLogoSelect"
+                :accept="'image/png,image/jpeg,image/gif,image/webp,image/svg+xml'"
+              >
+                <el-button type="primary" plain size="small">{{ $t('settings.uploadLogo') }}</el-button>
+              </el-upload>
+              <el-button size="small" @click="resetBrandingLogo" :disabled="!brandingForm.logoData">
+                {{ $t('settings.resetLogo') }}
+              </el-button>
+              <div class="branding-logo-hint">{{ $t('settings.brandingLogoHint') }}</div>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item :label="$t('settings.brandingTitle')">
+          <el-input
+            v-model="brandingForm.title"
+            :placeholder="$t('settings.brandingTitlePlaceholder')"
+            maxlength="32"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="brandingSubmitting" @click="handleBrandingSave">
+            {{ $t('common.save') }}
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
     <!-- 用户管理 -->
     <el-card v-if="activeTab === 'user'">
       <template #header>
@@ -360,6 +409,11 @@
         </div>
       </template>
       <el-table :data="userList" v-loading="userLoading" stripe max-height="500">
+        <el-table-column :label="$t('user.avatar')" width="80">
+          <template #default="{ row }">
+            <el-avatar :size="40" :src="row.avatar || undefined" icon="User" />
+          </template>
+        </el-table-column>
         <el-table-column prop="username" :label="$t('user.userName')" min-width="150" />
         <el-table-column prop="role" :label="$t('user.role')" width="100">
           <template #default="{ row }">
@@ -404,6 +458,26 @@
     <!-- 用户对话框 -->
     <el-dialog v-model="userDialogVisible" :title="userForm.id ? $t('user.editUser') : $t('user.newUser')" width="500px">
       <el-form ref="userFormRef" :model="userForm" :rules="userRules" label-width="80px">
+        <el-form-item :label="$t('user.avatar')">
+          <div class="avatar-updater">
+            <el-avatar :size="80" :src="avatarPreview || undefined" icon="User" />
+            <el-upload
+              :show-file-list="false"
+              :before-upload="handleAvatarBeforeUpload"
+              :http-request="handleAvatarUpload"
+              :accept="'image/png,image/jpeg,image/gif,image/webp'"
+              class="avatar-upload-btn"
+            >
+              <el-button size="small">{{ $t('user.changeAvatar') }}</el-button>
+              <template #tip>
+                <div class="avatar-tip">{{ $t('user.avatarTip', 'JPG/PNG/GIF/WebP, 最大 2MB') }}</div>
+              </template>
+            </el-upload>
+            <el-button v-if="userForm.avatar" text type="danger" size="small" @click="clearAvatar">
+              {{ $t('common.delete') }}
+            </el-button>
+          </div>
+        </el-form-item>
         <el-form-item :label="$t('user.userName')" prop="username">
           <el-input v-model="userForm.username" :placeholder="$t('user.pleaseEnterUsername')" />
         </el-form-item>
@@ -411,16 +485,17 @@
           <el-input v-model="userForm.password" type="password" :placeholder="$t('user.pleaseEnterPassword')" />
         </el-form-item>
         <el-form-item :label="$t('user.role')" prop="role">
-          <el-select v-model="userForm.role" :placeholder="$t('user.pleaseSelectRole')">
+          <el-select v-model="userForm.role" :placeholder="$t('user.pleaseSelectRole')" :disabled="isAdminRow">
             <el-option :label="$t('user.admin')" value="admin" />
             <el-option :label="$t('user.user')" value="user" />
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('common.status')" prop="status">
-          <el-select v-model="userForm.status" :placeholder="$t('user.pleaseSelectStatus')">
+          <el-select v-model="userForm.status" :placeholder="$t('user.pleaseSelectStatus')" :disabled="isAdminRow">
             <el-option :label="$t('common.enabled')" value="enable" />
             <el-option :label="$t('common.disabled')" value="disable" />
           </el-select>
+          <div v-if="isAdminRow" class="form-tip">{{ $t('user.adminStatusLockTip', 'admin 账号状态与角色受保护，不允许修改') }}</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -476,16 +551,20 @@ import { Plus, Bell, Edit, Delete, Position } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import request from '@/api/request'
 import { getSubfinderProviderList, getSubfinderProviderInfo, saveSubfinderProvider as saveSubfinderProviderApi } from '@/api/subfinder'
-import { getUserList, createUser, updateUser, deleteUser, resetUserPassword } from '@/api/auth'
+import { getUserList, createUser, updateUser, deleteUser, resetUserPassword, uploadUserAvatar } from '@/api/auth'
+import { useUserStore } from '@/stores/user'
+import { useBrandingStore } from '@/stores/branding'
 import { getNotifyProviders, getNotifyConfigList, saveNotifyConfig, deleteNotifyConfig, testNotifyConfig } from '@/api/notify'
 
 const { t } = useI18n()
+const userStore = useUserStore()
+const brandingStore = useBrandingStore()
 
 const route = useRoute()
 const router = useRouter()
 
 // 有效的tab名称
-const validTabs = ['onlineapi', 'subfinder', 'workspace', 'organization', 'notify', 'user']
+const validTabs = ['onlineapi', 'subfinder', 'workspace', 'organization', 'notify', 'user', 'branding']
 
 // 从URL获取当前tab
 const activeTab = computed(() => {
@@ -519,7 +598,10 @@ const userList = ref([])
 const userDialogVisible = ref(false)
 const userSubmitting = ref(false)
 const userFormRef = ref()
-const userForm = ref({ id: '', username: '', password: '', role: 'user', status: 'enable' })
+const userForm = ref({ id: '', username: '', password: '', role: 'user', status: 'enable', avatar: '' })
+const isAdminRow = computed(() => userForm.value.username === 'admin')
+const avatarPreview = computed(() => userForm.value.avatar || '')
+const avatarUploading = ref(false)
 const userRules = computed(() => ({
   username: [{ required: true, message: t('user.pleaseEnterUsername'), trigger: 'blur' }],
   password: [
@@ -644,6 +726,63 @@ function loadDataByTab(tab) {
   } else if (tab === 'notify') {
     loadNotifyProviders()
     loadNotifyConfigList()
+  } else if (tab === 'branding') {
+    loadBrandingConfig()
+  }
+}
+
+// 品牌配置
+const brandingSubmitting = ref(false)
+const brandingForm = reactive({ logoData: '', title: '' })
+const brandingPreviewSrc = computed(() => brandingForm.logoData || '/logo.png')
+
+async function loadBrandingConfig() {
+  await brandingStore.load()
+  brandingForm.logoData = brandingStore.logoData || ''
+  brandingForm.title = brandingStore.title || ''
+}
+
+function handleBrandingLogoBeforeUpload(file) {
+  const maxBytes = 512 * 1024
+  if (file.size > maxBytes) {
+    ElMessage.error(t('settings.brandingLogoTooLarge'))
+    return false
+  }
+  return true
+}
+
+function handleBrandingLogoSelect(options) {
+  const file = options.file
+  const reader = new FileReader()
+  reader.onload = () => {
+    brandingForm.logoData = reader.result || ''
+  }
+  reader.onerror = () => {
+    ElMessage.error(t('settings.brandingLogoReadError'))
+  }
+  reader.readAsDataURL(file)
+}
+
+function resetBrandingLogo() {
+  brandingForm.logoData = ''
+}
+
+async function handleBrandingSave() {
+  brandingSubmitting.value = true
+  try {
+    const res = await brandingStore.save({
+      logoData: brandingForm.logoData || '',
+      title: (brandingForm.title || '').trim()
+    })
+    if (res && res.code === 0) {
+      ElMessage.success(t('common.saveSuccess', '保存成功'))
+    } else {
+      ElMessage.error(res?.msg || t('common.saveFailed', '保存失败'))
+    }
+  } catch (e) {
+    ElMessage.error(e?.message || t('common.saveFailed', '保存失败'))
+  } finally {
+    brandingSubmitting.value = false
   }
 }
 
@@ -804,9 +943,42 @@ function showUserDialog(row = null) {
   if (row) {
     userForm.value = { ...row, password: '' }
   } else {
-    userForm.value = { id: '', username: '', password: '', role: 'user', status: 'enable' }
+    userForm.value = { id: '', username: '', password: '', role: 'user', status: 'enable', avatar: '' }
   }
   userDialogVisible.value = true
+}
+
+function handleAvatarBeforeUpload(file) {
+  const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+  if (!allowed.includes(file.type)) {
+    ElMessage.error(t('user.avatarFormatError', '仅支持 JPG/PNG/GIF/WebP 格式'))
+    return false
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.error(t('user.avatarTooLarge', '头像文件不能超过 2MB'))
+    return false
+  }
+  return true
+}
+
+async function handleAvatarUpload({ file }) {
+  if (!file) return
+  avatarUploading.value = true
+  try {
+    const res = await uploadUserAvatar(file)
+    if (res.code === 0 && res.avatar) {
+      userForm.value.avatar = res.avatar
+      ElMessage.success(t('user.avatarUploadSuccess', '头像上传成功'))
+    } else {
+      ElMessage.error(res.msg || t('user.avatarUploadFailed', '头像上传失败'))
+    }
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
+function clearAvatar() {
+  userForm.value.avatar = ''
 }
 
 async function handleUserSubmit() {
@@ -820,6 +992,10 @@ async function handleUserSubmit() {
       ElMessage.success(res.msg || t('common.operationSuccess'))
       userDialogVisible.value = false
       loadUserList()
+      // 若修改的是当前登录用户,实时同步头像到顶栏 store
+      if (userForm.value.username === userStore.username) {
+        userStore.setAvatar(userForm.value.avatar || '')
+      }
     } else {
       ElMessage.error(res.msg || t('common.operationFailed'))
     }
@@ -1389,5 +1565,60 @@ async function handleDeleteNotify(row) {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+/* 用户头像上传 */
+.avatar-updater {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.avatar-updater .avatar-upload-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.avatar-tip {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 品牌 Logo 编辑区 */
+.branding-logo-editor {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.branding-logo-preview {
+  width: 88px;
+  height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+  overflow: hidden;
+}
+
+.branding-logo-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.branding-logo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.branding-logo-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

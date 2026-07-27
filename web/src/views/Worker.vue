@@ -18,7 +18,7 @@
 
     <el-card style="margin-bottom: 20px">
       <el-table :data="tableData" v-loading="loading" stripe max-height="500">
-        <el-table-column prop="name" :label="$t('worker.workerName')" min-width="150">
+        <el-table-column prop="name" :label="$t('worker.workerName')" min-width="160">
           <template #default="{ row }">
             <span 
               class="editable-name" 
@@ -30,29 +30,29 @@
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="ip" :label="$t('worker.ipAddress')" width="140">
+        <el-table-column prop="ip" :label="$t('worker.ipAddress')" width="130">
           <template #default="{ row }">
             {{ row.ip || '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="cpuLoad" :label="$t('worker.cpuLoad')" width="120">
+        <el-table-column prop="cpuLoad" :label="$t('worker.cpuLoad')" width="110">
           <template #default="{ row }">
             <el-progress :percentage="Math.round(row.cpuLoad)" :stroke-width="10" :color="getLoadColor(row.cpuLoad)" />
           </template>
         </el-table-column>
-        <el-table-column prop="memUsed" :label="$t('worker.memUsage')" width="120">
+        <el-table-column prop="memUsed" :label="$t('worker.memUsage')" width="110">
           <template #default="{ row }">
             <el-progress :percentage="Math.round(row.memUsed)" :stroke-width="10" :color="getLoadColor(row.memUsed)" />
           </template>
         </el-table-column>
-        <el-table-column prop="taskCount" :label="$t('worker.executedTasks')" width="100" />
-        <el-table-column prop="runningCount" :label="$t('worker.runningTasks')" width="100">
+        <el-table-column prop="taskCount" :label="$t('worker.executedTasks')" width="95" />
+        <el-table-column prop="runningCount" :label="$t('worker.runningTasks')" width="90">
           <template #default="{ row }">
             <el-tag v-if="row.runningCount > 0" type="warning">{{ row.runningCount }}</el-tag>
             <span v-else>0</span>
           </template>
         </el-table-column>
-        <el-table-column prop="concurrency" :label="$t('worker.concurrency')" width="140">
+        <el-table-column prop="concurrency" :label="$t('worker.concurrency')" width="110">
           <template #default="{ row }">
             <div class="concurrency-cell">
               <span 
@@ -91,10 +91,11 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="updateTime" :label="$t('worker.lastResponse')" width="160" />
-        <el-table-column :label="$t('common.operation')" width="280" fixed="right">
+        <el-table-column prop="updateTime" :label="$t('worker.lastResponse')" width="165" />
+        <el-table-column :label="$t('common.operation')" width="260" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" :icon="Monitor" @click="openConsole(row.name)" :disabled="row.status !== 'running'">{{ $t('worker.console') }}</el-button>
+            <el-button link size="small" type="primary" @click="openConsole(row.name)" :disabled="row.status !== 'running'">{{ $t('worker.console') }}</el-button>
+            <el-button link size="small" type="info" @click="openLogDrawer(row.name)">{{ $t('worker.logs') }}</el-button>
             <el-popconfirm
               :title="$t('worker.confirmRestart')"
               :confirm-button-text="$t('common.confirm')"
@@ -102,7 +103,7 @@
               @confirm="restartWorker(row.name)"
             >
               <template #reference>
-                <el-button size="small" type="warning" :icon="RefreshRight" :disabled="row.status !== 'running'">{{ $t('worker.restart') }}</el-button>
+                <el-button link size="small" type="warning" :disabled="row.status !== 'running'">{{ $t('worker.restart') }}</el-button>
               </template>
             </el-popconfirm>
             <el-popconfirm
@@ -112,7 +113,7 @@
               @confirm="deleteWorker(row.name)"
             >
               <template #reference>
-                <el-button size="small" type="danger" :icon="Delete">{{ $t('common.delete') }}</el-button>
+                <el-button link size="small" type="danger">{{ $t('common.delete') }}</el-button>
               </template>
             </el-popconfirm>
           </template>
@@ -302,16 +303,73 @@
         <el-button @click="installDialogVisible = false">{{ $t('common.close') }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- Worker 日志 Drawer -->
+    <el-drawer
+      v-model="logDrawerVisible"
+      :title="`${$t('worker.logs')} - ${logDrawerWorker}`"
+      size="70%"
+      direction="rtl"
+      :close-on-click-modal="false"
+      @close="closeLogStream"
+    >
+      <template #header>
+        <div class="log-drawer-header">
+          <span class="log-drawer-title">{{ $t('worker.logs') }} - {{ logDrawerWorker }}</span>
+          <div class="log-drawer-actions">
+            <el-input
+              v-model="logSearch"
+              :placeholder="$t('container.searchLogs')"
+              clearable
+              size="small"
+              style="width: 160px"
+            >
+              <template #prefix><el-icon><Search /></el-icon></template>
+            </el-input>
+            <el-select v-model="logLevelFilter" size="small" style="width: 90px">
+              <el-option :label="$t('container.allLevels')" value="all" />
+              <el-option label="ERROR" value="ERROR" />
+              <el-option label="WARN" value="WARN" />
+              <el-option label="INFO" value="INFO" />
+              <el-option label="DEBUG" value="DEBUG" />
+            </el-select>
+            <el-button :type="logPaused ? 'success' : 'warning'" size="small" @click="logPaused = !logPaused">
+              {{ logPaused ? $t('container.resume') : $t('container.pause') }}
+            </el-button>
+            <el-button size="small" @click="logLines = []">{{ $t('container.clear') }}</el-button>
+            <span class="log-line-count">{{ filteredLogLines.length }}/{{ logLines.length }}</span>
+          </div>
+        </div>
+      </template>
+      <div class="worker-log-box" ref="workerLogBox">
+        <div
+          v-for="(l, idx) in filteredLogLines"
+          :key="idx"
+          class="wlog-line"
+          :class="{ 'wlog-error': l.level === 'ERROR' || l.level === 'FATAL', 'wlog-warn': l.level === 'WARN' || l.level === 'SLOW', 'wlog-debug': l.level === 'DEBUG' }"
+        >
+          <span class="wlog-ln">{{ idx + 1 }}</span>
+          <span class="wlog-level" :class="'wlevel-' + (l.level || 'log').toLowerCase()">{{ l.level || 'LOG' }}</span>
+          <span v-if="l.time" class="wlog-time">{{ l.time }}</span>
+          <span v-if="l.taskId" class="wlog-task">[..{{ l.taskId.slice(-4) }}]</span>
+          <span class="wlog-body">{{ l.body }}</span>
+        </div>
+        <div v-if="!filteredLogLines.length && logConn !== 'connected'" class="wlog-empty">
+          {{ logConn === 'connecting' ? $t('container.connecting') : $t('container.noLogs') }}
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
-import { Refresh, Delete, Edit, RefreshRight, Download, Monitor } from '@element-plus/icons-vue'
+import { ref, onMounted, onUnmounted, reactive, computed, nextTick } from 'vue'
+import { Refresh, Delete, Edit, RefreshRight, Download, Monitor, Document, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import request from '@/api/request'
 import { useI18n } from 'vue-i18n'
+import { useUserStore } from '@/stores/user'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -646,6 +704,81 @@ function fallbackCopyToClipboard(text) {
   }
 }
 
+// ==================== Worker 日志 Drawer ====================
+const userStore = useUserStore()
+const logDrawerVisible = ref(false)
+const logDrawerWorker = ref('')
+const logLines = ref([])
+const logPaused = ref(false)
+const logConn = ref('disconnected')
+const workerLogBox = ref(null)
+const logSearch = ref('')
+const logLevelFilter = ref('all')
+let logEs = null
+
+const filteredLogLines = computed(() => {
+  const kw = logSearch.value.trim().toLowerCase()
+  const lf = logLevelFilter.value
+  return logLines.value.filter(l => {
+    if (lf !== 'all' && l.level !== lf) return false
+    if (kw && !(l.body || '').toLowerCase().includes(kw) && !(l.taskId || '').toLowerCase().includes(kw)) return false
+    return true
+  })
+})
+
+function openLogDrawer(workerName) {
+  logDrawerWorker.value = workerName
+  logDrawerVisible.value = true
+  logLines.value = []
+  logPaused.value = false
+  logSearch.value = ''
+  logLevelFilter.value = 'all'
+  logConn.value = 'connecting'
+
+  // 使用专用的 Worker 日志 SSE 接口（基于 Redis Pub/Sub，不依赖 Docker）
+  const url = `/api/v1/worker/logs/stream?token=${encodeURIComponent(userStore.token)}`
+
+  closeLogStream()
+  logEs = new EventSource(url)
+
+  logEs.addEventListener('open', () => {
+    logConn.value = 'connected'
+  })
+
+  logEs.onmessage = (ev) => {
+    if (logPaused.value) return
+    try {
+      const obj = JSON.parse(ev.data)
+      // 按 workerName 过滤（流会广播所有 worker 的日志）
+      if (obj.workerName && obj.workerName !== workerName && obj.workerName !== 'API') return
+      logLines.value.push({
+        level: (obj.level || '').toUpperCase(),
+        time: obj.timestamp || '',
+        taskId: obj.taskId || '',
+        body: obj.message || obj.msg || ''
+      })
+      if (logLines.value.length > 3000) logLines.value.splice(0, logLines.value.length - 3000)
+      nextTick(() => {
+        const el = workerLogBox.value
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    } catch (_) {}
+  }
+
+  logEs.onerror = () => {
+    logConn.value = 'disconnected'
+    closeLogStream()
+  }
+}
+
+function closeLogStream() {
+  if (logEs) {
+    logEs.close()
+    logEs = null
+  }
+  logConn.value = 'disconnected'
+}
+
 function openConsole(workerName) {
   router.push(`/worker/console/${workerName}`)
 }
@@ -761,5 +894,100 @@ function openConsole(workerName) {
       }
     }
   }
+}
+
+// Worker 日志 Drawer 样式
+.log-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 20px;
+}
+.log-drawer-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.log-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.log-line-count {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.worker-log-box {
+  height: 100%;
+  overflow-y: auto;
+  background: #1a1b26;
+  border-radius: 6px;
+  padding: 8px 0;
+  font-family: 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.wlog-line {
+  display: flex;
+  align-items: baseline;
+  padding: 2px 12px 2px 0;
+  &:hover { background: rgba(255, 255, 255, 0.05); }
+}
+.wlog-ln {
+  width: 44px;
+  min-width: 44px;
+  text-align: right;
+  padding-right: 8px;
+  color: #565f89;
+  font-size: 11px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.wlog-level {
+  display: inline-block;
+  min-width: 44px;
+  padding: 0 5px;
+  margin-right: 6px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.wlevel-error, .wlevel-fatal { color: #fff; background: rgba(247, 118, 142, 0.8); }
+.wlevel-warn, .wlevel-slow { color: #1a1b26; background: rgba(224, 175, 104, 0.85); }
+.wlevel-info { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
+.wlevel-debug { color: #565f89; background: rgba(86, 95, 137, 0.15); }
+.wlevel-log { color: #7aa2f7; background: rgba(122, 162, 247, 0.12); }
+.wlog-time {
+  color: #565f89;
+  font-size: 12px;
+  margin-right: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.wlog-task {
+  color: #bb9af7;
+  font-size: 11px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.wlog-body {
+  color: #c0caf5;
+  word-break: break-all;
+  white-space: pre-wrap;
+  flex: 1;
+  min-width: 0;
+}
+.wlog-error .wlog-body { color: #f7768e; }
+.wlog-warn .wlog-body { color: #e0af68; }
+.wlog-debug .wlog-body { color: #565f89; }
+.wlog-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #565f89;
+  font-size: 14px;
 }
 </style>

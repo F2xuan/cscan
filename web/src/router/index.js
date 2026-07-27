@@ -37,59 +37,86 @@ const routes = [
         component: lazyLoad(() => import('@/views/Dashboard.vue')),
         meta: { title: '工作台', icon: 'Odometer' }
       },
+      // ===== 资产管理（顶层资产 + 暴露面 + 风险，全部挂 /asset-management/*）=====
       {
         path: 'asset-management',
         name: 'AssetManagement',
         component: lazyLoad(() => import('@/views/AssetManagement.vue')),
-        meta: { title: '资产管理', icon: 'DataAnalysis' }
+        meta: { title: '资产概览', icon: 'DataAnalysis' }
       },
       {
-        path: 'asset/directory',
-        name: 'DirectoryManagement',
-        component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
-        meta: { title: '目录管理', icon: 'Folder' }
+        path: 'asset-management/space-search',
+        name: 'AssetSpaceSearch',
+        component: lazyLoad(() => import('@/views/AssetSpaceSearch.vue')),
+        meta: { title: '资产空间搜索', icon: 'Search' }
       },
+      // -------- 暴露面 --------
       {
-        path: 'asset/vulnerability',
-        name: 'VulnerabilityManagement',
-        component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
-        meta: { title: '漏洞管理', icon: 'Warning' }
-      },
-      {
-        path: 'asset-groups',
-        name: 'AssetGroups',
-        component: lazyLoad(() => import('@/views/AssetGroups.vue')),
-        meta: { title: '资产分组', icon: 'FolderOpened' }
-      },
-      {
-        path: 'asset-inventory',
-        name: 'AssetInventory',
-        component: lazyLoad(() => import('@/views/AssetInventory.vue')),
-        meta: { title: '资产清单', icon: 'List' }
-      },
-      {
-        path: 'screenshots',
-        name: 'Screenshots',
+        path: 'asset-management/exposure/screenshot',
+        name: 'ExposureScreenshot',
         component: lazyLoad(() => import('@/views/Screenshots.vue')),
-        meta: { title: '截图清单', icon: 'Picture' }
+        meta: { title: '截图', icon: 'Picture' }
       },
       {
-        path: 'site',
-        name: 'Site',
-        component: lazyLoad(() => import('@/views/Site.vue')),
-        meta: { title: '站点管理', icon: 'Monitor', hidden: true }
-      },
-      {
-        path: 'domain',
-        name: 'Domain',
+        path: 'asset-management/exposure/subdomain',
+        name: 'ExposureSubdomain',
         component: lazyLoad(() => import('@/views/Domain.vue')),
-        meta: { title: '域名管理', icon: 'Link', hidden: true }
+        meta: { title: '子域名', icon: 'Link' }
       },
       {
-        path: 'ip',
-        name: 'IP',
+        path: 'asset-management/exposure/ip',
+        name: 'ExposureIp',
         component: lazyLoad(() => import('@/views/IP.vue')),
-        meta: { title: 'IP管理', icon: 'Position', hidden: true }
+        meta: { title: 'IP', icon: 'Position' }
+      },
+      {
+        path: 'asset-management/exposure/port',
+        name: 'ExposurePort',
+        component: lazyLoad(() => import('@/views/AssetManagement/PortPage.vue')),
+        meta: { title: '端口', icon: 'Connection' }
+      },
+      {
+        path: 'asset-management/exposure/site',
+        name: 'ExposureSite',
+        component: lazyLoad(() => import('@/views/Site.vue')),
+        meta: { title: '站点', icon: 'Monitor' }
+      },
+      {
+        path: 'asset-management/exposure/icon',
+        name: 'ExposureIcon',
+        component: lazyLoad(() => import('@/views/AssetManagement/IconPage.vue')),
+        meta: { title: 'Icon', icon: 'Picture' }
+      },
+      {
+        path: 'asset-management/exposure/app',
+        name: 'ExposureApp',
+        component: lazyLoad(() => import('@/views/AssetManagement/AppPage.vue')),
+        meta: { title: '应用', icon: 'Grid' }
+      },
+      {
+        path: 'asset-management/exposure/dir',
+        name: 'ExposureDir',
+        component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
+        meta: { title: '目录', icon: 'Folder' }
+      },
+      {
+        path: 'asset-management/exposure/js',
+        name: 'ExposureJs',
+        component: lazyLoad(() => import('@/views/AssetManagement/JSFinderPage.vue')),
+        meta: { title: 'JS', icon: 'Document' }
+      },
+      // -------- 风险 --------
+      {
+        path: 'asset-management/risk/sensitive-dir',
+        name: 'RiskSensitiveDir',
+        component: lazyLoad(() => import('@/views/AssetManagement/SensitiveDirPage.vue')),
+        meta: { title: '敏感目录/文件', icon: 'FolderOpened' }
+      },
+      {
+        path: 'asset-management/risk/vuln',
+        name: 'RiskVuln',
+        component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
+        meta: { title: '漏洞', icon: 'Warning' }
       },
       {
         path: 'task/create',
@@ -144,7 +171,7 @@ const routes = [
         path: 'worker-logs',
         name: 'WorkerLogs',
         component: lazyLoad(() => import('@/views/WorkerLogs.vue')),
-        meta: { title: '运行日志', icon: 'Document' }
+        meta: { title: '容器日志', icon: 'Document' }
       },
       {
         path: 'blacklist',
@@ -200,6 +227,24 @@ const routes = [
         component: lazyLoad(() => import('@/views/Settings.vue')),
         meta: { title: '系统配置', icon: 'Setting' }
       },
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: lazyLoad(() => import('@/views/Profile.vue')),
+        meta: { title: '个人中心', icon: 'User', hidden: true }
+      },
+      {
+        path: 'api-docs',
+        name: 'ApiDocs',
+        component: lazyLoad(() => import('@/views/ApiDocs.vue')),
+        meta: { title: '接口管理', icon: 'Document', roles: ['admin', 'superadmin'] }
+      },
+      {
+        path: 'ai-config',
+        name: 'AIConfig',
+        component: lazyLoad(() => import('@/views/AIConfig.vue')),
+        meta: { title: 'AI配置', icon: 'MagicStick', roles: ['admin', 'superadmin'] }
+      },
     ]
   }
 ]
@@ -212,10 +257,13 @@ const router = createRouter({
 // 路由守卫
 router.beforeEach((to, from, next) => {
   const userStore = useUserStore()
-  
+
   if (to.meta.requiresAuth !== false && !userStore.token) {
     next('/login')
   } else if (to.path === '/login' && userStore.token) {
+    next('/dashboard')
+  } else if (to.meta.roles && !to.meta.roles.includes(userStore.role)) {
+    // 角色不匹配：拦截直接输入 URL 的越权访问（后端亦有对应校验）
     next('/dashboard')
   } else {
     next()

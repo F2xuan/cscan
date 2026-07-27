@@ -79,12 +79,21 @@ docker-compose -f docker-compose.dev.yaml up -d
 
 # 2. 启动服务
 go run rpc/task/task.go -f rpc/task/etc/task.yaml
+
+
+# 3. 开发模式豁免（自动生成随机 secret，仅限本地调试）
+# Windows powershell
+$env:CSCAN_DEV=1
+# Windows cmd
+# set CSCAN_DEV=1
+# linux & mac
+# export CSCAN_DEV=1
 go run api/cscan.go -f api/etc/cscan.yaml
 
-# 3. 启动前端
+# 4. 启动前端
 cd web ; npm install ; npm run dev
 
-# 4. 启动 Worker
+# 5. 启动 Worker
 go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 ```
 

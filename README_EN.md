@@ -63,14 +63,19 @@ chmod +x cscan.sh && ./cscan.sh
 # 1. Start dependencies
 docker-compose -f docker-compose.dev.yaml up -d
 
-# 2. Start services
+# 2. Set JWT secret environment variable (required, otherwise API refuses to start)
+export CSCAN_JWT_SECRET="$(openssl rand -hex 32)"
+# Or use dev mode bypass (auto-generates random secret, local debug only)
+# export CSCAN_DEV=1
+
+# 3. Start services
 go run rpc/task/task.go -f rpc/task/etc/task.yaml
 go run api/cscan.go -f api/etc/cscan.yaml
 
-# 3. Start frontend
+# 4. Start frontend
 cd web ; npm install ; npm run dev
 
-# 4. Start Worker
+# 5. Start Worker
 go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 ```
 

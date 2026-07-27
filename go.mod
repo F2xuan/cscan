@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/chromedp/chromedp v0.15.1
+	github.com/docker/docker v28.3.3+incompatible
 	github.com/ffuf/ffuf/v2 v2.1.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gobwas/ws v1.4.0
@@ -34,6 +35,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.38.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.52.0
+	golang.org/x/sync v0.20.0
 	golang.org/x/text v0.36.0
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.11
@@ -155,7 +157,6 @@ require (
 	github.com/ditashi/jsbeautifier-go v0.0.0-20141206144643-2520a8026a9c // indirect
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
-	github.com/docker/docker v28.3.3+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
@@ -457,7 +458,6 @@ require (
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621 // indirect
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/time v0.14.0 // indirect

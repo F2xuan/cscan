@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -149,6 +150,7 @@ type TerminalHandler struct {
 	sessions         sync.Map // sessionId -> *TerminalSession
 	sessionCount     int32
 	mu               sync.Mutex
+	createMu         sync.Mutex // 保护 CreateSession/CloseSession 的 check-and-store 原子性
 	blacklistRegexps []*regexp.Regexp
 	onOutput         func(sessionId string, data []byte) // 输出回调
 }
@@ -229,12 +231,7 @@ func (h *TerminalHandler) IsCommandBlacklisted(command string) bool {
 
 // GetSessionCount 获取当前会话数
 func (h *TerminalHandler) GetSessionCount() int {
-	count := 0
-	h.sessions.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	return count
+	return int(atomic.LoadInt32(&h.sessionCount))
 }
 
 // GetSession 获取会话
@@ -248,9 +245,14 @@ func (h *TerminalHandler) GetSession(sessionId string) (*TerminalSession, bool) 
 // ==================== Session Management ====================
 
 // CreateSession 创建新会话
+// 修复 C-12：原实现 check-count 与 store 非原子，并发调用可绕过 MaxSessions 限制
+// 现使用 createMu 将"检查数量+检查存在+存储+计数"合并为临界区
 func (h *TerminalHandler) CreateSession(sessionId string) (*TerminalSession, error) {
+	h.createMu.Lock()
+	defer h.createMu.Unlock()
+
 	// 检查会话数限制
-	if h.GetSessionCount() >= h.config.MaxSessions {
+	if int(atomic.LoadInt32(&h.sessionCount)) >= h.config.MaxSessions {
 		return nil, &TerminalError{Code: ErrCodeSessionLimit, Message: "maximum session limit reached"}
 	}
 
@@ -261,26 +263,35 @@ func (h *TerminalHandler) CreateSession(sessionId string) (*TerminalSession, err
 
 	session := NewTerminalSession(sessionId)
 	h.sessions.Store(sessionId, session)
+	atomic.AddInt32(&h.sessionCount, 1)
 
 	return session, nil
 }
 
 // CloseSession 关闭会话
 func (h *TerminalHandler) CloseSession(sessionId string) error {
+	h.createMu.Lock()
 	session, ok := h.sessions.Load(sessionId)
+	if ok {
+		h.sessions.Delete(sessionId)
+		atomic.AddInt32(&h.sessionCount, -1)
+	}
+	h.createMu.Unlock()
+
 	if !ok {
 		return &TerminalError{Code: ErrCodeSessionNotFound, Message: "session not found"}
 	}
 
 	s := session.(*TerminalSession)
 	s.Close()
-	h.sessions.Delete(sessionId)
 
 	return nil
 }
 
 // CloseAllSessions 关闭所有会话
 func (h *TerminalHandler) CloseAllSessions() {
+	h.createMu.Lock()
+	defer h.createMu.Unlock()
 	h.sessions.Range(func(key, value interface{}) bool {
 		if session, ok := value.(*TerminalSession); ok {
 			session.Close()
@@ -288,6 +299,7 @@ func (h *TerminalHandler) CloseAllSessions() {
 		h.sessions.Delete(key)
 		return true
 	})
+	atomic.StoreInt32(&h.sessionCount, 0)
 }
 
 // ==================== Command Execution ====================

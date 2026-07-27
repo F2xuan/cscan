@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -290,6 +291,20 @@ func NewWorkerConnection(conn net.Conn, workerName string, svcCtx *svc.ServiceCo
 	}
 }
 
+// GetWorkerName 获取Worker名称（并发安全）
+func (wc *WorkerConnection) GetWorkerName() string {
+	wc.mu.RLock()
+	defer wc.mu.RUnlock()
+	return wc.workerName
+}
+
+// SetWorkerName 设置Worker名称（并发安全），供 RenameConnection 等场景使用
+func (wc *WorkerConnection) SetWorkerName(name string) {
+	wc.mu.Lock()
+	wc.workerName = name
+	wc.mu.Unlock()
+}
+
 // Send 发送消息到Worker
 func (wc *WorkerConnection) Send(msg *WSMessage) error {
 	data, err := json.Marshal(msg)
@@ -311,6 +326,16 @@ func (wc *WorkerConnection) Close() {
 	wc.closeOnce.Do(func() {
 		close(wc.closeChan)
 	})
+}
+
+// isClosed 检查连接是否已关闭（非阻塞）
+func (wc *WorkerConnection) isClosed() bool {
+	select {
+	case <-wc.closeChan:
+		return true
+	default:
+		return false
+	}
 }
 
 // UpdateLastPing 更新最后心跳时间
@@ -789,76 +814,125 @@ func NewWorkerWSHandler(svcCtx *svc.ServiceContext) *WorkerWSHandler {
 }
 
 // subscribeWorkerControl 订阅 Worker 控制命令频道
+// 修复 C-09：原实现 for msg := range ch 在 Redis 连接断开时 channel 关闭，
+// goroutine 直接退出，后续所有 worker 控制命令（stop/restart/rename）永久失效。
+// 现增加断线重连+指数退避。
 func (h *WorkerWSHandler) subscribeWorkerControl() {
 	ctx := context.Background()
-	pubsub := h.svcCtx.RedisClient.Subscribe(ctx, "cscan:worker:control")
-	defer pubsub.Close()
+	const maxBackoff = 30 * time.Second
+	backoff := time.Second
 
-	ch := pubsub.Channel()
-	logx.Info("[WorkerWS] Started subscribing to worker control channel")
+	for {
+		pubsub := h.svcCtx.RedisClient.Subscribe(ctx, "cscan:worker:control")
+		ch := pubsub.Channel()
 
-	for msg := range ch {
-		// 解析控制命令
-		var cmd struct {
-			Action      string `json:"action"`
-			WorkerName  string `json:"workerName"`
-			NewName     string `json:"newName,omitempty"`
-			Concurrency int    `json:"concurrency,omitempty"`
-		}
-		if err := json.Unmarshal([]byte(msg.Payload), &cmd); err != nil {
-			logx.Errorf("[WorkerWS] Invalid control command: %v", err)
+		// 等待订阅确认
+		if _, err := pubsub.Receive(ctx); err != nil {
+			logx.Errorf("[WorkerWS] Subscribe cscan:worker:control failed: %v, retry in %v", err, backoff)
+			pubsub.Close()
+			h.sleepCtx(ctx, backoff)
+			backoff = nextBackoff(backoff, maxBackoff)
 			continue
 		}
+		backoff = time.Second
+		logx.Info("[WorkerWS] Subscribed to worker control channel")
 
-		logx.Infof("[WorkerWS] Received control command: action=%s, worker=%s", cmd.Action, cmd.WorkerName)
-
-		// 获取 Worker 连接
-		conn, ok := h.GetConnection(cmd.WorkerName)
-		if !ok {
-			logx.Infof("[WorkerWS] Worker %s not connected, skipping control command", cmd.WorkerName)
-			continue
-		}
-
-		// 构造并发送控制消息
-		var payload []byte
-		switch cmd.Action {
-		case "stop":
-			payload, _ = json.Marshal(map[string]interface{}{
-				"action": "WORKER_STOP",
-			})
-		case "restart":
-			payload, _ = json.Marshal(map[string]interface{}{
-				"action": "WORKER_RESTART",
-			})
-		case "rename":
-			payload, _ = json.Marshal(map[string]interface{}{
-				"action":  "WORKER_RENAME",
-				"newName": cmd.NewName,
-			})
-			// 同时更新服务端的连接映射
-			if cmd.NewName != "" && cmd.NewName != cmd.WorkerName {
-				h.RenameConnection(cmd.WorkerName, cmd.NewName)
+	consumeLoop:
+		for msg := range ch {
+			if msg == nil {
+				break consumeLoop
 			}
-		case "setConcurrency":
-			payload, _ = json.Marshal(map[string]interface{}{
-				"action":      "WORKER_SET_CONCURRENCY",
-				"concurrency": cmd.Concurrency,
-			})
-		default:
-			logx.Infof("[WorkerWS] Unknown control action: %s", cmd.Action)
-			continue
+			h.handleWorkerControlMessage(msg.Payload)
 		}
 
-		// 发送控制消息给 Worker
-		if err := conn.Send(&WSMessage{
-			Type:    WSTypeControl,
-			Payload: payload,
-		}); err != nil {
-			logx.Errorf("[WorkerWS] Failed to send control command to %s: %v", cmd.WorkerName, err)
-		} else {
-			logx.Infof("[WorkerWS] Sent control command to %s: %s", cmd.WorkerName, cmd.Action)
-		}
+		logx.Errorf("[WorkerWS] Worker control subscription disconnected, reconnecting in %v...", backoff)
+		pubsub.Close()
+		h.sleepCtx(ctx, backoff)
+		backoff = nextBackoff(backoff, maxBackoff)
 	}
+}
+
+// handleWorkerControlMessage 处理单条 worker 控制命令
+func (h *WorkerWSHandler) handleWorkerControlMessage(payloadStr string) {
+	// 解析控制命令
+	var cmd struct {
+		Action      string `json:"action"`
+		WorkerName  string `json:"workerName"`
+		NewName     string `json:"newName,omitempty"`
+		Concurrency int    `json:"concurrency,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(payloadStr), &cmd); err != nil {
+		logx.Errorf("[WorkerWS] Invalid control command: %v", err)
+		return
+	}
+
+	logx.Infof("[WorkerWS] Received control command: action=%s, worker=%s", cmd.Action, cmd.WorkerName)
+
+	// 获取 Worker 连接
+	conn, ok := h.GetConnection(cmd.WorkerName)
+	if !ok {
+		logx.Infof("[WorkerWS] Worker %s not connected, skipping control command", cmd.WorkerName)
+		return
+	}
+
+	// 构造并发送控制消息
+	var payload []byte
+	switch cmd.Action {
+	case "stop":
+		payload, _ = json.Marshal(map[string]interface{}{
+			"action": "WORKER_STOP",
+		})
+	case "restart":
+		payload, _ = json.Marshal(map[string]interface{}{
+			"action": "WORKER_RESTART",
+		})
+	case "rename":
+		payload, _ = json.Marshal(map[string]interface{}{
+			"action":  "WORKER_RENAME",
+			"newName": cmd.NewName,
+		})
+		// 同时更新服务端的连接映射
+		if cmd.NewName != "" && cmd.NewName != cmd.WorkerName {
+			h.RenameConnection(cmd.WorkerName, cmd.NewName)
+		}
+	case "setConcurrency":
+		payload, _ = json.Marshal(map[string]interface{}{
+			"action":      "WORKER_SET_CONCURRENCY",
+			"concurrency": cmd.Concurrency,
+		})
+	default:
+		logx.Infof("[WorkerWS] Unknown control action: %s", cmd.Action)
+		return
+	}
+
+	// 发送控制消息给 Worker
+	if err := conn.Send(&WSMessage{
+		Type:    WSTypeControl,
+		Payload: payload,
+	}); err != nil {
+		logx.Errorf("[WorkerWS] Failed to send control command to %s: %v", cmd.WorkerName, err)
+	} else {
+		logx.Infof("[WorkerWS] Sent control command to %s: %s", cmd.WorkerName, cmd.Action)
+	}
+}
+
+// sleepCtx 可被 ctx 取消的 sleep
+func (h *WorkerWSHandler) sleepCtx(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
+
+// nextBackoff 指数退避，上限为 max
+func nextBackoff(cur, max time.Duration) time.Duration {
+	next := cur * 2
+	if next > max {
+		next = max
+	}
+	return next
 }
 
 // GetWorkerSessionCount 获取Worker当前会话数
@@ -924,8 +998,8 @@ func (h *WorkerWSHandler) RenameConnection(oldName, newName string) {
 	// 获取旧连接
 	if conn, ok := h.connections.Load(oldName); ok {
 		workerConn := conn.(*WorkerConnection)
-		// 更新连接的workerName
-		workerConn.workerName = newName
+		// 更新连接的workerName（并发安全，可能正被 readPump/心跳/任务回调读取）
+		workerConn.SetWorkerName(newName)
 		// 存储到新key
 		h.connections.Store(newName, workerConn)
 		// 删除旧key
@@ -997,6 +1071,13 @@ func (h *WorkerWSHandler) GetConnectedWorkers() []string {
 // GET /api/v1/worker/ws
 func WorkerWSEndpointHandler(svcCtx *svc.ServiceContext, wsHandler *WorkerWSHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// 修复 C-26：升级前校验 Origin，防止 CSWSH
+		// Worker 是非浏览器客户端，Origin 通常为空，validateWSOrigin 允许空 Origin
+		if !validateWSOrigin(r) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+
 		// 升级HTTP连接为WebSocket
 		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
@@ -1011,6 +1092,50 @@ func WorkerWSEndpointHandler(svcCtx *svc.ServiceContext, wsHandler *WorkerWSHand
 		// 处理连接
 		handleWebSocketConnection(ctx, conn, svcCtx, wsHandler)
 	}
+}
+
+// validateWSOrigin 校验 WebSocket 升级请求的 Origin 头，防止 CSWSH 攻击
+// 修复 C-26：原 UpgradeHTTP 调用未校验 Origin，浏览器发起的跨站请求可自动携带 cookie/token，
+// 存在跨站 WebSocket 劫持风险。
+// 策略：
+//   - Origin 为空：允许（非浏览器客户端如 Worker、curl 不发送 Origin）
+//   - Origin 存在：必须与请求 Host 同源（scheme+host+port 一致）
+func validateWSOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// 非浏览器客户端，由后续 install key / JWT 认证负责
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	originHost := parsed.Hostname()
+	originPort := parsed.Port()
+	if originHost == "" {
+		return false
+	}
+
+	// 解析请求 Host
+	reqHost := r.Host
+	if h, p, err := net.SplitHostPort(reqHost); err == nil {
+		reqHost = h
+		reqPort := p
+		// 同源比较：host 一致，且端口一致（或都为默认端口）
+		return isSameHostPort(originHost, originPort, reqHost, reqPort)
+	}
+	// 请求 Host 无端口（默认 80/443）
+	return isSameHostPort(originHost, originPort, reqHost, "")
+}
+
+// isSameHostPort 比较 host:port 是否同源（考虑默认端口）
+func isSameHostPort(originHost, originPort, reqHost, reqPort string) bool {
+	if originHost != reqHost {
+		return false
+	}
+	// 实际部署中前端与 API 同源时端口必然一致；
+	// 任一端口为空表示使用默认端口，视为同源
+	return originPort == reqPort || originPort == "" || reqPort == ""
 }
 
 // handleWebSocketConnection 处理WebSocket连接
@@ -1103,15 +1228,31 @@ func waitForAuth(ctx context.Context, conn net.Conn, svcCtx *svc.ServiceContext)
 }
 
 // validateInstallKey 验证Install Key
+// 修复 C-19：原将 Redis 故障与"密钥未配置"混为一谈返回 ErrAuthFailed，
+// 导致 Worker 误认为密钥无效。现区分 redis.Nil 与其他 Redis 错误，
+// 基础设施故障返回 503 错误，避免 Worker 误判。
 func validateInstallKey(ctx context.Context, svcCtx *svc.ServiceContext, installKey string) error {
 	if installKey == "" {
 		return ErrAuthFailed
 	}
 
-	// 从Redis获取存储的Install Key
+	// 从Redis获取存储的Install Key（带超时，避免 Redis 故障时挂起）
 	installKeyKey := "cscan:worker:install_key"
-	storedKey, err := svcCtx.RedisClient.Get(ctx, installKeyKey).Result()
-	if err != nil || storedKey == "" {
+	keyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	storedKey, err := svcCtx.RedisClient.Get(keyCtx, installKeyKey).Result()
+	cancel()
+
+	if err != nil {
+		if err == redis.Nil {
+			// 密钥未配置：业务问题
+			logx.Error("[WorkerWS] Install key not configured in Redis")
+			return ErrAuthFailed
+		}
+		// Redis 基础设施故障：返回 503 错误，避免 Worker 误认为密钥无效
+		logx.Errorf("[WorkerWS] Redis unavailable during install key validation: %v", err)
+		return &WSError{Code: 1004, Message: "认证服务暂时不可用"}
+	}
+	if storedKey == "" {
 		logx.Error("[WorkerWS] Install key not configured in Redis")
 		return ErrAuthFailed
 	}
@@ -1157,18 +1298,18 @@ func readPump(ctx context.Context, conn net.Conn, wc *WorkerConnection, svcCtx *
 
 		data, _, err := wsutil.ReadClientData(conn)
 		if err != nil {
-			logx.Errorf("[WorkerWS] Read error for %s: %v", wc.workerName, err)
+			logx.Errorf("[WorkerWS] Read error for %s: %v", wc.GetWorkerName(), err)
 			return
 		}
 
 		var msg WSMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			logx.Errorf("[WorkerWS] Invalid message from %s: %v, data: %s", wc.workerName, err, string(data))
+			logx.Errorf("[WorkerWS] Invalid message from %s: %v, data: %s", wc.GetWorkerName(), err, string(data))
 			continue
 		}
 
 		// 调试：打印收到的消息类型
-		logx.Infof("[WorkerWS] Received message from %s: type=%s", wc.workerName, msg.Type)
+		logx.Infof("[WorkerWS] Received message from %s: type=%s", wc.GetWorkerName(), msg.Type)
 
 		// 路由消息
 		handleMessage(ctx, wc, svcCtx, &msg)
@@ -1188,7 +1329,7 @@ func writePump(ctx context.Context, conn net.Conn, wc *WorkerConnection) {
 			return
 		case data := <-wc.sendChan:
 			if err := wsutil.WriteServerMessage(conn, ws.OpText, data); err != nil {
-				logx.Errorf("[WorkerWS] Write error for %s: %v", wc.workerName, err)
+				logx.Errorf("[WorkerWS] Write error for %s: %v", wc.GetWorkerName(), err)
 				return
 			}
 		case <-ticker.C:
@@ -1196,7 +1337,7 @@ func writePump(ctx context.Context, conn net.Conn, wc *WorkerConnection) {
 			msg := &WSMessage{Type: WSTypePing}
 			data, _ := json.Marshal(msg)
 			if err := wsutil.WriteServerMessage(conn, ws.OpText, data); err != nil {
-				logx.Errorf("[WorkerWS] Ping error for %s: %v", wc.workerName, err)
+				logx.Errorf("[WorkerWS] Ping error for %s: %v", wc.GetWorkerName(), err)
 				return
 			}
 		}
@@ -1217,7 +1358,7 @@ func heartbeatChecker(ctx context.Context, wc *WorkerConnection) {
 		case <-ticker.C:
 			// 检查最后心跳时间，超过90秒未收到心跳则断开
 			if time.Since(wc.GetLastPing()) > 90*time.Second {
-				logx.Infof("[WorkerWS] Heartbeat timeout for %s", wc.workerName)
+				logx.Infof("[WorkerWS] Heartbeat timeout for %s", wc.GetWorkerName())
 				wc.Close()
 				return
 			}
@@ -1272,7 +1413,7 @@ func handleMessage(ctx context.Context, wc *WorkerConnection, svcCtx *svc.Servic
 		// 终端大小调整响应
 		wc.HandleTerminalResizeResponse(msg.Payload)
 	default:
-		logx.Infof("[WorkerWS] Unknown message type from %s: %s", wc.workerName, msg.Type)
+		logx.Infof("[WorkerWS] Unknown message type from %s: %s", wc.GetWorkerName(), msg.Type)
 	}
 }
 
@@ -1292,7 +1433,7 @@ func handlePong(wc *WorkerConnection) {
 func handleLog(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
 	var logPayload LogPayload
 	if err := json.Unmarshal(payload, &logPayload); err != nil {
-		logx.Errorf("[WorkerWS] Invalid log payload from %s: %v", wc.workerName, err)
+		logx.Errorf("[WorkerWS] Invalid log payload from %s: %v", wc.GetWorkerName(), err)
 		return
 	}
 
@@ -1301,28 +1442,33 @@ func handleLog(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceCon
 		logPayload.Timestamp = time.Now().UnixMilli()
 	}
 
-	logx.Infof("[WorkerWS] Received log from %s: taskId=%s, level=%s, msg=%s",
-		wc.workerName, logPayload.TaskId, logPayload.Level, logPayload.Message)
+	// 仅对 WARN/ERROR 级别日志在 API 端落盘，避免每条 INFO 日志都造成 API 进程内存增长
+	// INFO/DEBUG 日志直接走 Redis 流转发到前端订阅客户端
+	if logPayload.Level == "WARN" || logPayload.Level == "ERROR" {
+		// 修复 m5：原 logx.Infof 导致告警/错误以 INFO 级别落盘，无法按级别过滤和告警
+		logx.Errorf("[WorkerWS] Received log from %s: taskId=%s, level=%s, msg=%s",
+			wc.GetWorkerName(), logPayload.TaskId, logPayload.Level, logPayload.Message)
+	}
 
 	// 写入Redis日志流
-	writeLogToRedis(ctx, svcCtx, wc.workerName, &logPayload)
+	writeLogToRedis(ctx, svcCtx, wc.GetWorkerName(), &logPayload)
 }
 
 // handleLogBatch 处理批量日志消息
 func handleLogBatch(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
 	var batchPayload LogBatchPayload
 	if err := json.Unmarshal(payload, &batchPayload); err != nil {
-		logx.Errorf("[WorkerWS] Invalid log batch payload from %s: %v", wc.workerName, err)
+		logx.Errorf("[WorkerWS] Invalid log batch payload from %s: %v", wc.GetWorkerName(), err)
 		return
 	}
 
-	logx.Infof("[WorkerWS] Received log batch from %s: count=%d", wc.workerName, len(batchPayload.Logs))
+	logx.Infof("[WorkerWS] Received log batch from %s: count=%d", wc.GetWorkerName(), len(batchPayload.Logs))
 
 	for _, logPayload := range batchPayload.Logs {
 		if logPayload.Timestamp == 0 {
 			logPayload.Timestamp = time.Now().UnixMilli()
 		}
-		writeLogToRedis(ctx, svcCtx, wc.workerName, &logPayload)
+		writeLogToRedis(ctx, svcCtx, wc.GetWorkerName(), &logPayload)
 	}
 }
 
@@ -1374,45 +1520,91 @@ func writeLogToRedis(ctx context.Context, svcCtx *svc.ServiceContext, workerName
 // ==================== Control Signal Subscription ====================
 
 // subscribeControlSignals 订阅Redis控制信号
+// 修复 C-09：原实现 channel 关闭时直接 return，Redis 重连后该 Worker 不再收到任务控制信号
+// （STOP/PAUSE/RESUME），导致任务无法取消。现增加断线重连+指数退避。
 func subscribeControlSignals(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext) {
-	// 使用模式订阅所有任务控制信号
-	pubsub := svcCtx.RedisClient.PSubscribe(ctx, "cscan:task:ctrl:*")
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
+	const maxBackoff = 30 * time.Second
+	backoff := time.Second
 
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil || wc.isClosed() {
 			return
-		case <-wc.closeChan:
-			return
-		case msg, ok := <-ch:
-			if !ok {
+		}
+
+		// 使用模式订阅所有任务控制信号
+		pubsub := svcCtx.RedisClient.PSubscribe(ctx, "cscan:task:ctrl:*")
+		ch := pubsub.Channel()
+
+		// 等待订阅确认
+		if _, err := pubsub.Receive(ctx); err != nil {
+			if ctx.Err() != nil || wc.isClosed() {
+				pubsub.Close()
 				return
 			}
-			// 解析频道名获取taskId
-			// 频道格式: cscan:task:ctrl:{taskId}
-			taskId := extractTaskIdFromChannel(msg.Channel)
-			if taskId == "" {
-				continue
-			}
-
-			// 转发控制信号给Worker
-			action := msg.Payload // STOP, PAUSE, RESUME
-			payload, _ := json.Marshal(&ControlPayload{
-				TaskId: taskId,
-				Action: action,
-			})
-
-			wc.Send(&WSMessage{
-				Type:    WSTypeControl,
-				Payload: payload,
-			})
-
-			logx.Infof("[WorkerWS] Forwarded control signal to %s: taskId=%s, action=%s",
-				wc.workerName, taskId, action)
+			logx.Errorf("[WorkerWS] PSubscribe cscan:task:ctrl:* failed for %s: %v, retry in %v",
+				wc.GetWorkerName(), err, backoff)
+			pubsub.Close()
+			controlSleepCtx(ctx, wc, backoff)
+			backoff = nextBackoff(backoff, maxBackoff)
+			continue
 		}
+		backoff = time.Second
+
+	consumeLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				pubsub.Close()
+				return
+			case <-wc.closeChan:
+				pubsub.Close()
+				return
+			case msg, ok := <-ch:
+				// 通道关闭（连接断开/错误）：退出内层循环，外层重连
+				if !ok || msg == nil {
+					logx.Errorf("[WorkerWS] Task control subscription closed for %s, reconnecting",
+						wc.GetWorkerName())
+					pubsub.Close()
+					break consumeLoop
+				}
+				// 解析频道名获取taskId
+				// 频道格式: cscan:task:ctrl:{taskId}
+				taskId := extractTaskIdFromChannel(msg.Channel)
+				if taskId == "" {
+					continue
+				}
+
+				// 转发控制信号给Worker
+				action := msg.Payload // STOP, PAUSE, RESUME
+				payload, _ := json.Marshal(&ControlPayload{
+					TaskId: taskId,
+					Action: action,
+				})
+
+				wc.Send(&WSMessage{
+					Type:    WSTypeControl,
+					Payload: payload,
+				})
+
+				logx.Infof("[WorkerWS] Forwarded control signal to %s: taskId=%s, action=%s",
+					wc.GetWorkerName(), taskId, action)
+			}
+		}
+
+		// 断线退避后重连
+		controlSleepCtx(ctx, wc, backoff)
+		backoff = nextBackoff(backoff, maxBackoff)
+	}
+}
+
+// controlSleepCtx 可被 ctx / wc.closeChan 取消的 sleep
+func controlSleepCtx(ctx context.Context, wc *WorkerConnection, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-wc.closeChan:
+	case <-t.C:
 	}
 }
 
@@ -1432,19 +1624,19 @@ func extractTaskIdFromChannel(channel string) string {
 func handleTerminalOutput(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
 	var outputPayload TerminalOutputPayload
 	if err := json.Unmarshal(payload, &outputPayload); err != nil {
-		logx.Errorf("[WorkerWS] Invalid terminal output payload from %s: %v", wc.workerName, err)
+		logx.Errorf("[WorkerWS] Invalid terminal output payload from %s: %v", wc.GetWorkerName(), err)
 		return
 	}
 
 	// 将终端输出发布到Redis频道，供前端WebSocket订阅
 	outputJSON, _ := json.Marshal(map[string]interface{}{
-		"workerName": wc.workerName,
+		"workerName": wc.GetWorkerName(),
 		"sessionId":  outputPayload.SessionId,
 		"data":       outputPayload.Data,
 		"timestamp":  time.Now().UnixMilli(),
 	})
 
 	// 发布到终端输出频道
-	channel := fmt.Sprintf("cscan:worker:terminal:%s:%s", wc.workerName, outputPayload.SessionId)
+	channel := fmt.Sprintf("cscan:worker:terminal:%s:%s", wc.GetWorkerName(), outputPayload.SessionId)
 	svcCtx.RedisClient.Publish(ctx, channel, string(outputJSON))
 }

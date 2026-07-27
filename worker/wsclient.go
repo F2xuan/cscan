@@ -524,51 +524,72 @@ func (c *WorkerWSClient) readPump(ctx context.Context) {
 	}
 }
 
-// handleReadError 处理读取错误
-func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
+// initiateReconnect 统一的重连触发方法
+// 参数:
+//   - waitIfBusy: 当已有重连在进行时，是否等待其完成（handleReadError 场景需要）
+//   - source: 触发来源，用于日志区分（如 "readError", "writePump", "pingPump"）
+//   - waitCtx: 等待重连完成时监听的 context（仅 waitIfBusy=true 时有效）
+//
+// 返回值:
+//   - true: 成功触发重连或已有重连在进行中
+//   - false: 客户端已关闭或 waitCtx 已取消，不应继续操作
+func (c *WorkerWSClient) initiateReconnect(waitIfBusy bool, source string, waitCtx ...context.Context) bool {
+	// 检查客户端是否已关闭
 	select {
 	case <-c.closeChan:
 		return false
 	default:
 	}
 
-	logx.Infof("[WSClient] Read error: %v", err)
+	// 修复 M6：将 "检查重连状态 + CAS + 关闭旧连接" 放入同一 connMu 临界区
+	// 原实现先 Close 再 CAS，并发调用时多方都会 Close 同一 conn，虽然 net.Conn.Close 通常幂等
+	// 但不保证；且 c.conn=nil 后仍调用 Close 可能引入空指针风险（虽此处已判断）
+	var waitCtxVal context.Context
+	if len(waitCtx) > 0 {
+		waitCtxVal = waitCtx[0]
+	}
 
-	// 关闭旧连�?
 	c.connMu.Lock()
+	if c.reconnecting.Load() {
+		// 已有重连在进行中
+		c.connMu.Unlock()
+
+		if !waitIfBusy {
+			return true
+		}
+		// 等待重连完成
+		for c.reconnecting.Load() {
+			select {
+			case <-c.closeChan:
+				return false
+			case <-waitCtxVal.Done():
+				return false
+			case <-time.After(100 * time.Millisecond):
+				// 继续等待
+			}
+		}
+		return true
+	}
+
+	// 占用重连槽位
+	c.reconnecting.Store(true)
+	// 关闭旧连接（仅由当前 goroutine 执行，避免双重 Close）
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
 	c.connMu.Unlock()
 
+	// 更新状态标志
 	c.connected.Store(false)
 	c.authenticated.Store(false)
 
-	// 尝试重连
-	if !c.reconnecting.CompareAndSwap(false, true) {
-		// 已经在重连中，等待重连完�?
-		for c.reconnecting.Load() {
-			select {
-			case <-c.closeChan:
-				return false
-			case <-ctx.Done():
-				return false
-			case <-time.After(100 * time.Millisecond):
-				// 继续等待重连完成
-			}
-		}
-		return true
-	}
-
-	// 使用独立�?context 进行重连，避免继承已取消的父 context
-	reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
-
+	// 启动异步重连（使用独立 context，避免继承已取消的父 context）
 	go func() {
-		defer func() {
-			reconnectCancel()
-			c.reconnecting.Store(false)
-		}()
+		defer c.reconnecting.Store(false)
+
+		reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
+		defer reconnectCancel()
 
 		// 监听关闭信号
 		go func() {
@@ -587,50 +608,22 @@ func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
 		}
 
 		if err := c.connectWithRetry(reconnectCtx, true); err != nil {
-			logx.Infof("[WSClient] Reconnect failed: %v", err)
+			logx.Infof("[WSClient] Reconnect from %s failed: %v", source, err)
 		}
 	}()
 
 	return true
 }
 
+// handleReadError 处理读取错误，返回是否应继续运行
+func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
+	logx.Infof("[WSClient] Read error: %v", err)
+	return c.initiateReconnect(true, "readError", ctx)
+}
+
 // triggerReconnect 主动触发重连（供 writePump 等调用）
 func (c *WorkerWSClient) triggerReconnect() {
-	// 关闭旧连接
-	c.connMu.Lock()
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-	}
-	c.connMu.Unlock()
-
-	c.connected.Store(false)
-	c.authenticated.Store(false)
-
-	// CAS 避免重复触发重连
-	if !c.reconnecting.CompareAndSwap(false, true) {
-		return // 已有重连在进行中
-	}
-
-	go func() {
-		defer c.reconnecting.Store(false)
-
-		reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
-		defer reconnectCancel()
-
-		go func() {
-			select {
-			case <-c.closeChan:
-				reconnectCancel()
-			case <-reconnectCtx.Done():
-			}
-		}()
-
-		time.Sleep(time.Second)
-		if err := c.connectWithRetry(reconnectCtx, true); err != nil {
-			logx.Infof("[WSClient] Reconnect from writePump failed: %v", err)
-		}
-	}()
+	c.initiateReconnect(false, "writePump")
 }
 
 // writePump 写入消息循环
@@ -703,42 +696,7 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 
 			if time.Since(lastPong) > heartbeatTimeout {
 				logx.Infof("[WSClient] Heartbeat timeout (no PONG for %v), triggering reconnect...", time.Since(lastPong))
-
-				// 关闭当前连接并触发重�?
-				c.connMu.Lock()
-				if c.conn != nil {
-					c.conn.Close()
-					c.conn = nil
-				}
-				c.connMu.Unlock()
-
-				c.connected.Store(false)
-				c.authenticated.Store(false)
-
-				// 触发重连（如果没有正在进行的重连�?
-				if c.reconnecting.CompareAndSwap(false, true) {
-					go func() {
-						defer c.reconnecting.Store(false)
-
-						// 使用独立�?context 进行重连
-						reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
-						defer reconnectCancel()
-
-						// 监听关闭信号
-						go func() {
-							select {
-							case <-c.closeChan:
-								reconnectCancel()
-							case <-reconnectCtx.Done():
-							}
-						}()
-
-						time.Sleep(time.Second)
-						if err := c.connectWithRetry(reconnectCtx, true); err != nil {
-							logx.Infof("[WSClient] Reconnect from pingPump failed: %v", err)
-						}
-					}()
-				}
+				c.initiateReconnect(false, "pingPump")
 				continue
 			}
 

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/model"
 	"cscan/pkg/response"
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -376,6 +376,12 @@ func WorkerTerminalWSHandler(svcCtx *svc.ServiceContext, wsHandler *WorkerWSHand
 			return
 		}
 
+		// 修复 C-26：升级前校验 Origin，防止 CSWSH（跨站 WebSocket 劫持）
+		if !validateWSOrigin(r) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+
 		// 升级HTTP连接为WebSocket
 		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
@@ -673,7 +679,7 @@ func WorkerTerminalWSHandlerWithAuth(svcCtx *svc.ServiceContext, wsHandler *Work
 		}
 
 		// 验证 JWT token
-		claims, err := validateJWTToken(token, svcCtx.Config.Auth.AccessSecret)
+		claims, err := middleware.ValidateJWTToken(token, svcCtx.Config.Auth.AccessSecret)
 		if err != nil {
 			logx.Errorf("[TerminalWS] Invalid token: %v", err)
 			http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -693,22 +699,6 @@ func WorkerTerminalWSHandlerWithAuth(svcCtx *svc.ServiceContext, wsHandler *Work
 	}
 }
 
-// validateJWTToken 验证 JWT token
-func validateJWTToken(tokenString string, secret string) (map[string]interface{}, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(secret), nil
-	})
+// validateJWTToken 已迁移至 api/internal/middleware.ValidateJWTToken
+// 供 WebSocket / SSE 等非标准 AuthMiddleware 入口共享签名验证逻辑,避免后续演进时本地副本漂移。
 
-	if err != nil {
-		return nil, err
-	}
-
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		return claims, nil
-	}
-
-	return nil, fmt.Errorf("invalid token")
-}

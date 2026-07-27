@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"net/http"
@@ -156,11 +157,19 @@ func Get(url string) (*http.Response, error) {
 }
 
 // GetWithTimeout 使用指定超时发送GET请求
+// 修复 C-35：原实现每次调用都 NewPooledClient 创建新的 Transport，
+// 调用方关闭 resp.Body 后空闲连接回到该 Transport 的池中但 Transport 不再被复用，
+// 导致连接池资源泄漏（直到 GC 回收 Transport 时才释放底层 TCP 连接）。
+// 现复用全局 DefaultClient 的连接池，通过 context.WithTimeout 控制单次请求超时。
 func GetWithTimeout(url string, timeout time.Duration) (*http.Response, error) {
-	cfg := DefaultPoolConfig()
-	cfg.Timeout = timeout
-	client := NewPooledClient(cfg)
-	return client.Get(url)
+	Init()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return DefaultClient.Do(req)
 }
 
 // GetInsecure 跳过TLS验证发送GET请求

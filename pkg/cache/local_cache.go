@@ -3,14 +3,18 @@ package cache
 import (
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // LocalCache 本地内存缓存
 type LocalCache struct {
-	data    sync.Map
-	ttl     time.Duration
-	cleaner *time.Ticker
-	stopCh  chan struct{}
+	data     sync.Map
+	ttl      time.Duration
+	cleaner  *time.Ticker
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	group    singleflight.Group
 }
 
 type cacheItem struct {
@@ -92,13 +96,19 @@ func (c *LocalCache) GetOrSet(key string, setter func() (interface{}, error)) (i
 		return v, nil
 	}
 
-	value, err := setter()
-	if err != nil {
-		return nil, err
-	}
-
-	c.Set(key, value)
-	return value, nil
+	v, err, _ := c.group.Do(key, func() (interface{}, error) {
+		// 双重检查：在获取到 singleflight 锁后再次检查缓存
+		if v, ok := c.Get(key); ok {
+			return v, nil
+		}
+		value, err := setter()
+		if err != nil {
+			return nil, err
+		}
+		c.Set(key, value)
+		return value, nil
+	})
+	return v, err
 }
 
 // GetOrSetWithTTL 获取或设置缓存（自定义TTL）
@@ -107,13 +117,19 @@ func (c *LocalCache) GetOrSetWithTTL(key string, ttl time.Duration, setter func(
 		return v, nil
 	}
 
-	value, err := setter()
-	if err != nil {
-		return nil, err
-	}
-
-	c.SetWithTTL(key, value, ttl)
-	return value, nil
+	v, err, _ := c.group.Do(key, func() (interface{}, error) {
+		// 双重检查：在获取到 singleflight 锁后再次检查缓存
+		if v, ok := c.Get(key); ok {
+			return v, nil
+		}
+		value, err := setter()
+		if err != nil {
+			return nil, err
+		}
+		c.SetWithTTL(key, value, ttl)
+		return value, nil
+	})
+	return v, err
 }
 
 // Clear 清空所有缓存
@@ -168,8 +184,10 @@ func (c *LocalCache) cleanExpired() {
 
 // Stop 停止清理协程
 func (c *LocalCache) Stop() {
-	c.cleaner.Stop()
-	close(c.stopCh)
+	c.stopOnce.Do(func() {
+		c.cleaner.Stop()
+		close(c.stopCh)
+	})
 }
 
 // Stats 缓存统计

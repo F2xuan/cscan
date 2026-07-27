@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -67,10 +68,53 @@ func (p *SMTPProvider) Send(ctx context.Context, result *NotifyResult) error {
 	addr := fmt.Sprintf("%s:%d", p.config.Server, p.config.Port)
 	auth := smtp.PlainAuth("", p.config.Username, p.config.Password, p.config.Server)
 
+	// 修复 C-34：原实现用 goroutine + 15s timer 包装 smtp.SendMail/sendWithTLS，
+	// 但 tls.Dial 和 smtp.SendMail 内部使用 net.Dial（无超时），SMTP 服务器不可达时
+	// goroutine 会阻塞到 OS 级 TCP 超时（数分钟），timer 返回后 goroutine 仍然泄漏。
+	// 现使用带 10s 超时的 net.DialTimeout 建立连接，并在连接上设置 I/O deadline，
+	// 彻底消除 goroutine 泄漏。
 	if p.config.UseTLS {
 		return p.sendWithTLS(addr, auth, msg)
 	}
-	return smtp.SendMail(addr, auth, p.config.FromAddress, p.config.ToAddresses, []byte(msg))
+	return p.sendPlain(addr, auth, msg)
+}
+
+// sendPlain 使用明文 SMTP 发送（带连接超时和 I/O deadline）
+func (p *SMTPProvider) sendPlain(addr string, auth smtp.Auth, msg string) error {
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("smtp dial timeout: %w", err)
+	}
+	// 设置 I/O deadline，防止 SMTP 交互阶段挂起
+	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, p.config.Server)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if err = client.Auth(auth); err != nil {
+		return err
+	}
+	if err = client.Mail(p.config.FromAddress); err != nil {
+		return err
+	}
+	for _, to := range p.config.ToAddresses {
+		if err = client.Rcpt(to); err != nil {
+			return err
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(msg))
+	if err != nil {
+		return err
+	}
+	return w.Close()
 }
 
 func (p *SMTPProvider) sendWithTLS(addr string, auth smtp.Auth, msg string) error {
@@ -79,10 +123,18 @@ func (p *SMTPProvider) sendWithTLS(addr string, auth smtp.Auth, msg string) erro
 		ServerName:         p.config.Server,
 	}
 
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	// 修复 C-34：使用 net.DialTimeout + tls.Client 替代 tls.Dial（无超时）
+	rawConn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp tls dial timeout: %w", err)
 	}
+	conn := tls.Client(rawConn, tlsConfig)
+	if err := conn.Handshake(); err != nil {
+		rawConn.Close()
+		return fmt.Errorf("smtp tls handshake failed: %w", err)
+	}
+	// 设置 I/O deadline，防止 SMTP 交互阶段挂起
+	conn.SetDeadline(time.Now().Add(15 * time.Second))
 	defer conn.Close()
 
 	client, err := smtp.NewClient(conn, p.config.Server)

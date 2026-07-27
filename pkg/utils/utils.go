@@ -68,7 +68,13 @@ func UniqueStrings(slice []string) []string {
 }
 
 // RandomInt 生成指定范围内的随机整数 [min, max]
+// 修复 C-15：当 max < min 时 max-min+1 <= 0，rand.Intn 会 panic
+// 现对非法范围做保护：max < min 时交换，保证参数恒为正
 func RandomInt(min, max int) int {
+	if max < min {
+		min, max = max, min
+	}
+	// 此时 max >= min，max-min+1 >= 1，rand.Intn 参数合法
 	return rand.Intn(max-min+1) + min
 }
 

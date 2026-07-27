@@ -147,8 +147,13 @@ func (m *ProviderManager) SearchWithDetail(ip string) (*Location, error) {
 }
 
 // Close 关闭服务
+// 修复 C-18：原 Close 后未将 m.provider 置 nil，导致 IsEnabled 仍返回 true，
+// 后续 Search 调用会使用已关闭的 provider。现置 nil。
 func (m *ProviderManager) Close() error {
-	provider := m.GetProvider()
+	m.mu.Lock()
+	provider := m.provider
+	m.provider = nil
+	m.mu.Unlock()
 	if provider == nil {
 		return nil
 	}

@@ -87,14 +87,33 @@ func (n *Notifier) Send(ctx context.Context, result *NotifyResult) error {
 		return nil
 	}
 
-	var errs []string
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		errs    []string
+		failed  int
+	)
+
 	for _, p := range providers {
-		if err := p.Send(ctx, result); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", p.Name(), err))
-		}
+		wg.Add(1)
+		go func(provider Provider) {
+			defer wg.Done()
+			// 每个 provider 独立超时，避免相互影响
+			pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			if err := provider.Send(pctx, result); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Sprintf("%s: %v", provider.Name(), err))
+				failed++
+				mu.Unlock()
+			}
+		}(p)
 	}
 
-	if len(errs) > 0 {
+	wg.Wait()
+
+	// 全部失败才返回 error，部分失败只记日志（通过 errs 体现）
+	if failed == len(providers) {
 		return fmt.Errorf("notify errors: %s", strings.Join(errs, "; "))
 	}
 	return nil

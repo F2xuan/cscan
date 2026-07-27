@@ -86,13 +86,21 @@ func (l *StructuredLogger) Errorf(format string, args ...interface{}) {
 }
 
 // Warn 警告日志
+// 修复 C-13：原使用 Errorw 以 ERROR 级别落盘，导致 WARN 被误报为 ERROR，
+// 告警系统按 ERROR 级别触发告警，无法区分真实错误与警告。
+// go-zero v1.7 无原生 Warn 级别，改用 Infow + level=warn 字段：
+//  - 不再污染 ERROR 告警通道
+//  - 仍以 INFO 级别落盘，可通过 level 字段过滤
 func (l *StructuredLogger) Warn(msg string) {
-	l.Logger.Sloww(msg, l.toLogFields()...)
+	fields := l.toLogFields()
+	fields = append(fields, logx.Field("level", "warn"))
+	l.Logger.Infow(msg, fields...)
 }
 
 // Warnf 格式化警告日志
+// 修复 C-13：原使用 Errorf 以 ERROR 级别落盘，现改用 Infof + [WARN] 前缀
 func (l *StructuredLogger) Warnf(format string, args ...interface{}) {
-	l.Logger.Slowf(format, args...)
+	l.Logger.Infof("[WARN] "+format, args...)
 }
 
 // Debug 调试日志

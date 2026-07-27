@@ -13,6 +13,12 @@ const (
 	UserNotFound        = 10001
 	UserPasswordError   = 10002
 	UserDisabled        = 10003
+	UserTokenNotFound       = 10004
+	UserTokenExpired        = 10005
+	UserTokenDisabled       = 10006
+	UserTokenLimitExceeded = 10007
+	UserTokenScopeDenied   = 10008
+	UserTokenScopeInvalid  = 10009
 	TaskNotFound        = 10101
 	ProfileNotFound     = 10102
 	TaskStatusError     = 10103
@@ -33,6 +39,12 @@ var codeMsg = map[int]string{
 	UserNotFound:        "用户不存在",
 	UserPasswordError:   "用户名或密码错误",
 	UserDisabled:        "用户已禁用",
+	UserTokenNotFound:       "Token不存在",
+	UserTokenExpired:        "Token已过期",
+	UserTokenDisabled:       "Token已失效",
+	UserTokenLimitExceeded: "Token数量超过上限",
+	UserTokenScopeDenied:   "Token不允许调用此API分组",
+	UserTokenScopeInvalid:  "Token包含未知的API分组",
 	TaskNotFound:        "任务不存在",
 	ProfileNotFound:     "任务配置不存在",
 	TaskStatusError:     "任务状态不允许此操作",

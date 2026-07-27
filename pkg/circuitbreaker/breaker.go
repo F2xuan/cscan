@@ -2,6 +2,7 @@ package circuitbreaker
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -84,13 +85,19 @@ func NewWithName(name string, cfg Config) *CircuitBreaker {
 }
 
 // Execute 执行操作
-func (cb *CircuitBreaker) Execute(fn func() error) error {
+func (cb *CircuitBreaker) Execute(fn func() error) (err error) {
 	if err := cb.beforeExecute(); err != nil {
 		return err
 	}
 
-	err := fn()
-	cb.afterExecute(err)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("circuit breaker execute panic: %v", r)
+		}
+		cb.afterExecute(err)
+	}()
+
+	err = fn()
 	return err
 }
 
@@ -185,7 +192,12 @@ func (cb *CircuitBreaker) transitionTo(newState State) {
 	cb.halfOpenReqs = 0
 
 	if cb.OnStateChange != nil {
-		go cb.OnStateChange(oldState, newState)
+		go func() {
+			defer func() {
+				_ = recover()
+			}()
+			cb.OnStateChange(oldState, newState)
+		}()
 	}
 }
 

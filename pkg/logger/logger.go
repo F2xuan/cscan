@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,9 +37,12 @@ type Logger interface {
 }
 
 // SimpleLogger 简单日志实现
+// 修复 C-36：原 level 字段在 log() 中无锁读取，而 SetLevel() 在锁内写入，存在数据竞争。
+// 现将 level 改为 atomic.Int32，log() 通过原子读判断是否需要输出（热路径无需加锁）。
+// output 和 fields 仍由 mu 保护（冷路径，仅在 SetOutput/WithPrefix/WithField 时访问）。
 type SimpleLogger struct {
 	prefix string
-	level  Level
+	level  atomic.Int32
 	output io.Writer
 	fields map[string]interface{}
 	mu     sync.Mutex
@@ -46,57 +50,72 @@ type SimpleLogger struct {
 
 // NewLogger 创建日志器
 func NewLogger(prefix string) *SimpleLogger {
-	return &SimpleLogger{
+	l := &SimpleLogger{
 		prefix: prefix,
-		level:  LevelInfo,
 		output: os.Stdout,
 		fields: make(map[string]interface{}),
 	}
+	l.level.Store(int32(LevelInfo))
+	return l
 }
 
 // SetLevel 设置日志级别
 func (l *SimpleLogger) SetLevel(level Level) *SimpleLogger {
-	l.level = level
+	l.level.Store(int32(level))
 	return l
 }
 
 // SetOutput 设置输出
 func (l *SimpleLogger) SetOutput(w io.Writer) *SimpleLogger {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.output = w
 	return l
 }
 
 // WithPrefix 创建带前缀的子日志器
 func (l *SimpleLogger) WithPrefix(prefix string) Logger {
+	l.mu.Lock()
+	output := l.output
+	fieldsCopy := make(map[string]interface{}, len(l.fields))
+	for k, v := range l.fields {
+		fieldsCopy[k] = v
+	}
+	l.mu.Unlock()
+
 	newLogger := &SimpleLogger{
 		prefix: l.prefix + "/" + prefix,
-		level:  l.level,
-		output: l.output,
-		fields: make(map[string]interface{}),
+		output: output,
+		fields: fieldsCopy,
 	}
-	for k, v := range l.fields {
-		newLogger.fields[k] = v
-	}
+	newLogger.level.Store(l.level.Load())
 	return newLogger
 }
 
 // WithField 创建带字段的子日志器
 func (l *SimpleLogger) WithField(key string, value interface{}) Logger {
+	l.mu.Lock()
+	output := l.output
+	fieldsCopy := make(map[string]interface{}, len(l.fields)+1)
+	for k, v := range l.fields {
+		fieldsCopy[k] = v
+	}
+	l.mu.Unlock()
+
+	fieldsCopy[key] = value
+
 	newLogger := &SimpleLogger{
 		prefix: l.prefix,
-		level:  l.level,
-		output: l.output,
-		fields: make(map[string]interface{}),
+		output: output,
+		fields: fieldsCopy,
 	}
-	for k, v := range l.fields {
-		newLogger.fields[k] = v
-	}
-	newLogger.fields[key] = value
+	newLogger.level.Store(l.level.Load())
 	return newLogger
 }
 
 func (l *SimpleLogger) log(level Level, format string, args ...interface{}) {
-	if level < l.level {
+	// 修复 C-36：原子读 level，避免与 SetLevel 的数据竞争
+	if level < Level(l.level.Load()) {
 		return
 	}
 

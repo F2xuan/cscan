@@ -99,7 +99,13 @@ func ExtractBetween(s, start, end string) string {
 }
 
 // ExtractAllBetween 提取所有两个标记之间的内容
+// 修复 C-14：当 start 或 end 为空字符串时，strings.Index 返回 0，
+// remaining 永不前进导致死循环。现增加空标记检查和进度保护。
 func ExtractAllBetween(s, start, end string) []string {
+	// 空 start/end 会导致 strings.Index 恒返回 0，remaining 不前进，死循环
+	if start == "" || end == "" {
+		return nil
+	}
 	var results []string
 	remaining := s
 
@@ -116,7 +122,13 @@ func ExtractAllBetween(s, start, end string) []string {
 		}
 
 		results = append(results, remaining[startIdx:startIdx+endIdx])
-		remaining = remaining[startIdx+endIdx+len(end):]
+
+		nextStart := startIdx + endIdx + len(end)
+		// 进度保护：若未前进则跳出，避免异常输入导致死循环
+		if nextStart >= len(remaining) {
+			break
+		}
+		remaining = remaining[nextStart:]
 	}
 
 	return results

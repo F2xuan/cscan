@@ -3,6 +3,7 @@ package geolocation
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lionsoul2014/ip2region/binding/golang/service"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -52,17 +53,27 @@ func NewIp2RegionProvider(v4Path, v6Path string) (*Ip2RegionProvider, error) {
 }
 
 // Search 查询 IP 地址的地理位置
+// 修复 C-16：原未检查 p.ip2region 是否为 nil（Close 后或零值结构体），
+// 直接调用 p.ip2region.Search 会 panic。现增加 nil 检查。
 func (p *Ip2RegionProvider) Search(ip string) (string, error) {
 	if ip == "" {
 		return "", ErrInvalidIPAddress
 	}
 
-	region, err := p.ip2region.Search(ip)
+	p.mu.RLock()
+	region := p.ip2region
+	p.mu.RUnlock()
+	// 修复 C-18：Close 后 ip2region 被置 nil，此处必须检查
+	if region == nil {
+		return "", ErrServiceNotInitialized
+	}
+
+	result, err := region.Search(ip)
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
 	}
 
-	return region, nil
+	return result, nil
 }
 
 // SearchWithDetail 查询并返回详细地理位置信息
@@ -81,12 +92,15 @@ func (p *Ip2RegionProvider) SearchWithDetail(ip string) (*Location, error) {
 }
 
 // Close 关闭服务
+// 修复 C-18：原 Close 后未将 ip2region 置 nil，导致 IsEnabled 仍返回 true，
+// 后续 Search 使用已关闭的资源。现将 ip2region 置 nil。
 func (p *Ip2RegionProvider) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if p.ip2region != nil {
 		p.ip2region.Close()
+		p.ip2region = nil
 	}
 	return nil
 }
@@ -132,6 +146,9 @@ func NewBatchSearch(provider Provider) *BatchSearch {
 }
 
 // SearchBatch 批量查询 IP 地址的地理位置
+// 修复 C-17：原实现查询失败时仅 Slow 日志并跳过，返回的 map 缺少失败项，
+// 调用方无法区分"查询成功但无结果"与"查询失败"，导致误报成功。
+// 现统计失败数，全部失败时记录 Error 日志，部分失败记录 Warn 日志。
 func (b *BatchSearch) SearchBatch(ips []string) map[string]string {
 	results := make(map[string]string)
 	if len(ips) == 0 {
@@ -140,6 +157,7 @@ func (b *BatchSearch) SearchBatch(ips []string) map[string]string {
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var failedCount int32
 
 	// 限制并发数
 	concurrency := 50
@@ -155,7 +173,9 @@ func (b *BatchSearch) SearchBatch(ips []string) map[string]string {
 
 			region, err := b.provider.Search(ip)
 			if err != nil {
-				logx.Slowf("search IP %s failed: %v", ip, err)
+				// 修复 C-17：用 Error 级别记录查询失败，避免被误认为成功
+				logx.Errorf("[GeoLocation] search IP %s failed: %v", ip, err)
+				atomic.AddInt32(&failedCount, 1)
 				return
 			}
 
@@ -166,10 +186,20 @@ func (b *BatchSearch) SearchBatch(ips []string) map[string]string {
 	}
 
 	wg.Wait()
+
+	failed := int(atomic.LoadInt32(&failedCount))
+	if failed > 0 {
+		if failed == len(ips) {
+			logx.Errorf("[GeoLocation] SearchBatch: all %d IP lookups failed", failed)
+		} else {
+			logx.Infof("[GeoLocation] SearchBatch: %d/%d IP lookups failed", failed, len(ips))
+		}
+	}
 	return results
 }
 
 // SearchBatchWithDetail 批量查询详细地理位置
+// 修复 C-17：同 SearchBatch，统计失败并记录日志
 func (b *BatchSearch) SearchBatchWithDetail(ips []string) map[string]*Location {
 	results := make(map[string]*Location)
 	if len(ips) == 0 {
@@ -178,6 +208,7 @@ func (b *BatchSearch) SearchBatchWithDetail(ips []string) map[string]*Location {
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var failedCount int32
 
 	concurrency := 50
 	sem := make(chan struct{}, concurrency)
@@ -192,7 +223,8 @@ func (b *BatchSearch) SearchBatchWithDetail(ips []string) map[string]*Location {
 
 			loc, err := b.provider.SearchWithDetail(ip)
 			if err != nil {
-				logx.Slowf("search IP %s failed: %v", ip, err)
+				logx.Errorf("[GeoLocation] search IP %s failed: %v", ip, err)
+				atomic.AddInt32(&failedCount, 1)
 				return
 			}
 
@@ -203,5 +235,14 @@ func (b *BatchSearch) SearchBatchWithDetail(ips []string) map[string]*Location {
 	}
 
 	wg.Wait()
+
+	failed := int(atomic.LoadInt32(&failedCount))
+	if failed > 0 {
+		if failed == len(ips) {
+			logx.Errorf("[GeoLocation] SearchBatchWithDetail: all %d IP lookups failed", failed)
+		} else {
+			logx.Infof("[GeoLocation] SearchBatchWithDetail: %d/%d IP lookups failed", failed, len(ips))
+		}
+	}
 	return results
 }

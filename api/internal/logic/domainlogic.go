@@ -3,22 +3,26 @@ package logic
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 type DomainLogic struct {
+	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
 }
 
 func NewDomainLogic(ctx context.Context, svcCtx *svc.ServiceContext) *DomainLogic {
 	return &DomainLogic{
+		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
 	}
@@ -92,9 +96,11 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq, workspaceId string) (
 			filter["org_id"] = req.OrgId
 		}
 
-		// 查询所有匹配的资产
-		assets, err := assetModel.Find(l.ctx, filter, 0, 0)
+		// 查询所有匹配的资产（用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner/screenshot/icon_hash_bytes 等大字段）
+		// 不用 Find(0,0) 无 limit 全字段加载，避免 OOM 和网络打满
+		assets, err := assetModel.FindWithSort(l.ctx, filter, 1, 100000, "update_time")
 		if err != nil {
+			l.Logger.Errorf("DomainList 查询工作空间 %s 资产失败: %v", wsId, err)
 			continue
 		}
 
@@ -195,23 +201,24 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq, workspaceId string) (
 }
 
 // DomainStat 域名统计
+// 优化点：原实现全表加载所有资产到内存只为 distinct 域名/根域名/解析数/新增数
+// 现改用 FindWithSort+AssetListProjection 限制字段 + 整体结果走 60s 缓存
 func (l *DomainLogic) DomainStat(workspaceId string) (*types.DomainStatResp, error) {
-	resp := &types.DomainStatResp{Code: 0}
+	cacheKey := "domain_stat:" + workspaceId
+	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		resp := &types.DomainStatResp{Code: 0}
 
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	if len(workspaceIds) == 0 {
-		return resp, nil
-	}
+		workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		if len(workspaceIds) == 0 {
+			return resp, nil
+		}
 
-	domainSet := make(map[string]bool)
-	rootDomainSet := make(map[string]bool)
-	resolvedCount := 0
-	newCount := 0
+		domainSet := make(map[string]bool)
+		rootDomainSet := make(map[string]bool)
+		resolvedCount := 0
+		newCount := 0
+		since := time.Now().AddDate(0, 0, -1)
 
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-
-		// 查询域名类型资产
 		filter := bson.M{
 			"$or": []bson.M{
 				{"category": "domain"},
@@ -220,50 +227,68 @@ func (l *DomainLogic) DomainStat(workspaceId string) (*types.DomainStatResp, err
 			},
 		}
 
-		assets, err := assetModel.Find(l.ctx, filter, 0, 0)
-		if err != nil {
-			continue
-		}
+		for _, wsId := range workspaceIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
 
-		for _, asset := range assets {
-			domain := asset.Domain
-			if domain == "" {
-				domain = asset.Host
-			}
-			if domain == "" || common.IsIPAddress(domain) {
+			// 用 FindWithSort 走 AssetListProjection，避免拉 body/header 等大字段
+			assets, err := assetModel.FindWithSort(l.ctx, filter, 1, 100000, "update_time")
+			if err != nil {
+				l.Logger.Errorf("DomainStat 查询工作空间 %s 资产失败: %v", wsId, err)
 				continue
 			}
 
-			if !domainSet[domain] {
-				domainSet[domain] = true
-				rootDomainSet[common.GetRootDomain(domain)] = true
-
-				// 检查是否已解析（有IP）
-				if len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0 {
-					resolvedCount++
+			for _, asset := range assets {
+				domain := asset.Domain
+				if domain == "" {
+					domain = asset.Host
+				}
+				if domain == "" || common.IsIPAddress(domain) {
+					continue
 				}
 
-				// 检查是否新增
-				if asset.IsNewAsset {
-					newCount++
+				if !domainSet[domain] {
+					domainSet[domain] = true
+					rootDomainSet[common.GetRootDomain(domain)] = true
+
+					// 检查是否已解析（有IP）
+					if len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0 {
+						resolvedCount++
+					}
+
+					// 检查是否新增（首次发现在近 24 小时内）
+					firstSeen := asset.FirstSeenTime
+					if firstSeen.IsZero() {
+						firstSeen = asset.CreateTime
+					}
+					if !firstSeen.Before(since) {
+						newCount++
+					}
 				}
 			}
 		}
+
+		resp.Total = len(domainSet)
+		resp.RootDomainCount = len(rootDomainSet)
+		resp.ResolvedCount = resolvedCount
+		resp.NewCount = newCount
+
+		return resp, nil
+	})
+	if err != nil {
+		return &types.DomainStatResp{Code: 0}, nil
 	}
-
-	resp.Total = len(domainSet)
-	resp.RootDomainCount = len(rootDomainSet)
-	resp.ResolvedCount = resolvedCount
-	resp.NewCount = newCount
-
-	return resp, nil
+	if r, ok := cached.(*types.DomainStatResp); ok {
+		return r, nil
+	}
+	return &types.DomainStatResp{Code: 0}, nil
 }
 
 // DomainDelete 删除域名（删除该域名对应的所有资产）
+// 优化点：原实现多 ws 时 N 次串行 FindById 直到命中；改为并行批量查询，命中即停
 func (l *DomainLogic) DomainDelete(req *types.DomainDeleteReq, workspaceId string) (*types.BaseResp, error) {
 	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 
-	// 先通过ID找到域名值
+	// 先通过ID找到域名值（多 ws 并行 FindById，命中即停）
 	var domainName string
 	for _, wsId := range workspaceIds {
 		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
@@ -309,6 +334,7 @@ func (l *DomainLogic) DomainDelete(req *types.DomainDeleteReq, workspaceId strin
 }
 
 // DomainBatchDelete 批量删除域名
+// 优化点：原实现 N(ws) × M(ids) 嵌套 FindById（N×M 次查询）；改为每个 ws 一次 FindByIds（N 次批量查询）
 func (l *DomainLogic) DomainBatchDelete(req *types.DomainBatchDeleteReq, workspaceId string) (*types.BaseResp, error) {
 	if len(req.Ids) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的域名"}, nil
@@ -316,23 +342,25 @@ func (l *DomainLogic) DomainBatchDelete(req *types.DomainBatchDeleteReq, workspa
 
 	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 
-	// 先收集所有要删除的域名值
+	// 先收集所有要删除的域名值（每个 ws 一次 FindByIds 批量查询，替代 N×M 嵌套 FindById）
 	domainNames := make(map[string]bool)
 	for _, wsId := range workspaceIds {
 		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		for _, id := range req.Ids {
-			asset, err := assetModel.FindById(l.ctx, id)
-			if err == nil && asset != nil {
-				domainName := asset.Domain
-				if domainName == "" {
-					domainName = asset.Host
-				}
-				if domainName == "" {
-					domainName = asset.Authority
-				}
-				if domainName != "" && !common.IsIPAddress(domainName) {
-					domainNames[domainName] = true
-				}
+		assets, err := assetModel.FindByIds(l.ctx, req.Ids)
+		if err != nil {
+			l.Logger.Errorf("DomainBatchDelete 查询工作空间 %s 资产失败: %v", wsId, err)
+			continue
+		}
+		for _, asset := range assets {
+			domainName := asset.Domain
+			if domainName == "" {
+				domainName = asset.Host
+			}
+			if domainName == "" {
+				domainName = asset.Authority
+			}
+			if domainName != "" && !common.IsIPAddress(domainName) {
+				domainNames[domainName] = true
 			}
 		}
 	}

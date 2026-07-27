@@ -3,7 +3,9 @@ package logic
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -30,9 +33,15 @@ func NewWorkerInstallLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Wor
 }
 
 // generateInstallKey 生成安装密钥
+// 修复 C-22：原忽略 rand.Read 错误，若 crypto/rand 故障 bytes 为全零，
+// 将生成可预测的 "0000000000000000"。现检查错误，失败时 panic（启动期安全）。
 func generateInstallKey() string {
 	bytes := make([]byte, 16)
-	rand.Read(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		// crypto/rand 故障属于严重系统问题，安全敏感场景应快速失败
+		logx.Errorf("[WorkerInstall] crypto/rand failed: %v", err)
+		panic(fmt.Sprintf("crypto/rand failed during install key generation: %v", err))
+	}
 	return hex.EncodeToString(bytes)[:16]
 }
 
@@ -155,13 +164,34 @@ func (l *WorkerInstallLogic) RefreshInstallKey() (*types.WorkerRefreshKeyResp, e
 }
 
 // ValidateInstallKey 验证安装密钥
+// 修复 C-21：原使用 != 普通字符串比较，存在时序攻击风险，改用 subtle.ConstantTimeCompare
+// 修复 C-19 同类问题：区分 redis.Nil（未配置→401）与其他 Redis 错误（→503）
 func (l *WorkerInstallLogic) ValidateInstallKey(req *types.WorkerValidateKeyReq) (*types.WorkerValidateKeyResp, error) {
 	rdb := l.svcCtx.RedisClient
 
-	// 获取当前安装密钥
+	// 获取当前安装密钥（带超时，避免 Redis 故障时挂起）
 	installKeyKey := "cscan:worker:install_key"
-	storedKey, err := rdb.Get(l.ctx, installKeyKey).Result()
-	if err != nil || storedKey == "" {
+	keyCtx, cancel := context.WithTimeout(l.ctx, 3*time.Second)
+	storedKey, err := rdb.Get(keyCtx, installKeyKey).Result()
+	cancel()
+
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return &types.WorkerValidateKeyResp{
+				Code:  401,
+				Msg:   "安装密钥未配置",
+				Valid: false,
+			}, nil
+		}
+		// Redis 基础设施故障：返回 503，避免 Worker 误认为密钥无效
+		logx.Errorf("[WorkerInstall] Redis unavailable during key validation: %v", err)
+		return &types.WorkerValidateKeyResp{
+			Code:  503,
+			Msg:   "认证服务暂时不可用",
+			Valid: false,
+		}, nil
+	}
+	if storedKey == "" {
 		return &types.WorkerValidateKeyResp{
 			Code:  401,
 			Msg:   "安装密钥未配置",
@@ -169,8 +199,8 @@ func (l *WorkerInstallLogic) ValidateInstallKey(req *types.WorkerValidateKeyReq)
 		}, nil
 	}
 
-	// 验证密钥
-	if req.InstallKey != storedKey {
+	// 修复 C-21：使用常量时间比较，防止时序攻击
+	if subtle.ConstantTimeCompare([]byte(req.InstallKey), []byte(storedKey)) != 1 {
 		l.Logger.Errorf("[WorkerInstall] Invalid install key attempt: %s", req.InstallKey)
 		return &types.WorkerValidateKeyResp{
 			Code:  401,

@@ -35,7 +35,7 @@ func (l *ScanTemplateExportLogic) ScanTemplateExport(req *types.ScanTemplateExpo
 		// 导出指定模板
 		for _, id := range req.Ids {
 			t, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, id)
-			if err == nil {
+			if err == nil && t != nil {
 				templates = append(templates, *t)
 			}
 		}
@@ -175,6 +175,10 @@ func NewScanTemplateUseLogic(ctx context.Context, svcCtx *svc.ServiceContext) *S
 func (l *ScanTemplateUseLogic) ScanTemplateUse(req *types.ScanTemplateUseReq) (*types.ScanTemplateDetailResp, error) {
 	template, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		l.Logger.Errorf("ScanTemplateUse: find template failed, id=%s, error=%v", req.Id, err)
+		return &types.ScanTemplateDetailResp{Code: 500, Msg: "查询模板失败"}, nil
+	}
+	if template == nil {
 		return &types.ScanTemplateDetailResp{Code: 400, Msg: "模板不存在"}, nil
 	}
 

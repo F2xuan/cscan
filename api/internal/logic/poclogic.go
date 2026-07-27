@@ -634,6 +634,10 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 		// Nuclei默认模板
 		template, err := l.svcCtx.NucleiTemplateModel.FindByTemplateId(l.ctx, req.Id)
 		if err != nil {
+			l.Logger.Errorf("PocValidate: find nuclei template failed, id=%s, error=%v", req.Id, err)
+			return &types.PocValidateResp{Code: 500, Msg: "查询Nuclei模板失败"}, nil
+		}
+		if template == nil {
 			return &types.PocValidateResp{Code: 404, Msg: "Nuclei模板不存在"}, nil
 		}
 		pocSeverity = template.Severity
@@ -641,6 +645,10 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 		// 自定义POC
 		poc, err := l.svcCtx.CustomPocModel.FindById(l.ctx, req.Id)
 		if err != nil {
+			l.Logger.Errorf("PocValidate: find custom poc failed, id=%s, error=%v", req.Id, err)
+			return &types.PocValidateResp{Code: 500, Msg: "查询POC失败"}, nil
+		}
+		if poc == nil {
 			return &types.PocValidateResp{Code: 404, Msg: "POC不存在"}, nil
 		}
 		pocSeverity = poc.Severity
@@ -902,6 +910,10 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 	// 获取POC
 	poc, err := l.svcCtx.CustomPocModel.FindById(l.ctx, req.PocId)
 	if err != nil {
+		l.Logger.Errorf("CustomPocScanAssets: find poc failed, pocId=%s, error=%v", req.PocId, err)
+		return &types.CustomPocScanAssetsResp{Code: 500, Msg: "查询POC失败"}, nil
+	}
+	if poc == nil {
 		return &types.CustomPocScanAssetsResp{Code: 404, Msg: "POC不存在"}, nil
 	}
 

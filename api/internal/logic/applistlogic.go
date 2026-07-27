@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/middleware"
@@ -64,13 +65,24 @@ func (l *AppListLogic) AppList(req *types.AppListReq) (*types.AppListResp, error
 	}
 
 	pageItems := filtered[start:end]
+	if len(pageItems) == 0 {
+		return &types.AppListResp{Code: 0, Msg: "success", Total: total, List: []types.AppItem{}}, nil
+	}
+
+	// 仅对当前页的 app 用 $in 批量查询资产（N+1 → 1 次批量查询）
+	// 每个 app 取最多 20 条资产，用于展示 host 列表/createTime/updateTime/orgName
+	pageApps := make([]string, 0, len(pageItems))
+	for _, s := range pageItems {
+		pageApps = append(pageApps, s.Field)
+	}
+	assetsByApp, err := l.findAppAssetsBatch(workspaceId, pageApps)
+	if err != nil {
+		return nil, err
+	}
+
 	list := make([]types.AppItem, 0, len(pageItems))
 	for _, stat := range pageItems {
-		assets, err := l.findAppAssets(workspaceId, stat.Field)
-		if err != nil {
-			return nil, err
-		}
-
+		assets := assetsByApp[stat.Field]
 		assetNames := make([]string, 0, len(assets))
 		var createTime, updateTime string
 		orgName := ""
@@ -117,50 +129,90 @@ func (l *AppListLogic) AppStat() (*types.AppStatResp, error) {
 }
 
 func (l *AppListLogic) aggregateAppStats(workspaceId string) ([]model.StatResult, error) {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	merged := make(map[string]int)
-	for _, wsId := range wsIds {
-		stats, err := l.svcCtx.GetAssetModel(wsId).AggregateApp(l.ctx, 1000)
-		if err != nil {
-			return nil, err
+	// 聚合结果走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
+	cacheKey := "app_stats:" + workspaceId
+	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		merged := make(map[string]int)
+		for _, wsId := range wsIds {
+			stats, err := l.svcCtx.GetAssetModel(wsId).AggregateApp(l.ctx, 1000)
+			if err != nil {
+				return nil, err
+			}
+			for _, stat := range stats {
+				merged[stat.Field] += stat.Count
+			}
 		}
-		for _, stat := range stats {
-			merged[stat.Field] += stat.Count
-		}
-	}
 
-	results := make([]model.StatResult, 0, len(merged))
-	for field, count := range merged {
-		results = append(results, model.StatResult{Field: field, Count: count})
-	}
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Count == results[j].Count {
-			return results[i].Field < results[j].Field
+		results := make([]model.StatResult, 0, len(merged))
+		for field, count := range merged {
+			results = append(results, model.StatResult{Field: field, Count: count})
 		}
-		return results[i].Count > results[j].Count
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].Count == results[j].Count {
+				return results[i].Field < results[j].Field
+			}
+			return results[i].Count > results[j].Count
+		})
+		return results, nil
 	})
-	return results, nil
+	if err != nil {
+		return nil, err
+	}
+	if results, ok := cached.([]model.StatResult); ok {
+		return results, nil
+	}
+	return nil, nil
 }
 
-func (l *AppListLogic) findAppAssets(workspaceId, app string) ([]model.Asset, error) {
+// findAppAssetsBatch 批量查询多个 app 对应的资产（替代 N+1 的 findAppAssets）
+// 一次 $in 查询所有 app，再按 app 分组，每个 app 最多保留 20 条最新资产
+// 优化点：用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner 等大字段
+func (l *AppListLogic) findAppAssetsBatch(workspaceId string, apps []string) (map[string][]model.Asset, error) {
+	if len(apps) == 0 {
+		return make(map[string][]model.Asset), nil
+	}
 	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	allAssets := make([]model.Asset, 0)
+	result := make(map[string][]model.Asset, len(apps))
+
+	// 每个 ws 一次 $in 查询；app 是数组字段，$in 会匹配数组中包含任一值的文档
+	limit := int64(len(apps) * 20)
+	filter := bson.M{"app": bson.M{"$in": apps}}
+
 	for _, wsId := range wsIds {
-		assets, err := l.svcCtx.GetAssetModel(wsId).FindFull(l.ctx, bson.M{
-			"app": bson.M{"$in": []string{app}},
-		}, 1, 20)
+		assets, err := l.svcCtx.GetAssetModel(wsId).FindWithSort(l.ctx, filter, 1, int(limit), "update_time")
 		if err != nil {
 			return nil, err
 		}
-		allAssets = append(allAssets, assets...)
+		for _, asset := range assets {
+			for _, app := range asset.App {
+				if containsString(apps, app) {
+					result[app] = append(result[app], asset)
+				}
+			}
+		}
 	}
-	sort.Slice(allAssets, func(i, j int) bool {
-		return allAssets[i].UpdateTime.After(allAssets[j].UpdateTime)
-	})
-	if len(allAssets) > 20 {
-		allAssets = allAssets[:20]
+
+	// 每个 app 最多保留 20 条，并按 updateTime 降序
+	for app, assets := range result {
+		sort.Slice(assets, func(i, j int) bool {
+			return assets[i].UpdateTime.After(assets[j].UpdateTime)
+		})
+		if len(assets) > 20 {
+			assets = assets[:20]
+		}
+		result[app] = assets
 	}
-	return allAssets, nil
+	return result, nil
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *AppListLogic) countNewAppAssets(workspaceId string) (int64, error) {

@@ -68,6 +68,33 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 	if req.Port > 0 {
 		filter["port"] = req.Port
 	}
+	// Phase 5: 敏感信息/敏感目录页面通过下列 3 个字段做服务端固定过滤。
+	if req.IsRisk != nil {
+		filter["is_risk"] = *req.IsRisk
+	}
+	if req.RiskSource != "" {
+		filter["risk_source"] = req.RiskSource
+	}
+	if len(req.KeywordAny) > 0 {
+		orClauses := make([]bson.M, 0, len(req.KeywordAny)*2)
+		for _, kw := range req.KeywordAny {
+			if kw == "" {
+				continue
+			}
+			escaped := regexp.QuoteMeta(kw)
+			orClauses = append(orClauses,
+				bson.M{"vul_name": bson.M{"$regex": escaped, "$options": "i"}},
+				bson.M{"tags": kw},
+			)
+		}
+		if len(orClauses) > 0 {
+			// 与已有 $or（通用 Query 模糊）冲突时后者优先，避免语义错乱：
+			// 已有 Query 时不再叠加 keyword $or，让调用方二选一。
+			if _, exists := filter["$or"]; !exists {
+				filter["$or"] = orClauses
+			}
+		}
+	}
 
 	var total int64
 	var vuls []model.Vul
@@ -77,14 +104,30 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 
 	// 如果查询多个工作空间
 	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 收集所有工作空间的数据
+		// 优化点：原实现 Find(filter, 0, 0) 把每个 ws 全部漏洞加载到内存，多 ws 时易 OOM
+		// 现改为只拉取覆盖到当前页末尾的数据量（needTotal = page * pageSize），
+		// 全局合并 + 排序 + 分页，既保证跨 ws 分页正确性又控制内存
+		needTotal := req.Page * req.PageSize
+		// 安全上限：避免用户翻到极深页时拉取过多数据
+		if needTotal > 50000 {
+			needTotal = 50000
+		}
+
 		var allVuls []model.Vul
 		for _, wsId := range wsIds {
 			vulModel := l.svcCtx.GetVulModel(wsId)
 			wsTotal, _ := vulModel.Count(l.ctx, filter)
 			total += wsTotal
 
-			wsVuls, _ := vulModel.Find(l.ctx, filter, 0, 0)
+			if wsTotal == 0 {
+				continue
+			}
+			// 每个 ws 最多拉 needTotal 条（覆盖到当前页末尾），wsTotal 不足时按实际数拉
+			limit := needTotal
+			if wsTotal < int64(limit) {
+				limit = int(wsTotal)
+			}
+			wsVuls, _ := vulModel.Find(l.ctx, filter, 1, limit)
 			allVuls = append(allVuls, wsVuls...)
 		}
 
@@ -269,40 +312,51 @@ func NewVulStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulStatLo
 }
 
 func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err error) {
-	var total, critical, high, medium, low, info, week, month int64
-	now := time.Now()
+	// 聚合统计走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
+	cacheKey := "vul_stat:" + workspaceId
+	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		var total, critical, high, medium, low, info, week, month int64
+		now := time.Now()
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		// 获取需要查询的工作空间列表
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 
-	for _, wsId := range wsIds {
-		vulModel := l.svcCtx.GetVulModel(wsId)
-		stats, statErr := vulModel.AggregateStats(l.ctx, now)
-		if statErr != nil {
-			continue
+		for _, wsId := range wsIds {
+			vulModel := l.svcCtx.GetVulModel(wsId)
+			stats, statErr := vulModel.AggregateStats(l.ctx, now)
+			if statErr != nil {
+				continue
+			}
+			total += stats.Total
+			critical += stats.Critical
+			high += stats.High
+			medium += stats.Medium
+			low += stats.Low
+			info += stats.Info
+			week += stats.Week
+			month += stats.Month
 		}
-		total += stats.Total
-		critical += stats.Critical
-		high += stats.High
-		medium += stats.Medium
-		low += stats.Low
-		info += stats.Info
-		week += stats.Week
-		month += stats.Month
-	}
 
-	return &types.VulStatResp{
-		Code:     0,
-		Msg:      "success",
-		Total:    int(total),
-		Critical: int(critical),
-		High:     int(high),
-		Medium:   int(medium),
-		Low:      int(low),
-		Info:     int(info),
-		Week:     int(week),
-		Month:    int(month),
-	}, nil
+		return &types.VulStatResp{
+			Code:     0,
+			Msg:      "success",
+			Total:    int(total),
+			Critical: int(critical),
+			High:     int(high),
+			Medium:   int(medium),
+			Low:      int(low),
+			Info:     int(info),
+			Week:     int(week),
+			Month:    int(month),
+		}, nil
+	})
+	if cacheErr != nil {
+		return &types.VulStatResp{Code: 0, Msg: "success"}, nil
+	}
+	if r, ok := cached.(*types.VulStatResp); ok {
+		return r, nil
+	}
+	return &types.VulStatResp{Code: 0, Msg: "success"}, nil
 }
 
 // VulDetailLogic 漏洞详情逻辑

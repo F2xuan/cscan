@@ -239,6 +239,10 @@ func (l *FingerprintDeleteLogic) FingerprintDelete(req *types.FingerprintDeleteR
 	// 检查是否为内置指纹
 	fp, err := l.svcCtx.FingerprintModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		logx.Errorf("FingerprintDelete: find fingerprint failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询指纹失败"}, nil
+	}
+	if fp == nil {
 		return &types.BaseResp{Code: 404, Msg: "指纹不存在"}, nil
 	}
 	if fp.IsBuiltin {
@@ -1055,6 +1059,10 @@ func (l *FingerprintValidateLogic) FingerprintValidate(req *types.FingerprintVal
 	// 从数据库获取指纹
 	fp, err := l.svcCtx.FingerprintModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		l.Logger.Errorf("FingerprintValidate: find fingerprint failed, id=%s, error=%v", req.Id, err)
+		return &types.FingerprintValidateResp{Code: 500, Msg: "查询指纹失败"}, nil
+	}
+	if fp == nil {
 		return &types.FingerprintValidateResp{Code: 404, Msg: "指纹不存在"}, nil
 	}
 
@@ -2052,7 +2060,11 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 	// 获取指纹
 	fp, err := l.svcCtx.FingerprintModel.FindById(l.ctx, req.FingerprintId)
 	if err != nil {
-		l.Logger.Errorf("FingerprintMatchAssets: fingerprint not found, id=%s, err=%v", req.FingerprintId, err)
+		l.Logger.Errorf("FingerprintMatchAssets: find fingerprint failed, id=%s, err=%v", req.FingerprintId, err)
+		return &types.FingerprintMatchAssetsResp{Code: 500, Msg: "查询指纹失败"}, nil
+	}
+	if fp == nil {
+		l.Logger.Errorf("FingerprintMatchAssets: fingerprint not found, id=%s", req.FingerprintId)
 		return &types.FingerprintMatchAssetsResp{Code: 404, Msg: "指纹不存在"}, nil
 	}
 	l.Logger.Infof("FingerprintMatchAssets: fingerprint found, name=%s, rule=%s", fp.Name, fp.Rule)
@@ -2075,7 +2087,7 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 	var allAssets []model.Asset
 	for _, wsId := range wsIds {
 		assetModel := l.svcCtx.GetAssetModel(wsId)
-		assets, err := assetModel.FindFull(l.ctx, filter, 0, 0)
+		assets, err := assetModel.FindForFingerprint(l.ctx, filter, 0, 0)
 		if err != nil {
 			l.Logger.Errorf("FingerprintMatchAssets: query assets failed for workspace %s, err=%v", wsId, err)
 			continue
@@ -2086,6 +2098,13 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 
 	assets := allAssets
 	l.Logger.Infof("FingerprintMatchAssets: total assets found across all workspaces: %d, rule=%s", len(assets), fp.Rule)
+
+	// 安全告警：当待匹配资产数量过大时提示 OOM 风险
+	// FindFull 已通过 AssetFingerprintProjection 排除 screenshot/cert/banner，单文档内存占用大幅下降
+	// 但若资产规模超过 10 万仍建议按工作空间分批执行
+	if len(assets) > 100000 {
+		l.Logger.Errorf("FingerprintMatchAssets: WARNING 资产数量 %d 超过 10 万，存在 OOM 风险，建议按工作空间分批匹配", len(assets))
+	}
 
 	l.Logger.Infof("FingerprintMatchAssets: fingerprintId=%s, name=%s, totalAssets=%d, updateAsset=%v, rule=%s", req.FingerprintId, fp.Name, len(assets), req.UpdateAsset, fp.Rule)
 
@@ -2153,14 +2172,8 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 				}
 				// 如果不存在，添加指纹
 				if !fpExists {
-					newApps := append(asset.App, fp.Name)
-
-					// 构建更新内容，同时标记资产为已更新
-					update := bson.M{
-						"app":                     newApps,
-						"update":                  true, // 标记为有更新
-						"last_status_change_time": time.Now(),
-					}
+					newApps := append([]string{}, asset.App...)
+					newApps = append(newApps, fp.Name)
 
 					// 找到该资产所属的工作空间
 					assetWorkspaceId := common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
@@ -2168,16 +2181,48 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 						// 如果是多工作空间查询，需要找到该资产实际所属的工作空间
 						for _, wsId := range wsIds {
 							testAssetModel := l.svcCtx.GetAssetModel(wsId)
-							_, err := testAssetModel.FindById(l.ctx, asset.Id.Hex())
-							if err == nil {
+							foundAsset, err := testAssetModel.FindById(l.ctx, asset.Id.Hex())
+							if err == nil && foundAsset != nil {
 								assetWorkspaceId = wsId
 								break
 							}
 						}
 					}
 					assetModel := l.svcCtx.GetAssetModel(assetWorkspaceId)
-					err := assetModel.Update(l.ctx, asset.Id.Hex(), update)
-					if err == nil {
+
+					// 通过 helper 构造更新文档：app 走 $addToSet，diff 触发 update_time 推进。
+					// 指纹匹配是管理员触发的"主动发现"，标记资产为已更新并推进
+					// last_status_change_time，但不变更 new / last_task_id（无跨任务语义）。
+					updatedAsset := &model.Asset{
+						Authority: asset.Authority,
+						Host:      asset.Host,
+						Port:      asset.Port,
+						IsHTTP:    asset.IsHTTP,
+						App:       newApps,
+						TaskId:    asset.TaskId,
+					}
+					existingForHelper := &model.Asset{
+						Id:       asset.Id,
+						TaskId:   asset.TaskId,
+						LastTaskId: asset.LastTaskId,
+						App:      asset.App,
+						Authority: asset.Authority,
+						Host:     asset.Host,
+						Port:     asset.Port,
+						IsHTTP:   asset.IsHTTP,
+					}
+					opts := model.AssetWriteOptions{
+						TaskId:          asset.TaskId,
+						IsDifferentTask: false,
+					}
+					update, _ := model.BuildAssetUpdateDoc(updatedAsset, existingForHelper, opts)
+					// 显式补齐指纹匹配特有语义：update=true / last_status_change_time
+					if setFields, ok := update["$set"].(bson.M); ok {
+						setFields["update"] = true
+						setFields["last_status_change_time"] = time.Now()
+					}
+
+					if err := assetModel.UpdateWithRaw(l.ctx, asset.Id.Hex(), update); err == nil {
 						updatedCount++
 					}
 				}
@@ -2636,31 +2681,31 @@ func (l *HttpServiceImportLogic) ParseAndImport(content string) (*types.HttpServ
 		}
 	}
 
-	// 保存服务映射（去重）
+	// 保存服务映射（去重）：循环外拉一次 mappings 全表，避免 N+1 查询
+	existingMappings, _ := l.svcCtx.HttpServiceModel.GetMappings(l.ctx)
+	existingSet := make(map[string]struct{}, len(existingMappings))
+	for _, e := range existingMappings {
+		existingSet[strings.ToLower(e.ServiceName)] = struct{}{}
+	}
 	for _, m := range serviceMappings {
-		// 检查是否已存在
-		existing, _ := l.svcCtx.HttpServiceModel.GetMappings(l.ctx)
-		exists := false
-		for _, e := range existing {
-			if strings.EqualFold(e.ServiceName, m.ServiceName) {
-				exists = true
-				skipped++
-				break
-			}
+		key := strings.ToLower(m.ServiceName)
+		if _, exists := existingSet[key]; exists {
+			skipped++
+			continue
 		}
-		if !exists {
-			doc := &model.HttpServiceMapping{
-				ServiceName: strings.ToLower(m.ServiceName),
-				IsHttp:      m.IsHttp,
-				Description: m.Description,
-				Enabled:     m.Enabled,
-			}
-			if err := l.svcCtx.HttpServiceModel.SaveMapping(l.ctx, doc); err != nil {
-				l.Logger.Errorf("保存服务映射失败: %v", err)
-				skipped++
-			} else {
-				imported++
-			}
+		// 标记为已存在，防止导入数据内部重复
+		existingSet[key] = struct{}{}
+		doc := &model.HttpServiceMapping{
+			ServiceName: key,
+			IsHttp:      m.IsHttp,
+			Description: m.Description,
+			Enabled:     m.Enabled,
+		}
+		if err := l.svcCtx.HttpServiceModel.SaveMapping(l.ctx, doc); err != nil {
+			l.Logger.Errorf("保存服务映射失败: %v", err)
+			skipped++
+		} else {
+			imported++
 		}
 	}
 

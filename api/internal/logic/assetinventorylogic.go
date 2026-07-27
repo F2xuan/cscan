@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -83,15 +84,6 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 	// IconHash 过滤
 	if req.IconHash != "" {
 		filter["icon_hash"] = req.IconHash
-	}
-
-	if req.RequireRecognitionOrShot {
-		appendAndFilter(bson.M{
-			"$or": []bson.M{
-				{"screenshot": bson.M{"$exists": true, "$ne": ""}},
-				{"app.0": bson.M{"$exists": true}},
-			},
-		})
 	}
 
 	// 技术栈过滤
@@ -192,81 +184,27 @@ func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq, works
 
 	// 获取需要查询的工作空间列表
 	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Infof("AssetInventory查询工作空间列表: %v", wsIds)
+	if len(wsIds) == 0 {
+		return &types.AssetInventoryResp{Code: 0, Msg: "success", Total: 0, List: []types.AssetInventoryItem{}}, nil
+	}
 
-	// 构建查询条件
+	// 统一通过 $unionWith + $facet 在服务端完成跨工作空间聚合、排序与分页
 	filter := l.buildInventoryFilter(req)
+	sortField := inventorySortField(req.SortBy)
+	skip := int64((req.Page - 1) * req.PageSize)
+	limit := int64(req.PageSize)
 
-	var total int64
-	var resultItems []types.AssetInventoryItem
+	// 以第一个 ws 集合作为主集合，其它通过 $unionWith 合入
+	assetModel := l.svcCtx.GetAssetModel(wsIds[0])
+	total, assets, err := assetModel.AggregateInventoryPaged(l.ctx, wsIds, filter, skip, limit, sortField)
+	if err != nil {
+		l.Logger.Errorf("[AssetInventory] AggregateInventoryPaged 失败: %v", err)
+		return &types.AssetInventoryResp{Code: 500, Msg: "查询失败"}, nil
+	}
 
-	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 多工作空间：需要获取足够数据以覆盖当前页
-		needTotal := req.Page * req.PageSize // 需要覆盖到当前页末尾的数据量
-		var allItems []types.AssetInventoryItem
-
-		for _, wsId := range wsIds {
-			assetModel := l.svcCtx.GetAssetModel(wsId)
-
-			wsTotal, err := assetModel.Count(l.ctx, filter)
-			if err != nil || wsTotal == 0 {
-				continue
-			}
-			total += wsTotal
-
-			limit := needTotal
-			if wsTotal < int64(limit) {
-				limit = int(wsTotal)
-			}
-
-			assets, err := assetModel.FindWithScreenshot(l.ctx, filter, 1, limit)
-			if err != nil {
-				l.Logger.Errorf("查询工作空间 %s 资产失败: %v", wsId, err)
-				continue
-			}
-
-			for _, asset := range assets {
-				allItems = append(allItems, convertAssetToInventoryItem(asset, wsId))
-			}
-		}
-
-		// 排序
-		sortAssets(allItems, req.SortBy)
-
-		// 分页
-		start := (req.Page - 1) * req.PageSize
-		end := start + req.PageSize
-		if start >= len(allItems) {
-			resultItems = []types.AssetInventoryItem{}
-		} else {
-			if end > len(allItems) {
-				end = len(allItems)
-			}
-			resultItems = allItems[start:end]
-		}
-	} else {
-		// 单工作空间：使用 MongoDB 原生分页，避免全量加载
-		wsId := wsIds[0]
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-
-		wsTotal, err := assetModel.Count(l.ctx, filter)
-		if err != nil {
-			return &types.AssetInventoryResp{Code: 500, Msg: "查询失败"}, nil
-		}
-		total = wsTotal
-
-		sortField := inventorySortField(req.SortBy)
-		skip := int64((req.Page - 1) * req.PageSize)
-		limit := int64(req.PageSize)
-		assets, err := assetModel.FindWithOffset(l.ctx, filter, skip, limit, sortField)
-		if err != nil {
-			return &types.AssetInventoryResp{Code: 500, Msg: "查询失败"}, nil
-		}
-
-		resultItems = make([]types.AssetInventoryItem, 0, len(assets))
-		for _, asset := range assets {
-			resultItems = append(resultItems, convertAssetToInventoryItem(asset, wsId))
-		}
+	resultItems := make([]types.AssetInventoryItem, 0, len(assets))
+	for _, item := range assets {
+		resultItems = append(resultItems, convertAssetToInventoryItem(item.Asset, item.WsId))
 	}
 
 	return &types.AssetInventoryResp{
@@ -295,46 +233,35 @@ func inventorySortField(sortBy string) string {
 }
 
 // sortAssets 对资产进行排序
+// 优化点：原 O(n²) 冒泡排序在数据量大时 CPU 飙升；改用 sort.Slice O(n log n)
 func sortAssets(assets []types.AssetInventoryItem, sortBy string) {
 	switch sortBy {
 	case "name", "name-asc":
 		// 按主机名升序
-		for i := 0; i < len(assets)-1; i++ {
-			for j := i + 1; j < len(assets); j++ {
-				if strings.ToLower(assets[i].Host) > strings.ToLower(assets[j].Host) {
-					assets[i], assets[j] = assets[j], assets[i]
-				}
-			}
-		}
+		sort.Slice(assets, func(i, j int) bool {
+			return strings.ToLower(assets[i].Host) < strings.ToLower(assets[j].Host)
+		})
 	case "name-desc":
 		// 按主机名降序
-		for i := 0; i < len(assets)-1; i++ {
-			for j := i + 1; j < len(assets); j++ {
-				if strings.ToLower(assets[i].Host) < strings.ToLower(assets[j].Host) {
-					assets[i], assets[j] = assets[j], assets[i]
-				}
-			}
-		}
+		sort.Slice(assets, func(i, j int) bool {
+			return strings.ToLower(assets[i].Host) > strings.ToLower(assets[j].Host)
+		})
 	case "port":
 		// 按端口升序
-		for i := 0; i < len(assets)-1; i++ {
-			for j := i + 1; j < len(assets); j++ {
-				if assets[i].Port > assets[j].Port {
-					assets[i], assets[j] = assets[j], assets[i]
-				}
-			}
-		}
+		sort.Slice(assets, func(i, j int) bool {
+			return assets[i].Port < assets[j].Port
+		})
 	case "time-asc":
 		// 按时间升序（最旧的在前）
-		for i := 0; i < len(assets)-1; i++ {
-			for j := i + 1; j < len(assets); j++ {
-				if assets[i].LastUpdatedFull > assets[j].LastUpdatedFull {
-					assets[i], assets[j] = assets[j], assets[i]
-				}
-			}
-		}
+		sort.Slice(assets, func(i, j int) bool {
+			return assets[i].LastUpdatedFull < assets[j].LastUpdatedFull
+		})
+	case "time", "time-desc", "":
+		// 按时间降序（最新在前）
+		sort.Slice(assets, func(i, j int) bool {
+			return assets[i].LastUpdatedFull > assets[j].LastUpdatedFull
+		})
 	}
-	// 默认 "time"/"time-desc"/空值：按时间降序（已经是最新的在前）
 }
 
 // formatTimeAgo 格式化相对时间

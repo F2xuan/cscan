@@ -2,29 +2,53 @@ package logic
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 type SiteLogic struct {
+	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
 }
 
 func NewSiteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SiteLogic {
 	return &SiteLogic{
+		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
 	}
+}
+
+// resolveAssetIP 解析资产的展示 IP 与归属地
+// host 字段对 Web 资产可能保存的是域名，真实 IP 存于 ip.ipv4/ip.ipv6；仅当 host 本身是 IP 字面量时才回退到 host
+func resolveAssetIP(ip model.IP, host string) (string, string) {
+	for _, v4 := range ip.IpV4 {
+		if v4.IPName != "" {
+			return v4.IPName, v4.Location
+		}
+	}
+	for _, v6 := range ip.IpV6 {
+		if v6.IPName != "" {
+			return v6.IPName, v6.Location
+		}
+	}
+	if common.IsIPAddress(host) {
+		return host, ""
+	}
+	return "", ""
 }
 
 // SiteList 站点列表 - 只返回Web资产（HTTP/HTTPS服务）
@@ -113,8 +137,8 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 		count, _ := assetModel.Count(l.ctx, filter)
 		totalCount += int(count)
 
-		// 查询数据
-		assets, err := assetModel.Find(l.ctx, filter, req.Page, req.PageSize)
+		// 查询数据（保留 icon_hash_bytes 用于展示 favicon）
+		assets, err := assetModel.FindForSite(l.ctx, filter, req.Page, req.PageSize)
 		if err != nil {
 			continue
 		}
@@ -123,7 +147,6 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 			site := types.Site{
 				Id:         asset.Id.Hex(),
 				Title:      asset.Title,
-				IP:         asset.Host,
 				Port:       asset.Port,
 				Service:    asset.Service,
 				HttpStatus: asset.HttpStatus,
@@ -137,6 +160,14 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 				Memo:       asset.Memo,
 			}
 
+			// IP 与归属地：host 对 Web 资产可能是域名，真实 IP 存于 ip.ipv4/ip.ipv6
+			site.IP, site.Location = resolveAssetIP(asset.Ip, asset.Host)
+
+			// favicon 图片数据
+			if len(asset.IconHashBytes) > 0 && isValidImageBytes(asset.IconHashBytes) {
+				site.IconHashBytes = base64.StdEncoding.EncodeToString(asset.IconHashBytes)
+			}
+
 			// 构建站点URL
 			scheme := "http"
 			if asset.Service == "https" || asset.Port == 443 || asset.Port == 8443 {
@@ -146,11 +177,6 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 				site.Site = fmt.Sprintf("%s://%s", scheme, asset.Authority)
 			} else {
 				site.Site = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
-			}
-
-			// 获取位置信息
-			if len(asset.Ip.IpV4) > 0 {
-				site.Location = asset.Ip.IpV4[0].Location
 			}
 
 			// 组织名称
@@ -214,16 +240,18 @@ func (l *SiteLogic) SiteBatchDelete(req *types.SiteBatchDeleteReq, workspaceId s
 }
 
 // SiteStat 站点统计
+// 优化点：
+//  1. 原实现每个 ws 跑 4 次 Count（4×N 次 collection scan），现改用 $facet 一次聚合（N 次）
+//  2. 整体结果走 60s 缓存
 func (l *SiteLogic) SiteStat(workspaceId string) (*types.SiteStatResp, error) {
-	resp := &types.SiteStatResp{Code: 0}
+	cacheKey := "site_stat:" + workspaceId
+	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		resp := &types.SiteStatResp{Code: 0}
 
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	if len(workspaceIds) == 0 {
-		return resp, nil
-	}
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+		workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		if len(workspaceIds) == 0 {
+			return resp, nil
+		}
 
 		// Web资产过滤条件
 		webFilter := bson.M{
@@ -234,44 +262,45 @@ func (l *SiteLogic) SiteStat(workspaceId string) (*types.SiteStatResp, error) {
 				{"screenshot": bson.M{"$exists": true, "$ne": ""}},
 			},
 		}
-
-		// 总数
-		total, _ := assetModel.Count(l.ctx, webFilter)
-		resp.Total += int(total)
-
-		// HTTP数量
-		httpCount, _ := assetModel.Count(l.ctx, bson.M{
-			"$and": []bson.M{
-				webFilter,
-				{"$or": []bson.M{
-					{"service": "http"},
-					{"port": 80},
-				}},
+		httpFilter := bson.M{
+			"$or": []bson.M{
+				{"service": "http"},
+				{"port": 80},
 			},
-		})
-		resp.HttpCount += int(httpCount)
-
-		// HTTPS数量
-		httpsCount, _ := assetModel.Count(l.ctx, bson.M{
-			"$and": []bson.M{
-				webFilter,
-				{"$or": []bson.M{
-					{"service": "https"},
-					{"port": 443},
-				}},
+		}
+		httpsFilter := bson.M{
+			"$or": []bson.M{
+				{"service": "https"},
+				{"port": 443},
 			},
-		})
-		resp.HttpsCount += int(httpsCount)
+		}
+		newFilter := bson.M{
+			"$expr": bson.M{"$gte": bson.A{
+				bson.M{"$ifNull": bson.A{"$first_seen_time", "$create_time"}},
+				time.Now().AddDate(0, 0, -1),
+			}},
+		}
 
-		// 新增数量
-		newCount, _ := assetModel.Count(l.ctx, bson.M{
-			"$and": []bson.M{
-				webFilter,
-				{"new": true},
-			},
-		})
-		resp.NewCount += int(newCount)
+		for _, wsId := range workspaceIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
+			stats, statErr := assetModel.AggregateSiteStats(l.ctx, webFilter, httpFilter, httpsFilter, newFilter)
+			if statErr != nil {
+				l.Logger.Errorf("SiteStat 聚合工作空间 %s 失败: %v", wsId, statErr)
+				continue
+			}
+			resp.Total += int(stats.Total)
+			resp.HttpCount += int(stats.Http)
+			resp.HttpsCount += int(stats.Https)
+			resp.NewCount += int(stats.NewCount)
+		}
+
+		return resp, nil
+	})
+	if err != nil {
+		return &types.SiteStatResp{Code: 0}, nil
 	}
-
-	return resp, nil
+	if resp, ok := cached.(*types.SiteStatResp); ok {
+		return resp, nil
+	}
+	return &types.SiteStatResp{Code: 0}, nil
 }

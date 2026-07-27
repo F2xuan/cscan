@@ -32,7 +32,10 @@ func (l *AssetVulnScansLogic) AssetVulnScans(req *types.AssetVulnScansReq, works
 	assetModel := model.NewAssetModel(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName), workspaceId)
 	asset, err := assetModel.FindById(l.ctx, req.AssetId)
 	if err != nil {
-		return nil, fmt.Errorf("asset not found: %w", err)
+		return nil, fmt.Errorf("查询资产失败: %w", err)
+	}
+	if asset == nil {
+		return nil, fmt.Errorf("asset not found")
 	}
 
 	// Create scan result service and fetch vulnerability scan results

@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"time"
 
 	"cscan/api/internal/svc"
 
@@ -25,12 +26,26 @@ func GetDefaultWorkspaceId(ctx context.Context, svcCtx *svc.ServiceContext, work
 
 // GetWorkspaceIds 获取工作空间ID列表
 // 当 workspaceId 为空或 "all" 时，返回所有工作空间ID（包括默认空间）
+// 对 "all"/空 场景做 60s 缓存（带 singleflight 防击穿），单 workspaceId 不缓存
 func GetWorkspaceIds(ctx context.Context, svcCtx *svc.ServiceContext, workspaceId string) []string {
 	// 处理 "all" 值 - 前端传递 "all" 表示查询所有工作空间
 	if workspaceId != "" && workspaceId != "all" {
 		return []string{workspaceId}
 	}
 
+	// "all"/空 场景走缓存
+	cached, err := svcCtx.QueryCache.GetOrSetWithTTL("workspace_ids:all", 60*time.Second, func() (interface{}, error) {
+		return loadAllWorkspaceIds(ctx, svcCtx), nil
+	})
+	if err == nil {
+		if ids, ok := cached.([]string); ok {
+			return ids
+		}
+	}
+	return loadAllWorkspaceIds(ctx, svcCtx)
+}
+
+func loadAllWorkspaceIds(ctx context.Context, svcCtx *svc.ServiceContext) []string {
 	var ids []string
 
 	// 查询所有工作空间（不分页）
@@ -69,15 +84,35 @@ func GetWorkspaceIds(ctx context.Context, svcCtx *svc.ServiceContext, workspaceI
 	return ids
 }
 
-// LoadOrgMap 加载组织ID到名称的映射
+// LoadOrgMap 加载组织ID到名称的映射（带 60s 缓存）
+// 写入组织（创建/更新/删除）后应调用 InvalidateOrgMap 主动失效
 func LoadOrgMap(ctx context.Context, svcCtx *svc.ServiceContext) map[string]string {
-	orgMap := make(map[string]string)
-	orgs, err := svcCtx.OrganizationModel.Find(ctx, bson.M{}, 0, 0)
+	cached, err := svcCtx.QueryCache.GetOrSetWithTTL("org_map", 60*time.Second, func() (interface{}, error) {
+		orgMap := make(map[string]string)
+		orgs, err := svcCtx.OrganizationModel.Find(ctx, bson.M{}, 0, 0)
+		if err != nil {
+			return orgMap, nil
+		}
+		for _, org := range orgs {
+			orgMap[org.Id.Hex()] = org.Name
+		}
+		return orgMap, nil
+	})
 	if err != nil {
-		return orgMap
+		return make(map[string]string)
 	}
-	for _, org := range orgs {
-		orgMap[org.Id.Hex()] = org.Name
+	if m, ok := cached.(map[string]string); ok {
+		return m
 	}
-	return orgMap
+	return make(map[string]string)
+}
+
+// InvalidateOrgMap 主动失效组织映射缓存（组织 CRUD 后调用）
+func InvalidateOrgMap(svcCtx *svc.ServiceContext) {
+	svcCtx.QueryCache.Delete("org_map")
+}
+
+// InvalidateWorkspaceIds 主动失效工作空间列表缓存（工作空间 CRUD 后调用）
+func InvalidateWorkspaceIds(svcCtx *svc.ServiceContext) {
+	svcCtx.QueryCache.Delete("workspace_ids:all")
 }

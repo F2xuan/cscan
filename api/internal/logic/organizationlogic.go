@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 
+	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
@@ -29,7 +30,8 @@ func NewOrganizationListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 func (l *OrganizationListLogic) OrganizationList(req *types.PageReq) (resp *types.OrganizationListResp, err error) {
 	filter := bson.M{}
 
-	total, err := l.svcCtx.OrganizationModel.Count(l.ctx, filter)
+	// 空 filter 场景使用 EstimatedDocumentCount（O(1) 元数据查询）
+	total, err := l.svcCtx.OrganizationModel.EstimatedCount(l.ctx)
 	if err != nil {
 		return &types.OrganizationListResp{Code: 500, Msg: "查询失败"}, nil
 	}
@@ -87,6 +89,7 @@ func (l *OrganizationSaveLogic) OrganizationSave(req *types.OrganizationSaveReq)
 		if err != nil {
 			return &types.BaseResp{Code: 500, Msg: "更新失败"}, nil
 		}
+		common.InvalidateOrgMap(l.svcCtx)
 		return &types.BaseResp{Code: 0, Msg: "更新成功"}, nil
 	}
 
@@ -98,6 +101,7 @@ func (l *OrganizationSaveLogic) OrganizationSave(req *types.OrganizationSaveReq)
 	if err = l.svcCtx.OrganizationModel.Insert(l.ctx, org); err != nil {
 		return &types.BaseResp{Code: 500, Msg: "创建失败"}, nil
 	}
+	common.InvalidateOrgMap(l.svcCtx)
 
 	return &types.BaseResp{Code: 0, Msg: "创建成功"}, nil
 }
@@ -125,6 +129,7 @@ func (l *OrganizationDeleteLogic) OrganizationDelete(req *types.OrganizationDele
 	if err = l.svcCtx.OrganizationModel.Delete(l.ctx, req.Id); err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}
+	common.InvalidateOrgMap(l.svcCtx)
 
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }
@@ -156,6 +161,7 @@ func (l *OrganizationUpdateStatusLogic) OrganizationUpdateStatus(req *types.Orga
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "更新状态失败"}, nil
 	}
+	common.InvalidateOrgMap(l.svcCtx)
 
 	return &types.BaseResp{Code: 0, Msg: "状态更新成功"}, nil
 }

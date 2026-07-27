@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,20 @@ import (
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+const (
+	// jsfinderListCacheTTL 列表结果缓存时长，平衡刷新延迟与重复扫描开销
+	jsfinderListCacheTTL = 30 * time.Second
+)
+
+// jsfinderListProjection 列表查询投影：排除 request/response/curl_command 等大字段，
+// 这些字段剥离后单行内存占用大幅下降，跨 ws 合并 + 内存分页可移除硬上限，
+// 从而修复"深页取空"问题；大字段由 /jsfinder/detail 按需加载。
+var jsfinderListProjection = bson.M{
+	"request":      0,
+	"response":     0,
+	"curl_command": 0,
+}
 
 // JSFinderConfigLogic JSFinder 配置逻辑
 type JSFinderConfigLogic struct {
@@ -188,8 +203,30 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 	return nil
 }
 
-// GetJSFinderList 获取 JSFinder 结果列表
+// GetJSFinderList 获取 JSFinder 结果列表（带 30s 缓存）
 func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
+	wsKey := req.WorkspaceId
+	if wsKey == "" {
+		wsKey = "all"
+	}
+	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s",
+		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName)
+
+	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, jsfinderListCacheTTL, func() (interface{}, error) {
+		return l.getJSFinderListUncached(req)
+	})
+	if cerr != nil {
+		l.Logger.Errorf("[JSFinder] 缓存读取失败: %v", cerr)
+		return l.getJSFinderListUncached(req)
+	}
+	if r, ok := cached.(*types.JSFinderListResp); ok && r != nil {
+		return r, nil
+	}
+	return l.getJSFinderListUncached(req)
+}
+
+// getJSFinderListUncached 无缓存版本：实际查询逻辑
+func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
 	workspaceId := req.WorkspaceId
 
 	filter := bson.M{}
@@ -228,12 +265,37 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 
 	// 支持多工作空间查询
 	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
+		// 跨工作空间分页正确性：从每个 ws 按 create_time 降序拉取覆盖到当前页末尾的数据量
+		// （needTotal = page * pageSize），合并排序后在内存中按页切片。
+		// OOM 防护改由 jsfinderListProjection 投影剥离 request/response/curl_command 大字段实现，
+		// 单行内存占用大幅下降，故不再设硬上限 —— 原上限会令 page*pageSize 超限后的所有页空数据。
+		needTotal := req.Page * req.PageSize
+
+		// 跨工作空间合并：filter 为空时使用 EstimatedCount（O(1)），避免逐 ws CountDocuments 扫描
+		emptyFilter := len(filter) == 0
 		for _, wsId := range wsIds {
 			m := l.svcCtx.GetJSFinderResultModel(wsId)
-			wsTotal, _ := m.Count(l.ctx, filter)
+			var wsTotal int64
+			if emptyFilter {
+				wsTotal, _ = m.EstimatedCount(l.ctx)
+			} else {
+				wsTotal, _ = m.Count(l.ctx, filter)
+			}
 			total += wsTotal
 
-			wsResults, _ := m.Find(l.ctx, filter, nil)
+			if wsTotal == 0 {
+				continue
+			}
+			// 每个 ws 最多拉 needTotal 条（覆盖到当前页末尾），按 create_time 降序
+			limit := int64(needTotal)
+			if wsTotal < limit {
+				limit = wsTotal
+			}
+			opt := options.Find().
+				SetLimit(limit).
+				SetSort(bson.D{{Key: "create_time", Value: -1}}).
+				SetProjection(jsfinderListProjection)
+			wsResults, _ := m.Find(l.ctx, filter, opt)
 			allResults = append(allResults, wsResults...)
 		}
 
@@ -256,7 +318,11 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 		m := l.svcCtx.GetJSFinderResultModel(workspaceId)
 
 		var err error
-		total, err = m.Count(l.ctx, filter)
+		if len(filter) == 0 {
+			total, err = m.EstimatedCount(l.ctx)
+		} else {
+			total, err = m.Count(l.ctx, filter)
+		}
 		if err != nil {
 			return nil, xerr.NewServerError("Count JSFinderResult Error: " + err.Error())
 		}
@@ -264,7 +330,8 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 		opt := options.Find().
 			SetSkip(int64((req.Page - 1) * req.PageSize)).
 			SetLimit(int64(req.PageSize)).
-			SetSort(bson.D{{Key: "create_time", Value: -1}})
+			SetSort(bson.D{{Key: "create_time", Value: -1}}).
+			SetProjection(jsfinderListProjection)
 
 		allResults, err = m.Find(l.ctx, filter, opt)
 		if err != nil {
@@ -319,4 +386,56 @@ func (l *JSFinderLogic) ClearJSFinderResults(workspaceId string) error {
 	}
 
 	return nil
+}
+
+// GetJSFinderDetail 按 id 取单条 JSFinder 结果（含 request/response/curl_command 大字段）。
+// 列表查询已投影剥离这些大字段，详情按需回填；id 在哪个 workspace 由前端随 id 一并给出。
+// workspaceId 为空/"all" 时遍历所有工作空间定位，命中后返回。
+func (l *JSFinderLogic) GetJSFinderDetail(req *types.JSFinderDetailReq) (*types.JSFinderDetailResp, error) {
+	id := strings.TrimSpace(req.Id)
+	if id == "" {
+		return &types.JSFinderDetailResp{Code: 400, Msg: "id 不能为空"}, nil
+	}
+
+	wsIds := []string{strings.TrimSpace(req.WorkspaceId)}
+	if wsIds[0] == "" || wsIds[0] == "all" {
+		wsIds = common.GetWorkspaceIds(l.ctx, l.svcCtx, req.WorkspaceId)
+	}
+
+	for _, wsId := range wsIds {
+		doc, err := l.svcCtx.GetJSFinderResultModel(wsId).FindByID(l.ctx, id)
+		if err != nil {
+			continue // 该 ws 无此 id 或集合缺失，尝试下一个
+		}
+		if doc == nil {
+			continue
+		}
+		return &types.JSFinderDetailResp{
+			Code: 0,
+			Msg:  "success",
+			Data: &types.JSFinderResult{
+				Id:               doc.Id.Hex(),
+				WorkspaceId:      doc.WorkspaceId,
+				MainTaskId:       doc.MainTaskId,
+				TaskName:         doc.TaskName,
+				Authority:        doc.Authority,
+				Host:             doc.Host,
+				Port:             doc.Port,
+				URL:              doc.URL,
+				Severity:         doc.Severity,
+				VulName:          doc.VulName,
+				Result:           doc.Result,
+				Tags:             doc.Tags,
+				MatcherName:      doc.MatcherName,
+				ExtractedResults: doc.ExtractedResults,
+				CurlCommand:      doc.CurlCommand,
+				Request:          doc.Request,
+				Response:         doc.Response,
+				CreateTime:       doc.CreateTime.Format("2006-01-02 15:04:05"),
+				UpdateTime:       doc.UpdateTime.Format("2006-01-02 15:04:05"),
+			},
+		}, nil
+	}
+
+	return &types.JSFinderDetailResp{Code: 404, Msg: "未找到该 JSFinder 结果"}, nil
 }

@@ -2,12 +2,14 @@ package logic
 
 import (
 	"context"
+	"time"
 
+	"cscan/api/internal/logic/common"
+	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
 	"github.com/zeromicro/go-zero/core/logx"
-	"go.mongodb.org/mongo-driver/bson"
 )
 
 // AssetFingerprintsListLogic 资产指纹列表
@@ -26,11 +28,36 @@ func NewAssetFingerprintsListLogic(ctx context.Context, svcCtx *svc.ServiceConte
 }
 
 func (l *AssetFingerprintsListLogic) AssetFingerprintsList(req *types.AssetFingerprintsListReq) (*types.AssetFingerprintsListResp, error) {
-	// 从资产集合中聚合获取所有不重复的指纹
-	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("assets")
+	workspaceId := middleware.GetWorkspaceId(l.ctx)
 
-	// 使用distinct获取所有不重复的指纹
-	fingerprints, err := collection.Distinct(l.ctx, "fingerprints", bson.M{})
+	// 缓存键：按 workspaceId 维度隔离；Limit 在缓存后再裁剪，不影响缓存命中率
+	cacheKey := "asset_fingerprints:" + workspaceId
+	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		fpSet := make(map[string]struct{})
+
+		// 资产字段名是 app（数组），集合名是 <wsId>_asset；旧代码用 "assets"/"fingerprints" 永远返回空
+		for _, wsId := range wsIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
+			values, err := assetModel.Distinct(l.ctx, "app", nil)
+			if err != nil {
+				l.Logger.Errorf("获取工作空间 %s 指纹列表失败: %v", wsId, err)
+				continue
+			}
+			for _, v := range values {
+				if s, ok := v.(string); ok && s != "" {
+					fpSet[s] = struct{}{}
+				}
+			}
+		}
+
+		result := make([]string, 0, len(fpSet))
+		for fp := range fpSet {
+			result = append(result, fp)
+		}
+		return result, nil
+	})
+
 	if err != nil {
 		l.Logger.Errorf("获取指纹列表失败: %v", err)
 		return &types.AssetFingerprintsListResp{
@@ -40,14 +67,7 @@ func (l *AssetFingerprintsListLogic) AssetFingerprintsList(req *types.AssetFinge
 		}, nil
 	}
 
-	// 转换为字符串列表
-	result := make([]string, 0, len(fingerprints))
-	for _, fp := range fingerprints {
-		if s, ok := fp.(string); ok && s != "" {
-			result = append(result, s)
-		}
-	}
-
+	result, _ := cached.([]string)
 	// 限制返回数量
 	if req.Limit > 0 && len(result) > req.Limit {
 		result = result[:req.Limit]
@@ -73,25 +93,48 @@ func NewAssetPortsStatsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *A
 		ctx:    ctx,
 		svcCtx: svcCtx,
 	}
+
 }
 
 func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, error) {
-	// 从资产集合中聚合端口统计
-	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("assets")
+	workspaceId := middleware.GetWorkspaceId(l.ctx)
 
-	// 聚合管道：按端口分组统计
-	pipeline := []bson.M{
-		{"$match": bson.M{"port": bson.M{"$gt": 0}}},
-		{"$group": bson.M{
-			"_id":     "$port",
-			"service": bson.M{"$first": "$service"},
-			"count":   bson.M{"$sum": 1},
-		}},
-		{"$sort": bson.M{"count": -1}},
-		{"$limit": 200},
-	}
+	// 缓存键：按 workspaceId 维度隔离
+	cacheKey := "asset_ports_stats:" + workspaceId
+	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		merged := make(map[int]*types.PortStatItem)
 
-	cursor, err := collection.Aggregate(l.ctx, pipeline)
+		// 资产集合名是 <wsId>_asset；端口字段是 port（int），AssetModel.AggregatePort 已封装聚合管道
+		for _, wsId := range wsIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
+			stats, err := assetModel.AggregatePort(l.ctx, 200)
+			if err != nil {
+				l.Logger.Errorf("获取工作空间 %s 端口统计失败: %v", wsId, err)
+				continue
+			}
+			for _, s := range stats {
+				if s.Port <= 0 {
+					continue
+				}
+				if existing, ok := merged[s.Port]; ok {
+					existing.Count += int64(s.Count)
+				} else {
+					merged[s.Port] = &types.PortStatItem{
+						Port:  s.Port,
+						Count: int64(s.Count),
+					}
+				}
+			}
+		}
+
+		list := make([]types.PortStatItem, 0, len(merged))
+		for _, v := range merged {
+			list = append(list, *v)
+		}
+		return list, nil
+	})
+
 	if err != nil {
 		l.Logger.Errorf("获取端口统计失败: %v", err)
 		return &types.AssetPortsStatsResp{
@@ -100,30 +143,10 @@ func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, er
 			List: []types.PortStatItem{},
 		}, nil
 	}
-	defer cursor.Close(l.ctx)
 
-	var results []struct {
-		Port    int    `bson:"_id"`
-		Service string `bson:"service"`
-		Count   int64  `bson:"count"`
-	}
-
-	if err := cursor.All(l.ctx, &results); err != nil {
-		l.Logger.Errorf("解析端口统计失败: %v", err)
-		return &types.AssetPortsStatsResp{
-			Code: 500,
-			Msg:  "解析端口统计失败",
-			List: []types.PortStatItem{},
-		}, nil
-	}
-
-	list := make([]types.PortStatItem, 0, len(results))
-	for _, r := range results {
-		list = append(list, types.PortStatItem{
-			Port:    r.Port,
-			Service: r.Service,
-			Count:   r.Count,
-		})
+	list, _ := cached.([]types.PortStatItem)
+	if list == nil {
+		list = []types.PortStatItem{}
 	}
 
 	return &types.AssetPortsStatsResp{

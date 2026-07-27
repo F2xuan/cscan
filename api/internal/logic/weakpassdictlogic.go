@@ -145,7 +145,11 @@ func (l *WeakpassDictDeleteLogic) WeakpassDictDelete(req *types.WeakpassDictDele
 	// 先检查是否为内置字典
 	dict, err := dictModel.FindById(l.ctx, req.Id)
 	if err != nil {
-		return nil, err
+		l.Logger.Errorf("WeakpassDictDelete: find dict failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询字典失败"}, nil
+	}
+	if dict == nil {
+		return &types.BaseResp{Code: 404, Msg: "字典不存在"}, nil
 	}
 	if dict.IsBuiltin {
 		return &types.BaseResp{Code: 1, Msg: "无法删除内置字典"}, nil

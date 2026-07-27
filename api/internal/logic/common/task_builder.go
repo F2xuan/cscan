@@ -211,6 +211,10 @@ func (b *TaskBuilder) upsertInitialAsset(assetModel *model.AssetModel, task *mod
 		return assetModel.Insert(b.ctx, asset)
 	}
 
+	// task_builder 仅承担"预写"职责：仅补齐 existing 缺失的字段，
+	// 不覆盖已有的业务字段、不强制推进 update_time / update 标志。
+	// 预写是从用户输入推断的字段（如 IP / CName / Domain），
+	// 真正的业务字段（title/header/body）由后续扫描器回写时推进。
 	updateFields := bson.M{}
 	if len(existing.Ip.IpV4) == 0 && len(existing.Ip.IpV6) == 0 && (len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0) {
 		updateFields["ip"] = asset.Ip

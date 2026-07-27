@@ -72,6 +72,9 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 		task, err = taskModel.FindById(l.ctx, req.TaskId)
 		if err != nil {
 			l.Logger.Errorf("FindById failed: %v", err)
+			return &types.ReportDetailResp{Code: 500, Msg: "查询任务失败"}, nil
+		}
+		if task == nil {
 			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
@@ -303,6 +306,9 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
 		task, err = taskModel.FindById(l.ctx, req.TaskId)
 		if err != nil {
+			return nil, "", fmt.Errorf("查询任务失败: %v", err)
+		}
+		if task == nil {
 			return nil, "", fmt.Errorf("任务不存在")
 		}
 	}

@@ -36,8 +36,8 @@ func (l *DirScanDictListLogic) DirScanDictList(req *types.DirScanDictListReq) (*
 		return nil, err
 	}
 
-	// 获取总数
-	total, err := dictModel.Count(l.ctx)
+	// 获取总数（空 filter 场景使用 EstimatedDocumentCount，O(1) 元数据查询）
+	total, err := dictModel.EstimatedCount(l.ctx)
 	if err != nil {
 		return nil, err
 	}

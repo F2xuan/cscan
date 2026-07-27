@@ -115,6 +115,10 @@ func (l *ScanTemplateSaveLogic) ScanTemplateSave(req *types.ScanTemplateSaveReq,
 		// 更新
 		existing, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, req.Id)
 		if err != nil {
+			l.Logger.Errorf("ScanTemplateSave: find template failed, id=%s, error=%v", req.Id, err)
+			return &types.BaseRespWithId{Code: 500, Msg: "查询模板失败"}, nil
+		}
+		if existing == nil {
 			return &types.BaseRespWithId{Code: 400, Msg: "模板不存在"}, nil
 		}
 
@@ -159,6 +163,10 @@ func NewScanTemplateDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext)
 func (l *ScanTemplateDeleteLogic) ScanTemplateDelete(req *types.ScanTemplateDeleteReq, userId string) (*types.BaseResp, error) {
 	template, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		l.Logger.Errorf("ScanTemplateDelete: find template failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询模板失败"}, nil
+	}
+	if template == nil {
 		return &types.BaseResp{Code: 400, Msg: "模板不存在"}, nil
 	}
 
@@ -194,6 +202,10 @@ func NewScanTemplateDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext)
 func (l *ScanTemplateDetailLogic) ScanTemplateDetail(req *types.ScanTemplateDetailReq) (*types.ScanTemplateDetailResp, error) {
 	template, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		l.Logger.Errorf("ScanTemplateDetail: find template failed, id=%s, error=%v", req.Id, err)
+		return &types.ScanTemplateDetailResp{Code: 500, Msg: "查询模板失败"}, nil
+	}
+	if template == nil {
 		return &types.ScanTemplateDetailResp{Code: 400, Msg: "模板不存在"}, nil
 	}
 
@@ -235,6 +247,10 @@ func (l *ScanTemplateFromTaskLogic) ScanTemplateFromTask(req *types.ScanTemplate
 	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
 	task, err := taskModel.FindById(l.ctx, req.TaskId)
 	if err != nil {
+		l.Logger.Errorf("ScanTemplateFromTask: find task failed, taskId=%s, error=%v", req.TaskId, err)
+		return &types.BaseRespWithId{Code: 500, Msg: "查询任务失败"}, nil
+	}
+	if task == nil {
 		return &types.BaseRespWithId{Code: 400, Msg: "任务不存在"}, nil
 	}
 

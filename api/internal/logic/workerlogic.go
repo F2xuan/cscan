@@ -62,10 +62,19 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 		return &types.WorkerListResp{Code: 400, Msg: "请求已取消"}, nil
 	}
 
-	// 从Redis获取Worker状态（使用正确的键前缀）
-	keys, err := rdb.Keys(l.ctx, "cscan:worker:*").Result()
-	if err != nil {
-		return &types.WorkerListResp{Code: 500, Msg: "查询失败"}, nil
+	// 从Redis获取Worker状态（使用 SCAN 避免 KEYS 阻塞 Redis 单线程）
+	var keys []string
+	var cursor uint64
+	for {
+		batch, nextCursor, err := rdb.Scan(l.ctx, cursor, "cscan:worker:*", 100).Result()
+		if err != nil {
+			return &types.WorkerListResp{Code: 500, Msg: "查询失败"}, nil
+		}
+		keys = append(keys, batch...)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
 	}
 
 	list := make([]types.Worker, 0, len(keys))
@@ -189,7 +198,7 @@ func (l *WorkerDeleteLogic) WorkerDelete(req *types.WorkerDeleteReq) (resp *type
 
 	// 2. 同时通过 WebSocket 发送停止命令（如果 Worker 已连接）
 	// 这会在下次心跳前立即通知 Worker
-	stopMsg := fmt.Sprintf(`{"action":"stop","workerName":"%s"}`, req.Name)
+	stopMsg, _ := json.Marshal(map[string]interface{}{"action": "stop", "workerName": req.Name})
 	rdb.Publish(l.ctx, "cscan:worker:control", stopMsg)
 
 	// 3. 删除Worker状态数据
@@ -263,7 +272,7 @@ func (l *WorkerRenameLogic) WorkerRename(req *types.WorkerRenameReq) (resp *type
 	rdb.SAdd(l.ctx, "cscan:workers", req.NewName)
 
 	// 7. 发送重命名命令给Worker（让Worker更新自己的名称）
-	renameMsg := fmt.Sprintf(`{"action":"rename","workerName":"%s","newName":"%s"}`, req.OldName, req.NewName)
+	renameMsg, _ := json.Marshal(map[string]interface{}{"action": "rename", "workerName": req.OldName, "newName": req.NewName})
 	rdb.Publish(l.ctx, "cscan:worker:control", renameMsg)
 
 	l.Logger.Infof("[WorkerRename] Renamed worker from %s to %s", req.OldName, req.NewName)

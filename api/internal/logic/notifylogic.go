@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,7 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 			Id:              c.Id.Hex(),
 			Name:            c.Name,
 			Provider:        c.Provider,
-			Config:          c.Config,
+			Config:          maskNotifyConfigSensitive(c.Config),
 			Status:          c.Status,
 			MessageTemplate: ensureHighRiskDetailsPlaceholder(c.MessageTemplate),
 			WebURL:          c.WebURL,
@@ -65,6 +66,45 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 		Msg:  "success",
 		List: list,
 	}, nil
+}
+
+// maskNotifyConfigSensitive 对通知配置 JSON 字符串中的敏感字段做脱敏处理
+// 敏感字段名(不区分大小写)包含: password, secret, token, apikey, api_key
+// 非敏感字段(如 server、port、username)保留原值,便于前端展示配置概况
+func maskNotifyConfigSensitive(configJSON string) string {
+	if configJSON == "" {
+		return ""
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		// 解析失败,返回原值(可能是非 JSON 格式)
+		return configJSON
+	}
+	sensitiveKeys := []string{"password", "secret", "token", "apikey", "api_key", "key"}
+	for k, v := range cfg {
+		lowerKey := strings.ToLower(k)
+		for _, sk := range sensitiveKeys {
+			if strings.Contains(lowerKey, sk) {
+				if s, ok := v.(string); ok && s != "" {
+					cfg[k] = maskString(s)
+				}
+				break
+			}
+		}
+	}
+	masked, err := json.Marshal(cfg)
+	if err != nil {
+		return configJSON
+	}
+	return string(masked)
+}
+
+// maskString 对字符串做脱敏处理,保留前2后2,中间用 **** 替换
+func maskString(s string) string {
+	if len(s) <= 4 {
+		return "****"
+	}
+	return s[:2] + "****" + s[len(s)-2:]
 }
 
 // NotifyConfigSaveLogic 保存通知配置

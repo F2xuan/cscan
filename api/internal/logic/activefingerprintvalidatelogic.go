@@ -14,6 +14,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -39,6 +40,10 @@ func (l *ActiveFingerprintValidateLogic) ActiveFingerprintValidate(req *types.Ac
 	// 获取主动指纹
 	activeFp, err := l.svcCtx.ActiveFingerprintModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		logx.Errorf("ActiveFingerprintValidate: find active fingerprint failed, id=%s, error=%v", req.Id, err)
+		return &types.ActiveFingerprintValidateResp{Code: 500, Msg: "查询主动指纹失败"}, nil
+	}
+	if activeFp == nil {
 		return &types.ActiveFingerprintValidateResp{Code: 404, Msg: "主动指纹不存在"}, nil
 	}
 

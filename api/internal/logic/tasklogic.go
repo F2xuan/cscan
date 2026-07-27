@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,7 +69,8 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 	// 构建查询条件
 	filter := bson.M{}
 	if req.Name != "" {
-		filter["name"] = bson.M{"$regex": req.Name, "$options": "i"}
+		// 修复 M-18：转义用户输入中的正则元字符，防止 ReDoS 和意外匹配
+		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(req.Name), "$options": "i"}
 	}
 	if req.Status != "" {
 		filter["status"] = req.Status
@@ -90,6 +92,9 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 	wsIds := common.GetWorkspaceIds(ctx, l.svcCtx, wsId)
 	l.Logger.Infof("MainTaskList: querying workspaces: %v", wsIds)
 
+	// 单工作空间查询上限：避免某个工作空间任务过多导致内存溢出
+	const maxTasksPerWorkspace = 1000
+
 	// 如果查询多个工作空间
 	if len(wsIds) > 1 || wsId == "" || wsId == "all" {
 		// 使用并发查询提高性能
@@ -107,7 +112,8 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 				defer wg.Done()
 				taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
 				wsTotal, _ := taskModel.Count(ctx, filter)
-				wsTasks, _ := taskModel.Find(ctx, filter, 0, 0)
+				// 限制单工作空间返回任务数，防止 OOM
+				wsTasks, _ := taskModel.Find(ctx, filter, 1, maxTasksPerWorkspace)
 				resultChan <- wsResult{tasks: wsTasks, count: wsTotal, wsId: workspaceId}
 			}(ws)
 		}
@@ -160,8 +166,17 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 		}
 
+		// 限制 pageSize 上限，防止一次查询过多导致 OOM
+		pageSize := req.PageSize
+		if pageSize <= 0 {
+			pageSize = 20
+		}
+		if pageSize > maxTasksPerWorkspace {
+			pageSize = maxTasksPerWorkspace
+		}
+
 		// 查询列表
-		tasks, err := taskModel.Find(ctx, filter, req.Page, req.PageSize)
+		tasks, err := taskModel.Find(ctx, filter, req.Page, pageSize)
 		if err != nil {
 			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 		}
@@ -359,6 +374,10 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 		// 从扫描配置模板获取配置
 		template, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, req.TemplateId)
 		if err != nil {
+			l.Logger.Errorf("MainTaskCreate: find template failed, templateId=%s, error=%v", req.TemplateId, err)
+			return &types.BaseRespWithId{Code: 500, Msg: "查询模板失败"}, nil
+		}
+		if template == nil {
 			return &types.BaseRespWithId{Code: 400, Msg: "扫描模板不存在"}, nil
 		}
 		profileName = template.Name
@@ -376,6 +395,10 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 		// 从 profile 获取配置（兼容旧版）
 		profile, err := l.svcCtx.ProfileModel.FindById(l.ctx, req.ProfileId)
 		if err != nil {
+			l.Logger.Errorf("MainTaskCreate: find profile failed, profileId=%s, error=%v", req.ProfileId, err)
+			return &types.BaseRespWithId{Code: 500, Msg: "查询任务配置失败"}, nil
+		}
+		if profile == nil {
 			return &types.BaseRespWithId{Code: 400, Msg: "任务配置不存在"}, nil
 		}
 		profileName = profile.Name
@@ -687,6 +710,10 @@ func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq, workspac
 		var err error
 		oldTask, err = taskModel.FindById(l.ctx, req.Id)
 		if err != nil {
+			l.Logger.Errorf("MainTaskRestart: find task failed, id=%s, error=%v", req.Id, err)
+			return &types.BaseRespWithId{Code: 500, Msg: "查询任务失败"}, nil
+		}
+		if oldTask == nil {
 			return &types.BaseRespWithId{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
@@ -713,6 +740,10 @@ func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq, workspac
 		// 从配置模板获取（任务管理创建的任务）
 		profile, err := l.svcCtx.ProfileModel.FindById(l.ctx, oldTask.ProfileId)
 		if err != nil {
+			l.Logger.Errorf("MainTaskRestart: find profile failed, profileId=%s, error=%v", oldTask.ProfileId, err)
+			return &types.BaseRespWithId{Code: 500, Msg: "查询任务配置失败"}, nil
+		}
+		if profile == nil {
 			return &types.BaseRespWithId{Code: 400, Msg: "任务配置不存在"}, nil
 		}
 		if profile.Config != "" {
@@ -814,7 +845,11 @@ func (l *MainTaskStartLogic) MainTaskStart(req *types.MainTaskControlReq, worksp
 		var err error
 		task, err = taskModel.FindById(l.ctx, req.Id)
 		if err != nil {
-			l.Logger.Errorf("MainTaskStart: task not found, id=%s, wsId=%s, error=%v", req.Id, wsId, err)
+			l.Logger.Errorf("MainTaskStart: find task failed, id=%s, wsId=%s, error=%v", req.Id, wsId, err)
+			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+		}
+		if task == nil {
+			l.Logger.Errorf("MainTaskStart: task not found, id=%s, wsId=%s", req.Id, wsId)
 			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
@@ -906,7 +941,11 @@ func (l *MainTaskPauseLogic) MainTaskPause(req *types.MainTaskControlReq, worksp
 		var err error
 		task, err = taskModel.FindById(l.ctx, req.Id)
 		if err != nil {
-			l.Logger.Errorf("MainTaskPause: task not found, id=%s, error=%v", req.Id, err)
+			l.Logger.Errorf("MainTaskPause: find task failed, id=%s, error=%v", req.Id, err)
+			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+		}
+		if task == nil {
+			l.Logger.Errorf("MainTaskPause: task not found, id=%s", req.Id)
 			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
@@ -1004,7 +1043,11 @@ func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq, work
 		var err error
 		task, err = taskModel.FindById(l.ctx, req.Id)
 		if err != nil {
-			l.Logger.Errorf("MainTaskResume: task not found, id=%s, error=%v", req.Id, err)
+			l.Logger.Errorf("MainTaskResume: find task failed, id=%s, error=%v", req.Id, err)
+			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+		}
+		if task == nil {
+			l.Logger.Errorf("MainTaskResume: task not found, id=%s", req.Id)
 			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
@@ -1177,6 +1220,10 @@ func (l *MainTaskStopLogic) MainTaskStop(req *types.MainTaskControlReq, workspac
 		var err error
 		task, err = taskModel.FindById(l.ctx, req.Id)
 		if err != nil {
+			l.Logger.Errorf("MainTaskStop: find task failed, id=%s, error=%v", req.Id, err)
+			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+		}
+		if task == nil {
 			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
@@ -1336,7 +1383,11 @@ func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq, works
 	// 获取任务
 	task, err := taskModel.FindById(l.ctx, req.Id)
 	if err != nil {
-		l.Logger.Errorf("MainTaskUpdate: task not found, id=%s, error=%v", req.Id, err)
+		l.Logger.Errorf("MainTaskUpdate: find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+	}
+	if task == nil {
+		l.Logger.Errorf("MainTaskUpdate: task not found, id=%s", req.Id)
 		return &types.BaseResp{Code: 40001, Msg: "任务不存在"}, nil
 	}
 
@@ -1361,7 +1412,10 @@ func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq, works
 		// 验证配置是否存在
 		profile, err := l.svcCtx.ProfileModel.FindById(l.ctx, req.ProfileId)
 		if err != nil {
-			l.Logger.Errorf("MainTaskUpdate: profile not found, profileId=%s, error=%v", req.ProfileId, err)
+			l.Logger.Errorf("MainTaskUpdate: find profile failed, profileId=%s, error=%v", req.ProfileId, err)
+			return &types.BaseResp{Code: 500, Msg: "查询任务配置失败"}, nil
+		}
+		if profile == nil {
 			return &types.BaseResp{Code: 400, Msg: "任务配置不存在"}, nil
 		}
 		update["profile_id"] = req.ProfileId
@@ -1395,7 +1449,7 @@ func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq, works
 		// 获取当前profile配置
 		if task.ProfileId != "" {
 			profile, err := l.svcCtx.ProfileModel.FindById(l.ctx, task.ProfileId)
-			if err == nil && profile.Config != "" {
+			if err == nil && profile != nil && profile.Config != "" {
 				var profileConfig map[string]interface{}
 				if err := json.Unmarshal([]byte(profile.Config), &profileConfig); err == nil {
 					for k, v := range profileConfig {
@@ -1417,6 +1471,10 @@ func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq, works
 	// 再次检查状态（防止并发修改）
 	task, err = taskModel.FindById(l.ctx, req.Id)
 	if err != nil {
+		l.Logger.Errorf("MainTaskUpdate: re-find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+	}
+	if task == nil {
 		return &types.BaseResp{Code: 40001, Msg: "任务不存在"}, nil
 	}
 	if task.Status != model.TaskStatusCreated {

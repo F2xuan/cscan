@@ -13,6 +13,7 @@ import (
 	"cscan/model"
 	"cscan/onlineapi"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -53,6 +54,10 @@ func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq, workspaceId string) 
 	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
 	config, err := configModel.FindByPlatform(l.ctx, req.Platform)
 	if err != nil {
+		logx.Errorf("OnlineAPI Search: find config failed, platform=%s, error=%v", req.Platform, err)
+		return &types.OnlineSearchResp{Code: 500, Msg: "查询API配置失败"}, nil
+	}
+	if config == nil {
 		return &types.OnlineSearchResp{Code: 404, Msg: "未配置" + req.Platform + "的API密钥"}, nil
 	}
 
@@ -274,6 +279,10 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
 	config, err := configModel.FindByPlatform(l.ctx, req.Platform)
 	if err != nil {
+		logx.Errorf("OnlineAPI ImportAll: find config failed, platform=%s, error=%v", req.Platform, err)
+		return &types.OnlineImportAllResp{Code: 500, Msg: "查询API配置失败"}, nil
+	}
+	if config == nil {
 		return &types.OnlineImportAllResp{Code: 404, Msg: "未配置" + req.Platform + "的API密钥"}, nil
 	}
 
@@ -500,7 +509,7 @@ func (l *OnlineAPILogic) ConfigList(workspaceId string) (*types.APIConfigListRes
 		list = append(list, types.APIConfig{
 			Id:         doc.Id.Hex(),
 			Platform:   doc.Platform,
-			Key:        doc.Key,
+			Key:        maskSecret(doc.Key),
 			Secret:     maskSecret(doc.Secret),
 			Version:    doc.Version,
 			Status:     doc.Status,

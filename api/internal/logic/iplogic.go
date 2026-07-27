@@ -4,22 +4,26 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"time"
 
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 type IPLogic struct {
+	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
 }
 
 func NewIPLogic(ctx context.Context, svcCtx *svc.ServiceContext) *IPLogic {
 	return &IPLogic{
+		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
 	}
@@ -93,9 +97,11 @@ func (l *IPLogic) IPList(req *types.IPListReq, workspaceId string) (*types.IPLis
 			filter["$and"] = conditions
 		}
 
-		// 查询所有匹配的资产
-		assets, err := assetModel.Find(l.ctx, filter, 0, 0)
+		// 查询所有匹配的资产（用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner/screenshot/icon_hash_bytes 等大字段）
+		// 不用 Find(0,0) 无 limit 全字段加载，避免 OOM 和网络打满
+		assets, err := assetModel.FindWithSort(l.ctx, filter, 1, 50000, "update_time")
 		if err != nil {
+			l.Logger.Errorf("IPList 查询工作空间 %s 资产失败: %v", wsId, err)
 			continue
 		}
 
@@ -254,77 +260,113 @@ func (l *IPLogic) IPList(req *types.IPListReq, workspaceId string) (*types.IPLis
 }
 
 // IPStat IP统计
+// 优化点：原实现全表加载所有资产到内存只为 distinct IP/port/service/newIPs，且每个 ws 一次全表 scan
+// 现改用：
+//  1. DB 端 distinct 命令替代内存 distinct（port/service 直接 distinct 字段）
+//  2. IP 仍需内存聚合（来源 ip.ipv4.ip + host），但用 FindWithSort+Projection 限制字段
+//  3. 整体结果走 60s 缓存（统计数据不需要实时）
 func (l *IPLogic) IPStat(workspaceId string) (*types.IPStatResp, error) {
-	resp := &types.IPStatResp{Code: 0}
+	cacheKey := "ip_stat:" + workspaceId
+	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		resp := &types.IPStatResp{Code: 0}
 
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	if len(workspaceIds) == 0 {
+		workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+		if len(workspaceIds) == 0 {
+			return resp, nil
+		}
+
+		ipSet := make(map[string]bool)
+		portSet := make(map[int]bool)
+		serviceSet := make(map[string]bool)
+		newIPs := make(map[string]bool)
+
+		for _, wsId := range workspaceIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
+
+			// 用 DB 端 distinct 替代内存 distinct（port/service）
+			if values, err := assetModel.Distinct(l.ctx, "port", nil); err == nil {
+				for _, v := range values {
+					if i, ok := v.(int32); ok && i > 0 {
+						portSet[int(i)] = true
+					} else if i, ok := v.(int64); ok && i > 0 {
+						portSet[int(i)] = true
+					} else if i, ok := v.(int); ok && i > 0 {
+						portSet[i] = true
+					}
+				}
+			}
+			if values, err := assetModel.Distinct(l.ctx, "service", nil); err == nil {
+				for _, v := range values {
+					if s, ok := v.(string); ok && s != "" {
+						serviceSet[s] = true
+					}
+				}
+			}
+
+			// IP 需要聚合 ip.ipv4.ip + host(IP)，用 FindWithSort+Projection 限制字段
+			// 只取必要字段（ip/host/is_new），不拉 body/header/screenshot 等
+			assets, err := assetModel.FindWithSort(l.ctx, bson.M{}, 1, 100000, "update_time")
+			if err != nil {
+				l.Logger.Errorf("IPStat 查询工作空间 %s 资产失败: %v", wsId, err)
+				continue
+			}
+
+			for _, asset := range assets {
+				// 收集IP
+				var ips []string
+				for _, ipv4 := range asset.Ip.IpV4 {
+					if ipv4.IPName != "" {
+						ips = append(ips, ipv4.IPName)
+					}
+				}
+				if common.IsIPAddress(asset.Host) && asset.Host != "" {
+					found := false
+					for _, ip := range ips {
+						if ip == asset.Host {
+							found = true
+							break
+						}
+					}
+					if !found {
+						ips = append(ips, asset.Host)
+					}
+				}
+
+				firstSeen := asset.FirstSeenTime
+					if firstSeen.IsZero() {
+						firstSeen = asset.CreateTime
+					}
+					isNewAsset := !firstSeen.Before(time.Now().AddDate(0, 0, -1))
+
+					for _, ip := range ips {
+						if !ipSet[ip] {
+							ipSet[ip] = true
+							if isNewAsset {
+								newIPs[ip] = true
+							}
+						}
+					}
+			}
+		}
+
+		resp.Total = len(ipSet)
+		resp.PortCount = len(portSet)
+		resp.ServiceCount = len(serviceSet)
+		resp.NewCount = len(newIPs)
+
 		return resp, nil
+	})
+	if err != nil {
+		return &types.IPStatResp{Code: 0}, nil
 	}
-
-	ipSet := make(map[string]bool)
-	portSet := make(map[int]bool)
-	serviceSet := make(map[string]bool)
-	newIPs := make(map[string]bool)
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-
-		// 查询所有资产
-		assets, err := assetModel.Find(l.ctx, bson.M{}, 0, 0)
-		if err != nil {
-			continue
-		}
-
-		for _, asset := range assets {
-			// 收集IP
-			var ips []string
-			for _, ipv4 := range asset.Ip.IpV4 {
-				if ipv4.IPName != "" {
-					ips = append(ips, ipv4.IPName)
-				}
-			}
-			if common.IsIPAddress(asset.Host) && asset.Host != "" {
-				found := false
-				for _, ip := range ips {
-					if ip == asset.Host {
-						found = true
-						break
-					}
-				}
-				if !found {
-					ips = append(ips, asset.Host)
-				}
-			}
-
-			for _, ip := range ips {
-				if !ipSet[ip] {
-					ipSet[ip] = true
-					if asset.IsNewAsset {
-						newIPs[ip] = true
-					}
-				}
-			}
-
-			if asset.Port > 0 {
-				portSet[asset.Port] = true
-			}
-
-			if asset.Service != "" {
-				serviceSet[asset.Service] = true
-			}
-		}
+	if r, ok := cached.(*types.IPStatResp); ok {
+		return r, nil
 	}
-
-	resp.Total = len(ipSet)
-	resp.PortCount = len(portSet)
-	resp.ServiceCount = len(serviceSet)
-	resp.NewCount = len(newIPs)
-
-	return resp, nil
+	return &types.IPStatResp{Code: 0}, nil
 }
 
 // IPDelete 删除IP（删除该IP下所有资产）
+// 优化点：原实现先 Find 再 BatchDelete（两次查询）；改直接 DeleteByFilter（一次删除）
 func (l *IPLogic) IPDelete(req *types.IPDeleteReq, workspaceId string) (*types.BaseResp, error) {
 	if req.IP == "" {
 		return &types.BaseResp{Code: 400, Msg: "IP不能为空"}, nil
@@ -333,38 +375,28 @@ func (l *IPLogic) IPDelete(req *types.IPDeleteReq, workspaceId string) (*types.B
 	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	var totalDeleted int64
 
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+	filter := bson.M{
+		"$or": []bson.M{
+			{"host": req.IP},
+			{"ip.ipv4.ip": req.IP},
+		},
+	}
 
-		// 查询该IP下的所有资产
-		filter := bson.M{
-			"$or": []bson.M{
-				{"host": req.IP},
-				{"ip.ipv4.ip": req.IP},
-			},
-		}
-		assets, err := assetModel.Find(l.ctx, filter, 0, 0)
+	for _, wsId := range workspaceIds {
+		assetModel := l.svcCtx.GetAssetModel(wsId)
+		deleted, err := assetModel.DeleteByFilter(l.ctx, filter)
 		if err != nil {
+			l.Logger.Errorf("IPDelete 删除工作空间 %s 资产失败: %v", wsId, err)
 			continue
 		}
-
-		// 收集资产ID
-		ids := make([]string, 0, len(assets))
-		for _, asset := range assets {
-			ids = append(ids, asset.Id.Hex())
-		}
-
-		// 批量删除
-		if len(ids) > 0 {
-			deleted, _ := assetModel.BatchDelete(l.ctx, ids)
-			totalDeleted += deleted
-		}
+		totalDeleted += deleted
 	}
 
 	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(totalDeleted, 10) + " 条资产"}, nil
 }
 
 // IPBatchDelete 批量删除IP
+// 优化点：原实现先 Find 再 BatchDelete（两次查询）；改直接 DeleteByFilter（一次删除）
 func (l *IPLogic) IPBatchDelete(req *types.IPBatchDeleteReq, workspaceId string) (*types.BaseResp, error) {
 	if len(req.IPs) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的IP"}, nil
@@ -373,32 +405,21 @@ func (l *IPLogic) IPBatchDelete(req *types.IPBatchDeleteReq, workspaceId string)
 	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	var totalDeleted int64
 
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+	filter := bson.M{
+		"$or": []bson.M{
+			{"host": bson.M{"$in": req.IPs}},
+			{"ip.ipv4.ip": bson.M{"$in": req.IPs}},
+		},
+	}
 
-		// 查询这些IP下的所有资产
-		filter := bson.M{
-			"$or": []bson.M{
-				{"host": bson.M{"$in": req.IPs}},
-				{"ip.ipv4.ip": bson.M{"$in": req.IPs}},
-			},
-		}
-		assets, err := assetModel.Find(l.ctx, filter, 0, 0)
+	for _, wsId := range workspaceIds {
+		assetModel := l.svcCtx.GetAssetModel(wsId)
+		deleted, err := assetModel.DeleteByFilter(l.ctx, filter)
 		if err != nil {
+			l.Logger.Errorf("IPBatchDelete 删除工作空间 %s 资产失败: %v", wsId, err)
 			continue
 		}
-
-		// 收集资产ID
-		ids := make([]string, 0, len(assets))
-		for _, asset := range assets {
-			ids = append(ids, asset.Id.Hex())
-		}
-
-		// 批量删除
-		if len(ids) > 0 {
-			deleted, _ := assetModel.BatchDelete(l.ctx, ids)
-			totalDeleted += deleted
-		}
+		totalDeleted += deleted
 	}
 
 	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(totalDeleted, 10) + " 条资产"}, nil

@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 
+	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
@@ -81,6 +82,7 @@ func (l *WorkspaceSaveLogic) WorkspaceSave(req *types.WorkspaceSaveReq) (resp *t
 		if err != nil {
 			return &types.BaseResp{Code: 500, Msg: "更新失败"}, nil
 		}
+		common.InvalidateWorkspaceIds(l.svcCtx)
 		return &types.BaseResp{Code: 0, Msg: "更新成功"}, nil
 	}
 
@@ -92,6 +94,7 @@ func (l *WorkspaceSaveLogic) WorkspaceSave(req *types.WorkspaceSaveReq) (resp *t
 	if err = l.svcCtx.WorkspaceModel.Insert(l.ctx, workspace); err != nil {
 		return &types.BaseResp{Code: 500, Msg: "创建失败"}, nil
 	}
+	common.InvalidateWorkspaceIds(l.svcCtx)
 
 	return &types.BaseResp{Code: 0, Msg: "创建成功"}, nil
 }
@@ -119,6 +122,9 @@ func (l *WorkspaceDeleteLogic) WorkspaceDelete(req *types.WorkspaceDeleteReq) (r
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "查询工作空间失败"}, nil
 	}
+	if ws == nil {
+		return &types.BaseResp{Code: 404, Msg: "工作空间不存在"}, nil
+	}
 
 	if ws.Name == "默认工作空间" {
 		return &types.BaseResp{Code: 400, Msg: "系统默认工作空间不允许删除"}, nil
@@ -127,6 +133,7 @@ func (l *WorkspaceDeleteLogic) WorkspaceDelete(req *types.WorkspaceDeleteReq) (r
 	if err = l.svcCtx.WorkspaceModel.Delete(l.ctx, req.Id); err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}
+	common.InvalidateWorkspaceIds(l.svcCtx)
 
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }

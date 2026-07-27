@@ -145,7 +145,7 @@ onMounted(() => {
 }
 
 .blacklist-content {
-  max-width: 1000px;
+  max-width: 100%;
 }
 
 .info-alert {

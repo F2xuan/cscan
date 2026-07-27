@@ -246,6 +246,12 @@ const props = defineProps({
   selection: {
     type: Boolean,
     default: false
+  },
+  // 固定的额外查询参数，会被合并到 loadData 的 payload 中（不写入 URL）。
+  // 用于父页面注入服务端固定过滤条件（例如敏感信息页强制 isRisk=true）。
+  extraParams: {
+    type: Object,
+    default: () => ({})
   }
 })
 
@@ -389,6 +395,7 @@ async function loadData() {
       page: pagination.page,
       pageSize: pagination.pageSize,
       query: searchQuery.value,
+      ...(props.extraParams || {}),
       ...searchForm
     }
 

@@ -2,10 +2,9 @@
   <img src="images/logo.png" width="80" alt="CSCAN" />
 </div>
 
-
 <div align="center">
 
-**CSCAN-Enterprise Distributed Network Asset Scanning Platform**
+**CSCAN - Enterprise Distributed Network Asset Scanning Platform**
 
 [![Go](https://img.shields.io/badge/Go-1.25.7-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
@@ -18,9 +17,24 @@
 
 ---
 
-| Dashboard | Asset Filter | Fingerprint | Vulnerability | Nodes Monitor | Notification |
-|:---:|:---:|:---:|:---:|:---:|:---:|
-| <img src="images/dashboard.png" width="200"> | <img src="images/filter.png" width="200"> | <img src="images/finger.png" width="200"> | <img src="images/poc.png" width="200"> | <img src="images/worker.png" width="200"> | <img src="images/notice.png" width="200"> |
+<table width="100%">
+  <tr>
+    <td align="center"><b>Dashboard</b></td>
+    <td align="center"><b>Asset Search</b></td>
+    <td align="center"><b>Fingerprint</b></td>
+    <td align="center"><b>Vulnerability</b></td>
+    <td align="center"><b>Node Monitor</b></td>
+    <td align="center"><b>Notification</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="images/dashboard.png"></td>
+    <td align="center"><img src="images/filter.png"></td>
+    <td align="center"><img src="images/finger.png"></td>
+    <td align="center"><img src="images/poc.png"></td>
+    <td align="center"><img src="images/worker.png"></td>
+    <td align="center"><img src="images/notice.png"></td>
+  </tr>
+</table>
 
 ---
 
@@ -29,11 +43,11 @@
 
 - **Distributed Architecture** - Master/Worker separation, multi-node elastic scaling
 - **Pipeline Orchestration** - Scan phases automatically chained, results passed to subsequent phases
-- **Weakpass Dict Management** - Built-in default dictionaries, custom dict CRUD, import/export
+- **Weak Password Dictionary Management** - Built-in default dictionaries, custom dict CRUD, import/export
 - **Cron Tasks** - Cron expression-driven periodic scanning tasks
 - **Asset Grouping** - Auto-aggregate assets by domain, real-time task status reflection
 - **Multi-Workspace** - Tenant-level data isolation, organization/team dimension management
-- **Notification** - Real-time scan result push (DingTalk/Feishu/WeCom/Email/Webhook)
+- **Notification Subscription** - Real-time scan result push (DingTalk/Feishu/WeCom/Email/Webhook)
 
 ---
 
@@ -63,13 +77,17 @@ chmod +x cscan.sh && ./cscan.sh
 # 1. Start dependencies
 docker-compose -f docker-compose.dev.yaml up -d
 
-# 2. Set JWT secret environment variable (required, otherwise API refuses to start)
-export CSCAN_JWT_SECRET="$(openssl rand -hex 32)"
-# Or use dev mode bypass (auto-generates random secret, local debug only)
-# export CSCAN_DEV=1
-
-# 3. Start services
+# 2. Start services
 go run rpc/task/task.go -f rpc/task/etc/task.yaml
+
+
+# 3. Dev mode bypass (auto-generates random secret, local debug only)
+# Windows powershell
+$env:CSCAN_DEV=1
+# Windows cmd
+# set CSCAN_DEV=1
+# linux & mac
+# export CSCAN_DEV=1
 go run api/cscan.go -f api/etc/cscan.yaml
 
 # 4. Start frontend

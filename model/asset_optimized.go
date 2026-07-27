@@ -26,6 +26,24 @@ var AssetScreenshotProjection = bson.M{
 	"banner": 0,
 }
 
+// AssetSiteProjection 站点列表专用投影，在列表投影基础上保留 icon_hash_bytes 用于展示 favicon
+var AssetSiteProjection = bson.M{
+	"body":       0,
+	"header":     0,
+	"screenshot": 0,
+	"cert":       0,
+	"banner":     0,
+}
+
+// AssetFingerprintProjection 指纹匹配专用投影
+// 保留 body/header/icon_hash_bytes/server/title 等匹配所需字段，仅排除 screenshot/cert/banner 这三个无关大字段
+// 相比 FindFull 全字段加载，可减少约 70%+ 内存占用（screenshot 通常最大）
+var AssetFingerprintProjection = bson.M{
+	"screenshot": 0,
+	"cert":       0,
+	"banner":     0,
+}
+
 // AssetDetailProjection 详情查询投影（包含所有字段）
 var AssetDetailProjection = bson.M{}
 

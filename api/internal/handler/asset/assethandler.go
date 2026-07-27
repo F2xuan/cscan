@@ -140,6 +140,26 @@ func AssetImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// AssetSaveHandler 手动添加资产
+func AssetSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetSaveReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetSaveLogic(r.Context(), svcCtx)
+		resp, err := l.AssetSave(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
 // AssetFingerprintsListHandler 获取资产中已识别的指纹列表
 func AssetFingerprintsListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -344,6 +364,81 @@ func AssetExposuresHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetExposuresLogic(r.Context(), svcCtx)
 		resp, err := l.AssetExposures(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetTargetListHandler 顶层资产列表（IP/主域名）
+func AssetTargetListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetListReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetTargetListLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetList(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetTargetDetailHandler 顶层资产详情（meta + exposure + risk）
+func AssetTargetDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetDetailReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetTargetDetailLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetDetail(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetTargetUpdateHandler 更新顶层资产用户字段
+func AssetTargetUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetUpdateReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetTargetUpdateLogic(r.Context(), svcCtx)
+		if err := l.AssetTargetUpdate(&req, workspaceId); err != nil {
+			response.Error(w, err)
+			return
+		}
+		response.SuccessWithMsg(w, "success")
+	}
+}
+
+// AssetTargetDeleteHandler 删除顶层资产
+func AssetTargetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetDeleteReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetTargetDeleteLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetDelete(&req, workspaceId)
 		if err != nil {
 			response.Error(w, err)
 			return

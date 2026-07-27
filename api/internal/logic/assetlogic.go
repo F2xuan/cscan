@@ -15,6 +15,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -164,12 +165,14 @@ func parseQuerySyntax(query string, filter bson.M) {
 
 	// 如果不包含 = 号，则视为普通文本模糊搜索
 	if !strings.Contains(query, "=") {
+		// 修复 M-18：转义正则元字符，防止 ReDoS
+		escQ := regexp.QuoteMeta(query)
 		filter["$or"] = []bson.M{
-			{"host": bson.M{"$regex": query, "$options": "i"}},
-			{"authority": bson.M{"$regex": query, "$options": "i"}},
-			{"title": bson.M{"$regex": query, "$options": "i"}},
-			{"domain": bson.M{"$regex": query, "$options": "i"}},
-			{"service": bson.M{"$regex": query, "$options": "i"}},
+			{"host": bson.M{"$regex": escQ, "$options": "i"}},
+			{"authority": bson.M{"$regex": escQ, "$options": "i"}},
+			{"title": bson.M{"$regex": escQ, "$options": "i"}},
+			{"domain": bson.M{"$regex": escQ, "$options": "i"}},
+			{"service": bson.M{"$regex": escQ, "$options": "i"}},
 		}
 		return
 	}
@@ -201,19 +204,19 @@ func parseQuerySyntax(query string, filter bson.M) {
 				filter["port"] = port
 			}
 		case "host", "ip":
-			filter["host"] = bson.M{"$regex": value, "$options": "i"}
+			filter["host"] = bson.M{"$regex": regexp.QuoteMeta(value), "$options": "i"}
 		case "service", "protocol":
-			filter["service"] = bson.M{"$regex": value, "$options": "i"}
+			filter["service"] = bson.M{"$regex": regexp.QuoteMeta(value), "$options": "i"}
 		case "title":
-			filter["title"] = bson.M{"$regex": value, "$options": "i"}
+			filter["title"] = bson.M{"$regex": regexp.QuoteMeta(value), "$options": "i"}
 		case "app", "finger", "fingerprint":
-			filter["app"] = bson.M{"$regex": cleanAppName(value), "$options": "i"}
+			filter["app"] = bson.M{"$regex": regexp.QuoteMeta(cleanAppName(value)), "$options": "i"}
 		case "status", "httpstatus":
 			filter["status"] = value
 		case "domain":
-			filter["domain"] = bson.M{"$regex": value, "$options": "i"}
+			filter["domain"] = bson.M{"$regex": regexp.QuoteMeta(value), "$options": "i"}
 		case "banner":
-			filter["banner"] = bson.M{"$regex": value, "$options": "i"}
+			filter["banner"] = bson.M{"$regex": regexp.QuoteMeta(value), "$options": "i"}
 		}
 	}
 }
@@ -247,7 +250,7 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 	// 独立筛选条件：无论是否有 query 都生效，且不覆盖 parseQuerySyntax 已设置的字段
 	if req.Host != "" {
 		if _, exists := filter["host"]; !exists {
-			filter["host"] = bson.M{"$regex": req.Host, "$options": "i"}
+			filter["host"] = bson.M{"$regex": regexp.QuoteMeta(req.Host), "$options": "i"}
 		}
 	}
 	if req.Port > 0 {
@@ -262,18 +265,18 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 	}
 	if req.Service != "" {
 		if _, exists := filter["service"]; !exists {
-			filter["service"] = bson.M{"$regex": req.Service, "$options": "i"}
+			filter["service"] = bson.M{"$regex": regexp.QuoteMeta(req.Service), "$options": "i"}
 		}
 	}
 	if req.Title != "" {
 		if _, exists := filter["title"]; !exists {
-			filter["title"] = bson.M{"$regex": req.Title, "$options": "i"}
+			filter["title"] = bson.M{"$regex": regexp.QuoteMeta(req.Title), "$options": "i"}
 		}
 	}
 	if req.App != "" {
 		if _, exists := filter["app"]; !exists {
 			cleanedApp := cleanAppName(req.App)
-			filter["app"] = bson.M{"$regex": cleanedApp, "$options": "i"}
+			filter["app"] = bson.M{"$regex": regexp.QuoteMeta(cleanedApp), "$options": "i"}
 		}
 	}
 	if req.HttpStatus != "" {
@@ -321,8 +324,14 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 
 	// 如果查询多个工作空间
 	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 优化：限制每个工作空间的查询数量，避免内存溢出
-		maxPerWorkspace := req.PageSize * 3 // 每个工作空间最多查询3页的数据
+		// 优化点：原 maxPerWorkspace = pageSize*3 只能覆盖前 3 页，翻到第 4 页及以后会丢数据
+		// 改为 needTotal = page * pageSize 覆盖到当前页末尾，保证跨 ws 分页正确性
+		// FindWithSort 已走 AssetListProjection（排除 body/header/cert/banner/screenshot/icon_hash_bytes）
+		needTotal := req.Page * req.PageSize
+		// 安全上限：避免用户翻到极深页时拉取过多数据
+		if needTotal > 50000 {
+			needTotal = 50000
+		}
 		var allAssets []model.Asset
 
 		for _, wsId := range wsIds {
@@ -335,8 +344,8 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 			}
 			total += wsTotal
 
-			// 限制查询数量，避免内存问题
-			limit := maxPerWorkspace
+			// 每个 ws 最多拉 needTotal 条（覆盖到当前页末尾），wsTotal 不足时按实际数拉
+			limit := needTotal
 			if wsTotal < int64(limit) {
 				limit = int(wsTotal)
 			}
@@ -403,13 +412,8 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 		}
 	}
 
-	// 构建组织ID到名称的映射
-	orgNameMap := make(map[string]string)
-	if orgs, err := l.svcCtx.OrganizationModel.Find(l.ctx, bson.M{}, 0, 0); err == nil {
-		for _, org := range orgs {
-			orgNameMap[org.Id.Hex()] = org.Name
-		}
-	}
+	// 构建组织ID到名称的映射（走带缓存版的 LoadOrgMap，避免每次 list 都全表加载 organization）
+	orgNameMap := common.LoadOrgMap(l.ctx, l.svcCtx)
 
 	// 转换响应
 	list := make([]types.Asset, 0, len(assets))
@@ -513,6 +517,22 @@ func NewAssetStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetSt
 }
 
 func (l *AssetStatLogic) AssetStat(workspaceId string) (resp *types.AssetStatResp, err error) {
+	// 聚合统计走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
+	// 原实现每个 ws 跑 7 次聚合（overview/port/service/app/title/iconHash/riskLevel），多 ws 时是 7×N 次 collection scan
+	cacheKey := "asset_stat:" + workspaceId
+	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
+		return l.loadAssetStat(workspaceId)
+	})
+	if cacheErr != nil {
+		return l.loadAssetStat(workspaceId)
+	}
+	if r, ok := cached.(*types.AssetStatResp); ok {
+		return r, nil
+	}
+	return l.loadAssetStat(workspaceId)
+}
+
+func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp, error) {
 	var totalAsset, totalHost, newCount, updatedCount int64
 	var topPorts, topService, topApp, topTitle []types.StatItem
 	var topIconHash []types.IconHashStatItem
@@ -887,7 +907,11 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 		return &types.AssetImportResp{Code: 400, Msg: "请输入要导入的目标"}, nil
 	}
 
+	// "all"/空 需解析为真实 workspaceId，否则会错误写入 "default" 集合，
+	// 而前端实际 workspace 列表里不含 default → 清单不可见
+	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	metaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
 
 	var newCount, skipCount, errorCount int
 	var errorDetails []string
@@ -910,6 +934,7 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 		// 检查是否已存在
 		existing, _ := assetModel.FindByHostPort(l.ctx, host, port)
 		if existing != nil {
+			// AssetImportReq 不携带 labels/memo，命中已存在时无需更新；保留 skip 计数语义
 			skipCount++
 			continue
 		}
@@ -931,6 +956,12 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 			continue
 		}
 		newCount++
+
+		// 同步创建/刷新顶层资产 meta，否则顶层资产列表（只读 {ws}_asset_target_meta）不会展示手动导入的资产
+		if err := upsertAssetTargetMeta(l.ctx, metaModel, workspaceId, host, "", nil); err != nil {
+			l.Logger.Errorf("[AssetImport] upsert target meta host=%s fail: %v", host, err)
+		}
+		invalidateAssetTargetCaches(l.svcCtx, "")
 	}
 
 	if total == 0 {
@@ -967,6 +998,88 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 		SkipCount:  skipCount,
 		ErrorCount: errorCount,
 	}, nil
+}
+
+// AssetSaveLogic 手动添加资产
+type AssetSaveLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewAssetSaveLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetSaveLogic {
+	return &AssetSaveLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *AssetSaveLogic) AssetSave(req *types.AssetSaveReq, workspaceId string) (resp *types.AssetSaveResp, err error) {
+	host := strings.TrimSpace(req.Host)
+	if host == "" {
+		return nil, xerr.NewCodeErrorMsg(xerr.ParamError, "主机不能为空")
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		return nil, xerr.NewCodeErrorMsg(xerr.ParamError, "端口范围 1-65535")
+	}
+	if !isValidHost(host) {
+		return nil, xerr.NewCodeErrorMsg(xerr.ParamError, "无效的主机名或IP")
+	}
+
+	protocol := strings.TrimSpace(strings.ToLower(req.Protocol))
+	service := protocol
+	isHTTP := protocol == "http" || protocol == "https"
+
+	authority := host + ":" + strconv.Itoa(req.Port)
+
+	asset := &model.Asset{
+		Authority: authority,
+		Host:      host,
+		Port:      req.Port,
+		Service:   service,
+		IsHTTP:    isHTTP,
+		Title:     strings.TrimSpace(req.Title),
+		Labels:    req.Labels,
+		Memo:      strings.TrimSpace(req.Memo),
+		Source:    "manual",
+	}
+
+	wsId := common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
+	assetModel := l.svcCtx.GetAssetModel(wsId)
+	historyModel := l.svcCtx.GetAssetHistoryModel(wsId)
+
+	// 预读 existing 以驱动 helper 的 diff / 状态字段门控 / 历史写入
+	existing, _ := assetModel.FindByAuthorityOnly(l.ctx, authority)
+
+	opts := model.AssetWriteOptions{
+		IsManual:             true,
+		TaskId:               "",
+		IsDifferentTask:      false,
+		AllowClearUserFields: true,
+	}
+	update, changes := model.BuildAssetUpdateDoc(asset, existing, opts)
+
+	if err := assetModel.UpsertByAuthority(l.ctx, authority, update); err != nil {
+		l.Errorf("[AssetSave] upsert failed: %v", err)
+		return nil, xerr.NewServerError("保存资产失败")
+	}
+
+	// 写入历史：仅当 existing 非空且存在实际变更时
+	if existing != nil && len(changes) > 0 {
+		history := model.SnapshotFromAsset(existing, existing.TaskId, existing.UpdateTime, changes)
+		if err := historyModel.Insert(l.ctx, history); err != nil {
+			l.Logger.Errorf("[AssetSave] insert history failed: %v", err)
+		}
+	}
+
+	// 同步创建/刷新顶层资产 meta，否则顶层资产列表不会展示手动添加的资产
+	if err := upsertAssetTargetMeta(l.ctx, l.svcCtx.GetAssetTargetMetaModel(wsId), wsId, host, "", req.Labels); err != nil {
+		l.Logger.Errorf("[AssetSave] upsert target meta host=%s fail: %v", host, err)
+	}
+	invalidateAssetTargetCaches(l.svcCtx, "")
+
+	return &types.AssetSaveResp{Code: 0, Msg: "success"}, nil
 }
 
 // parseTarget 解析目标字符串，支持 IP:端口、URL、域名 格式
@@ -1056,6 +1169,15 @@ func parseTarget(target string) (host string, port int, scheme string, err error
 	}
 
 	return host, port, scheme, nil
+}
+
+// upsertAssetTargetMeta 将手动导入/添加的资产归并到顶层资产 meta 集合。
+// 解析与 upsert 共用 model.AssetTargetMetaModel.EnsureForAsset，
+// 与扫描结果保存（RPC SaveTaskResult）保持一致，避免顶层资产列表只见手动新增。
+//
+// labels 在 Upsert 时按 $set 覆盖；nil 则保留原值。
+func upsertAssetTargetMeta(ctx context.Context, metaModel *model.AssetTargetMetaModel, wsId, host, domain string, labels []string) error {
+	return metaModel.EnsureForAsset(ctx, wsId, host, domain, labels)
 }
 
 // isValidHost 校验主机名是否为有效的IP或域名

@@ -127,6 +127,9 @@ func (m *ScanResultHistoryModel) FindByVersionId(ctx context.Context, workspaceI
 	var doc ScanResultHistory
 	err := m.coll.FindOne(ctx, filter).Decode(&doc)
 	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &doc, nil

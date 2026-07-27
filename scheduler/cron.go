@@ -65,7 +65,7 @@ type CronManager struct {
 	tasks     map[string]*CronTask
 	cronKey   string
 	taskSrc   CronTaskSource // MongoDB数据源
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	stopCh    chan struct{} // 优雅停止信号
 }
 
@@ -287,13 +287,23 @@ func (m *CronManager) DisableTask(ctx context.Context, taskId string) error {
 	return nil
 }
 
-// GetTasks 获取所有定时任务
+// GetTasks 获取所有定时任务（并发安全，返回快照切片）
 func (m *CronManager) GetTasks() []*CronTask {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	tasks := make([]*CronTask, 0, len(m.tasks))
 	for _, task := range m.tasks {
 		tasks = append(tasks, task)
 	}
 	return tasks
+}
+
+// GetTask 根据 taskId 获取单个定时任务（并发安全）
+func (m *CronManager) GetTask(taskId string) (*CronTask, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	task, ok := m.tasks[taskId]
+	return task, ok
 }
 
 // startTask 启动定时任务
@@ -445,8 +455,16 @@ func (m *CronManager) executeTask(task *CronTask) {
 	// 计算下次执行时间
 	switch currentTask.ScheduleType {
 	case "cron":
-		schedule, _ := cronParser.Parse(currentTask.CronSpec)
-		currentTask.NextRunTime = schedule.Next(time.Now()).Local().Format("2006-01-02 15:04:05")
+		// 修复 C-08：原忽略 Parse 错误，spec 非法时 schedule 为 nil，
+		// schedule.Next() 触发 nil pointer panic 导致 executeTask 崩溃
+		schedule, err := cronParser.Parse(currentTask.CronSpec)
+		if err != nil || schedule == nil {
+			logx.Errorf("[CronManager] Invalid cron spec for task %s: spec=%q, err=%v",
+				taskId, currentTask.CronSpec, err)
+			currentTask.NextRunTime = ""
+		} else {
+			currentTask.NextRunTime = schedule.Next(time.Now()).Local().Format("2006-01-02 15:04:05")
+		}
 	case "once":
 		// 一次性任务执行后禁用
 		currentTask.Status = "disable"

@@ -52,8 +52,8 @@ func (cm *ChunkManager) CreateChunkedTask(ctx context.Context, req *ChunkTaskReq
 	logx.Infof("[ChunkManager] Creating chunked task: taskId=%s, targets=%d chars",
 		req.TaskId, len(req.Target))
 
-	// 执行任务拆分
-	splitResult, err := cm.splitter.SplitTask(req.TaskId, req.Target, req.Config)
+	// 执行任务拆分（传入原任务优先级，保留优先级语义）
+	splitResult, err := cm.splitter.SplitTask(req.TaskId, req.Target, req.Config, req.Priority)
 	if err != nil {
 		return &ChunkTaskResponse{
 			Success: false,
@@ -107,8 +107,9 @@ func (cm *ChunkManager) CreateChunkedTask(ctx context.Context, req *ChunkTaskReq
 		schedTasks = append(schedTasks, schedTask)
 		chunkIds = append(chunkIds, chunk.ChunkId)
 
-		// 保存分片任务信息到Redis
-		if err := cm.saveChunkTaskInfo(ctx, chunk.ChunkId, req, chunk); err != nil {
+		// 保存分片任务信息到 Redis（含完整 Config，供 getSchedulerTasks 还原）
+		// 修复历史问题：原仅保存 7 个字段，导致 getSchedulerTasks 重建时 Config 丢失
+		if err := cm.saveChunkTaskInfo(ctx, chunk.ChunkId, req, chunk, chunkConfigBytes); err != nil {
 			logx.Errorf("[ChunkManager] Failed to save chunk task info for %s: %v", chunk.ChunkId, err)
 		}
 	}
@@ -346,21 +347,30 @@ func (cm *ChunkManager) saveChunkInfo(ctx context.Context, taskId string, splitR
 }
 
 // saveChunkTaskInfo 保存分片任务信息
-func (cm *ChunkManager) saveChunkTaskInfo(ctx context.Context, chunkId string, req *ChunkTaskRequest, chunk TaskChunk) error {
+// 修复历史问题：原仅保存 7 个字段，getSchedulerTasks 重建 TaskInfo 时丢失 Config
+// 导致 PushChunkedTasks 推送不完整的任务到队列，Worker 拉取后无法执行扫描
+// 现完整序列化 TaskInfo（含 Config/TaskName/Workers），供 getSchedulerTasks 直接还原
+func (cm *ChunkManager) saveChunkTaskInfo(ctx context.Context, chunkId string, req *ChunkTaskRequest, chunk TaskChunk, chunkConfigBytes []byte) error {
 	key := cm.getChunkTaskInfoKey(chunkId)
 
-	info := map[string]interface{}{
-		"chunkId":      chunkId,
+	// 完整保存 TaskInfo，确保 getSchedulerTasks 能还原所有字段
+	// 字段对齐 scheduler.TaskInfo 结构，避免类型断言失败
+	taskInfo := map[string]interface{}{
+		"taskId":      chunkId,
+		"mainTaskId":  req.MainTaskId,
+		"workspaceId": req.WorkspaceId,
+		"taskName":    req.TaskName,
+		"config":      string(chunkConfigBytes), // 完整的分片配置 JSON
+		"priority":    chunk.Priority,
+		"workers":     req.Workers,
+		"chunkId":     chunkId,
 		"parentTaskId": req.TaskId,
-		"workspaceId":  req.WorkspaceId,
-		"mainTaskId":   req.MainTaskId,
 		"chunkIndex":   chunk.Index,
 		"targetCount":  chunk.TargetCount,
-		"priority":     chunk.Priority,
 		"createTime":   time.Now(),
 	}
 
-	data, err := json.Marshal(info)
+	data, err := json.Marshal(taskInfo)
 	if err != nil {
 		return err
 	}
@@ -391,6 +401,9 @@ func (cm *ChunkManager) getChunkStatus(ctx context.Context, chunkId string) (*Ch
 }
 
 // getSchedulerTasks 获取调度任务列表
+// 修复历史问题：原仅还原 4 个字段（TaskId/MainTaskId/WorkspaceId/Priority），Config 丢失
+// 导致 PushChunkedTasks 推送不完整的任务到队列，Worker 拉取后因 Config 为空无法执行扫描
+// 现直接反序列化保存的 TaskInfo（含 Config/TaskName/Workers），完整还原
 func (cm *ChunkManager) getSchedulerTasks(ctx context.Context, taskId string) ([]*TaskInfo, error) {
 	splitResult, err := cm.GetChunkInfo(ctx, taskId)
 	if err != nil {
@@ -399,24 +412,54 @@ func (cm *ChunkManager) getSchedulerTasks(ctx context.Context, taskId string) ([
 
 	var tasks []*TaskInfo
 	for _, chunk := range splitResult.Chunks {
-		// 从Redis获取分片任务信息
+		// 从 Redis 获取完整的分片任务信息
 		key := cm.getChunkTaskInfoKey(chunk.ChunkId)
 		data, err := cm.rdb.Get(ctx, key).Result()
 		if err != nil {
+			logx.Errorf("[ChunkManager] getSchedulerTasks: failed to get chunk task info for %s: %v", chunk.ChunkId, err)
 			continue
 		}
 
 		var info map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &info); err != nil {
+			logx.Errorf("[ChunkManager] getSchedulerTasks: failed to parse chunk task info for %s: %v", chunk.ChunkId, err)
 			continue
 		}
 
-		// 重建调度任务
+		// 安全的类型断言：使用 fmt.Sprint 兜底，避免 panic
+		// JSON 反序列化 map[string]interface{} 后，string 字段是 string，但防御性编程更稳妥
+		mainTaskId, _ := info["mainTaskId"].(string)
+		workspaceId, _ := info["workspaceId"].(string)
+		taskName, _ := info["taskName"].(string)
+		config, _ := info["config"].(string)
+		// priority 是 int，JSON 反序列化后是 float64
+		var priority int
+		if p, ok := info["priority"].(float64); ok {
+			priority = int(p)
+		} else if p, ok := info["priority"].(int); ok {
+			priority = p
+		} else {
+			priority = chunk.Priority // 兜底用 chunk 自带的 priority
+		}
+		// workers 是 []interface{}（JSON 反序列化），需要逐个断言
+		var workers []string
+		if w, ok := info["workers"].([]interface{}); ok {
+			for _, v := range w {
+				if s, ok := v.(string); ok {
+					workers = append(workers, s)
+				}
+			}
+		}
+
+		// 完整还原 TaskInfo（包含 Config）
 		task := &TaskInfo{
 			TaskId:      chunk.ChunkId,
-			MainTaskId:  info["mainTaskId"].(string),
-			WorkspaceId: info["workspaceId"].(string),
-			Priority:    chunk.Priority,
+			MainTaskId:  mainTaskId,
+			WorkspaceId: workspaceId,
+			TaskName:    taskName,
+			Config:      config,
+			Priority:    priority,
+			Workers:     workers,
 		}
 		tasks = append(tasks, task)
 	}

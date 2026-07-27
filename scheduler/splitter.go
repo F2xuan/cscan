@@ -73,7 +73,10 @@ type TaskChunk struct {
 }
 
 // SplitTask 拆分任务
-func (s *TaskSplitter) SplitTask(taskId, target string, taskConfig map[string]interface{}) (*SplitResult, error) {
+// originalPriority 为原任务优先级（scheduler.PriorityBackground..PriorityUrgent），
+// 不拆分时透传，拆分时作为分片基础优先级叠加调整项后 clamp 到 [PriorityBackground, PriorityUrgent]。
+// 修复 C-04：原实现硬编码 Priority=1（Low），小规模紧急任务被强制降级，优先级调度失效。
+func (s *TaskSplitter) SplitTask(taskId, target string, taskConfig map[string]interface{}, originalPriority int) (*SplitResult, error) {
 	// 解析所有目标
 	allTargets, err := s.parseAllTargets(target)
 	if err != nil {
@@ -91,14 +94,14 @@ func (s *TaskSplitter) SplitTask(taskId, target string, taskConfig map[string]in
 		RecommendedSize: s.calculateOptimalChunkSize(totalTargets),
 	}
 
-	// 如果不需要拆分，返回单个分片
+	// 如果不需要拆分，返回单个分片：透传原任务优先级
 	if !needSplit {
 		chunk := TaskChunk{
 			Index:       0,
 			Targets:     allTargets,
 			TargetCount: totalTargets,
 			ChunkId:     taskId,
-			Priority:    1,
+			Priority:    originalPriority,
 		}
 		result.Chunks = []TaskChunk{chunk}
 		result.ChunkCount = 1
@@ -106,8 +109,8 @@ func (s *TaskSplitter) SplitTask(taskId, target string, taskConfig map[string]in
 		return result, nil
 	}
 
-	// 拆分为多个分片
-	chunks := s.createChunks(taskId, allTargets)
+	// 拆分为多个分片：以原优先级为 base 计算分片优先级
+	chunks := s.createChunks(taskId, allTargets, originalPriority)
 	result.Chunks = chunks
 	result.ChunkCount = len(chunks)
 	result.EstimatedTime = s.estimateExecutionTime(totalTargets, taskConfig)
@@ -143,7 +146,8 @@ func (s *TaskSplitter) calculateOptimalChunkSize(totalTargets int) int {
 }
 
 // createChunks 创建分片
-func (s *TaskSplitter) createChunks(taskId string, allTargets []string) []TaskChunk {
+// basePriority 为原任务优先级，作为各分片优先级计算的基准
+func (s *TaskSplitter) createChunks(taskId string, allTargets []string, basePriority int) []TaskChunk {
 	var chunks []TaskChunk
 	chunkSize := s.calculateOptimalChunkSize(len(allTargets))
 
@@ -164,7 +168,7 @@ func (s *TaskSplitter) createChunks(taskId string, allTargets []string) []TaskCh
 			Targets:     chunkTargets,
 			TargetCount: len(chunkTargets),
 			ChunkId:     chunkId,
-			Priority:    s.calculateChunkPriority(len(chunks), len(chunkTargets)),
+			Priority:    s.calculateChunkPriority(len(chunks), len(chunkTargets), basePriority),
 		}
 
 		chunks = append(chunks, chunk)
@@ -174,23 +178,32 @@ func (s *TaskSplitter) createChunks(taskId string, allTargets []string) []TaskCh
 }
 
 // calculateChunkPriority 计算分片优先级
-func (s *TaskSplitter) calculateChunkPriority(index, targetCount int) int {
-	// 基础优先级
-	basePriority := 1
+// 在 basePriority（原任务优先级）基础上叠加调整项，并 clamp 到 [PriorityBackground, PriorityUrgent]
+// 修复 C-04：原实现固定 base=1（Low），忽略原任务优先级；现以原优先级为基准
+func (s *TaskSplitter) calculateChunkPriority(index, targetCount, basePriority int) int {
+	priority := basePriority
 
 	// 目标数量少的分片优先级更高（更快完成）
 	if targetCount <= s.config.MinChunkSize {
-		basePriority += 2
+		priority += 2
 	} else if targetCount <= s.config.MaxTargetsPerChunk {
-		basePriority += 1
+		priority += 1
 	}
 
 	// 前面的分片优先级稍高
 	if index < 3 {
-		basePriority += 1
+		priority += 1
 	}
 
-	return basePriority
+	// clamp 到 [PriorityBackground, PriorityUrgent]
+	if priority < PriorityBackground {
+		priority = PriorityBackground
+	}
+	if priority > PriorityUrgent {
+		priority = PriorityUrgent
+	}
+
+	return priority
 }
 
 // estimateExecutionTime 估算执行时间
@@ -346,7 +359,8 @@ func (s *TargetSplitter) SplitTargets(target string) []string {
 	}
 
 	splitter := NewTaskSplitter(config)
-	result, err := splitter.SplitTask("", target, nil)
+	// 旧版 TargetSplitter 无优先级概念，使用 PriorityNormal 作为默认基准
+	result, err := splitter.SplitTask("", target, nil, PriorityNormal)
 	if err != nil || !result.NeedSplit {
 		return []string{target}
 	}

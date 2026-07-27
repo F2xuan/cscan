@@ -228,27 +228,20 @@ func NewAIConfigLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AIConfig
 func (l *AIConfigLogic) GetConfig(workspaceId string) (*types.AIConfigGetResp, error) {
 	configModel := model.NewAPIConfigModel(l.svcCtx.MongoDB, workspaceId)
 	doc, err := configModel.FindByPlatform(l.ctx, "ai")
-	if err != nil {
-		// 如果没有配置，返回默认值
+	if err != nil || doc == nil {
 		return &types.AIConfigGetResp{
 			Code: 0,
 			Msg:  "success",
 			Data: &types.AIConfig{
-				Protocol: "anthropic",
-				BaseUrl:  "http://127.0.0.1:8045",
-				ApiKey:   "",
-				Model:    "gemini-2.5-flash",
+				Protocol: "openai",
 				Status:   "enable",
 			},
 		}, nil
 	}
 
-	// 解析存储的配置
 	// Key 字段存储格式: protocol|baseUrl|model
 	parts := strings.Split(doc.Key, "|")
-	protocol := "anthropic"
-	baseUrl := "http://127.0.0.1:8045"
-	modelName := "gemini-2.5-flash"
+	protocol, baseUrl, modelName := "openai", "", ""
 	if len(parts) >= 3 {
 		protocol = parts[0]
 		baseUrl = parts[1]
@@ -281,7 +274,7 @@ func (l *AIConfigLogic) SaveConfig(req *types.AIConfigSaveReq, workspaceId strin
 	// Key 字段存储格式: protocol|baseUrl|model
 	keyValue := fmt.Sprintf("%s|%s|%s", req.Protocol, req.BaseUrl, req.Model)
 
-	if err == nil && existing.Id.Hex() != "" {
+	if err == nil && existing != nil && existing.Id.Hex() != "" {
 		// 更新现有配置
 		err = configModel.Update(l.ctx, existing.Id.Hex(), bson.M{
 			"key":    keyValue,

@@ -637,7 +637,7 @@
           <div style="width: 100%">
             <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
               <span class="text-muted hint-text">{{ $t('poc.yamlHint') }}</span>
-              <el-button type="primary" size="small" @click="showAiAssistDialog" :icon="MagicStick">{{ $t('poc.aiAssist') }}</el-button>
+              <el-button v-if="isAdmin" type="primary" size="small" @click="showAiAssistDialog" :icon="MagicStick">{{ $t('poc.aiAssist') }}</el-button>
             </div>
             <div class="yaml-editor-wrapper">
               <el-input
@@ -706,43 +706,13 @@
 
     <!-- AI辅助编写POC对话框 -->
     <el-dialog v-model="aiAssistDialogVisible" :title="$t('poc.aiAssistTitle')" width="700px">
-      <!-- AI配置折叠面板 -->
-      <el-collapse v-model="aiConfigCollapse" style="margin-bottom: 15px;">
-        <el-collapse-item :title="$t('poc.aiServiceConfig')" name="config">
-          <el-form label-width="100px" size="small">
-            <el-form-item :label="$t('poc.protocolType')">
-              <el-radio-group v-model="aiConfig.protocol">
-                <el-radio-button label="openai">OpenAI</el-radio-button>
-                <el-radio-button label="anthropic">Anthropic</el-radio-button>
-                <el-radio-button label="gemini">Gemini</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item :label="$t('poc.serverAddress')">
-              <el-input v-model="aiConfig.baseUrl" placeholder="http://127.0.0.1:8045" />
-              <div class="text-muted hint-text" style="margin-top: 4px;">
-                {{ aiConfig.protocol === 'openai' ? 'OpenAI: /v1/chat/completions' : aiConfig.protocol === 'anthropic' ? 'Anthropic: /v1/messages' : 'Gemini: /v1beta/models/...' }}
-              </div>
-            </el-form-item>
-            <el-form-item :label="$t('poc.apiKey')">
-              <el-input v-model="aiConfig.apiKey" :placeholder="$t('poc.apiKeyPlaceholder')" show-password />
-            </el-form-item>
-            <el-form-item :label="$t('poc.model')">
-              <el-select v-model="aiConfig.model" :placeholder="$t('poc.selectModel')" style="width: 100%" allow-create filterable>
-                <el-option label="gemini-2.5-flash" value="gemini-2.5-flash" />
-                <el-option label="gemini-2.5-pro" value="gemini-2.5-pro" />
-                <el-option label="claude-sonnet-4-20250514" value="claude-sonnet-4-20250514" />
-                <el-option label="claude-3-5-sonnet-20241022" value="claude-3-5-sonnet-20241022" />
-                <el-option label="gpt-4o" value="gpt-4o" />
-                <el-option label="gpt-4o-mini" value="gpt-4o-mini" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" size="small" @click="saveAiConfig" :loading="aiSaving">{{ $t('poc.saveConfig') }}</el-button>
-              <el-button size="small" @click="testAiConnection" :loading="aiTesting">{{ $t('poc.testConnection') }}</el-button>
-            </el-form-item>
-          </el-form>
-        </el-collapse-item>
-      </el-collapse>
+      <!-- AI服务配置已迁移至 系统管理 > AI配置 -->
+      <el-alert type="info" :closable="false" style="margin-bottom: 15px">
+        <template #title>
+          {{ $t('poc.aiConfigMovedHint') }}
+          <router-link to="/ai-config" class="ai-config-link">{{ $t('navigation.aiConfig') }}</router-link>
+        </template>
+      </el-alert>
 
       <el-form label-width="100px">
         <el-form-item :label="$t('poc.vulnDescription')">
@@ -1222,11 +1192,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check, Search } from '@element-plus/icons-vue'
-import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, getAIConfig, saveAIConfig, validatePocSyntax } from '@/api/poc'
+import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax } from '@/api/poc'
+import { DEFAULT_AI_CONFIG, loadAIConfig, chat, extractYamlBlock } from '@/utils/aiClient'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
 import { getWeakpassDictList, saveWeakpassDict, deleteWeakpassDict, clearWeakpassDict } from '@/api/weakpass'
 import { getJSFinderConfig, saveJSFinderConfig, resetJSFinderConfig } from '@/api/jsfinder'
+import { useUserStore } from '@/stores/user'
 import jsYaml from 'js-yaml'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
@@ -1234,6 +1206,7 @@ import { saveAs } from 'file-saver'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const userStore = useUserStore()
 
 // 有效的tab名称
 const validTabs = ['nucleiTemplates', 'tagMapping', 'customPoc', 'dirscanDict', 'subdomainDict', 'weakpassDict', 'jsfinderConfig']
@@ -1430,134 +1403,13 @@ const aiAssistForm = reactive({
   reference: ''
 })
 
-// AI配置
-const aiConfig = reactive({
-  protocol: 'anthropic', // openai/anthropic/gemini
-  baseUrl: 'http://127.0.0.1:8045',
-  apiKey: '',
-  model: 'gemini-2.5-flash'
-})
-const aiConfigCollapse = ref([]) // 折叠面板状态
-const aiTesting = ref(false) // 测试连接状态
-const aiSaving = ref(false) // 保存配置状态
+// AI配置（含明文 apiKey，接口仅对管理员开放，故 AI 辅助能力也限管理员）
+const isAdmin = computed(() => userStore.role === 'admin' || userStore.role === 'superadmin')
+const aiConfig = ref({ ...DEFAULT_AI_CONFIG })
 
-// 从数据库加载AI配置
 async function loadAiConfig() {
-  try {
-    const res = await getAIConfig()
-    if (res.code === 0 && res.data) {
-      aiConfig.protocol = res.data.protocol || 'anthropic'
-      aiConfig.baseUrl = res.data.baseUrl || 'http://127.0.0.1:8045'
-      aiConfig.apiKey = res.data.apiKey || ''
-      aiConfig.model = res.data.model || 'gemini-2.5-flash'
-    }
-  } catch (e) {
-    console.error('加载AI配置失败:', e)
-  }
-}
-
-// 保存AI配置到数据库
-async function saveAiConfig() {
-  if (!aiConfig.baseUrl) {
-    ElMessage.warning(t('poc.pleaseConfigAiService'))
-    return
-  }
-  
-  aiSaving.value = true
-  try {
-    const res = await saveAIConfig({
-      protocol: aiConfig.protocol,
-      baseUrl: aiConfig.baseUrl,
-      apiKey: aiConfig.apiKey,
-      model: aiConfig.model
-    })
-    if (res.code === 0) {
-      ElMessage.success(t('poc.aiConfigSaved'))
-    } else {
-      ElMessage.error(res.msg || t('poc.saveConfigFailed'))
-    }
-  } catch (e) {
-    console.error('保存AI配置失败:', e)
-    ElMessage.error(t('poc.saveConfigFailed'))
-  } finally {
-    aiSaving.value = false
-  }
-}
-
-// 测试AI服务连接
-async function testAiConnection() {
-  if (!aiConfig.baseUrl) {
-    ElMessage.warning(t('poc.pleaseConfigAiService'))
-    return
-  }
-  
-  aiTesting.value = true
-  try {
-    let response
-    
-    if (aiConfig.protocol === 'openai') {
-      // OpenAI 协议
-      response = await fetch(`${aiConfig.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${aiConfig.apiKey}`
-        },
-        body: JSON.stringify({
-          model: aiConfig.model,
-          max_tokens: 10,
-          messages: [
-            { role: 'user', content: 'Hi' }
-          ]
-        })
-      })
-    } else if (aiConfig.protocol === 'gemini') {
-      // Gemini 协议
-      response = await fetch(`${aiConfig.baseUrl}/v1beta/models/${aiConfig.model}:generateContent?key=${aiConfig.apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [
-            { parts: [{ text: 'Hi' }] }
-          ]
-        })
-      })
-    } else {
-      // Anthropic 协议 (默认)
-      response = await fetch(`${aiConfig.baseUrl}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': aiConfig.apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: aiConfig.model,
-          max_tokens: 10,
-          messages: [
-            { role: 'user', content: 'Hi' }
-          ]
-        })
-      })
-    }
-    
-    if (response.ok) {
-      ElMessage.success(t('poc.connectionSuccess'))
-    } else {
-      const errorText = await response.text()
-      ElMessage.error(`${t('poc.connectionFailed')}: ${response.status} ${errorText.substring(0, 100)}`)
-    }
-  } catch (e) {
-    if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-      ElMessage.error(t('poc.cannotConnectAi'))
-    } else {
-      ElMessage.error(t('poc.connectionFailed') + ': ' + e.message)
-    }
-  } finally {
-    aiTesting.value = false
-  }
+  if (!isAdmin.value) return
+  aiConfig.value = await loadAIConfig()
 }
 
 // 自定义POC筛选条件
@@ -3667,119 +3519,20 @@ async function generatePocWithAi() {
     ElMessage.warning('请输入漏洞描述或CVE编号')
     return
   }
-  
-  if (!aiConfig.baseUrl) {
-    ElMessage.warning('请先配置AI服务地址')
-    aiConfigCollapse.value = ['config']
+
+  if (!aiConfig.value.baseUrl) {
+    ElMessage.warning('请先在 系统管理 > AI配置 中配置AI服务地址')
     return
   }
-  
+
   aiGenerating.value = true
   try {
-    // 构建提示词
-    const prompt = buildPocPrompt()
-    
-    let response
-    let content = ''
-    
-    if (aiConfig.protocol === 'openai') {
-      // OpenAI 协议
-      response = await fetch(`${aiConfig.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${aiConfig.apiKey}`
-        },
-        body: JSON.stringify({
-          model: aiConfig.model,
-          max_tokens: 4096,
-          messages: [
-            { role: 'user', content: prompt }
-          ]
-        })
-      })
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`AI服务请求失败: ${response.status} ${errorText}`)
-      }
-      
-      const data = await response.json()
-      if (data.choices && data.choices.length > 0) {
-        content = data.choices[0].message?.content || ''
-      }
-    } else if (aiConfig.protocol === 'gemini') {
-      // Gemini 协议
-      response = await fetch(`${aiConfig.baseUrl}/v1beta/models/${aiConfig.model}:generateContent?key=${aiConfig.apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [
-            { parts: [{ text: prompt }] }
-          ],
-          generationConfig: {
-            maxOutputTokens: 4096
-          }
-        })
-      })
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`AI服务请求失败: ${response.status} ${errorText}`)
-      }
-      
-      const data = await response.json()
-      if (data.candidates && data.candidates.length > 0) {
-        const parts = data.candidates[0].content?.parts || []
-        content = parts.map(p => p.text || '').join('')
-      }
-    } else {
-      // Anthropic 协议 (默认)
-      response = await fetch(`${aiConfig.baseUrl}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': aiConfig.apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: aiConfig.model,
-          max_tokens: 4096,
-          messages: [
-            { role: 'user', content: prompt }
-          ]
-        })
-      })
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`AI服务请求失败: ${response.status} ${errorText}`)
-      }
-      
-      const data = await response.json()
-      if (data.content && data.content.length > 0) {
-        content = data.content[0].text || ''
-      }
-    }
-    
-    // 提取YAML代码块
-    const yamlMatch = content.match(/```ya?ml\n([\s\S]*?)```/)
-    if (yamlMatch) {
-      content = yamlMatch[1].trim()
-    } else {
-      // 尝试直接使用内容（如果看起来像YAML）
-      if (content.includes('id:') && content.includes('info:')) {
-        // 移除可能的markdown标记
-        content = content.replace(/```ya?ml\n?/g, '').replace(/```\n?/g, '').trim()
-      }
-    }
-    
+    const content = extractYamlBlock(await chat({ config: aiConfig.value, prompt: buildPocPrompt() }))
+
     if (!content || !content.includes('id:')) {
       throw new Error('AI返回的内容不是有效的Nuclei POC格式')
     }
-    
+
     // 保存到缓存（关闭对话框后仍可恢复）
     aiGeneratedPocCache.value = content
     // 将生成的POC填入编辑框
@@ -3790,7 +3543,7 @@ async function generatePocWithAi() {
     ElMessage.success('POC生成成功，请检查并修改后保存')
   } catch (e) {
     console.error('AI生成POC失败:', e)
-    if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+    if (e.code === 'NETWORK') {
       ElMessage.error('无法连接到AI服务，请确保服务已启动')
     } else {
       ElMessage.error('AI生成POC失败: ' + (e.message || '未知错误'))
@@ -4362,6 +4115,12 @@ async function handleResetJSFinderConfig() {
 </script>
 
 <style lang="scss" scoped>
+// 对话框内容会被 teleport 到 body，样式需置于顶层而非嵌套在 .poc-page 下
+.ai-config-link {
+  color: var(--el-color-primary);
+  font-weight: 500;
+}
+
 .poc-page {
   .card-header {
     display: flex;

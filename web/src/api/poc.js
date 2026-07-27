@@ -97,16 +97,6 @@ export function scanAssetsWithPoc(data) {
 }
 
 
-// AI配置
-export function getAIConfig() {
-  return request.post('/ai/config/get')
-}
-
-export function saveAIConfig(data) {
-  return request.post('/ai/config/save', data)
-}
-
-
 // 验证POC语法
 export function validatePocSyntax(data) {
   return request.post('/poc/custom/validateSyntax', data)

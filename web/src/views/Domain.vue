@@ -136,12 +136,14 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
+const route = useRoute()
 const workspaceStore = useWorkspaceStore()
 const loading = ref(false)
 const tableData = ref([])
@@ -175,6 +177,11 @@ function handleWorkspaceChanged() {
 }
 
 onMounted(() => {
+  if (route.query.rootDomain) {
+    searchForm.rootDomain = String(route.query.rootDomain)
+  } else if (route.query.domain) {
+    searchForm.domain = String(route.query.domain)
+  }
   loadData()
   loadStat()
   loadOrganizations()

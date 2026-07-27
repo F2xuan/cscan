@@ -180,12 +180,14 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
+const route = useRoute()
 const workspaceStore = useWorkspaceStore()
 const loading = ref(false)
 const tableData = ref([])
@@ -222,6 +224,9 @@ function handleWorkspaceChanged() {
 }
 
 onMounted(() => {
+  if (route.query.ip) {
+    searchForm.ip = String(route.query.ip)
+  }
   loadData()
   loadStat()
   loadOrganizations()

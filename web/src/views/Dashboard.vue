@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard-modern" :class="{ 'is-dark': themeStore.isDark }">
+  <div class="dashboard-modern" :class="[{ 'is-dark': themeStore.isDark }, `style-${themeStore.themeStyle}`]">
     <!-- 第一排：5个资产数据卡片 -->
     <div class="top-cards-row">
       <!-- 域名 -->
@@ -7,12 +7,12 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>域名资产
+            <div class="dot"></div>{{ t('dashboard.cardDomain') }}
             <el-icon class="card-icon"><Postcard /></el-icon>
           </div>
           <div class="card-value">{{ animatedData.domains }}</div>
           <div class="card-sub" :class="{ positive: stats.domainNew > 0 }">
-            较昨日 {{ stats.domainNew > 0 ? '↑' : '—' }} {{ stats.domainNew }}
+            {{ t('dashboard.compareYesterday') }} {{ stats.domainNew > 0 ? '↑' : '—' }} {{ stats.domainNew }}
           </div>
         </div>
       </div>
@@ -22,12 +22,12 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>IP 地理
+            <div class="dot"></div>{{ t('dashboard.cardIp') }}
             <el-icon class="card-icon"><MapLocation /></el-icon>
           </div>
           <div class="card-value">{{ animatedData.ips }}</div>
           <div class="card-sub" :class="{ positive: stats.ipNew > 0 }">
-            较昨日 {{ stats.ipNew > 0 ? '↑' : '—' }} {{ stats.ipNew }}
+            {{ t('dashboard.compareYesterday') }} {{ stats.ipNew > 0 ? '↑' : '—' }} {{ stats.ipNew }}
           </div>
         </div>
       </div>
@@ -37,12 +37,12 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>端口与服务
+            <div class="dot"></div>{{ t('dashboard.cardPort') }}
             <el-icon class="card-icon"><Monitor /></el-icon>
           </div>
           <div class="card-value">{{ animatedData.ports }}</div>
           <div class="card-sub" :class="{ positive: stats.assetNew > 0 }">
-            较昨日 {{ stats.assetNew > 0 ? '↑' : '—' }} {{ stats.assetNew }}
+            {{ t('dashboard.compareYesterday') }} {{ stats.assetNew > 0 ? '↑' : '—' }} {{ stats.assetNew }}
           </div>
         </div>
       </div>
@@ -52,12 +52,12 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>Web 站点
+            <div class="dot"></div>{{ t('dashboard.cardSite') }}
             <el-icon class="card-icon"><Box /></el-icon>
           </div>
           <div class="card-value">{{ animatedData.sites }}</div>
           <div class="card-sub" :class="{ positive: stats.siteNew > 0 }">
-            较昨日 {{ stats.siteNew > 0 ? '↑' : '—' }} {{ stats.siteNew }}
+            {{ t('dashboard.compareYesterday') }} {{ stats.siteNew > 0 ? '↑' : '—' }} {{ stats.siteNew }}
           </div>
         </div>
       </div>
@@ -67,12 +67,12 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>资产分组
+            <div class="dot"></div>{{ t('dashboard.cardGroup') }}
             <el-icon class="card-icon"><FolderOpened /></el-icon>
           </div>
           <div class="card-value">{{ animatedData.groups }}</div>
           <div class="card-sub neutral">
-            工作空间逻辑隔离
+            {{ t('dashboard.workspaceIsolation') }}
           </div>
         </div>
       </div>
@@ -85,11 +85,11 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>运行任务 / 计算节点
+            <div class="dot"></div>{{ t('dashboard.cardTask') }}
             <el-icon class="card-icon"><Cpu /></el-icon>
           </div>
           <div class="card-value">{{ taskStats.running }} / {{ workerStats.online }}</div>
-          <div class="card-sub neutral">排队中任务: {{ taskStats.pending }}</div>
+          <div class="card-sub neutral">{{ t('dashboard.queuedTasks') }}: {{ taskStats.pending }}</div>
         </div>
       </div>
 
@@ -98,11 +98,11 @@
         <div class="card-glow"></div>
         <div class="card-content">
           <div class="card-header">
-            <div class="dot"></div>目录与敏感文件
+            <div class="dot"></div>{{ t('dashboard.cardDir') }}
             <el-icon class="card-icon"><Lightning /></el-icon>
           </div>
           <div class="card-value">{{ animatedData.dirScans }}</div>
-          <div class="card-sub neutral">暴露面文件与备份监控</div>
+          <div class="card-sub neutral">{{ t('dashboard.exposureMonitor') }}</div>
         </div>
       </div>
 
@@ -111,38 +111,38 @@
         <div class="card-content vuln-content">
           <div class="vuln-left">
             <div class="card-header">
-              <div class="dot danger-dot"></div>风险与漏洞
+              <div class="dot danger-dot"></div>{{ t('dashboard.cardVuln') }}
               <el-icon class="card-icon danger-icon"><Aim /></el-icon>
             </div>
             <div class="card-value danger-text">{{ animatedData.vulns }}</div>
-            <div class="card-sub neutral">全生命周期威胁监测</div>
+            <div class="card-sub neutral">{{ t('dashboard.lifecycleThreat') }}</div>
           </div>
           <div class="vuln-right">
             <div class="vuln-bubbles">
               <div class="bubble">
                 <el-progress type="circle" :percentage="calcPercent(stats.vulnCritical, stats.vulns)" :width="48" :stroke-width="4" color="#f53f3f" :show-text="false" />
                 <div class="bubble-inner"><span class="pct">{{ calcPercent(stats.vulnCritical, stats.vulns) }}%</span></div>
-                <div class="bubble-label"><span class="sv-num critical">{{ stats.vulnCritical }}</span>严重</div>
+                <div class="bubble-label"><span class="sv-num critical">{{ stats.vulnCritical }}</span>{{ t('dashboard.critical') }}</div>
               </div>
               <div class="bubble">
                 <el-progress type="circle" :percentage="calcPercent(stats.vulnHigh, stats.vulns)" :width="48" :stroke-width="4" color="#ff7d00" :show-text="false" />
                 <div class="bubble-inner"><span class="pct">{{ calcPercent(stats.vulnHigh, stats.vulns) }}%</span></div>
-                <div class="bubble-label"><span class="sv-num high">{{ stats.vulnHigh }}</span>高危</div>
+                <div class="bubble-label"><span class="sv-num high">{{ stats.vulnHigh }}</span>{{ t('dashboard.high') }}</div>
               </div>
               <div class="bubble">
                 <el-progress type="circle" :percentage="calcPercent(stats.vulnMedium, stats.vulns)" :width="48" :stroke-width="4" color="#f7ba1e" :show-text="false" />
                 <div class="bubble-inner"><span class="pct">{{ calcPercent(stats.vulnMedium, stats.vulns) }}%</span></div>
-                <div class="bubble-label"><span class="sv-num medium">{{ stats.vulnMedium }}</span>中危</div>
+                <div class="bubble-label"><span class="sv-num medium">{{ stats.vulnMedium }}</span>{{ t('dashboard.medium') }}</div>
               </div>
               <div class="bubble">
                 <el-progress type="circle" :percentage="calcPercent(stats.vulnLow, stats.vulns)" :width="48" :stroke-width="4" color="#165dff" :show-text="false" />
                 <div class="bubble-inner"><span class="pct">{{ calcPercent(stats.vulnLow, stats.vulns) }}%</span></div>
-                <div class="bubble-label"><span class="sv-num low">{{ stats.vulnLow }}</span>低危</div>
+                <div class="bubble-label"><span class="sv-num low">{{ stats.vulnLow }}</span>{{ t('dashboard.low') }}</div>
               </div>
                <div class="bubble">
                 <el-progress type="circle" :percentage="calcPercent(stats.vulnInfo, stats.vulns)" :width="48" :stroke-width="4" color="#86909c" :show-text="false" />
                 <div class="bubble-inner"><span class="pct">{{ calcPercent(stats.vulnInfo, stats.vulns) }}%</span></div>
-                <div class="bubble-label"><span class="sv-num info">{{ stats.vulnInfo }}</span>信息</div>
+                <div class="bubble-label"><span class="sv-num info">{{ stats.vulnInfo }}</span>{{ t('dashboard.info') }}</div>
               </div>
             </div>
           </div>
@@ -154,7 +154,7 @@
     <div class="chart-row-large">
       <div class="chart-card">
         <div class="chart-header">
-           <div class="title"><div class="vertical-bar"></div> 任务执行趋势 (近7天)</div>
+           <div class="title"><div class="vertical-bar"></div> {{ t('dashboard.trendChartTitle') }}</div>
         </div>
         <div ref="trendChartRef" class="chart-container trend-container"></div>
       </div>
@@ -165,7 +165,7 @@
       <!-- 漏洞等级占比 -->
       <div class="chart-card">
          <div class="chart-header">
-           <div class="title"><div class="vertical-bar warning"></div> 漏洞等级占比</div>
+           <div class="title"><div class="vertical-bar warning"></div> {{ t('dashboard.vulnLevelPie') }}</div>
            <el-icon class="info-icon"><Warning /></el-icon>
          </div>
          <div ref="vulnPieChartRef" class="chart-container"></div>
@@ -174,7 +174,7 @@
       <!-- 各资产类型占比 -->
       <div class="chart-card">
          <div class="chart-header">
-           <div class="title"><div class="vertical-bar success"></div> 各资产类型结构</div>
+           <div class="title"><div class="vertical-bar success"></div> {{ t('dashboard.assetTypeStruct') }}</div>
          </div>
          <div ref="assetTypePieChartRef" class="chart-container"></div>
       </div>
@@ -182,7 +182,7 @@
       <!-- 端口占比 TOP 10 -->
       <div class="chart-card">
          <div class="chart-header">
-           <div class="title"><div class="vertical-bar primary"></div> 端口占比 TOP 10</div>
+           <div class="title"><div class="vertical-bar primary"></div> {{ t('dashboard.portTop10') }}</div>
          </div>
          <div ref="portBarChartRef" class="chart-container"></div>
       </div>
@@ -190,11 +190,11 @@
        <!-- 指纹分类 TOP 10 -->
       <div class="chart-card">
          <div class="chart-header">
-           <div class="title"><div class="vertical-bar primary"></div> 指纹分类分布</div>
+           <div class="title"><div class="vertical-bar primary"></div> {{ t('dashboard.fingerprintCategory') }}</div>
          </div>
          <div class="chart-container">
            <div v-if="stats.topApp.length === 0" class="empty-data">
-             <el-icon><Box /></el-icon>暂无指纹数据
+             <el-icon><Box /></el-icon>{{ t('dashboard.noFingerprintData') }}
            </div>
            <div v-else ref="appRoseChartRef" style="width:100%;height:100%;"></div>
          </div>
@@ -203,11 +203,11 @@
       <!-- 服务占比 TOP 10 -->
       <div class="chart-card">
          <div class="chart-header">
-           <div class="title"><div class="vertical-bar success"></div> 核心服务占比</div>
+           <div class="title"><div class="vertical-bar success"></div> {{ t('dashboard.coreService') }}</div>
          </div>
          <div class="chart-container">
            <div v-if="stats.topService.length === 0" class="empty-data">
-             <el-icon><Box /></el-icon>暂无服务数据
+             <el-icon><Box /></el-icon>{{ t('dashboard.noServiceData') }}
            </div>
            <div v-else ref="servicePieChartRef" style="width:100%;height:100%;"></div>
          </div>
@@ -216,11 +216,11 @@
       <!-- 指纹占比 TOP 10 -->
       <div class="chart-card">
          <div class="chart-header">
-           <div class="title"><div class="vertical-bar"></div> 指纹成分透视</div>
+           <div class="title"><div class="vertical-bar"></div> {{ t('dashboard.fingerprintPerspective') }}</div>
          </div>
          <div class="chart-container">
            <div v-if="stats.topApp.length === 0" class="empty-data">
-             <el-icon><Box /></el-icon>暂无指纹数据
+             <el-icon><Box /></el-icon>{{ t('dashboard.noFingerprintData') }}
            </div>
            <div v-else ref="appPieChartRef" style="width:100%;height:100%;"></div>
          </div>
@@ -232,6 +232,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import * as echarts from 'echarts'
 import request from '@/api/request'
 import { useThemeStore } from '@/stores/theme'
@@ -241,6 +242,7 @@ import {
 
 const router = useRouter()
 const themeStore = useThemeStore()
+const { t } = useI18n()
 
 // === 数据整合区 ===
 const stats = reactive({
@@ -483,7 +485,7 @@ function initTrendChart() {
     },
     series: [
       {
-        name: '成功任务', type: 'line', smooth: true, symbolSize: 8,
+        name: t('dashboard.successTask'), type: 'line', smooth: true, symbolSize: 8,
         itemStyle: { color: '#165dff' },
         lineStyle: { width: 3, shadowColor: 'rgba(22,93,255,0.3)', shadowBlur: 10, shadowOffsetY: 5 },
         areaStyle: {
@@ -495,7 +497,7 @@ function initTrendChart() {
         data: completed
       },
       {
-        name: '失败任务', type: 'line', smooth: true, symbolSize: 8,
+        name: t('dashboard.failedTask'), type: 'line', smooth: true, symbolSize: 8,
         itemStyle: { color: '#f53f3f' },
         lineStyle: { width: 3, shadowColor: 'rgba(245,63,63,0.3)', shadowBlur: 10, shadowOffsetY: 5 },
         areaStyle: {
@@ -516,14 +518,14 @@ function initVulnPieChart() {
   const c = getThemeColors()
 
   const data = [
-    { value: stats.vulnCritical, name: '严重', itemStyle: { color: SV_COLORS.critical } },
-    { value: stats.vulnHigh, name: '高危', itemStyle: { color: SV_COLORS.high } },
-    { value: stats.vulnMedium, name: '中危', itemStyle: { color: SV_COLORS.medium } },
-    { value: stats.vulnLow, name: '低危', itemStyle: { color: SV_COLORS.low } },
-    { value: stats.vulnInfo, name: '信息', itemStyle: { color: SV_COLORS.info } }
+    { value: stats.vulnCritical, name: t('dashboard.critical'), itemStyle: { color: SV_COLORS.critical } },
+    { value: stats.vulnHigh, name: t('dashboard.high'), itemStyle: { color: SV_COLORS.high } },
+    { value: stats.vulnMedium, name: t('dashboard.medium'), itemStyle: { color: SV_COLORS.medium } },
+    { value: stats.vulnLow, name: t('dashboard.low'), itemStyle: { color: SV_COLORS.low } },
+    { value: stats.vulnInfo, name: t('dashboard.info'), itemStyle: { color: SV_COLORS.info } }
   ].filter(d => d.value > 0)
 
-  if (data.length === 0) data.push({ value: 1, name: '无风险', itemStyle: { color: c.line } })
+  if (data.length === 0) data.push({ value: 1, name: t('dashboard.noRisk'), itemStyle: { color: c.line } })
 
   charts.vulnPie.setOption({
     backgroundColor: 'transparent',
@@ -535,7 +537,7 @@ function initVulnPieChart() {
       center: ['40%', '50%'],
       avoidLabelOverlap: false,
       itemStyle: { borderColor: themeStore.isDark ? '#232324' : '#ffffff', borderWidth: 2 },
-      label: { show: true, position: 'center', formatter: () => `漏洞总数\n\n{num|${stats.vulns}}`, color: c.title, fontSize: 14, rich: { num: { fontSize: 28, fontWeight: 'bold' } } },
+      label: { show: true, position: 'center', formatter: () => `${t('dashboard.totalVulnerabilities')}\n\n{num|${stats.vulns}}`, color: c.title, fontSize: 14, rich: { num: { fontSize: 28, fontWeight: 'bold' } } },
       labelLine: { show: false },
       data: data
     }]
@@ -548,13 +550,13 @@ function initAssetTypePieChart() {
   const c = getThemeColors()
 
   const data = [
-    { value: stats.domains, name: '域名', itemStyle: { color: '#165dff' } },
-    { value: stats.ips, name: 'IP', itemStyle: { color: '#14c9c9' } },
-    { value: stats.ports, name: '端口', itemStyle: { color: '#f7ba1e' } },
-    { value: stats.sites, name: '站点', itemStyle: { color: '#722ed1' } }
+    { value: stats.domains, name: t('dashboard.domainLabel'), itemStyle: { color: '#165dff' } },
+    { value: stats.ips, name: t('dashboard.ipLabel'), itemStyle: { color: '#14c9c9' } },
+    { value: stats.ports, name: t('dashboard.portLabel'), itemStyle: { color: '#f7ba1e' } },
+    { value: stats.sites, name: t('dashboard.siteLabel'), itemStyle: { color: '#722ed1' } }
   ].filter(d => d.value > 0)
 
-  if (data.length === 0) data.push({ value: 1, name: '暂无数据', itemStyle: { color: c.line } })
+  if (data.length === 0) data.push({ value: 1, name: t('dashboard.noChartData'), itemStyle: { color: c.line } })
 
   charts.assetType.setOption({
     backgroundColor: 'transparent',

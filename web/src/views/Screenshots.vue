@@ -1,291 +1,152 @@
 <template>
-  <div class="screenshots">
-    <!-- 页面头部 -->
-    <div class="page-header">
-      <div class="header-content">
-        <h1>{{ $t('navigation.screenshots') }}</h1>
-        <p class="description">
-          自动捕获的网页截图，快速识别登录页面、管理后台等重要资产
-        </p>
-      </div>
-      <div class="header-actions">
-        <el-button @click="exportData">
-          <el-icon><Download /></el-icon>
-          {{ $t('common.export') }}
-        </el-button>
-      </div>
+  <div class="screenshots-tab">
+    <!-- 搜索和过滤栏 -->
+    <div class="toolbar">
+      <el-input
+        v-model="searchQuery"
+        :placeholder="t('asset.screenshotsTab.searchPlaceholder')"
+        clearable
+        class="search-input"
+        @input="handleSearch"
+      >
+        <template #prefix>
+          <el-icon><Search /></el-icon>
+        </template>
+      </el-input>
+      <el-button @click="showFilters = !showFilters">
+        <el-icon><Filter /></el-icon>
+        {{ t('asset.screenshotsTab.filters') }}
+      </el-button>
+      <el-button @click="refreshData">
+        <el-icon><Refresh /></el-icon>
+        {{ t('asset.screenshotsTab.refresh') }}
+      </el-button>
     </div>
 
-    <!-- 搜索和过滤 -->
-    <div class="search-filters">
-      <div class="search-section">
-        <el-button @click="showFilters = !showFilters" :type="showFilters ? 'primary' : 'default'">
-          <el-icon><Filter /></el-icon>
-          {{ $t('common.addFilters') }}
-        </el-button>
-        <el-input
-          v-model="searchQuery"
-          :placeholder="$t('asset.searchInScreenshots')"
-          clearable
-          class="search-input"
-          @input="handleSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-      </div>
-    </div>
-
-    <!-- 过滤器标签栏 -->
-    <div class="filter-tabs">
-      <el-button
-        :type="activeTab === 'all' ? 'primary' : 'default'"
-        @click="activeTab = 'all'"
-      >
-        所有截图
-      </el-button>
-      <el-button
-        :type="activeTab === 'technologies' ? 'primary' : 'default'"
-        @click="activeTab = 'technologies'"
-      >
-        技术栈
-      </el-button>
-      <el-button
-        :type="activeTab === 'ports' ? 'primary' : 'default'"
-        @click="activeTab = 'ports'"
-      >
-        端口
-      </el-button>
-      <el-button
-        :type="activeTab === 'labels' ? 'primary' : 'default'"
-        @click="activeTab = 'labels'"
-      >
-        标签
-      </el-button>
-      <el-button
-        :type="activeTab === 'domains' ? 'primary' : 'default'"
-        @click="activeTab = 'domains'"
-      >
-        域名
-      </el-button>
-      <el-button @click="showMoreFilters = true">
-        更多
-        <el-icon><ArrowDown /></el-icon>
-      </el-button>
-      
-      <div class="filter-actions">
-        <el-dropdown @command="handleSort">
-          <el-button>
-            <el-icon><Sort /></el-icon>
-            排序
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="time">最近更新</el-dropdown-item>
-              <el-dropdown-item command="name">名称</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        
-        <el-dropdown @command="handleTimeFilter">
-          <el-button>
-            <el-icon><Clock /></el-icon>
-            全部时间
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="all">全部时间</el-dropdown-item>
-              <el-dropdown-item command="24h">最近24小时</el-dropdown-item>
-              <el-dropdown-item command="7d">最近7天</el-dropdown-item>
-              <el-dropdown-item command="30d">最近30天</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        
-        <el-button @click="refreshData">
-          <el-icon><Refresh /></el-icon>
-        </el-button>
-      </div>
+    <!-- 高级过滤器 -->
+    <div v-if="showFilters" class="filters-panel">
+      <el-form :inline="true">
+        <el-form-item :label="t('asset.screenshotsTab.statusCodes')">
+          <el-select v-model="filters.statusCodes" multiple :placeholder="t('asset.screenshotsTab.selectStatus')" clearable filterable>
+            <el-option
+              v-for="code in filterOptions.statusCodes"
+              :key="code"
+              :label="code"
+              :value="code"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('asset.screenshotsTab.timeRange')">
+          <el-select v-model="filters.timeRange" :placeholder="t('asset.screenshotsTab.selectTime')" clearable>
+            <el-option :label="t('asset.screenshotsTab.allTime')" value="all" />
+            <el-option :label="t('asset.screenshotsTab.last24h')" value="24h" />
+            <el-option :label="t('asset.screenshotsTab.last7d')" value="7d" />
+            <el-option :label="t('asset.screenshotsTab.last30d')" value="30d" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="applyFilters">{{ t('asset.screenshotsTab.apply') }}</el-button>
+          <el-button @click="resetFilters">{{ t('asset.screenshotsTab.reset') }}</el-button>
+        </el-form-item>
+      </el-form>
     </div>
 
     <!-- 截图网格 -->
-    <div class="screenshots-container">
-      <div v-loading="loading" class="screenshots-grid">
+    <div v-loading="loading" class="screenshots-grid">
+      <div
+        v-for="item in screenshots"
+        :key="item.id"
+        class="screenshot-card"
+        @click="viewDetails(item)"
+      >
+        <!-- 截图图片 -->
         <div
-          v-for="screenshot in paginatedScreenshots"
-          :key="screenshot.id"
-          class="screenshot-card"
-          @click="viewScreenshotDetails(screenshot)"
-        >
-          <!-- 截图图片 -->
-          <div 
-            class="screenshot-image-container"
-            @mouseenter="showPreview(screenshot, $event)"
-            @mouseleave="hidePreview"
-          >
-            <img
-              v-if="screenshot.screenshot"
-              :src="formatScreenshotUrl(screenshot.screenshot)"
-              :alt="screenshot.name"
-              class="screenshot-image"
-              @error="handleScreenshotError"
-            />
-            <div v-else class="no-screenshot">
-              <el-icon><Picture /></el-icon>
-              <span>{{ $t('assetInventory.noScreenshot') }}</span>
-            </div>
-            
-            <!-- 状态标签 -->
-            <div class="screenshot-status">
-              <el-tag :type="getStatusType(screenshot.status)" size="small">
-                {{ screenshot.status }}
-              </el-tag>
-            </div>
-          </div>
-
-          <!-- 截图信息 -->
-          <div class="screenshot-info">
-            <div class="screenshot-title">
-              <el-icon class="icon"><Monitor /></el-icon>
-              <span class="name">{{ screenshot.name }}</span>
-              <span class="port">:{{ screenshot.port }}</span>
-            </div>
-            
-            <div class="screenshot-meta">
-              <span class="page-title">{{ screenshot.title || '无标题' }}</span>
-            </div>
-            
-            <div class="screenshot-details">
-              <span class="ip">{{ screenshot.ip }}</span>
-              <span class="time">{{ formatTimeAgo(screenshot.lastUpdated) }}</span>
-            </div>
-            
-            <!-- 技术标签 -->
-            <div v-if="screenshot.technologies && screenshot.technologies.length" class="tech-tags">
-              <el-tag
-                v-for="tech in screenshot.technologies.slice(0, 3)"
-                :key="tech.name"
-                size="small"
-                class="tech-tag"
-              >
-                {{ tech.name }}
-              </el-tag>
-              <el-tag v-if="screenshot.technologies.length > 3" size="small" type="info">
-                +{{ screenshot.technologies.length - 3 }}
-              </el-tag>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 空状态 -->
-      <div v-if="!loading && filteredScreenshots.length === 0" class="empty-state">
-        <el-empty description="暂无截图数据">
-          <el-button type="primary" @click="$router.push('/task/create')">
-            创建扫描任务
-          </el-button>
-        </el-empty>
-      </div>
-
-      <!-- 分页 -->
-      <div v-if="filteredScreenshots.length > 0" class="pagination-container">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[12, 24, 48, 96]"
-          :total="totalScreenshots"
-          layout="total, sizes, prev, pager, next"
-          @size-change="handleSizeChange"
-          @current-change="handleCurrentChange"
-        />
-      </div>
-    </div>
-
-    <!-- 截图详情对话框 -->
-    <el-dialog
-      v-model="showDetailsDialog"
-      :title="selectedScreenshot?.name"
-      width="900px"
-      class="screenshot-dialog"
-    >
-      <div v-if="selectedScreenshot" class="screenshot-details-content">
-        <!-- 大图预览 -->
-        <div 
-          class="large-screenshot"
-          @mouseenter="showPreview(selectedScreenshot, $event)"
+          class="screenshot-image-container"
+          @mouseenter="showPreview(item, $event)"
           @mouseleave="hidePreview"
         >
           <img
-            v-if="selectedScreenshot.screenshot"
-            :src="formatScreenshotUrl(selectedScreenshot.screenshot)"
-            :alt="selectedScreenshot.name"
-            class="large-image"
+            v-if="item.screenshot"
+            :src="formatScreenshotUrl(item.screenshot)"
+            :alt="item.name"
+            class="screenshot-image"
+            loading="lazy"
             @error="handleScreenshotError"
           />
-          <div v-else class="no-screenshot-large">
+          <div v-else class="no-screenshot">
             <el-icon><Picture /></el-icon>
-            <span>无截图</span>
+            <span>{{ t('asset.screenshotsTab.noScreenshot') }}</span>
+          </div>
+
+          <!-- 状态标签 -->
+          <div class="screenshot-status">
+            <el-tag :type="getStatusType(item.status)" size="small">
+              {{ item.status }}
+            </el-tag>
           </div>
         </div>
-        
-        <!-- 详细信息 -->
-        <div class="details-info">
-          <div class="info-section">
-            <h3>基本信息</h3>
-            <div class="info-grid">
-              <div class="info-item">
-                <label>主机名:</label>
-                <span>{{ selectedScreenshot.name }}</span>
-              </div>
-              <div class="info-item">
-                <label>IP地址:</label>
-                <span>{{ selectedScreenshot.ip }}</span>
-              </div>
-              <div class="info-item">
-                <label>端口:</label>
-                <span>{{ selectedScreenshot.port }}</span>
-              </div>
-              <div class="info-item">
-                <label>状态:</label>
-                <el-tag :type="getStatusType(selectedScreenshot.status)">
-                  {{ selectedScreenshot.status }} {{ selectedScreenshot.statusText }}
-                </el-tag>
-              </div>
-              <div class="info-item">
-                <label>页面标题:</label>
-                <span>{{ selectedScreenshot.title || '无标题' }}</span>
-              </div>
-              <div class="info-item">
-                <label>发现时间:</label>
-                <span>{{ formatDateTime(selectedScreenshot.lastUpdated) }}</span>
-              </div>
-            </div>
+
+        <!-- 截图信息 -->
+        <div class="screenshot-info">
+          <div class="screenshot-title">
+            <el-icon class="icon"><Monitor /></el-icon>
+            <span class="name">{{ item.name }}</span>
+            <span class="port">:{{ item.port }}</span>
           </div>
-          
-          <div v-if="selectedScreenshot.technologies && selectedScreenshot.technologies.length" class="info-section">
-            <h3>技术栈</h3>
-            <div class="tech-list">
-              <el-tag
-                v-for="tech in selectedScreenshot.technologies"
-                :key="tech.name"
-                class="tech-tag"
-              >
-                {{ tech.name }}
-              </el-tag>
-            </div>
+
+          <div class="screenshot-meta">
+            <span class="page-title">{{ item.title || t('asset.screenshotsTab.noTitle') }}</span>
+          </div>
+
+          <div class="screenshot-details">
+            <span class="ip">{{ item.ip }}</span>
+            <span class="time">{{ item.lastUpdated }}</span>
+          </div>
+
+          <!-- 技术标签 -->
+          <div v-if="item.technologies && item.technologies.length" class="tech-tags">
+            <el-tag
+              v-for="tech in item.technologies.slice(0, 3)"
+              :key="tech.name"
+              size="small"
+              class="tech-tag"
+            >
+              {{ tech.name }}
+            </el-tag>
+            <el-tag v-if="item.technologies.length > 3" size="small" type="info">
+              +{{ item.technologies.length - 3 }}
+            </el-tag>
           </div>
         </div>
       </div>
-      
-      <template #footer>
-        <el-button @click="showDetailsDialog = false">关闭</el-button>
-        <el-button type="primary" @click="openInNewTab(selectedScreenshot)">
-          在新标签页打开
-        </el-button>
-      </template>
-    </el-dialog>
-    
+    </div>
+
+    <!-- 空状态 -->
+    <div v-if="!loading && screenshots.length === 0" class="empty-state">
+      <el-empty description="暂无截图数据" />
+    </div>
+
+    <!-- 分页 -->
+    <el-pagination
+      v-if="screenshots.length > 0"
+      v-model:current-page="currentPage"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[5, 10, 20, 50, 100]"
+      layout="total, sizes, prev, pager, next"
+      class="pagination"
+      @size-change="loadData"
+      @current-change="loadData"
+    />
+
+    <!-- 截图详情抽屉 - 使用共享组件 -->
+    <AssetDetailDrawer
+      v-model:visible="showDetailsDialog"
+      :asset="selectedItem"
+      @preview-show="showPreview"
+      @preview-hide="hidePreview"
+    />
+
     <!-- 图片预览浮层 -->
     <Teleport to="body">
       <Transition name="preview-fade">
@@ -314,37 +175,41 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { debounce } from 'lodash-es'
 import {
   Search,
   Filter,
-  Download,
-  Monitor,
-  Picture,
-  Sort,
-  Clock,
   Refresh,
-  ArrowDown
+  Picture,
+  Monitor
 } from '@element-plus/icons-vue'
-import { getScreenshots } from '@/api/asset'
+import { getScreenshots, getAssetFilterOptions } from '@/api/asset'
 import { formatScreenshotUrl, handleScreenshotError } from '@/utils/screenshot'
+import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
 
 const { t } = useI18n()
 
-// 响应式数据
 const loading = ref(false)
 const searchQuery = ref('')
 const showFilters = ref(false)
-const showMoreFilters = ref(false)
-const activeTab = ref('all')
-const filterStatus = ref('')
-const filterTime = ref('')
 const currentPage = ref(1)
-const pageSize = ref(24)
+const pageSize = ref(20)
+const total = ref(0)
+const screenshots = ref([])
 const showDetailsDialog = ref(false)
-const selectedScreenshot = ref(null)
+const selectedItem = ref(null)
+const filters = ref({
+  statusCodes: [],
+  timeRange: 'all'
+})
+
+// 过滤器选项（从后端动态加载）
+const filterOptions = ref({
+  statusCodes: []
+})
 
 // 图片预览
 const previewVisible = ref(false)
@@ -352,22 +217,22 @@ const previewImage = ref('')
 const previewPosition = ref({ x: 0, y: 0 })
 const previewSize = ref({ width: 500, height: 400 })
 
-const showPreview = (screenshot, event) => {
-  if (!screenshot.screenshot) return
-  
-  previewImage.value = formatScreenshotUrl(screenshot.screenshot)
+const showPreview = (item, event) => {
+  if (!item.screenshot) return
+
+  previewImage.value = formatScreenshotUrl(item.screenshot)
   previewVisible.value = true
-  
+
   // 计算预览位置
   const rect = event.currentTarget.getBoundingClientRect()
-  
+
   // 检查是否在抽屉或对话框中
   const isInDrawer = event.currentTarget.closest('.el-drawer__body') !== null
   const isInDialog = event.currentTarget.closest('.el-dialog__body') !== null
   const isInDetailView = isInDrawer || isInDialog
-  
+
   let previewWidth, previewHeight, padding
-  
+
   if (isInDetailView) {
     // 在详情视图中，使用更大的预览尺寸
     previewWidth = Math.min(800, window.innerWidth * 0.5)
@@ -379,33 +244,33 @@ const showPreview = (screenshot, event) => {
     previewHeight = 400
     padding = 20
   }
-  
+
   previewSize.value = { width: previewWidth, height: previewHeight }
-  
+
   // 默认显示在右侧
   let x = rect.right + padding
   let y = rect.top
-  
+
   // 如果右侧空间不够，显示在左侧
   if (x + previewWidth > window.innerWidth) {
     x = rect.left - previewWidth - padding
   }
-  
+
   // 如果下方空间不够，向上调整
   if (y + previewHeight > window.innerHeight) {
     y = window.innerHeight - previewHeight - padding
   }
-  
+
   // 确保不超出顶部
   if (y < padding) {
     y = padding
   }
-  
+
   // 确保不超出左侧
   if (x < padding) {
     x = padding
   }
-  
+
   previewPosition.value = { x, y }
 }
 
@@ -413,21 +278,7 @@ const hidePreview = () => {
   previewVisible.value = false
 }
 
-// 截图数据
-const screenshots = ref([])
-const totalScreenshots = ref(0)
-
-// 计算属性
-const filteredScreenshots = computed(() => {
-  return screenshots.value
-})
-
-const paginatedScreenshots = computed(() => {
-  return screenshots.value
-})
-
-// 方法
-const loadScreenshots = async () => {
+const loadData = async () => {
   loading.value = true
   try {
     const res = await getScreenshots({
@@ -436,436 +287,225 @@ const loadScreenshots = async () => {
       query: searchQuery.value,
       technologies: [],
       ports: [],
-      statusCodes: filterStatus.value ? [filterStatus.value] : [],
-      timeRange: filterTime.value || 'all',
+      statusCodes: filters.value.statusCodes,
+      timeRange: filters.value.timeRange,
       hasScreenshot: true
     })
-    
     if (res.code === 0) {
       screenshots.value = res.list || []
-      totalScreenshots.value = res.total || 0
+      total.value = res.total || 0
     } else {
-      ElMessage.error(res.msg || '加载失败')
+      ElMessage.error(res.msg || t('asset.screenshotsTab.loadFailed'))
     }
   } catch (error) {
-    console.error('加载截图失败:', error)
-    ElMessage.error('加载失败')
+    console.error(t('asset.screenshotsTab.loadFailed'), error)
+    ElMessage.error(t('asset.screenshotsTab.loadFailed'))
   } finally {
     loading.value = false
   }
 }
 
-const handleSearch = () => {
+const handleSearch = debounce(() => {
   currentPage.value = 1
-  loadScreenshots()
-}
+  loadData()
+}, 300)
 
-const handleSort = (command) => {
-  ElMessage.success(`按${command}排序`)
-  loadScreenshots()
-}
-
-const handleTimeFilter = (command) => {
-  filterTime.value = command
-  currentPage.value = 1
-  loadScreenshots()
-}
-
-const refreshData = async () => {
-  await loadScreenshots()
-  ElMessage.success('刷新成功')
+const refreshData = () => {
+  loadData()
+  ElMessage.success(t('asset.screenshotsTab.refreshSuccess'))
 }
 
 const applyFilters = () => {
   currentPage.value = 1
-  loadScreenshots()
+  loadData()
 }
 
 const resetFilters = () => {
-  filterStatus.value = ''
-  filterTime.value = ''
+  filters.value = {
+    statusCodes: [],
+    timeRange: 'all'
+  }
   currentPage.value = 1
-  loadScreenshots()
+  loadData()
 }
 
-const handleSizeChange = (size) => {
-  pageSize.value = size
-  currentPage.value = 1
-  loadScreenshots()
-}
-
-const handleCurrentChange = (page) => {
-  currentPage.value = page
-  loadScreenshots()
-}
-
-const viewScreenshotDetails = (screenshot) => {
-  selectedScreenshot.value = screenshot
+const viewDetails = (item) => {
+  selectedItem.value = item
   showDetailsDialog.value = true
 }
 
-const exportData = async () => {
-  if (screenshots.value.length === 0) {
-    ElMessage.warning(t('asset.noDataToExport'))
-    return
-  }
-  
-  try {
-    ElMessage.info(t('asset.exportPreparing'))
-    
-    // 准备导出数据
-    const exportList = screenshots.value.map(item => ({
-      host: item.name || item.host,
-      port: item.port,
-      ip: item.ip,
-      title: item.title || '',
-      status: item.status,
-      technologies: (item.technologies || []).map(t => t.name || t).join('; '),
-      lastUpdated: item.lastUpdated
-    }))
-    
-    // 生成 CSV
-    const headers = [
-      t('asset.host'),
-      t('asset.port'),
-      t('asset.ip'),
-      t('asset.pageTitle'),
-      t('asset.statusCode'),
-      t('asset.technologies'),
-      t('asset.lastUpdated')
-    ]
-    
-    let csvContent = '\uFEFF' // BOM for UTF-8
-    csvContent += headers.join(',') + '\n'
-    
-    exportList.forEach(row => {
-      const values = [
-        row.host,
-        row.port,
-        row.ip,
-        `"${(row.title || '').replace(/"/g, '""')}"`,
-        row.status,
-        `"${(row.technologies || '').replace(/"/g, '""')}"`,
-        row.lastUpdated
-      ]
-      csvContent += values.join(',') + '\n'
-    })
-    
-    // 下载文件
-    const now = new Date()
-    const filename = `screenshots_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.csv`
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-    
-    ElMessage.success(t('asset.exportSuccess'))
-  } catch (error) {
-    console.error('导出失败:', error)
-    ElMessage.error(t('asset.exportFailed'))
-  }
-}
-
 const getStatusType = (status) => {
-  if (status.startsWith('2')) return 'success'
-  if (status.startsWith('3')) return 'warning'
-  if (status.startsWith('4') || status.startsWith('5')) return 'danger'
+  const statusStr = String(status || '')
+  if (statusStr.startsWith('2')) return 'success'
+  if (statusStr.startsWith('3')) return 'warning'
+  if (statusStr.startsWith('4') || statusStr.startsWith('5')) return 'danger'
   return 'info'
 }
 
-const formatTimeAgo = (dateStr) => {
-  // dateStr 已经是格式化后的相对时间字符串
-  return dateStr
-}
-
-const formatDateTime = (dateStr) => {
-  return dateStr
-}
-
-const openInNewTab = (screenshot) => {
-  const url = `http://${screenshot.name}:${screenshot.port}`
-  window.open(url, '_blank')
+// 加载过滤器选项
+const loadFilterOptions = async () => {
+  try {
+    const res = await getAssetFilterOptions({
+      hasScreenshot: true
+    })
+    if (res.code === 0) {
+      filterOptions.value = {
+        statusCodes: res.statusCodes || []
+      }
+    }
+  } catch (error) {
+    console.error(t('asset.screenshotsTab.loadFailed'), error)
+  }
 }
 
 onMounted(() => {
-  loadScreenshots()
+  loadFilterOptions()
+  loadData()
 })
 </script>
 
 <style lang="scss" scoped>
-.screenshots {
-  padding: 24px;
-  background: hsl(var(--background));
-  min-height: 100vh;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-  
-  .header-content {
-    h1 {
-      font-size: 28px;
-      font-weight: 600;
-      color: hsl(var(--foreground));
-      margin: 0 0 8px 0;
-    }
-    
-    .description {
-      color: hsl(var(--muted-foreground));
-      font-size: 14px;
-      margin: 0;
-    }
-  }
-  
-  .header-actions {
+.screenshots-tab {
+  .toolbar {
     display: flex;
     gap: 12px;
-  }
-}
+    margin-bottom: 16px;
 
-.search-filters {
-  margin-bottom: 16px;
-  
-  .search-section {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    
     .search-input {
       flex: 1;
       max-width: 400px;
     }
   }
-}
 
-.filter-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  align-items: center;
-  
-  .filter-actions {
-    margin-left: auto;
-    display: flex;
-    gap: 8px;
+  .filters-panel {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+
+    :deep(.el-select) {
+      min-width: 200px;
+    }
   }
-}
 
-.screenshots-container {
   .screenshots-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 20px;
     margin-bottom: 24px;
   }
-}
 
-.screenshot-card {
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  
-  &:hover {
-    border-color: hsl(var(--primary));
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    transform: translateY(-2px);
-  }
-}
-
-.screenshot-image-container {
-  position: relative;
-  height: 200px;
-  background: hsl(var(--muted));
-  overflow: hidden;
-  
-  .screenshot-image {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  
-  .no-screenshot {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: hsl(var(--muted-foreground));
-    
-    .el-icon {
-      font-size: 48px;
-      margin-bottom: 8px;
-    }
-  }
-  
-  .screenshot-status {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-  }
-}
-
-.screenshot-info {
-  padding: 16px;
-  
-  .screenshot-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
-    
-    .icon {
-      color: hsl(var(--muted-foreground));
-      font-size: 16px;
-    }
-    
-    .name {
-      font-weight: 500;
-      color: hsl(var(--foreground));
-      font-size: 14px;
-    }
-    
-    .port {
-      color: hsl(var(--primary));
-      font-weight: 500;
-      font-size: 14px;
-    }
-  }
-  
-  .screenshot-meta {
-    margin-bottom: 8px;
-    
-    .page-title {
-      font-size: 13px;
-      color: hsl(var(--muted-foreground));
-      display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-  
-  .screenshot-details {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 12px;
-    color: hsl(var(--muted-foreground));
-    margin-bottom: 12px;
-  }
-  
-  .tech-tags {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    
-    .tech-tag {
-      font-size: 11px;
-    }
-  }
-}
-
-.empty-state {
-  padding: 60px 20px;
-  text-align: center;
-}
-
-.pagination-container {
-  display: flex;
-  justify-content: center;
-  margin-top: 24px;
-}
-
-.screenshot-dialog {
-  .screenshot-details-content {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-  
-  .large-screenshot {
-    width: 100%;
-    max-height: 500px;
-    background: hsl(var(--muted));
+  .screenshot-card {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
     border-radius: 8px;
     overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    
-    .large-image {
-      width: 100%;
-      height: auto;
-      max-height: 500px;
-      object-fit: contain;
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      border-color: hsl(var(--primary));
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      transform: translateY(-2px);
     }
-    
-    .no-screenshot-large {
+  }
+
+  .screenshot-image-container {
+    position: relative;
+    height: 200px;
+    background: hsl(var(--muted));
+
+    .screenshot-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .no-screenshot {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 300px;
+      height: 100%;
       color: hsl(var(--muted-foreground));
-      
+
       .el-icon {
-        font-size: 64px;
-        margin-bottom: 16px;
+        font-size: 48px;
+        margin-bottom: 8px;
+      }
+    }
+
+    .screenshot-status {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+    }
+  }
+
+  .screenshot-info {
+    padding: 16px;
+
+    .screenshot-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+
+      .icon {
+        color: hsl(var(--muted-foreground));
+      }
+
+      .name {
+        font-weight: 500;
+        color: hsl(var(--foreground));
+      }
+
+      .port {
+        color: hsl(var(--primary));
+        font-weight: 500;
+      }
+    }
+
+    .screenshot-meta {
+      margin-bottom: 8px;
+
+      .page-title {
+        font-size: 13px;
+        color: hsl(var(--muted-foreground));
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+
+    .screenshot-details {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: hsl(var(--muted-foreground));
+      margin-bottom: 12px;
+    }
+
+    .tech-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+
+      .tech-tag {
+        font-size: 11px;
       }
     }
   }
-  
-  .details-info {
-    .info-section {
-      margin-bottom: 24px;
-      
-      h3 {
-        margin: 0 0 16px 0;
-        color: hsl(var(--foreground));
-        font-size: 16px;
-        font-weight: 600;
-      }
-      
-      .info-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 12px;
-        
-        .info-item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          
-          label {
-            font-weight: 500;
-            color: hsl(var(--muted-foreground));
-            min-width: 80px;
-          }
-          
-          span {
-            color: hsl(var(--foreground));
-          }
-        }
-      }
-      
-      .tech-list {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-    }
+
+  .empty-state {
+    padding: 60px 20px;
+    text-align: center;
+  }
+
+  .pagination {
+    margin-top: 16px;
   }
 }
 
@@ -875,7 +515,7 @@ onMounted(() => {
   z-index: 9999;
   pointer-events: none;
   max-width: 90vw;
-  
+
   .preview-container {
     background: hsl(var(--card));
     border: 2px solid hsl(var(--primary));
@@ -884,7 +524,7 @@ onMounted(() => {
     overflow: hidden;
     width: 100%;
     height: 100%;
-    
+
     .preview-image {
       width: 100%;
       height: 100%;
@@ -905,4 +545,3 @@ onMounted(() => {
   opacity: 0;
 }
 </style>
-

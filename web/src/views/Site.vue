@@ -92,14 +92,24 @@
               />
               <div class="site-info">
                 <a :href="row.site" target="_blank" class="site-link">{{ row.site }}</a>
-                <div class="site-title" :title="row.title">{{ row.title || '-' }}</div>
+                <div class="site-title-row">
+                  <img
+                    v-if="getIconDataUrl(row.iconHashBytes)"
+                    :src="getIconDataUrl(row.iconHashBytes)"
+                    :title="row.iconHash"
+                    class="site-favicon"
+                    @error="handleIconError"
+                  />
+                  <el-icon v-else-if="row.iconHash" class="site-favicon-placeholder" :title="row.iconHash"><Picture /></el-icon>
+                  <span class="site-title" :title="row.title">{{ row.title || '-' }}</span>
+                </div>
               </div>
             </div>
           </template>
         </el-table-column>
         <el-table-column label="IP" width="140">
           <template #default="{ row }">
-            <div>{{ row.ip }}</div>
+            <div>{{ row.ip || '-' }}</div>
             <div v-if="row.location" class="location-text">{{ row.location }}</div>
           </template>
         </el-table-column>
@@ -118,9 +128,9 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('site.organization')" width="120">
+        <el-table-column :label="$t('common.createTime')" width="160">
           <template #default="{ row }">
-            {{ row.orgName || $t('common.defaultOrganization') }}
+            {{ row.createTime }}
           </template>
         </el-table-column>
         <el-table-column :label="$t('common.updateTime')" width="160">
@@ -176,9 +186,11 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Picture } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { formatScreenshotUrl } from '@/utils/screenshot'
+import { getIconDataUrl, handleIconError } from '@/utils/icon'
 
 const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
@@ -392,13 +404,32 @@ function getAppName(app) {
         }
       }
       
-      .site-title {
-        color: var(--el-text-color-secondary);
-        font-size: 12px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+      .site-title-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         margin-top: 4px;
+
+        .site-favicon,
+        .site-favicon-placeholder {
+          width: 16px;
+          height: 16px;
+          flex-shrink: 0;
+          object-fit: contain;
+        }
+
+        .site-favicon-placeholder {
+          color: var(--el-text-color-secondary);
+        }
+
+        .site-title {
+          color: var(--el-text-color-secondary);
+          font-size: 12px;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
       }
     }
   }

@@ -55,6 +55,7 @@ func (l *UserListLogic) UserList(req *types.PageReq) (resp *types.UserListResp, 
 			Username: u.Username,
 			Role:     role,
 			Status:   u.Status,
+			Avatar:   u.Avatar,
 		})
 	}
 
@@ -107,6 +108,7 @@ func (l *UserCreateLogic) UserCreate(req *types.UserCreateReq) (resp *types.Base
 		Password: req.Password, // 在model层会自动bcrypt加密
 		Role:     role,
 		Status:   req.Status,
+		Avatar:   req.Avatar,
 	}
 
 	err = l.svcCtx.UserModel.Insert(l.ctx, user)
@@ -144,6 +146,15 @@ func (l *UserUpdateLogic) UserUpdate(req *types.UserUpdateReq) (resp *types.Base
 		return &types.BaseResp{Code: 404, Msg: "用户不存在"}, nil
 	}
 
+	// admin 账号状态受保护：禁止修改状态
+	if user.IsAdmin() && req.Status != "" && req.Status != user.Status {
+		return &types.BaseResp{Code: 400, Msg: "admin 账号状态不允许修改"}, nil
+	}
+	// admin 账号角色受保护：禁止降级
+	if user.IsAdmin() && req.Role != "" && req.Role != user.Role {
+		return &types.BaseResp{Code: 400, Msg: "admin 账号角色不允许修改"}, nil
+	}
+
 	// 如果修改用户名，检查是否重复
 	if req.Username != user.Username {
 		exists, err := l.svcCtx.UserModel.FindByUsername(l.ctx, req.Username)
@@ -165,6 +176,7 @@ func (l *UserUpdateLogic) UserUpdate(req *types.UserUpdateReq) (resp *types.Base
 		"username":    req.Username,
 		"role":        role,
 		"status":      req.Status,
+		"avatar":      req.Avatar,
 		"update_time": time.Now(),
 	}
 
@@ -234,6 +246,13 @@ func NewUserResetPasswordLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordReq) (resp *types.BaseResp, err error) {
+	// 安全自绑定：忽略客户端传入的 Id，仅允许修改当前登录用户自己的密码
+	currentUserId := middleware.GetUserId(l.ctx)
+	if currentUserId == "" {
+		return &types.BaseResp{Code: 401, Msg: "未认证"}, nil
+	}
+	req.Id = currentUserId
+
 	// 验证新密码强度
 	if err := model.ValidatePasswordStrength(req.NewPassword); err != nil {
 		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil
@@ -269,6 +288,11 @@ func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordR
 		return &types.BaseResp{Code: 500, Msg: "重置密码失败"}, nil
 	}
 
+	// 同步吊销该用户所有 PAT，保证密码修改后 Token 全部失效
+	if _, err := l.svcCtx.UserTokenModel.RevokeByUserId(l.ctx, user.Id); err != nil {
+		logx.Errorf("[UserResetPassword] revoke user tokens failed: %v", err)
+	}
+
 	return &types.BaseResp{Code: 0, Msg: "密码重置成功"}, nil
 }
 
@@ -287,7 +311,16 @@ func NewUserFirstLoginResetPasswordLogic(ctx context.Context, svcCtx *svc.Servic
 	}
 }
 
-func (l *UserFirstLoginResetPasswordLogic) UserFirstLoginResetPassword(req *types.UserFirstLoginResetPasswordReq) (resp *types.BaseResp, err error) {
+func (l *UserFirstLoginResetPasswordLogic) UserFirstLoginResetPassword(req *types.UserFirstLoginResetPasswordReq, currentUserId string) (resp *types.BaseResp, err error) {
+	// 安全校验:只能重置自己的密码,防止越权
+	// currentUserId 来自 JWT Context,无法被客户端伪造
+	if currentUserId == "" {
+		return &types.BaseResp{Code: 401, Msg: "未认证"}, nil
+	}
+	if req.Id != currentUserId {
+		return &types.BaseResp{Code: 403, Msg: "只能修改自己的密码"}, nil
+	}
+
 	// 验证新密码强度
 	if err := model.ValidatePasswordStrength(req.NewPassword); err != nil {
 		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil

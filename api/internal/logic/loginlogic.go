@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"cscan/api/internal/svc"
@@ -10,6 +11,14 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// loginTimeout 登录请求的 MongoDB 查询超时时间。
+// 远小于 HTTP 服务器 5 分钟总超时，避免 MongoDB 故障时登录请求长时间挂起。
+const loginTimeout = 3 * time.Second
+
+// ErrAuthServiceUnavailable 表示认证服务（依赖 MongoDB）暂时不可用。
+// 调用方应将其映射为 HTTP 503，而不是 401。
+var ErrAuthServiceUnavailable = errors.New("authentication service temporarily unavailable")
 
 type LoginLogic struct {
 	logx.Logger
@@ -26,16 +35,28 @@ func NewLoginLogic(ctx context.Context, svcCtx *svc.ServiceContext) *LoginLogic 
 }
 
 func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err error) {
+	// 为 MongoDB 查询单独设置超时，避免 MongoDB 故障时整个请求挂起 5 分钟。
+	// 使用单独的 context 而非 l.ctx，确保超时只影响数据库查询，不影响后续 token 生成。
+	verifyCtx, cancel := context.WithTimeout(l.ctx, loginTimeout)
+	defer cancel()
+
 	// 验证用户名密码
-	user, ok := l.svcCtx.UserModel.VerifyPassword(l.ctx, req.Username, req.Password)
+	user, ok, verifyErr := l.svcCtx.UserModel.VerifyPassword(verifyCtx, req.Username, req.Password)
+	if verifyErr != nil {
+		// 基础设施错误（MongoDB 故障、context 超时等）必须与认证失败区分开。
+		// 不能返回 401 "用户名或密码错误"，否则会误导用户。
+		l.Logger.Errorf("login verify failed: username=%s err=%v", req.Username, verifyErr)
+		return nil, ErrAuthServiceUnavailable
+	}
 	if !ok {
+		// 真正的认证失败：用户不存在 / 密码错误 / 用户禁用
 		return &types.LoginResp{
 			Code: 401,
 			Msg:  "用户名或密码错误",
 		}, nil
 	}
 
-	// 更新登录时间
+	// 更新登录时间（非关键路径，失败不影响登录）
 	if err := l.svcCtx.UserModel.UpdateLoginTime(l.ctx, user.Id.Hex()); err != nil {
 		l.Logger.Errorf("更新登录时间失败: %v", err)
 	}
@@ -51,10 +72,8 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 	accessExpire := l.svcCtx.Config.Auth.AccessExpire
 	token, err := l.generateToken(user.Id.Hex(), user.Username, role, now, accessExpire)
 	if err != nil {
-		return &types.LoginResp{
-			Code: 500,
-			Msg:  "生成Token失败",
-		}, nil
+		l.Logger.Errorf("generate token failed: username=%s err=%v", req.Username, err)
+		return nil, err
 	}
 
 	// 获取默认工作空间 - 如果用户没有分配工作空间，使用空字符串（对应 default 工作空间）

@@ -43,6 +43,7 @@ type UserInfo struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	Status   string `json:"status"`
+	Avatar   string `json:"avatar"`
 }
 
 type UserListResp struct {
@@ -58,6 +59,7 @@ type UserCreateReq struct {
 	Password string `json:"password"`
 	Role     string `json:"role,optional"`
 	Status   string `json:"status"`
+	Avatar   string `json:"avatar,optional"`
 }
 
 type UserUpdateReq struct {
@@ -65,6 +67,19 @@ type UserUpdateReq struct {
 	Username string `json:"username"`
 	Role     string `json:"role,optional"`
 	Status   string `json:"status"`
+	Avatar   string `json:"avatar,optional"`
+}
+
+// UserUpdateAvatarReq 仅更新头像（供当前登录用户自助上传头像使用）
+type UserUpdateAvatarReq struct {
+	Avatar string `json:"avatar"`
+}
+
+// AvatarUploadResp 头像上传响应
+type AvatarUploadResp struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	Avatar string `json:"avatar"`
 }
 
 type UserDeleteReq struct {
@@ -81,6 +96,104 @@ type UserResetPasswordReq struct {
 type UserFirstLoginResetPasswordReq struct {
 	Id          string `json:"id"`
 	NewPassword string `json:"newPassword"`
+}
+
+// ==================== 个人中心 ====================
+type UserProfileGetResp struct {
+	Code          int    `json:"code"`
+	Msg           string `json:"msg"`
+	Id            string `json:"id"`
+	Username      string `json:"username"`
+	Email         string `json:"email"`
+	Phone         string `json:"phone"`
+	Avatar        string `json:"avatar"`
+	Role          string `json:"role"`
+	Status        string `json:"status"`
+	LastLoginTime int64  `json:"lastLoginTime,omitempty"` // unix seconds, 0 значит нет
+	CreateTime    int64  `json:"createTime"`
+}
+
+type UserProfileUpdateReq struct {
+	Username string `json:"username,optional"`
+	Email    string `json:"email,optional"`
+	Phone    string `json:"phone,optional"`
+	Avatar   string `json:"avatar,optional"`
+}
+
+type UserPasswordChangeReq struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
+}
+
+type UserPasswordChangeResp struct {
+	Code         int    `json:"code"`
+	Msg          string `json:"msg"`
+	MustReLogin  bool   `json:"mustReLogin"`
+}
+
+type UserTokenCreateReq struct {
+	Name      string   `json:"name"`
+	ExpiresAt int64    `json:"expiresAt,omitempty"` // unix seconds, 0 = 永久
+	Scopes    []string `json:"scopes,optional"` // 空或含 "*" 表示全量
+}
+
+type UserTokenCreateResp struct {
+	Code      int      `json:"code"`
+	Msg       string   `json:"msg"`
+	Token     string   `json:"token"`     // 仅本次返回明文
+	Id        string   `json:"id"`
+	Name      string   `json:"name"`
+	Prefix    string   `json:"prefix"`
+	Scopes    []string `json:"scopes"`
+	ExpiresAt int64    `json:"expiresAt,omitempty"`
+	CreateTime int64  `json:"createTime"`
+}
+
+type UserTokenListItem struct {
+	Id          string   `json:"id"`
+	Name        string   `json:"name"`
+	Prefix      string   `json:"prefix"`
+	PlainToken  string   `json:"plainToken"`
+	Scopes      []string `json:"scopes"`
+	ExpiresAt   int64    `json:"expiresAt,omitempty"`
+	LastUsedAt  int64    `json:"lastUsedAt,omitempty"`
+	LastUsedIP  string   `json:"lastUsedIp,omitempty"`
+	Status      string   `json:"status"`
+	CreateTime  int64    `json:"createTime"`
+}
+
+type UserTokenListResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	List []UserTokenListItem `json:"list"`
+}
+
+type UserTokenSetStatusReq struct {
+	Id     string `json:"id"`
+	Status string `json:"status"` // enable / disable
+}
+
+type UserTokenScopeItem struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// UserTokenScopeGroup 描述一个分组及其可用的 CRUD 动作集合，
+// 供前端按分组水平排列、每组带「选中本组全部」复选框使用。
+type UserTokenScopeGroup struct {
+	Value       string   `json:"value"`
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	Actions     []string `json:"actions"` // ["read","create","update","delete"]
+}
+
+type UserTokenScopeListResp struct {
+	Code    int                    `json:"code"`
+	Msg     string                 `json:"msg"`
+	List    []UserTokenScopeItem   `json:"list"`    // 兼容字段：扁平 <group>:<action>
+	Groups  []UserTokenScopeGroup `json:"groups"`  // 分组矩阵：20 组 × 4 动作
+	Actions []string               `json:"actions"` // ["read","create","update","delete"]
 }
 
 // ==================== 工作空间 ====================
@@ -274,6 +387,22 @@ type AssetImportResp struct {
 	ErrorCount int    `json:"errorCount"` // 错误数量
 }
 
+// AssetSaveReq 手动添加资产请求
+type AssetSaveReq struct {
+	Host     string   `json:"host"`
+	Port     int      `json:"port"`
+	Protocol string   `json:"protocol"` // http | https | 自定义协议
+	Title    string   `json:"title"`
+	Labels   []string `json:"labels"`
+	Memo     string   `json:"memo"`
+}
+
+// AssetSaveResp 手动添加资产响应
+type AssetSaveResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
 type AssetHistoryReq struct {
 	AssetId string `json:"assetId"`
 	Limit   int    `json:"limit,default=20"`
@@ -324,25 +453,26 @@ type SiteListReq struct {
 }
 
 type Site struct {
-	Id         string   `json:"id"`
-	Site       string   `json:"site"`
-	Title      string   `json:"title"`
-	IP         string   `json:"ip"`
-	Port       int      `json:"port"`
-	Service    string   `json:"service"`
-	HttpStatus string   `json:"httpStatus"`
-	App        []string `json:"app"`
-	Labels     []string `json:"labels"`
-	Screenshot string   `json:"screenshot"`
-	Location   string   `json:"location"`
-	OrgId      string   `json:"orgId,omitempty"`
-	OrgName    string   `json:"orgName,omitempty"`
-	CreateTime string   `json:"createTime"`
-	UpdateTime string   `json:"updateTime"`
-	HttpHeader string   `json:"httpHeader,omitempty"`
-	IconHash   string   `json:"iconHash,omitempty"`
-	ColorTag   string   `json:"colorTag,omitempty"`
-	Memo       string   `json:"memo,omitempty"`
+	Id            string   `json:"id"`
+	Site          string   `json:"site"`
+	Title         string   `json:"title"`
+	IP            string   `json:"ip"`
+	Port          int      `json:"port"`
+	Service       string   `json:"service"`
+	HttpStatus    string   `json:"httpStatus"`
+	App           []string `json:"app"`
+	Labels        []string `json:"labels"`
+	Screenshot    string   `json:"screenshot"`
+	Location      string   `json:"location"`
+	OrgId         string   `json:"orgId,omitempty"`
+	OrgName       string   `json:"orgName,omitempty"`
+	CreateTime    string   `json:"createTime"`
+	UpdateTime    string   `json:"updateTime"`
+	HttpHeader    string   `json:"httpHeader,omitempty"`
+	IconHash      string   `json:"iconHash,omitempty"`
+	IconHashBytes string   `json:"iconHashBytes,omitempty"` // favicon 图片 base64
+	ColorTag      string   `json:"colorTag,omitempty"`
+	Memo          string   `json:"memo,omitempty"`
 }
 
 type SiteListResp struct {
@@ -802,14 +932,20 @@ type VulDetailResp struct {
 }
 
 type VulListReq struct {
-	Page      int    `json:"page,default=1"`
-	PageSize  int    `json:"pageSize,default=20"`
-	Query     string `json:"query,optional"`
-	Authority string `json:"authority,optional"`
-	Severity  string `json:"severity,optional"`
-	Source    string `json:"source,optional"`
-	Host      string `json:"host,optional"`
-	Port      int    `json:"port,optional"`
+	Page       int      `json:"page,default=1"`
+	PageSize   int      `json:"pageSize,default=20"`
+	Query      string   `json:"query,optional"`
+	Authority  string   `json:"authority,optional"`
+	Severity   string   `json:"severity,optional"`
+	Source     string   `json:"source,optional"`
+	Host       string   `json:"host,optional"`
+	Port       int      `json:"port,optional"`
+	// Phase 5: 敏感信息/敏感目录页面复用 /vul/list 时下发的固定过滤。
+	// IsRisk 为 nil 时忽略，非 nil 时精确匹配 is_risk 字段。
+	IsRisk     *bool    `json:"isRisk,optional"`
+	RiskSource string   `json:"riskSource,optional"`
+	// KeywordAny：命中 vul_name 或 tags 任一关键字即视为匹配（大小写不敏感）。
+	KeywordAny []string `json:"keywordAny,optional"`
 }
 
 type VulListResp struct {
@@ -1754,7 +1890,7 @@ type GeneratePocData struct {
 // AI配置
 type AIConfig struct {
 	Id         string `json:"id"`
-	Protocol   string `json:"protocol"` // openai/anthropic/gemini
+	Protocol   string `json:"protocol"` // openai/anthropic
 	BaseUrl    string `json:"baseUrl"`  // 服务地址
 	ApiKey     string `json:"apiKey"`   // API密钥
 	Model      string `json:"model"`    // 模型名称
@@ -1770,7 +1906,7 @@ type AIConfigGetResp struct {
 }
 
 type AIConfigSaveReq struct {
-	Protocol string `json:"protocol"` // openai/anthropic/gemini
+	Protocol string `json:"protocol"` // openai/anthropic
 	BaseUrl  string `json:"baseUrl"`
 	ApiKey   string `json:"apiKey"`
 	Model    string `json:"model"`
@@ -2501,6 +2637,28 @@ type ThemeConfigSaveReq struct {
 	ColorTheme string `json:"colorTheme"`
 }
 
+// ==================== 全局品牌配置（Logo / 标题） ====================
+
+// BrandingConfig 全局品牌配置
+type BrandingConfig struct {
+	LogoData   string `json:"logoData"`             // Logo 的 data URI（base64），为空使用默认 /logo.png
+	Title      string `json:"title"`                // 侧边栏与浏览器标题
+	UpdateTime string `json:"updateTime,omitempty"` // 最近一次更新时间
+}
+
+// BrandingConfigResp 品牌配置响应
+type BrandingConfigResp struct {
+	Code   int             `json:"code"`
+	Msg    string          `json:"msg"`
+	Config *BrandingConfig `json:"config,omitempty"`
+}
+
+// BrandingConfigSaveReq 保存品牌配置请求
+type BrandingConfigSaveReq struct {
+	LogoData string `json:"logoData,optional"`
+	Title    string `json:"title,optional"`
+}
+
 // ==================== 资产标签管理 ====================
 type AssetUpdateLabelsReq struct {
 	Id          string   `json:"id"`
@@ -2923,4 +3081,183 @@ type JSFinderListResp struct {
 	Msg   string            `json:"msg"`
 	Total int64             `json:"total"`
 	List  []*JSFinderResult `json:"list"`
+}
+
+// JSFinderDetailReq 单条 JSFinder 结果详情请求
+// 列表查询已投影排除 request/response/curl_command 等大字段，
+// 详情按 workspaceId + id 按需回填这些字段。
+type JSFinderDetailReq struct {
+	WorkspaceId string `json:"workspaceId,optional"`
+	Id          string `json:"id"`
+}
+
+type JSFinderDetailResp struct {
+	Code int             `json:"code"`
+	Msg  string          `json:"msg"`
+	Data *JSFinderResult `json:"data,omitempty"`
+}
+
+// ==================== 容器日志 ====================
+type ContainerPort struct {
+	IP          string `json:"ip,omitempty"`
+	PrivatePort uint16 `json:"privatePort"`
+	PublicPort  uint16 `json:"publicPort,omitempty"`
+	Type        string `json:"type,omitempty"`
+}
+
+type ContainerInfo struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Image  string            `json:"image"`
+	State  string            `json:"state"`
+	Status string            `json:"status"`
+	Ports  []ContainerPort   `json:"ports"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+type ContainerListResp struct {
+	Code int             `json:"code"`
+	Msg  string          `json:"msg"`
+	List []ContainerInfo `json:"list"`
+}
+
+type ContainerLogsFetchReq struct {
+	Name  string `json:"name"`
+	Tail  string `json:"tail,optional"`
+	Since string `json:"since,optional"`
+}
+
+type ContainerLogLine struct {
+	Stream    string `json:"stream"`
+	TS        string `json:"ts"`
+	Line      string `json:"line"`
+	Container string `json:"container,omitempty"` // 合并流时标识来源容器
+}
+
+type ContainerLogsFetchResp struct {
+	Code int                 `json:"code"`
+	Msg  string              `json:"msg"`
+	List []ContainerLogLine  `json:"list"`
+}
+
+// ==================== 资产目标（顶层资产：IP/主域名） ====================
+type AssetTargetListReq struct {
+	Page       int      `json:"page,default=1"`
+	PageSize   int      `json:"pageSize,default=20"`
+	TargetType string   `json:"targetType,optional"` // "" | "ip" | "domain"
+	Query      string   `json:"query,optional"`
+	Labels     []string `json:"labels,optional"`
+}
+
+type AssetTargetListItem struct {
+	Id           string   `json:"id"`
+	TargetType   string   `json:"targetType"`
+	TargetValue  string   `json:"targetValue"`
+	Labels       []string `json:"labels"`
+	Memo         string   `json:"memo"`
+	ColorTag     string   `json:"colorTag"`
+	LastScanTime int64    `json:"lastScanTime"` // unix ms, 0 表示未知
+	FirstSeen    int64    `json:"firstSeen"`
+	TaskCount    int      `json:"taskCount"`
+
+	// Phase 4 burble：list 行内联 exposure/risk 计数（来自 meta denormalize 字段，可能为 0 表示未初始化）
+	ExposureSubdomains int `json:"exposureSubdomains,omitempty"`
+	ExposureIps        int `json:"exposureIps,omitempty"`
+	ExposurePorts      int `json:"exposurePorts,omitempty"`
+	ExposureSites      int `json:"exposureSites,omitempty"`
+	ExposureIcons      int `json:"exposureIcons,omitempty"`
+	ExposureApps       int `json:"exposureApps,omitempty"`
+	ExposureDirs       int `json:"exposureDirs,omitempty"`
+	ExposureJs         int `json:"exposureJs,omitempty"`
+	ExposureScreenshots int `json:"exposureScreenshots,omitempty"`
+	RiskSensitiveInfo  int `json:"riskSensitiveInfo,omitempty"`
+	RiskSensitiveDir   int `json:"riskSensitiveDir,omitempty"`
+	RiskVulnHigh       int `json:"riskVulnHigh,omitempty"`
+	RiskVulnTotal      int `json:"riskVulnTotal,omitempty"`
+}
+
+type AssetTargetListResp struct {
+	Code  int                   `json:"code"`
+	Msg   string                `json:"msg"`
+	Total int64                 `json:"total"`
+	List  []AssetTargetListItem `json:"list"`
+}
+
+type AssetTargetDetailReq struct {
+	TargetId string `json:"targetId"`
+}
+
+type AssetTargetExposureStats struct {
+	Subdomains  int `json:"subdomains"`
+	Ips         int `json:"ips"`
+	Ports       int `json:"ports"`
+	Sites       int `json:"sites"`
+	Icons       int `json:"icons"`
+	Apps        int `json:"apps"`
+	Dirs        int `json:"dirs"`
+	Js          int `json:"js"`
+	Screenshots int `json:"screenshots"`
+}
+
+type AssetTargetRiskStats struct {
+	SensitiveInfo      int                          `json:"sensitiveInfo"`
+	SensitiveDir       int                          `json:"sensitiveDir"`
+	VulnHigh           int                          `json:"vulnHigh"`
+	VulnTotal          int                          `json:"vulnTotal"`
+	SensitiveInfoItems []AssetTargetSensitiveVulItem `json:"sensitiveInfoItems,omitempty"`
+	SensitiveDirItems  []AssetTargetSensitiveVulItem `json:"sensitiveDirItems,omitempty"`
+	SensitivePathItems []AssetTargetSensitiveDirItem `json:"sensitivePathItems,omitempty"`
+}
+
+type AssetTargetSensitiveVulItem struct {
+	Id         string   `json:"id"`
+	VulName    string   `json:"vulName"`
+	Severity   string   `json:"severity"`
+	Host       string   `json:"host"`
+	Port       int      `json:"port"`
+	Url        string   `json:"url"`
+	Source     string   `json:"source"`
+	Tags       []string `json:"tags"`
+	CreateTime int64    `json:"createTime"`
+}
+
+type AssetTargetSensitiveDirItem struct {
+	Id         string `json:"id"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Path       string `json:"path"`
+	Url        string `json:"url"`
+	StatusCode int    `json:"statusCode"`
+	Title      string `json:"title"`
+	CreateTime int64  `json:"createTime"`
+}
+
+type AssetTargetDetailData struct {
+	Meta     AssetTargetListItem       `json:"meta"`
+	Exposure AssetTargetExposureStats  `json:"exposure"`
+	Risk     AssetTargetRiskStats      `json:"risk"`
+}
+
+type AssetTargetDetailResp struct {
+	Code int                    `json:"code"`
+	Msg  string                 `json:"msg"`
+	Data AssetTargetDetailData  `json:"data"`
+}
+
+type AssetTargetUpdateReq struct {
+	TargetId string   `json:"targetId"`
+	Labels   []string `json:"labels,optional"`
+	Memo     string   `json:"memo,optional"`
+	ColorTag string   `json:"colorTag,optional"`
+}
+
+type AssetTargetDeleteReq struct {
+	TargetId     string `json:"targetId"`
+	DeleteAssets bool   `json:"deleteAssets,optional"`
+}
+
+type AssetTargetDeleteResp struct {
+	Code         int    `json:"code"`
+	Msg          string `json:"msg"`
+	DeletedCount int64  `json:"deletedCount"` // 级联删除的底层资产数量
 }

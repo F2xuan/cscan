@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"cscan/api/internal/handler/ai"
 	"cscan/api/internal/handler/asset"
 	"cscan/api/internal/handler/blacklist"
+	"cscan/api/internal/handler/container"
 	"cscan/api/internal/handler/dirscan"
 	"cscan/api/internal/handler/fingerprint"
 	"cscan/api/internal/handler/jsfinder"
@@ -23,10 +26,22 @@ import (
 	"cscan/api/internal/handler/worker"
 	"cscan/api/internal/handler/workspace"
 	"cscan/api/internal/middleware"
+	"cscan/api/internal/swagger"
 	"cscan/api/internal/svc"
+	"cscan/model"
 
 	"github.com/zeromicro/go-zero/rest"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 // WorkerWSHandlerInstance 全局WebSocket处理器实例
 var WorkerWSHandlerInstance *worker.WorkerWSHandler
@@ -58,12 +73,23 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		},
 	)
 
+	// Swagger 文档路由（公开访问，便于开发联调）
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/swagger/doc.json", Handler: swagger.SpecHandler},
+		{Method: http.MethodGet, Path: "/swagger-ui", Handler: swagger.UIHandler},
+	})
+	swagger.CollectEx(http.MethodGet, "/health", swagger.TierPublic)
+	swagger.CollectEx(http.MethodGet, "/swagger/doc.json", swagger.TierPublic)
+	swagger.CollectEx(http.MethodGet, "/swagger-ui", swagger.TierPublic)
+
 	// 公开路由（无需认证）- 登录接口和Worker安装相关
 	server.AddRoutes(
 		[]rest.Route{
 			{Method: http.MethodPost, Path: "/api/v1/login", Handler: user.LoginHandler(svcCtx)},
 			// 全局主题配置（无需认证，所有人可获取）
 			{Method: http.MethodPost, Path: "/api/v1/theme/config/get", Handler: notify.ThemeConfigGetHandler(svcCtx)},
+			// 全局品牌配置（Logo / 标题；登录页也需展示，因此公开可读）
+			{Method: http.MethodPost, Path: "/api/v1/branding/config/get", Handler: notify.BrandingConfigGetHandler(svcCtx)},
 			// Worker安装相关（无需认证，Worker需要调用）
 			{Method: http.MethodGet, Path: "/api/v1/worker/download", Handler: worker.WorkerDownloadHandler(svcCtx)},
 			{Method: http.MethodPost, Path: "/api/v1/worker/validate", Handler: worker.WorkerValidateKeyHandler(svcCtx)},
@@ -71,6 +97,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 			{Method: http.MethodGet, Path: "/api/v1/worker/ws", Handler: worker.WorkerWSEndpointHandler(svcCtx, WorkerWSHandlerInstance)},
 			// 静态文件 - docker-compose-worker.yaml
 			{Method: http.MethodGet, Path: "/static/docker-compose-worker.yaml", Handler: worker.DockerComposeWorkerHandler(svcCtx)},
+			// 静态文件 - 用户头像 /static/avatars/<filename>
+			{Method: http.MethodGet, Path: "/static/avatars/:filename", Handler: user.AvatarStaticHandler(svcCtx)},
 		},
 	)
 
@@ -116,10 +144,37 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		}
 	}
 
+	for _, rt := range workerRoutes {
+		swagger.CollectEx(rt.Method, rt.Path, swagger.TierWorker)
+	}
+
 	server.AddRoutes(workerRoutes)
 
 	// 需要认证的路由
 	authMiddleware := middleware.NewAuthMiddleware(svcCtx.Config.Auth.AccessSecret)
+	authMiddleware = authMiddleware.WithPAT(
+		func(ctx context.Context, token string) (primitive.ObjectID, string, string, primitive.ObjectID, []string, error) {
+			pat, err := svcCtx.UserTokenModel.FindByHash(ctx, model.HashPAT(token))
+			if err != nil || pat == nil {
+				return primitive.NilObjectID, "", "", primitive.NilObjectID, nil, err
+			}
+			if pat.Status != model.StatusEnable {
+				return primitive.NilObjectID, "", "", primitive.NilObjectID, nil, nil
+			}
+			if pat.ExpiresAt != nil && pat.ExpiresAt.Before(time.Now()) {
+				return primitive.NilObjectID, "", "", primitive.NilObjectID, nil, nil
+			}
+			user, err := svcCtx.UserModel.FindByObjectId(ctx, pat.UserId)
+			if err != nil || user == nil || user.Status != model.StatusEnable {
+				return primitive.NilObjectID, "", "", primitive.NilObjectID, nil, err
+			}
+			return user.Id, firstNonEmpty(user.Role, "user"), user.Status, pat.Id, pat.Scopes, nil
+		},
+		func(ctx context.Context, tokenId primitive.ObjectID, ip string) {
+			_ = svcCtx.UserTokenModel.UpdateLastUsed(ctx, tokenId, ip, time.Now())
+		},
+		svcCtx.UserModel,
+	)
 	authRoutes := []rest.Route{
 		// 用户管理（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/user/list", Handler: user.UserListHandler(svcCtx)},
@@ -127,6 +182,18 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/user/resetPassword", Handler: user.UserResetPasswordHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/scanConfig/save", Handler: user.SaveScanConfigHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/scanConfig/get", Handler: user.GetScanConfigHandler(svcCtx)},
+		// 用户自助更新头像（任意登录用户可更新自己的头像）
+		{Method: http.MethodPost, Path: "/api/v1/user/avatar/upload", Handler: user.UserAvatarUploadHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/avatar/update", Handler: user.UserUpdateAvatarHandler(svcCtx)},
+
+		// 个人中心：个人信息 / 修改密码 / 个人 API Token
+		{Method: http.MethodPost, Path: "/api/v1/user/profile/get", Handler: user.UserProfileGetHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/profile/update", Handler: user.UserProfileUpdateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/password/change", Handler: user.UserPasswordChangeHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/token/create", Handler: user.UserTokenCreateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/token/list", Handler: user.UserTokenListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/token/setStatus", Handler: user.UserTokenSetStatusHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/token/scopes", Handler: user.UserTokenScopeListHandler(svcCtx)},
 
 		// Worker日志（需要认证）
 		{Method: http.MethodGet, Path: "/api/v1/worker/logs/stream", Handler: worker.WorkerLogsHandler(svcCtx)},
@@ -155,6 +222,10 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/screenshots", Handler: asset.ScreenshotsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/filterOptions", Handler: asset.AssetFilterOptionsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/exposures", Handler: asset.AssetExposuresHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/list", Handler: asset.AssetTargetListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/detail", Handler: asset.AssetTargetDetailHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/update", Handler: asset.AssetTargetUpdateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/delete", Handler: asset.AssetTargetDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/updateLabels", Handler: asset.AssetUpdateLabelsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/addLabel", Handler: asset.AssetAddLabelHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/removeLabel", Handler: asset.AssetRemoveLabelHandler(svcCtx)},
@@ -163,6 +234,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/clear", Handler: asset.AssetClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/history", Handler: asset.AssetHistoryHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/import", Handler: asset.AssetImportHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/save", Handler: asset.AssetSaveHandler(svcCtx)},
 
 		// 应用管理
 		{Method: http.MethodPost, Path: "/api/v1/asset/app/list", Handler: asset.AppListHandler(svcCtx)},
@@ -250,15 +322,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/vul/batchDelete", Handler: vul.VulBatchDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/vul/clear", Handler: vul.VulClearHandler(svcCtx)},
 
-		// Worker管理
-		{Method: http.MethodPost, Path: "/api/v1/worker/list", Handler: worker.WorkerListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/delete", Handler: worker.WorkerDeleteHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/rename", Handler: worker.WorkerRenameHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/restart", Handler: worker.WorkerRestartHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/concurrency", Handler: worker.WorkerSetConcurrencyHandler(svcCtx)},
-		// Worker安装管理（需要认证）
-		{Method: http.MethodPost, Path: "/api/v1/worker/install/command", Handler: worker.WorkerInstallCommandHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/install/refresh", Handler: worker.WorkerRefreshKeyHandler(svcCtx)},
+		// Worker 日志相关路由保留在 authRoutes(普通用户可查看)
+		// Worker 管理类敏感操作(删除/重启/重命名/并发度/install key)已移至 adminRoutes
 
 		// 在线API搜索
 		{Method: http.MethodPost, Path: "/api/v1/onlineapi/search", Handler: onlineapi.OnlineSearchHandler(svcCtx)},
@@ -345,8 +410,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 
 		// AI辅助
 		{Method: http.MethodPost, Path: "/api/v1/ai/generatePoc", Handler: ai.GeneratePocHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/ai/config/get", Handler: ai.AIConfigGetHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/ai/config/save", Handler: ai.AIConfigSaveHandler(svcCtx)},
 
 		// 目录扫描字典
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/dict/list", Handler: dirscan.DirScanDictListHandler(svcCtx)},
@@ -405,6 +468,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/jsfinder/config/save", Handler: jsfinder.JSFinderConfigSaveHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/jsfinder/config/reset", Handler: jsfinder.JSFinderConfigResetHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/jsfinder/list", Handler: jsfinder.JSFinderListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/jsfinder/detail", Handler: jsfinder.JSFinderDetailHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/jsfinder/clear", Handler: jsfinder.JSFinderClearHandler(svcCtx)},
 	}
 
@@ -417,6 +481,9 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	}
 
 	server.AddRoutes(authRoutes)
+	for _, rt := range authRoutes {
+		swagger.CollectEx(rt.Method, rt.Path, swagger.TierAuth)
+	}
 
 	// 需要管理员权限的路由（敏感操作）
 	adminRoutes := []rest.Route{
@@ -424,6 +491,21 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/user/create", Handler: user.UserCreateHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/update", Handler: user.UserUpdateHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/delete", Handler: user.UserDeleteHandler(svcCtx)},
+		// Worker管理（敏感操作,需要管理员权限）
+		// 安全修复:原放在 authRoutes 中,任意登录用户可获取 install key 或重启/删除 Worker
+		{Method: http.MethodPost, Path: "/api/v1/worker/list", Handler: worker.WorkerListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/delete", Handler: worker.WorkerDeleteHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/rename", Handler: worker.WorkerRenameHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/restart", Handler: worker.WorkerRestartHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/concurrency", Handler: worker.WorkerSetConcurrencyHandler(svcCtx)},
+		// Worker安装管理（install key 是 Worker 主密钥,必须管理员权限）
+		{Method: http.MethodPost, Path: "/api/v1/worker/install/command", Handler: worker.WorkerInstallCommandHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/install/refresh", Handler: worker.WorkerRefreshKeyHandler(svcCtx)},
+		// 全局品牌配置（写权限限管理员）
+		{Method: http.MethodPost, Path: "/api/v1/branding/config/save", Handler: notify.BrandingConfigSaveHandler(svcCtx)},
+		// AI配置（含明文 apiKey，读写均限管理员）
+		{Method: http.MethodPost, Path: "/api/v1/ai/config/get", Handler: ai.AIConfigGetHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/ai/config/save", Handler: ai.AIConfigSaveHandler(svcCtx)},
 	}
 
 	// 为管理员路由包装认证中间件 + 管理员权限中间件
@@ -436,6 +518,9 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 
 	if len(adminRoutes) > 0 {
 		server.AddRoutes(adminRoutes)
+		for _, rt := range adminRoutes {
+			swagger.CollectEx(rt.Method, rt.Path, swagger.TierAdmin)
+		}
 	}
 
 	// Worker控制台路由（需要认证 + 管理员权限）
@@ -457,6 +542,9 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// 审计日志
 		{Method: http.MethodGet, Path: "/api/v1/worker/console/audit", Handler: worker.WorkerAuditLogHandler(svcCtx)},
 		{Method: http.MethodDelete, Path: "/api/v1/worker/console/audit", Handler: worker.WorkerAuditLogClearHandler(svcCtx)},
+		// 容器日志(POST 接口走 console-auth;SSE 流走单独的 token 查询参数认证)
+		{Method: http.MethodPost, Path: "/api/v1/container/list", Handler: container.ContainerListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/container/logs/fetch", Handler: container.ContainerLogsFetchHandler(svcCtx)},
 	}
 
 	// 为控制台路由包装认证中间件和管理员权限中间件
@@ -472,10 +560,26 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	}
 
 	server.AddRoutes(consoleRoutes)
+	for _, rt := range consoleRoutes {
+		swagger.CollectEx(rt.Method, rt.Path, swagger.TierConsole)
+	}
 
 	// 终端 WebSocket 路由（单独处理，支持从 URL 参数读取 token）
 	terminalWSRoute := []rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/worker/console/terminal", Handler: worker.WorkerTerminalWSHandlerWithAuth(svcCtx, WorkerWSHandlerInstance)},
 	}
 	server.AddRoutes(terminalWSRoute)
+	for _, rt := range terminalWSRoute {
+		swagger.CollectEx(rt.Method, rt.Path, swagger.TierTerminal)
+	}
+
+	// 容器日志 SSE 路由(EventSource 无法设置 Authorization 头,token 通过查询参数传递)
+	containerSSERoute := []rest.Route{
+		{Method: http.MethodGet, Path: "/api/v1/container/logs/stream", Handler: container.ContainerLogStreamHandler(svcCtx)},
+		{Method: http.MethodGet, Path: "/api/v1/container/logs/stream/merged", Handler: container.ContainerMergedLogStreamHandler(svcCtx)},
+	}
+	server.AddRoutes(containerSSERoute)
+	for _, rt := range containerSSERoute {
+		swagger.CollectEx(rt.Method, rt.Path, swagger.TierContainer)
+	}
 }

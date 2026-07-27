@@ -48,6 +48,13 @@ import { useWorkspaceStore } from './stores/workspace'
 const workspaceStore = useWorkspaceStore()
 workspaceStore.initialize()
 
+// 初始化品牌配置（Logo / 标题）
+import { useBrandingStore } from './stores/branding'
+const brandingStore = useBrandingStore()
+brandingStore.load().then(() => {
+  if (brandingStore.displayTitle) document.title = brandingStore.displayTitle
+})
+
 // 启用性能监控（仅开发环境）
 if (import.meta.env.DEV) {
   enablePerformanceMonitoring()

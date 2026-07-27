@@ -91,6 +91,14 @@ request.interceptors.response.use(
           grouping: true
         })
       }
+    } else if (error.response && error.response.status === 503) {
+      // 503 服务不可用：基础设施故障（如 MongoDB 宕机），返回结构化错误让调用方区分
+      // 注意：登录接口返回 503 时，绝不能显示"密码错误"，否则会误导用户
+      const data = error.response.data
+      if (data && typeof data === 'object') {
+        return Promise.resolve(data)
+      }
+      return Promise.reject(error)
     } else {
       // 优化网络错误和后端未启动时的弹窗提示
       const errorMsg = error.message || '请求失败'

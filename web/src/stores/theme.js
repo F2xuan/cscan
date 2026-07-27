@@ -17,6 +17,12 @@ export const COLOR_THEMES = [
   { value: 'clean-slate', label: 'theme.cleanSlate', color: '#334155', darkColor: '#94a3b8', contrastColor: '#ffffff' },
 ]
 
+// 可用的款式列表（设计语言风格）
+export const THEME_STYLES = [
+  { value: 'vercel', label: 'theme.styleVercel', description: 'theme.styleVercelDesc' },
+  { value: 'apple', label: 'theme.styleApple', description: 'theme.styleAppleDesc' },
+]
+
 // 将 HEX 颜色转换为 RGB
 function hexToRgb(hex) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
@@ -73,6 +79,8 @@ export const useThemeStore = defineStore('theme', () => {
   const theme = ref('system')
   // 颜色主题
   const colorTheme = ref('default')
+  // 款式（设计语言风格：vercel / apple）
+  const themeStyle = ref('vercel')
   // 是否为暗色模式
   const isDark = ref(false)
   // 是否已从服务端加载
@@ -85,14 +93,16 @@ export const useThemeStore = defineStore('theme', () => {
       if (res.code === 0 && res.config) {
         theme.value = res.config.theme || 'system'
         colorTheme.value = res.config.colorTheme || 'default'
+        themeStyle.value = res.config.themeStyle || 'vercel'
         loaded.value = true
-        // watch([theme, colorTheme]) 会自动触发 updateTheme()，无需手动调用
+        // watch([theme, colorTheme, themeStyle]) 会自动触发 updateTheme()，无需手动调用
       }
     } catch (e) {
       console.error('Failed to load theme config:', e)
       // 加载失败时使用本地存储的配置
       theme.value = localStorage.getItem('theme') || 'system'
       colorTheme.value = localStorage.getItem('colorTheme') || 'default'
+      themeStyle.value = localStorage.getItem('themeStyle') || 'vercel'
     }
   }
 
@@ -101,7 +111,8 @@ export const useThemeStore = defineStore('theme', () => {
     try {
       await request.post('/theme/config/save', {
         theme: theme.value,
-        colorTheme: colorTheme.value
+        colorTheme: colorTheme.value,
+        themeStyle: themeStyle.value
       })
     } catch (e) {
       console.error('Failed to save theme config:', e)
@@ -133,6 +144,8 @@ export const useThemeStore = defineStore('theme', () => {
     })
     // 移除旧的主题类
     root.classList.remove('theme-cosmic-night', 'theme-vercel-dark')
+    // 移除款式类
+    root.classList.remove('style-vercel', 'style-apple')
     
     // 确定是否使用暗色模式
     let shouldBeDark = false
@@ -153,6 +166,9 @@ export const useThemeStore = defineStore('theme', () => {
       root.classList.add(`theme-${colorTheme.value}`)
     }
     
+    // 应用款式类
+    root.classList.add(`style-${themeStyle.value}`)
+    
     // 设置 Element Plus 主色
     const currentColorTheme = COLOR_THEMES.find(t => t.value === colorTheme.value)
     if (currentColorTheme) {
@@ -170,6 +186,7 @@ export const useThemeStore = defineStore('theme', () => {
     // 同时保存到本地存储（作为备份）
     localStorage.setItem('theme', theme.value)
     localStorage.setItem('colorTheme', colorTheme.value)
+    localStorage.setItem('themeStyle', themeStyle.value)
   }
 
   // 切换主题模式
@@ -182,6 +199,13 @@ export const useThemeStore = defineStore('theme', () => {
   // 切换颜色主题
   function setColorTheme(newColorTheme) {
     colorTheme.value = newColorTheme
+    updateTheme()
+    saveToServer()
+  }
+
+  // 切换款式
+  function setThemeStyle(newStyle) {
+    themeStyle.value = newStyle
     updateTheme()
     saveToServer()
   }
@@ -217,21 +241,24 @@ export const useThemeStore = defineStore('theme', () => {
   }
 
   // 监听主题变化
-  watch([theme, colorTheme], () => {
+  watch([theme, colorTheme, themeStyle], () => {
     updateTheme()
   })
 
   return {
     theme,
     colorTheme,
+    themeStyle,
     isDark,
     loaded,
     initTheme,
     loadFromServer,
     setTheme,
     setColorTheme,
+    setThemeStyle,
     toggleTheme,
     watchSystemTheme,
     COLOR_THEMES,
+    THEME_STYLES,
   }
 })

@@ -14,9 +14,9 @@
       </div>
     </div>
     
-    <div class="login-box">
+    <div :class="['login-box', `style-${themeStore.themeStyle}`]">
       <div class="login-header">
-        <h1>CSCAN</h1>
+        <h1>{{ brandingStore.displayTitle }}</h1>
         <p>{{ $t('auth.loginTitle') }}</p>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" class="login-form">
@@ -88,6 +88,7 @@ import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
+import { useBrandingStore } from '@/stores/branding'
 import { Sunny, Moon, Position } from '@element-plus/icons-vue'
 import { firstLoginResetPassword } from '@/api/auth'
 
@@ -96,6 +97,7 @@ const { t } = useI18n()
 const userStore = useUserStore()
 const themeStore = useThemeStore()
 const localeStore = useLocaleStore()
+const brandingStore = useBrandingStore()
 const formRef = ref()
 const loading = ref(false)
 

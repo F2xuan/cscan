@@ -21,6 +21,26 @@
     </div>
 
     <div class="setting-section">
+      <h3>{{ $t('theme.styleTitle') }}</h3>
+      <div class="style-themes">
+        <div 
+          v-for="style in themeStyles" 
+          :key="style.value"
+          class="style-theme"
+          :class="{ active: themeStore.themeStyle === style.value }"
+          @click="themeStore.setThemeStyle(style.value)"
+        >
+          <div class="style-preview-mini" :class="`preview-style-${style.value}`">
+            <div class="mini-card"></div>
+            <div class="mini-btn"></div>
+          </div>
+          <span class="style-name">{{ $t(style.label) }}</span>
+          <span class="style-desc">{{ $t(style.description) }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="setting-section">
       <h3>{{ $t('theme.colorTheme') }}</h3>
       <div class="color-themes">
         <div 
@@ -54,7 +74,7 @@
 </template>
 
 <script setup>
-import { useThemeStore } from '@/stores/theme'
+import { useThemeStore, THEME_STYLES } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
 import { Sunny, Moon, Monitor } from '@element-plus/icons-vue'
 
@@ -66,6 +86,8 @@ const themeModes = [
   { value: 'dark', label: 'theme.dark', icon: 'Moon' },
   { value: 'system', label: 'theme.system', icon: 'Monitor' }
 ]
+
+const themeStyles = THEME_STYLES
 
 const colorThemes = [
   { value: 'default', label: 'theme.default' },
@@ -134,6 +156,82 @@ function getLanguageName(locale) {
 
   span {
     font-size: 12px;
+    color: hsl(var(--muted-foreground));
+  }
+}
+
+.style-themes {
+  display: flex;
+  gap: 12px;
+}
+
+.style-theme {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border: 2px solid hsl(var(--border));
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: hsl(var(--card));
+  min-width: 140px;
+
+  &:hover {
+    border-color: hsl(var(--primary));
+  }
+
+  &.active {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+  }
+
+  .style-preview-mini {
+    width: 80px;
+    height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+
+    &.preview-style-vercel {
+      border-radius: 4px;
+      .mini-card { border-radius: 2px; }
+      .mini-btn { border-radius: 2px; }
+    }
+
+    &.preview-style-apple {
+      border-radius: 12px;
+      .mini-card { border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+      .mini-btn { border-radius: 99px; }
+    }
+
+    .mini-card {
+      width: 50px;
+      height: 18px;
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+    }
+
+    .mini-btn {
+      width: 28px;
+      height: 8px;
+      background: hsl(var(--primary));
+    }
+  }
+
+  .style-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+  }
+
+  .style-desc {
+    font-size: 11px;
     color: hsl(var(--muted-foreground));
   }
 }

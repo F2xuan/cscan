@@ -28,3 +28,42 @@ export function resetUserPassword(data) {
 export function firstLoginResetPassword(data) {
   return request.post('/user/firstLoginResetPassword', data)
 }
+
+// 用户头像上传（multipart）
+export function uploadUserAvatar(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/user/avatar/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+// ==================== 个人中心 ====================
+export function getUserProfile() {
+  return request.post('/user/profile/get')
+}
+
+export function updateUserProfile(data) {
+  return request.post('/user/profile/update', data)
+}
+
+export function changeUserPassword(data) {
+  return request.post('/user/password/change', data)
+}
+
+// ==================== 个人 API Token ====================
+export function createUserToken(data) {
+  return request.post('/user/token/create', data)
+}
+
+export function listUserTokens() {
+  return request.post('/user/token/list')
+}
+
+export function setUserTokenStatus(data) {
+  return request.post('/user/token/setStatus', data)
+}
+
+export function getUserTokenScopes() {
+  return request.post('/user/token/scopes')
+}

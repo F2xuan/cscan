@@ -856,6 +856,282 @@ html.dark .el-tabs--border-card {
   border-color: hsl(var(--border));
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   款式系统 — Vercel / Apple
+   双层策略：
+     A) html.style-*  → 覆盖 Element Plus 组件（无 scoped 冲突）
+     B) .element.style-* → 覆盖 Vue scoped 组件（绕过 [data-v-xxx] 特异性）
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── 1. 全局令牌 ────────────────────────────────────────── */
+html.style-vercel {
+  --radius: 0.5rem;
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 6px;
+  --el-box-shadow: none;
+  --el-box-shadow-light: none;
+  --el-box-shadow-lighter: none;
+  --el-font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+html.style-apple {
+  --radius: 1.2rem;
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 999px;
+  --el-font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+html.style-apple.light,
+html.style-apple:not(.dark) {
+  --el-box-shadow: 0 2px 4px -1px rgba(0,0,0,0.06), 0 1px 2px -1px rgba(0,0,0,0.05);
+  --el-box-shadow-light: 0 4px 8px -2px rgba(0,0,0,0.06), 0 2px 4px -2px rgba(0,0,0,0.05);
+  --el-box-shadow-lighter: 0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 3px -1px rgba(0,0,0,0.05);
+  --el-box-shadow-dark: 0 8px 24px -8px rgba(0,0,0,0.08), 0 4px 8px -4px rgba(0,0,0,0.05);
+}
+html.style-apple.dark {
+  --el-box-shadow: 0 2px 4px -1px rgba(0,0,0,0.40), 0 1px 2px -1px rgba(0,0,0,0.36);
+  --el-box-shadow-light: 0 4px 8px -2px rgba(0,0,0,0.44), 0 2px 4px -2px rgba(0,0,0,0.36);
+  --el-box-shadow-lighter: 0 1px 2px 0 rgba(0,0,0,0.36), 0 1px 3px -1px rgba(0,0,0,0.36);
+  --el-box-shadow-dark: 0 8px 24px -8px rgba(0,0,0,0.50), 0 4px 8px -4px rgba(0,0,0,0.40);
+}
+
+/* ─── 2. 字体 ────────────────────────────────────────────── */
+html.style-vercel body {
+  font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+}
+html.style-vercel code, html.style-vercel pre, html.style-vercel .el-input__inner {
+  font-family: 'Geist Mono', ui-monospace, monospace !important;
+}
+html.style-apple body {
+  font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+}
+html.style-apple code, html.style-apple pre, html.style-apple .el-input__inner {
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   3. Element Plus 组件（html.style-* 层）
+   ═══════════════════════════════════════════════════════════════ */
+
+/* 3.1 卡片 */
+html.style-vercel .el-card { border-radius: 6px !important; box-shadow: none !important; transition: border-color 0.16s ease !important; }
+html.style-vercel .el-card:hover { box-shadow: none !important; transform: none !important; border-color: var(--el-border-color-darker, #c0c4cc) !important; }
+html.style-apple.light .el-card, html.style-apple:not(.dark) .el-card { border-radius: 16px !important; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 3px -1px rgba(0,0,0,0.05) !important; transition: transform 0.18s ease, box-shadow 0.18s ease !important; }
+html.style-apple.light .el-card:hover, html.style-apple:not(.dark) .el-card:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 24px -8px rgba(0,0,0,0.08), 0 4px 8px -4px rgba(0,0,0,0.05) !important; }
+html.style-apple.dark .el-card { border-radius: 16px !important; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.36), 0 1px 3px -1px rgba(0,0,0,0.36) !important; transition: transform 0.18s ease, box-shadow 0.18s ease !important; }
+html.style-apple.dark .el-card:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 24px -8px rgba(0,0,0,0.50), 0 4px 8px -4px rgba(0,0,0,0.40) !important; }
+
+/* 3.2 按钮 */
+html.style-vercel .el-button { border-radius: 6px !important; box-shadow: none !important; }
+html.style-vercel .el-button.is-round { border-radius: 6px !important; }
+html.style-vercel .el-button:hover { filter: none !important; }
+html.style-apple .el-button { border-radius: 10px !important; }
+html.style-apple .el-button--large { border-radius: 14px !important; }
+html.style-apple .el-button.is-round { border-radius: 999px !important; }
+html.style-apple .el-button:hover { filter: brightness(0.96) !important; }
+html.style-apple .el-button:active { transform: scale(0.98) !important; }
+
+/* 3.3 对话框 */
+html.style-vercel .el-dialog { border-radius: 12px !important; box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0,0,0,0.12) !important; }
+html.style-vercel .el-dialog__header { border-bottom: 1px solid var(--border) !important; }
+html.style-apple.light .el-dialog, html.style-apple:not(.dark) .el-dialog { border-radius: 20px !important; box-shadow: 0 16px 40px -10px rgba(0,0,0,0.10), 0 8px 16px -8px rgba(0,0,0,0.06) !important; }
+html.style-apple.dark .el-dialog { border-radius: 20px !important; box-shadow: 0 16px 40px -10px rgba(0,0,0,0.55), 0 8px 16px -8px rgba(0,0,0,0.44) !important; }
+html.style-vercel.dark .el-dialog { box-shadow: 0 0 0 1px #282828, 0 8px 40px rgba(0,0,0,0.4) !important; }
+
+/* 3.4 抽屉 */
+html.style-vercel .el-drawer { border-radius: 0 !important; }
+html.style-apple .el-drawer { border-radius: 20px 0 0 20px !important; }
+
+/* 3.5 弹出框 / 下拉 */
+html.style-vercel .el-popper, html.style-vercel .el-popover, html.style-vercel .el-dropdown-menu, html.style-vercel .el-select-dropdown { border-radius: 8px !important; box-shadow: 0 0 0 1px var(--border), 0 4px 24px rgba(0,0,0,0.1) !important; }
+html.style-apple.light .el-popper, html.style-apple.light .el-popover, html.style-apple.light .el-dropdown-menu, html.style-apple.light .el-select-dropdown, html.style-apple:not(.dark) .el-popper, html.style-apple:not(.dark) .el-popover, html.style-apple:not(.dark) .el-dropdown-menu, html.style-apple:not(.dark) .el-select-dropdown { border-radius: 16px !important; box-shadow: 0 4px 8px -2px rgba(0,0,0,0.06), 0 2px 4px -2px rgba(0,0,0,0.05) !important; }
+html.style-apple.dark .el-popper, html.style-apple.dark .el-popover, html.style-apple.dark .el-dropdown-menu, html.style-apple.dark .el-select-dropdown { border-radius: 16px !important; box-shadow: 0 4px 8px -2px rgba(0,0,0,0.44), 0 2px 4px -2px rgba(0,0,0,0.36) !important; }
+
+/* 3.6 输入框 */
+html.style-vercel .el-input__wrapper, html.style-vercel .el-select__wrapper, html.style-vercel .el-textarea__inner { border-radius: 6px !important; }
+html.style-apple .el-input__wrapper, html.style-apple .el-select__wrapper, html.style-apple .el-textarea__inner { border-radius: 10px !important; }
+
+/* 3.7 消息框 / 通知 */
+html.style-vercel .el-message-box { border-radius: 12px !important; }
+html.style-vercel .el-notification { border-radius: 8px !important; }
+html.style-vercel .el-message { border-radius: 8px !important; }
+html.style-apple .el-message-box { border-radius: 20px !important; }
+html.style-apple .el-notification { border-radius: 16px !important; }
+html.style-apple .el-message { border-radius: 12px !important; }
+
+/* 3.8 标签 */
+html.style-vercel .el-tag { border-radius: 4px !important; }
+html.style-apple .el-tag { border-radius: 999px !important; }
+
+/* 3.9 表格行 hover */
+html.style-vercel .el-table__row:hover > td { background-color: transparent !important; }
+html.style-apple:not(.dark) .el-table__row:hover > td { background-color: rgba(0,0,0,0.02) !important; }
+html.style-apple.dark .el-table__row:hover > td { background-color: rgba(255,255,255,0.04) !important; }
+
+/* 3.10 标签页 */
+html.style-vercel .el-tabs__item { border-radius: 4px 4px 0 0 !important; }
+html.style-apple .el-tabs__item { border-radius: 10px 10px 0 0 !important; }
+
+/* 3.11 分页 */
+html.style-vercel .el-pager li { border-radius: 4px !important; }
+html.style-apple .el-pager li { border-radius: 10px !important; }
+
+/* 3.12 复选框 / 开关 / 徽章 / 头像 / 警告 / 进度 / 提示 */
+html.style-vercel .el-checkbox__inner { border-radius: 3px !important; }
+html.style-apple .el-checkbox__inner { border-radius: 6px !important; }
+html.style-apple .el-switch__core { border-radius: 999px !important; }
+html.style-apple .el-badge__content { border-radius: 999px !important; }
+html.style-vercel .el-avatar { border-radius: 6px !important; }
+html.style-apple .el-avatar { border-radius: 50% !important; }
+html.style-vercel .el-alert { border-radius: 8px !important; }
+html.style-apple .el-alert { border-radius: 12px !important; }
+html.style-vercel .el-progress-bar__outer { border-radius: 4px !important; }
+html.style-apple .el-progress-bar__outer { border-radius: 10px !important; }
+html.style-vercel .el-tooltip__popper { border-radius: 8px !important; }
+html.style-apple .el-tooltip__popper { border-radius: 12px !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   4. 侧边栏 — 组件级 class 绕过 scoped
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Vercel: 有阴影、菜单项 8px、活跃项有发光 */
+.aside.style-vercel {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+}
+.aside.style-vercel .el-menu-item {
+  border-radius: 8px !important;
+}
+.aside.style-vercel .el-sub-menu__title {
+  border-radius: 8px !important;
+}
+.aside.style-vercel .el-menu-item.is-active {
+  box-shadow: 0 2px 8px var(--el-color-primary-light-5) !important;
+}
+.aside.style-vercel .logo img {
+  border-radius: 6px !important;
+}
+
+/* Apple: 无阴影、菜单项 12px、活跃项无发光、logo 大圆角 */
+.aside.style-apple {
+  box-shadow: none !important;
+}
+.aside.style-apple .el-menu-item {
+  border-radius: 12px !important;
+}
+.aside.style-apple .el-sub-menu__title {
+  border-radius: 12px !important;
+}
+.aside.style-apple .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-apple .logo img {
+  border-radius: 12px !important;
+}
+/* Apple 侧边栏滚动条 */
+.aside.style-apple .menu-wrapper::-webkit-scrollbar { width: 6px; }
+.aside.style-apple .menu-wrapper::-webkit-scrollbar-thumb { border-radius: 999px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   5. 顶栏 — 组件级 class 绕过 scoped
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Vercel: 有阴影 */
+.header.style-vercel {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+}
+
+/* Apple: 无阴影、仅底边框 */
+.header.style-apple {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   6. Dashboard — 组件级 class 绕过 scoped
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Vercel stat-card: 小圆角、无阴影、无 hover 浮起、无光晕 */
+.dashboard-modern.style-vercel .stat-card {
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+.dashboard-modern.style-vercel .stat-card:hover {
+  transform: none !important;
+  box-shadow: none !important;
+  border-color: hsl(var(--border)) !important;
+}
+.dashboard-modern.style-vercel .stat-card .card-glow {
+  display: none !important;
+}
+
+/* Vercel chart-card: 小圆角、无阴影 */
+.dashboard-modern.style-vercel .chart-card {
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+/* Vercel bubble: 小圆角 */
+.dashboard-modern.style-vercel .bubble {
+  border-radius: 8px !important;
+}
+
+/* Apple stat-card: 大圆角、阴影、hover 浮起、光晕保留 */
+.dashboard-modern.style-apple .stat-card {
+  border-radius: 20px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+}
+.dashboard-modern.style-apple .stat-card:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: 0 12px 24px rgba(0,0,0,0.08) !important;
+}
+
+/* Apple chart-card: 大圆角、阴影 */
+.dashboard-modern.style-apple .chart-card {
+  border-radius: 20px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+}
+
+/* Apple bubble: 大圆角 */
+.dashboard-modern.style-apple .bubble {
+  border-radius: 20px !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   7. 滚动条
+   ═══════════════════════════════════════════════════════════════ */
+
+html.style-vercel ::-webkit-scrollbar { width: 6px; height: 6px; }
+html.style-vercel ::-webkit-scrollbar-thumb { border-radius: 4px; }
+html.style-apple ::-webkit-scrollbar { width: 8px; height: 8px; }
+html.style-apple ::-webkit-scrollbar-thumb { border-radius: 999px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   8. 遮罩层 / 毛玻璃
+   ═══════════════════════════════════════════════════════════════ */
+
+html.style-vercel .el-overlay { backdrop-filter: blur(4px) !important; }
+html.style-vercel .el-drawer, html.style-vercel .el-dialog { backdrop-filter: blur(12px) !important; }
+html.style-apple .el-overlay { backdrop-filter: blur(8px) !important; }
+html.style-apple .el-drawer, html.style-apple .el-dialog { backdrop-filter: blur(16px) !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   9. 登录页 — 组件级 class 绕过 scoped
+   ═══════════════════════════════════════════════════════════════ */
+
+.login-box.style-vercel {
+  border-radius: 8px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
+}
+html:not(.dark) .login-box.style-apple, .login-box.style-apple {
+  border-radius: 20px !important;
+}
+html:not(.dark) .login-box.style-apple {
+  box-shadow: 0 16px 40px -10px rgba(0,0,0,0.10), 0 8px 16px -8px rgba(0,0,0,0.06) !important;
+}
+html.dark .login-box.style-apple {
+  box-shadow: 0 16px 40px -10px rgba(0,0,0,0.55), 0 8px 16px -8px rgba(0,0,0,0.44) !important;
+}
+
 /* ============================================ */
 /* Element Plus 组件主题色覆盖 */
 /* ============================================ */
@@ -1242,7 +1518,7 @@ html.dark .el-loading-mask {
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--el-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   transition: background 0.3s, color 0.3s;
@@ -1281,7 +1557,7 @@ html.dark .workspace {
 
 /* 卡片圆角及平滑交互 */
 .el-card {
-  border-radius: 12px;
+  border-radius: var(--el-border-radius-base, 12px);
   background: hsl(var(--card));
   border-color: hsl(var(--border));
   color: hsl(var(--card-foreground));
@@ -1361,7 +1637,7 @@ html.dark .el-table .el-table__row--striped td.el-table__cell {
 /* ============================================ */
 .dark-card {
   background: #ffffff;
-  border-radius: 12px;
+  border-radius: var(--el-border-radius-base, 12px);
   padding: 20px;
   margin-bottom: 20px;
   border: 1px solid #e5e7eb;

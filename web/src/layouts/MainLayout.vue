@@ -1,10 +1,10 @@
 <template>
   <el-container class="layout-container">
     <!-- 侧边栏 -->
-    <el-aside :width="isCollapse ? '64px' : '250px'" :class="['aside', { collapsed: isCollapse }]">
+    <el-aside :width="isCollapse ? '64px' : '250px'" :class="['aside', `style-${themeStore.themeStyle}`, { collapsed: isCollapse }]">
       <div class="logo">
-        <img src="/logo.png" alt="logo" />
-        <span v-show="!isCollapse">CSCAN</span>
+        <img :src="brandingStore.logoSrc" alt="logo" />
+        <span v-show="!isCollapse">{{ brandingStore.displayTitle }}</span>
       </div>
 
       <div class="menu-wrapper">
@@ -18,12 +18,61 @@
             <template #title>{{ $t('navigation.dashboard') }}</template>
           </el-menu-item>
           <!-- 资产管理分组 -->
+          <el-sub-menu index="asset-menu">
+            <template #title>
+              <el-icon><Monitor /></el-icon>
+              <span>{{ $t('navigation.assetManagement') }}</span>
+            </template>
             <el-menu-item index="/asset-management">
-              <el-icon>
-               <Monitor />
-              </el-icon>
-              <template #title>{{ $t('navigation.assetManagement') }}</template>
+              <el-icon><DataAnalysis /></el-icon>
+              <template #title>{{ $t('navigation.assetOverview') }}</template>
             </el-menu-item>
+            <el-menu-item index="/asset-management/space-search">
+              <el-icon><Search /></el-icon>
+              <template #title>{{ $t('navigation.assetSpaceSearch') }}</template>
+            </el-menu-item>
+          </el-sub-menu>
+
+          <!-- 暴露面管理 -->
+          <el-sub-menu index="exposure-menu">
+            <template #title>
+              <el-icon><View /></el-icon>
+              <span>{{ $t('navigation.exposure') }}</span>
+            </template>
+            <el-menu-item index="/asset-management/exposure/subdomain">
+              <template #title>{{ $t('navigation.exposureSubdomain') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/ip">
+              <template #title>{{ $t('navigation.exposureIp') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/port">
+              <template #title>{{ $t('navigation.exposurePort') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/site">
+              <template #title>{{ $t('navigation.exposureSite') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/icon">
+              <template #title>{{ $t('navigation.exposureIcon') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/app">
+              <template #title>{{ $t('navigation.exposureApp') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/screenshot">
+              <template #title>{{ $t('navigation.exposureScreenshot') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/dir">
+              <template #title>{{ $t('navigation.exposureDir') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/exposure/js">
+              <template #title>{{ $t('navigation.exposureJs') }}</template>
+            </el-menu-item>
+          </el-sub-menu>
+
+          <!-- 漏洞 -->
+          <el-menu-item index="/asset-management/risk/vuln">
+            <el-icon><Warning /></el-icon>
+            <template #title>{{ $t('navigation.riskVuln') }}</template>
+          </el-menu-item>
           <!-- 分割线 -->
           <div class="menu-divider"></div>
 
@@ -123,12 +172,33 @@
               </el-icon>
               <template #title>{{ $t('navigation.organizationManagement') }}</template>
             </el-menu-item>
-            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'" index="/settings?tab=user">
-              <el-icon>
-                <User />
-              </el-icon>
-              <template #title>{{ $t('navigation.userManagement') }}</template>
-            </el-menu-item>
+
+            <!-- 系统管理（用户 / 接口 / 外观 / AI） -->
+            <el-sub-menu
+              v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
+              index="system-management"
+            >
+              <template #title>
+                <el-icon><Setting /></el-icon>
+                <span>{{ $t('navigation.systemManagement') }}</span>
+              </template>
+              <el-menu-item index="/settings?tab=user">
+                <el-icon><User /></el-icon>
+                <template #title>{{ $t('navigation.userManagement') }}</template>
+              </el-menu-item>
+              <el-menu-item index="/api-docs">
+                <el-icon><Document /></el-icon>
+                <template #title>{{ $t('navigation.apiDocs') }}</template>
+              </el-menu-item>
+              <el-menu-item index="/settings?tab=branding">
+                <el-icon><Picture /></el-icon>
+                <template #title>{{ $t('navigation.brandingConfig') }}</template>
+              </el-menu-item>
+              <el-menu-item index="/ai-config">
+                <el-icon><MagicStick /></el-icon>
+                <template #title>{{ $t('navigation.aiConfig') }}</template>
+              </el-menu-item>
+            </el-sub-menu>
 
         </el-menu>
       </div>
@@ -137,7 +207,7 @@
 
     <el-container>
       <!-- 顶部导航 -->
-      <el-header class="header">
+      <el-header :class="['header', `style-${themeStore.themeStyle}`]">
         <div class="header-left">
           <el-icon class="collapse-btn" @click="isCollapse = !isCollapse">
             <Fold v-if="!isCollapse" />
@@ -161,37 +231,18 @@
           <ThemeSwitcher />
           <el-dropdown @command="handleCommand">
             <span class="user-info">
-              <el-avatar :size="32" icon="User" />
+              <el-avatar :size="32" :src="avatarSrc || undefined" icon="User" />
               <span class="username">{{ userStore.username }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="changePassword">{{ $t('auth.changePassword') }}</el-dropdown-item>
+                <el-dropdown-item command="profile">{{ $t('auth.personalCenter') }}</el-dropdown-item>
                 <el-dropdown-item divided command="logout">{{ $t('auth.logout') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </div>
       </el-header>
-
-      <!-- 修改密码对话框 -->
-      <el-dialog v-model="changePwdVisible" :title="$t('auth.changePassword')" width="400px" append-to-body destroy-on-close>
-        <el-form ref="changePwdFormRef" :model="changePwdForm" :rules="changePwdRules" label-width="80px">
-          <el-form-item :label="$t('user.oldPassword')" prop="oldPassword">
-            <el-input v-model="changePwdForm.oldPassword" type="password" :placeholder="$t('user.pleaseEnterOldPassword')" show-password />
-          </el-form-item>
-          <el-form-item :label="$t('user.newPassword')" prop="newPassword">
-            <el-input v-model="changePwdForm.newPassword" type="password" :placeholder="$t('user.pleaseEnterNewPassword')" show-password />
-          </el-form-item>
-          <el-form-item :label="$t('user.confirmPassword')" prop="confirmPassword">
-            <el-input v-model="changePwdForm.confirmPassword" type="password" :placeholder="$t('user.pleaseConfirmPassword')" show-password />
-          </el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="changePwdVisible = false">{{ $t('common.cancel') }}</el-button>
-          <el-button type="primary" :loading="changePwdLoading" @click="handleChangePassword">{{ $t('common.confirm') }}</el-button>
-        </template>
-      </el-dialog>
 
       <!-- 主内容区 -->
       <el-main class="main" v-loading.fullscreen.lock="isSwitchingWorkspace" :element-loading-text="$t('common.switchingWorkspace', '正在切换工作空间...')">
@@ -213,56 +264,33 @@ import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useBrandingStore } from '@/stores/branding'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
-import { resetUserPassword } from '@/api/auth'
-import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, Folder, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer } from '@element-plus/icons-vue'
+import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, Folder, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const { t } = useI18n()
 const userStore = useUserStore()
 const themeStore = useThemeStore()
 const workspaceStore = useWorkspaceStore()
+const brandingStore = useBrandingStore()
 const isCollapse = ref(false)
 const defaultOpeneds = ref(['scan-group', 'system-group'])
 
-// 修改密码
-const changePwdVisible = ref(false)
-const changePwdLoading = ref(false)
-const changePwdFormRef = ref()
-const changePwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
-const changePwdRules = computed(() => ({
-  oldPassword: [{ required: true, message: t('user.pleaseEnterOldPassword'), trigger: 'blur' }],
-  newPassword: [
-    { required: true, message: t('user.pleaseEnterNewPassword'), trigger: 'blur' },
-    { min: 8, message: t('user.passwordMinLength', '密码至少8位'), trigger: 'blur' }
-  ],
-  confirmPassword: [
-    { required: true, message: t('user.pleaseConfirmPassword'), trigger: 'blur' },
-    {
-      validator: (rule, value, callback) => {
-        if (value !== changePwdForm.newPassword) {
-          callback(new Error(t('user.passwordMismatch')))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur'
-    }
-  ]
-}))
-
 onMounted(() => {
   workspaceStore.loadWorkspaces()
+  // 刷新当前登录用户信息（头像、邮箱等可能在其他会话中已变更）
+  userStore.refreshProfile()
 })
+
+const avatarSrc = computed(() => userStore.avatar || '')
 
 const isSwitchingWorkspace = ref(false)
 
 function handleWorkspaceChange(val) {
   isSwitchingWorkspace.value = true
   workspaceStore.setCurrentWorkspace(val)
-
-  // 给点延迟让数据和动画能展示出来
   setTimeout(() => {
     isSwitchingWorkspace.value = false
   }, 400)
@@ -272,34 +300,8 @@ function handleCommand(command) {
   if (command === 'logout') {
     userStore.logout()
     router.push('/login')
-  } else if (command === 'changePassword') {
-    changePwdForm.oldPassword = ''
-    changePwdForm.newPassword = ''
-    changePwdForm.confirmPassword = ''
-    changePwdVisible.value = true
-  }
-}
-
-async function handleChangePassword() {
-  if (!changePwdFormRef.value) return
-  try {
-    await changePwdFormRef.value.validate()
-    changePwdLoading.value = true
-    const res = await resetUserPassword({
-      id: userStore.userId,
-      oldPassword: changePwdForm.oldPassword,
-      newPassword: changePwdForm.newPassword
-    })
-    if (res.code === 0) {
-      ElMessage.success(res.msg || t('user.passwordResetSuccess'))
-      changePwdVisible.value = false
-    } else {
-      ElMessage.error(res.msg || t('user.passwordResetFailed'))
-    }
-  } catch (error) {
-    // validation failed
-  } finally {
-    changePwdLoading.value = false
+  } else if (command === 'profile') {
+    router.push('/profile')
   }
 }
 </script>
@@ -322,30 +324,38 @@ async function handleChangePassword() {
   flex-shrink: 0;
 
   .logo {
-    height: 64px;
+    min-height: 64px;
+    padding: 10px 12px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 6px;
     color: hsl(var(--sidebar-foreground));
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
-    letter-spacing: 2px;
+    letter-spacing: 1px;
     border-bottom: 1px solid hsl(var(--sidebar-border));
     flex-shrink: 0;
 
     img {
       width: 36px;
       height: 36px;
-      margin-right: 10px;
       border-radius: 6px;
       background: transparent;
       flex-shrink: 0;
+      object-fit: contain;
     }
 
     span {
-      white-space: nowrap;
+      max-width: 100%;
+      text-align: center;
+      line-height: 1.25;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
       overflow: hidden;
-      // 文字随容器宽度自然显示/隐藏，无动画
     }
   }
 
@@ -591,7 +601,6 @@ async function handleChangePassword() {
   overflow-x: hidden;
   transition: background 0.3s;
   flex: 1;
-  max-width: 1500px;
   width: 100%;
   margin: 0 auto;
 
@@ -619,12 +628,4 @@ async function handleChangePassword() {
   transform: translateX(10px);
 }
 
-// 收起状态下logo图标居中
-.aside.collapsed {
-  .logo {
-    img {
-      margin-right: 0; // 收起时图标居中
-    }
-  }
-}
 </style>

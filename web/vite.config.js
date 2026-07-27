@@ -62,7 +62,7 @@ export default defineConfig({
     host: true,
     port: 7777,
     proxy: {
-      '/api': {
+      '/api/': {
         target: 'http://127.0.0.1:8888',
         changeOrigin: true,
         ws: true, // 启用 WebSocket 代理
@@ -85,7 +85,15 @@ export default defineConfig({
           })
         }
       },
-      '/static': {
+      '/static/': {
+        target: 'http://127.0.0.1:8888',
+        changeOrigin: true
+      },
+      '/swagger/': {
+        target: 'http://127.0.0.1:8888',
+        changeOrigin: true
+      },
+      '/swagger-ui': {
         target: 'http://127.0.0.1:8888',
         changeOrigin: true
       }

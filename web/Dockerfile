@@ -16,7 +16,7 @@ ENV BUILD_TIME=$BUILD_TIME
 
 RUN npm run build
 
-FROM nginx:alpine
+FROM nginx:1.27-alpine3.20
 
 # 安装 openssl 用于生成自签证书
 RUN apk add --no-cache openssl

@@ -187,15 +187,16 @@ func generateAssetsFromTargetsWithResolver(target string, resolver dnsResolver) 
 			}
 			assets = append(assets, asset)
 		} else {
-			// 用户输入纯域名/IP（无协议无端口），默认传不带端口的目标
+			// 用户输入纯域名/IP（无协议无端口），自动补足 http:// 前缀，使用 80 端口
+			// 这样目录扫描、指纹识别等需要 HTTP 服务的模块才能正常工作
 			asset := &Asset{
 				Host:      info.Host,
-				Port:      0,
+				Port:      80,
 				Category:  category,
 				Source:    "user_input",
 				IsHTTP:    true,
 				Authority: info.Host,
-				Service:   "",
+				Service:   "http",
 			}
 			asset = enrichAssetWithDNS(asset, resolver)
 			// 域名目标DNS解析失败（无有效IP），跳过该目标
@@ -591,7 +592,16 @@ func ValidateNmapArgs(args string) error {
 		}
 
 		if !allowedFlags[flagPart] {
-			return fmt.Errorf("nmap args contains disallowed flag %q (not in whitelist)", token)
+			// nmap 长选项兼容单横线写法（-version-intensity == --version-intensity）
+			var alt string
+			if strings.HasPrefix(flagPart, "--") {
+				alt = flagPart[1:] // --foo -> -foo
+			} else {
+				alt = "-" + flagPart // -foo -> --foo
+			}
+			if !allowedFlags[alt] {
+				return fmt.Errorf("nmap args contains disallowed flag %q (not in whitelist)", token)
+			}
 		}
 	}
 

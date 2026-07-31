@@ -67,6 +67,7 @@ type ScanResult struct {
 	Assets          []*Asset          `json:"assets"`
 	Vulnerabilities []*Vulnerability  `json:"vulnerabilities"`
 	JSFinderResults []*JSFinderResult `json:"jsfinderResults,omitempty"`
+	CertResults     []*CertResult     `json:"certResults,omitempty"`    // 证书采集结果（T2.1 certcheck 扫描器产出，由 T2.2 落库）
 	SkippedHosts    []string          `json:"skippedHosts,omitempty"`    // 因端口阈值超限被跳过的主机列表
 	DNSFailedHosts  []string          `json:"dnsFailedHosts,omitempty"` // DNS解析失败的主机列表
 }
@@ -103,6 +104,8 @@ type Asset struct {
 	ContentWords  int64  `json:"contentWords,omitempty"`  // 响应单词数
 	ContentLines  int64  `json:"contentLines,omitempty"`  // 响应行数
 	Duration      int64  `json:"duration,omitempty"`      // 请求耗时(ms)
+	RequestRaw    string `json:"requestRaw,omitempty"`    // HTTP请求原文（AI研判用）
+	ResponseRaw   string `json:"responseRaw,omitempty"`   // HTTP响应原文（AI研判用）
 	// 子域接管检测字段
 	TakeoverRisk    bool   `json:"takeoverRisk,omitempty"`    // 是否存在接管风险
 	TakeoverService string `json:"takeoverService,omitempty"` // 可接管的服务
@@ -123,6 +126,7 @@ type Vulnerability struct {
 	Url       string   `json:"url"`
 	PocFile   string   `json:"pocFile"`
 	Source    string   `json:"source"`
+	RiskSource string  `json:"riskSource,omitempty"` // 风险来源（如 auto:cert-expiry / auto:weakpass / auto:info-leak），供风险视图与复验按来源查询
 	Severity  string   `json:"severity"`
 	Extra     string   `json:"extra"`
 	Result    string   `json:"result"`

@@ -101,6 +101,7 @@ type NucleiOptions struct {
 	CustomPocOnly        bool                     `json:"customPocOnly"`    // 只使用自定义POC
 	NucleiTemplates      []string                 `json:"nucleiTemplates"`  // 从数据库加载的Nuclei模板内容
 	CustomHeaders        []string                 `json:"customHeaders"`    // 自定义HTTP头部，格式: "Header: Value"
+	ForceScan            bool                     `json:"forceScan"`        // 强制扫描：不跳过非HTTP资产，直接对所有资产进行POC扫描
 	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`                // 发现漏洞时的回调函数
 }
 
@@ -175,6 +176,18 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		opts.Retries = adaptive.NucleiRetries
 	}
 
+	// 超时默认值处理：
+	// TargetTimeout 为单目标超时，Timeout 为整批扫描的全局超时。
+	// 调用方（如 PocScanExecutor）通常只设置 TargetTimeout，这里需要补齐默认值，
+	// 避免 Timeout 为零值导致 ScanBatch 回退到错误的 60s 超时。
+	if opts.TargetTimeout <= 0 {
+		opts.TargetTimeout = 600
+	}
+	if opts.Timeout <= 0 {
+		// 全局超时默认不小于单目标超时，ScanBatch 会根据目标数量进一步调整
+		opts.Timeout = opts.TargetTimeout
+	}
+
 	// Safety cap for template concurrency
 	if opts.Concurrency > 50 {
 		opts.Concurrency = 50
@@ -185,11 +198,14 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	if len(config.Targets) > 0 {
 		targets = config.Targets
 	} else {
-		targets = s.prepareTargets(config.Assets)
+		targets = s.prepareTargets(config.Assets, opts.ForceScan, config.TaskLogger)
 	}
 
 	if len(targets) == 0 {
 		logx.Info("No targets for nuclei scan")
+		if config.TaskLogger != nil {
+			config.TaskLogger("WARN", "No targets for nuclei scan (all assets were skipped as non-HTTP)")
+		}
 		return result, nil
 	}
 
@@ -467,13 +483,20 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		return nil, fmt.Errorf("no usable POC templates")
 	}
 
-	// 设置超时时间：基于目标数量动态计算
+	// 设置超时时间：
+	// 优先使用调用方指定的全局 Timeout；若未指定，则基于单目标超时 TargetTimeout
+	// 和目标数量动态计算，确保单个目标至少能获得 TargetTimeout 的扫描预算，
+	// 避免回退到过短的 60s 导致扫描被提前中断。
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		// 每个目标30秒，最少60秒，最多3600秒
-		timeout = len(targets) * 30
-		if timeout < 60 {
-			timeout = 60
+		perTarget := opts.TargetTimeout
+		if perTarget <= 0 {
+			perTarget = 600
+		}
+		// 总超时 = 目标数 × 单目标超时（Nuclei 内部并发执行，这是一个宽松的上限）
+		timeout = len(targets) * perTarget
+		if timeout < perTarget {
+			timeout = perTarget
 		}
 		if timeout > 3600 {
 			timeout = 3600
@@ -610,24 +633,38 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	return vuls, nil
 }
 
-// prepareTargets 准备目标URL列表（跳过非HTTP资产）
-func (s *NucleiScanner) prepareTargets(assets []*Asset) []string {
+// prepareTargets 准备目标URL列表
+// 当 forceScan=true 时，不跳过非HTTP资产，直接将所有资产转换为扫描目标
+// 当 forceScan=false 时（默认），跳过非HTTP资产，只扫描HTTP服务
+func (s *NucleiScanner) prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, format string, args ...interface{})) []string {
 	targets := make([]string, 0, len(assets))
 	seen := make(map[string]bool)
 	skipped := 0
+	// 记录每个被跳过资产的详情，用于日志输出
+	var skippedDetails []string
 
 	for _, asset := range assets {
-		// 使用 IsHTTP 字段判断（端口扫描阶段已设置）
-		// 同时检查端口是否为常见HTTP端口，避免对非HTTP服务进行扫描
-		if !asset.IsHTTP && !IsHTTPService(asset.Service, asset.Port) {
+		// 判断是否为HTTP资产
+		isHTTP := asset.IsHTTP || IsHTTPService(asset.Service, asset.Port)
+
+		// 非强制扫描模式下，跳过非HTTP资产
+		if !forceScan && !isHTTP {
 			skipped++
-			logx.Debugf("Skipping non-HTTP asset: %s:%d (service: %s, isHttp: %v)", asset.Host, asset.Port, asset.Service, asset.IsHTTP)
+			detail := fmt.Sprintf("%s:%d (service=%s)", asset.Host, asset.Port, asset.Service)
+			skippedDetails = append(skippedDetails, detail)
+			logx.Debugf("Skipping non-HTTP asset: %s (service: %s, isHttp: %v)", detail, asset.Service, asset.IsHTTP)
 			continue
 		}
 
+		// 确定协议方案
 		scheme := "http"
 		if asset.Service == "https" || asset.Port == 443 || asset.Port == 8443 {
 			scheme = "https"
+		}
+
+		// 强制扫描模式下，如果资产不是HTTP服务，记录提示日志
+		if forceScan && !isHTTP {
+			logx.Infof("Force scan enabled: treating non-HTTP asset %s:%d as HTTP target", asset.Host, asset.Port)
 		}
 
 		// 构建目标URL，如果资产有 Path 字段，包含在目标URL中
@@ -651,8 +688,27 @@ func (s *NucleiScanner) prepareTargets(assets []*Asset) []string {
 		}
 	}
 
+	// 将跳过统计写入任务日志（关键日志，不能遗漏）
 	if skipped > 0 {
 		logx.Infof("Nuclei: skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
+		if taskLogger != nil {
+			if forceScan {
+				taskLogger("INFO", "Force scan enabled: processing %d assets (non-HTTP assets will also be scanned)", len(targets))
+			} else {
+				taskLogger("INFO", "Skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
+				// 如果被跳过的资产数量不多，输出详细信息帮助排查
+				if len(skippedDetails) <= 10 {
+					taskLogger("INFO", "Skipped non-HTTP assets: %s", strings.Join(skippedDetails, ", "))
+				} else {
+					taskLogger("INFO", "Skipped non-HTTP assets (first 10): %s", strings.Join(skippedDetails[:10], ", "))
+				}
+			}
+		}
+	} else if forceScan && len(assets) > 0 {
+		// 强制扫描且没有跳过任何资产时，也输出一条确认日志
+		if taskLogger != nil {
+			taskLogger("INFO", "Force scan enabled: all %d assets will be scanned", len(assets))
+		}
 	}
 
 	return targets

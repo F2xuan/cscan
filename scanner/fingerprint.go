@@ -293,6 +293,13 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 
 	taskLog("INFO", "Fingerprint: completed passive scan, scanned %d assets", len(httpAssets))
 
+	// 证书抓取（ARL 风格附加功能）：对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，
+	// 采集结果经 worker.handleResult 落入 {workspaceId}_cert 集合。无开关，默认开启。
+	certFetched := s.fetchCertsForAssets(ctx, httpAssets, result, taskLog)
+	if certFetched > 0 {
+		taskLog("INFO", "Fingerprint: cert fetch completed, collected %d certificates", certFetched)
+	}
+
 	// 执行主动指纹扫描（如果启用）
 	if opts.ActiveScan {
 		if s.customFingerprintEngine != nil {
@@ -619,6 +626,36 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 		}
 	}
 }
+
+// FingerprintScanner 的证书抓取能力在 fetchCertsForAssets 中实现，
+// 对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，结果汇总到 ScanResult.CertResults。
+// 证书抓取作为指纹识别的附加功能（ARL 风格），无开关，默认开启。
+
+// fetchCertsForAssets 对资产列表中符合证书抓取条件的资产执行 TLS 握手并解析证书。
+// 返回成功采集的证书数量；失败的目标静默跳过（不影响整体指纹识别）。
+func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*Asset, result *ScanResult, taskLog func(level, format string, args ...interface{})) int {
+	count := 0
+	for _, a := range assets {
+		if a == nil || !isCertFetchTarget(a) {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			if taskLog != nil {
+				taskLog("WARN", "Fingerprint cert fetch interrupted at %s:%d", a.Host, a.Port)
+			}
+			return count
+		default:
+		}
+		if cr := FetchCert(ctx, a.Host, a.Port, 10*time.Second); cr != nil {
+			result.CertResults = append(result.CertResults, cr)
+			count++
+		}
+	}
+	return count
+}
+
+
 
 // getIconHashWithData 获取favicon的hash值和原始数据
 // htmlBody: 可选的HTML body内容，用于解析 <link rel="icon"> 标签发现自定义favicon路径

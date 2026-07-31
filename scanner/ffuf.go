@@ -148,15 +148,23 @@ func (o *FFufOptions) Validate() error {
 
 // cscanOutput 自定义 ffuf OutputProvider，收集结果到内存
 type cscanOutput struct {
-	results []ffuf.Result
-	mu      sync.Mutex
-	config  *ffuf.Config
+	results  []ffuf.Result
+	rawByURL map[string]*dirScanRaw // 按URL保存ffuf SDK原生dump的原始报文
+	mu       sync.Mutex
+	config   *ffuf.Config
+}
+
+// dirScanRaw 保存目录扫描单条结果的原始请求/响应（来自ffuf SDK的httputil.Dump*，无额外流量）
+type dirScanRaw struct {
+	RequestRaw  string
+	ResponseRaw string
 }
 
 func newCscanOutput(conf *ffuf.Config) *cscanOutput {
 	return &cscanOutput{
-		results: make([]ffuf.Result, 0),
-		config:  conf,
+		results:  make([]ffuf.Result, 0),
+		rawByURL: make(map[string]*dirScanRaw),
+		config:   conf,
 	}
 }
 
@@ -201,7 +209,7 @@ func (o *cscanOutput) Result(resp ffuf.Response) {
 		ContentLines:     resp.ContentLines,
 		ContentType:      resp.ContentType,
 		RedirectLocation: redirectLocation,
-		Duration:         resp.Time,
+		Duration:         resp.Duration,
 		Host:             resp.Request.Host,
 	}
 
@@ -212,8 +220,25 @@ func (o *cscanOutput) Result(resp ffuf.Response) {
 		result.Url = strings.Replace(o.config.Url, "FUZZ", inputData, 1)
 	}
 
+	// 直接使用ffuf SDK原生Dump的Request/Response Raw（已由SimpleRunner填充，无额外HTTP流量）
+	var reqRaw, respRaw string
+	if resp.Request != nil {
+		reqRaw = resp.Request.Raw
+	}
+	respRaw = resp.Raw
+	// 响应体可能超过MAX_DOWNLOAD_SIZE被截断或为空，做必要截断避免Mongo文档过大
+	if len(respRaw) > maxDirScanRawSize {
+		respRaw = respRaw[:maxDirScanRawSize]
+	}
+	if result.Url != "" && (reqRaw != "" || respRaw != "") {
+		o.rawByURL[result.Url] = &dirScanRaw{RequestRaw: reqRaw, ResponseRaw: respRaw}
+	}
+
 	o.results = append(o.results, result)
 }
+
+// maxDirScanRawSize 单条原始报文最大保留字节数（防止Mongo文档膨胀）
+const maxDirScanRawSize = 64 * 1024
 
 func (o *cscanOutput) GetCurrentResults() []ffuf.Result {
 	o.mu.Lock()
@@ -373,9 +398,28 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 		conf.AutoCalibrationStrategies = []string{"basic", "advanced"}
 	}
 
-	// 扩展名
+	// 扩展名（规范化：去空白、去除重复、统一以"."开头，ffuf需要形如".php,.jsp"）
 	if len(opts.Extensions) > 0 {
-		conf.Extensions = opts.Extensions
+		seen := make(map[string]struct{}, len(opts.Extensions))
+		normalized := make([]string, 0, len(opts.Extensions))
+		for _, ext := range opts.Extensions {
+			e := strings.TrimSpace(ext)
+			if e == "" {
+				continue
+			}
+			if !strings.HasPrefix(e, ".") {
+				e = "." + e
+			}
+			e = strings.ToLower(e)
+			if _, ok := seen[e]; ok {
+				continue
+			}
+			seen[e] = struct{}{}
+			normalized = append(normalized, e)
+		}
+		if len(normalized) > 0 {
+			conf.Extensions = normalized
+		}
 	}
 
 	// 输入模式
@@ -395,6 +439,11 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 		"Connection":      "keep-alive",
 	}
+
+	// 关键：设置 OutputDirectory 非空以触发 ffuf SimpleRunner 自动 DumpRequestOut/DumpResponse
+	// 填充 req.Raw 和 resp.Raw。我们的 cscanOutput.SaveFile 返回 nil，不会产生任何磁盘写入，
+	// 且 DumpRequestOut/DumpResponse 复用的是已发送的 http.Request/Response，**不会产生额外HTTP流量**。
+	conf.OutputDirectory = os.TempDir()
 
 	// 创建 MatcherManager 并配置过滤器/匹配器
 	mm := filter.NewMatcherManager()
@@ -477,11 +526,11 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 	logInfo("[FFuf] 目标 %s 扫描完成，原始结果: %d 条", target, len(results))
 
 	// 转换为 Asset
-	return s.convertResults(target, results), nil
+	return s.convertResults(target, results, output.rawByURL), nil
 }
 
 // convertResults 将 ffuf 结果转换为 Asset 列表
-func (s *FFufScanner) convertResults(target string, results []ffuf.Result) []*Asset {
+func (s *FFufScanner) convertResults(target string, results []ffuf.Result, rawByURL map[string]*dirScanRaw) []*Asset {
 	assets := make([]*Asset, 0, len(results))
 
 	parsedTarget, err := url.Parse(target)
@@ -539,6 +588,14 @@ func (s *FFufScanner) convertResults(target string, results []ffuf.Result) []*As
 		// 处理重定向
 		if r.RedirectLocation != "" {
 			asset.Title = r.RedirectLocation
+		}
+
+		// 填充原始请求/响应
+		if rawByURL != nil {
+			if raw, ok := rawByURL[resultURL]; ok && raw != nil {
+				asset.RequestRaw = raw.RequestRaw
+				asset.ResponseRaw = raw.ResponseRaw
+			}
 		}
 
 		assets = append(assets, asset)

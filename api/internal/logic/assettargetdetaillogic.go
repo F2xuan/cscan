@@ -136,7 +136,13 @@ func (l *AssetTargetDetailLogic) writebackDenormalized(wsId string, meta *model.
 
 // computeExposure 通过 AggregateGroupByDomain 一次扫描 owning ws 的 asset 集合，
 // 按根域名/IP 归并到该目标，再累加 asset 的字段维度。
-// 子域/IP/站点按 host 去重（同一 host 多端口只计一次），避免计数膨胀。
+// 各字段统计口径与暴露面管理页面保持一致：
+//   - 子域名(Subdomains): 归属该目标的非IP主机（按distinct host去重，同一host多端口只计一次）
+//   - IP(Ips): 归属该目标的IP主机（按distinct host去重）
+//   - 端口(Ports): distinct端口数（与端口管理页一致）
+//   - 站点(Sites): Web资产数（与站点管理页webFilter一致：is_http/service=http,https/有title/有screenshot）
+//   - 图标(Icons): distinct icon_hash数
+//   - 应用(Apps): distinct app数
 func (l *AssetTargetDetailLogic) computeExposure(wsId string, tType model.AssetTargetType, tValue string) types.AssetTargetExposureStats {
 	var stats types.AssetTargetExposureStats
 	assetModel := l.svcCtx.GetAssetModel(wsId)
@@ -146,30 +152,55 @@ func (l *AssetTargetDetailLogic) computeExposure(wsId string, tType model.AssetT
 		return stats
 	}
 
+	hostFilter := hostFilterForTarget(tType, tValue)
+
 	seenHosts := make(map[string]struct{})
+	seenDomains := make(map[string]struct{})
+	webAssetCount := 0
+
 	for _, row := range rows {
 		if !rowMatchesTarget(row.Host, row.Domain, tType, tValue) {
 			continue
 		}
-		stats.Sites++ // 每条 asset (host:port) 视为一个站点
-		if _, dup := seenHosts[row.Host]; dup {
-			continue
-		}
-		seenHosts[row.Host] = struct{}{}
-		if utils.IsIPAddress(row.Host) {
-			stats.Ips++
-		} else if row.Host != "" {
-			stats.Subdomains++
+
+		// 站点(Sites)：Web资产（与SiteStat的webFilter口径一致）
+		// 由于AggregateGroupByDomain只投影了host/domain，需要通过hostFilter二次查询
+		// 这里先统计distinct host，后续通过Count查询web资产数
+		if _, dup := seenHosts[row.Host]; !dup {
+			seenHosts[row.Host] = struct{}{}
+			if utils.IsIPAddress(row.Host) {
+				stats.Ips++
+			} else if row.Host != "" {
+				// 子域名：非IP主机（每个host算一个子域名）
+				stats.Subdomains++
+				// 同时记录domain维度的去重
+				if row.Domain != "" {
+					seenDomains[row.Domain] = struct{}{}
+				}
+			}
 		}
 	}
 
-	hostFilter := hostFilterForTarget(tType, tValue)
-
-	portCount, _ := assetModel.Count(l.ctx, bson.M{
+	// 端口(Ports)：distinct端口数（与端口管理页一致：$group by port）
+	portVals, _ := assetModel.Distinct(l.ctx, "port", bson.M{
 		"port": bson.M{"$gt": 0},
 		"host": hostFilter,
 	})
-	stats.Ports = int(portCount)
+	stats.Ports = countNonEmpty(portVals)
+
+	// 站点(Sites)：Web资产数（与SiteStat的webFilter一致）
+	webFilter := bson.M{
+		"$or": bson.A{
+			bson.M{"is_http": true},
+			bson.M{"service": bson.M{"$in": bson.A{"http", "https"}}},
+			bson.M{"title": bson.M{"$exists": true, "$ne": ""}},
+			bson.M{"screenshot": bson.M{"$exists": true, "$ne": ""}},
+		},
+		"host": hostFilter,
+	}
+	siteCount, _ := assetModel.Count(l.ctx, webFilter)
+	stats.Sites = int(siteCount)
+	_ = webAssetCount // 预留
 
 	// Icon/App 用 Distinct 按值去重，与 IconList/AppList 页面聚合逻辑一致
 	iconVals, _ := assetModel.Distinct(l.ctx, "icon_hash", bson.M{

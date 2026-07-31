@@ -2,9 +2,12 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -25,13 +28,15 @@ const (
 	jsfinderListCacheTTL = 30 * time.Second
 )
 
-// jsfinderListProjection 列表查询投影：排除 request/response/curl_command 等大字段，
-// 这些字段剥离后单行内存占用大幅下降，跨 ws 合并 + 内存分页可移除硬上限，
-// 从而修复"深页取空"问题；大字段由 /jsfinder/detail 按需加载。
+// jsfinderListProjection 列表查询投影：排除大字段，
+// request/response/curl_command/result/extracted_results 等大字段剥离后单行内存占用大幅下降，
+// 跨 ws 合并 + 内存分页可移除硬上限，从而修复"深页取空"问题；大字段由 /jsfinder/detail 按需加载。
 var jsfinderListProjection = bson.M{
-	"request":      0,
-	"response":     0,
-	"curl_command": 0,
+	"request":           0,
+	"response":          0,
+	"curl_command":      0,
+	"result":            0,
+	"extracted_results": 0,
 }
 
 // JSFinderConfigLogic JSFinder 配置逻辑
@@ -194,10 +199,10 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 	// 确保索引存在
 	_ = m.EnsureIndexes(l.ctx)
 
-	if err := m.InsertMany(l.ctx, modelResults); err != nil {
-		l.Logger.Errorf("SaveJSFinderResult Error: %v", err)
-		// InsertMany可能会因为唯一索引冲突而报错，在这里忽略 Duplicate Key Error，保证其余正常插入
-		// 这里只是打出错误日志，由于 MongoDB 的 InsertMany Ordered: false，出错条目会被跳过
+	// 使用 UpsertMany 替代 InsertMany：重复扫描时更新 update_time，避免产生重复脏数据
+	if err := m.UpsertMany(l.ctx, modelResults); err != nil {
+		l.Logger.Errorf("SaveJSFinderResult UpsertMany Error: %v", err)
+		// BulkWrite Ordered=false 时部分失败不影响其他条目，仅记录日志
 	}
 
 	return nil
@@ -209,8 +214,8 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 	if wsKey == "" {
 		wsKey = "all"
 	}
-	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s",
-		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName)
+	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s:%s:%v",
+		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.TagsAny)
 
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, jsfinderListCacheTTL, func() (interface{}, error) {
 		return l.getJSFinderListUncached(req)
@@ -229,26 +234,52 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
 	workspaceId := req.WorkspaceId
 
-	filter := bson.M{}
+	// 使用 $and 数组组合所有条件，避免多个 $or 互相覆盖
+	var andConditions []bson.M
 
 	if req.Query != "" {
-		filter["$or"] = []bson.M{
+		andConditions = append(andConditions, bson.M{"$or": []bson.M{
 			{"url": primitive.Regex{Pattern: req.Query, Options: "i"}},
 			{"vul_name": primitive.Regex{Pattern: req.Query, Options: "i"}},
 			{"host": primitive.Regex{Pattern: req.Query, Options: "i"}},
-		}
+		}})
 	}
 
 	if req.Severity != "" {
-		filter["severity"] = req.Severity
+		andConditions = append(andConditions, bson.M{"severity": req.Severity})
 	}
 
 	if req.Tags != "" {
-		filter["tags"] = req.Tags
+		andConditions = append(andConditions, bson.M{"tags": req.Tags})
+	}
+
+	if len(req.TagsAny) > 0 {
+		andConditions = append(andConditions, bson.M{"tags": bson.M{"$in": req.TagsAny}})
 	}
 
 	if req.MatcherName != "" {
-		filter["matcher_name"] = req.MatcherName
+		andConditions = append(andConditions, bson.M{"matcher_name": req.MatcherName})
+	}
+
+	if req.AIResult != "" {
+		andConditions = append(andConditions, bson.M{"ai_result": req.AIResult})
+	}
+	if req.AIStatus != "" {
+		if req.AIStatus == "pending" {
+			// 待研判：ai_status 为空/不存在/显式 pending 都算未研判
+			andConditions = append(andConditions, bson.M{"$or": []bson.M{
+				{"ai_status": bson.M{"$exists": false}},
+				{"ai_status": ""},
+				{"ai_status": "pending"},
+			}})
+		} else {
+			andConditions = append(andConditions, bson.M{"ai_status": req.AIStatus})
+		}
+	}
+
+	filter := bson.M{}
+	if len(andConditions) > 0 {
+		filter["$and"] = andConditions
 	}
 
 	if req.Page < 1 {
@@ -341,6 +372,10 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 
 	respList := make([]*types.JSFinderResult, 0, len(allResults))
 	for _, r := range allResults {
+		aiAnalyzedAt := ""
+		if !r.AIAnalyzedAt.IsZero() {
+			aiAnalyzedAt = r.AIAnalyzedAt.Format("2006-01-02 15:04:05")
+		}
 		respList = append(respList, &types.JSFinderResult{
 			Id:               r.Id.Hex(),
 			WorkspaceId:      r.WorkspaceId,
@@ -361,6 +396,10 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 			Response:         r.Response,
 			CreateTime:       r.CreateTime.Format("2006-01-02 15:04:05"),
 			UpdateTime:       r.UpdateTime.Format("2006-01-02 15:04:05"),
+			AIStatus:         r.AIStatus,
+			AIResult:         r.AIResult,
+			AIAnalyzedAt:     aiAnalyzedAt,
+			AIReason:         r.AIReason,
 		})
 	}
 
@@ -410,6 +449,10 @@ func (l *JSFinderLogic) GetJSFinderDetail(req *types.JSFinderDetailReq) (*types.
 		if doc == nil {
 			continue
 		}
+		aiAnalyzedAt := ""
+		if !doc.AIAnalyzedAt.IsZero() {
+			aiAnalyzedAt = doc.AIAnalyzedAt.Format("2006-01-02 15:04:05")
+		}
 		return &types.JSFinderDetailResp{
 			Code: 0,
 			Msg:  "success",
@@ -433,9 +476,445 @@ func (l *JSFinderLogic) GetJSFinderDetail(req *types.JSFinderDetailReq) (*types.
 				Response:         doc.Response,
 				CreateTime:       doc.CreateTime.Format("2006-01-02 15:04:05"),
 				UpdateTime:       doc.UpdateTime.Format("2006-01-02 15:04:05"),
+				AIStatus:         doc.AIStatus,
+				AIResult:         doc.AIResult,
+				AIAnalyzedAt:     aiAnalyzedAt,
+				AIReason:         doc.AIReason,
 			},
 		}, nil
 	}
 
 	return &types.JSFinderDetailResp{Code: 404, Msg: "未找到该 JSFinder 结果"}, nil
+}
+
+// ==================== JSFinder AI研判 ====================
+
+// jsfinderAIBatchTasks 全局批量任务状态表（内存map + mutex，单实例场景适用）
+var jsfinderAIBatchTasks sync.Map // taskId -> *batchTaskState
+
+type batchTaskState struct {
+	mu        sync.Mutex
+	TaskId    string
+	Total     int64
+	Completed int64
+	Status    string // running/completed/failed/stopped
+	StopCh    chan struct{} // 停止信号通道
+	EndTime   time.Time    // 任务结束时间（用于TTL清理）
+}
+
+func init() {
+	// 定期清理已完成/失败超过 1 小时的批量任务，防止内存泄漏
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-1 * time.Hour)
+			jsfinderAIBatchTasks.Range(func(key, value any) bool {
+				state := value.(*batchTaskState)
+				state.mu.Lock()
+				shouldDelete := (state.Status == "completed" || state.Status == "failed" || state.Status == "stopped") && !state.EndTime.IsZero() && state.EndTime.Before(cutoff)
+				state.mu.Unlock()
+				if shouldDelete {
+					jsfinderAIBatchTasks.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
+}
+
+// AnalyzeSingle 对单条JSFinder结果进行AI研判
+func (l *JSFinderLogic) AnalyzeSingle(req *types.JSFinderAIAnalyzeReq) (*types.JSFinderAIAnalyzeResp, error) {
+	workspaceId := req.WorkspaceId
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+
+	// 1. 加载AI配置
+	aiCfg, err := l.loadAIConfig(workspaceId)
+	if err != nil {
+		return &types.JSFinderAIAnalyzeResp{Code: 500, Msg: "AI配置加载失败: " + err.Error()}, nil
+	}
+
+	// 2. 查找目标记录（需要含result/extracted_results内容，不使用列表投影）
+	m := l.svcCtx.GetJSFinderResultModel(workspaceId)
+	doc, err := m.FindByID(l.ctx, req.Id)
+	if err != nil {
+		return &types.JSFinderAIAnalyzeResp{Code: 404, Msg: "未找到该记录"}, nil
+	}
+
+	// 3. 构造Prompt并调用大模型
+	result, reason, err := l.callAIAnalysis(aiCfg, doc)
+	if err != nil {
+		return &types.JSFinderAIAnalyzeResp{Code: 500, Msg: "AI研判失败: " + err.Error()}, nil
+	}
+
+	// 4. 回写数据库
+	now := time.Now()
+	aiResult := "no_risk"
+	if result == "risk" {
+		aiResult = "risk"
+	}
+	if err := m.UpdateAIResult(l.ctx, req.Id, "completed", aiResult, reason, now); err != nil {
+		return &types.JSFinderAIAnalyzeResp{Code: 500, Msg: "结果保存失败: " + err.Error()}, nil
+	}
+
+	return &types.JSFinderAIAnalyzeResp{
+		Code: 0, Msg: "success",
+		Data: &types.JSFinderAIAnalyzeData{
+			Id: req.Id, AIStatus: "completed", AIResult: aiResult,
+			AIReason: reason, AIAnalyzedAt: now.Format("2006-01-02 15:04:05"),
+		},
+	}, nil
+}
+
+// BatchAnalyzeAsync 启动批量研判异步任务，立即返回
+// 支持三种模式：
+// 1. req.Ids 非空：研判选中的数据
+// 2. req.Ids 为空但有筛选条件：研判符合筛选条件的未研判数据
+// 3. 都为空：研判所有未研判数据
+func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) (*types.JSFinderAIBatchAnalyzeResp, error) {
+	workspaceId := req.WorkspaceId
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	// 构造与列表查询一致的过滤条件（使用 $and 组合，避免 $or 互相覆盖）
+	var andConditions []bson.M
+	if req.Query != "" {
+		andConditions = append(andConditions, bson.M{"$or": []bson.M{
+			{"url": primitive.Regex{Pattern: req.Query, Options: "i"}},
+			{"vul_name": primitive.Regex{Pattern: req.Query, Options: "i"}},
+			{"host": primitive.Regex{Pattern: req.Query, Options: "i"}},
+		}})
+	}
+	if req.Severity != "" {
+		andConditions = append(andConditions, bson.M{"severity": req.Severity})
+	}
+	if req.Tags != "" {
+		andConditions = append(andConditions, bson.M{"tags": req.Tags})
+	}
+	if len(req.TagsAny) > 0 {
+		andConditions = append(andConditions, bson.M{"tags": bson.M{"$in": req.TagsAny}})
+	}
+	if req.MatcherName != "" {
+		andConditions = append(andConditions, bson.M{"matcher_name": req.MatcherName})
+	}
+	// 强制加上未研判条件：ai_status 不是 completed（包含空/不存在/pending）
+	andConditions = append(andConditions, bson.M{"ai_status": bson.M{"$ne": "completed"}})
+
+	filter := bson.M{}
+	if len(andConditions) > 0 {
+		filter["$and"] = andConditions
+	}
+
+	var pendingDocs []*model.JSFinderResult
+
+	if len(req.Ids) > 0 {
+		// 模式1：按选中的ID列表（跨workspace查找）
+		oids := make([]primitive.ObjectID, 0, len(req.Ids))
+		for _, id := range req.Ids {
+			oid, err := primitive.ObjectIDFromHex(id)
+			if err == nil {
+				oids = append(oids, oid)
+			}
+		}
+		idFilter := bson.M{
+			"_id":       bson.M{"$in": oids},
+			"ai_status": bson.M{"$ne": "completed"},
+		}
+		for _, wsId := range wsIds {
+			m := l.svcCtx.GetJSFinderResultModel(wsId)
+			docs, err := m.Find(l.ctx, idFilter, options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}))
+			if err == nil {
+				pendingDocs = append(pendingDocs, docs...)
+			}
+		}
+	} else {
+		// 模式2/3：按过滤条件（可能为空，表示所有未研判）
+		for _, wsId := range wsIds {
+			m := l.svcCtx.GetJSFinderResultModel(wsId)
+			docs, err := m.Find(l.ctx, filter, options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}))
+			if err == nil {
+				pendingDocs = append(pendingDocs, docs...)
+			}
+		}
+	}
+
+	if len(pendingDocs) == 0 {
+		return &types.JSFinderAIBatchAnalyzeResp{Code: 0, Msg: "无待研判数据", Total: 0}, nil
+	}
+
+	taskId := primitive.NewObjectID().Hex()
+	state := &batchTaskState{
+		TaskId: taskId,
+		Total:  int64(len(pendingDocs)),
+		Status: "running",
+		StopCh: make(chan struct{}),
+	}
+	jsfinderAIBatchTasks.Store(taskId, state)
+
+	// 启动goroutine异步处理
+	go l.runBatchAnalysis(wsIds, taskId, state, pendingDocs)
+
+	return &types.JSFinderAIBatchAnalyzeResp{
+		Code: 0, Msg: "批量研判任务已启动", TaskId: taskId, Total: int64(len(pendingDocs)),
+	}, nil
+}
+
+// runBatchAnalysis 批量研判实际执行逻辑（在独立goroutine中运行）
+func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *batchTaskState, pendingDocs []*model.JSFinderResult) {
+	// 使用独立的Background context，避免HTTP请求context被cancel导致后台任务中断
+	bgCtx := context.Background()
+
+	// 1. 加载AI配置（全局配置）
+	aiCfg, err := l.loadAIConfigWithCtx(bgCtx, "")
+	if err != nil {
+		state.mu.Lock()
+		state.Status = "failed"
+		state.EndTime = time.Now()
+		state.mu.Unlock()
+		logx.Errorf("[JSFinder-AI] batch task %s config error: %v", taskId, err)
+		return
+	}
+
+	// 2. 使用goroutine池处理（并发度5）
+	concurrency := 5
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	stopped := int32(0) // 原子标记是否已停止
+
+	for _, doc := range pendingDocs {
+		// 检查是否收到停止信号
+		select {
+		case <-state.StopCh:
+			atomic.StoreInt32(&stopped, 1)
+			logx.Infof("[JSFinder-AI] batch task %s received stop signal, stopping...", taskId)
+		default:
+		}
+		if atomic.LoadInt32(&stopped) == 1 {
+			break
+		}
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(d *model.JSFinderResult) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			// 再次检查停止信号（避免已停止后还在处理）
+			if atomic.LoadInt32(&stopped) == 1 {
+				state.mu.Lock()
+				state.Completed++ // 跳过的也算入完成数，避免进度卡住
+				state.mu.Unlock()
+				return
+			}
+
+			// 根据文档的workspaceId获取对应的model进行回写
+			wsId := d.WorkspaceId
+			if wsId == "" {
+				wsId = "default"
+			}
+			m := l.svcCtx.GetJSFinderResultModel(wsId)
+
+			result, reason, err := l.callAIAnalysis(aiCfg, d)
+			now := time.Now()
+			aiResult := "no_risk"
+			if err == nil && result == "risk" {
+				aiResult = "risk"
+			}
+			reason2use := reason
+			if err != nil {
+				reason2use = "研判失败: " + err.Error()
+				logx.Errorf("[JSFinder-AI] doc %s analyze error: %v", d.Id.Hex(), err)
+			}
+			_ = m.UpdateAIResult(context.Background(), d.Id.Hex(), "completed", aiResult, reason2use, now)
+
+			state.mu.Lock()
+			state.Completed++
+			state.mu.Unlock()
+		}(doc)
+	}
+	wg.Wait()
+
+	state.mu.Lock()
+	if atomic.LoadInt32(&stopped) == 1 {
+		state.Status = "stopped"
+	} else {
+		state.Status = "completed"
+	}
+	state.EndTime = time.Now()
+	state.mu.Unlock()
+	logx.Infof("[JSFinder-AI] batch task %s finished: status=%s, completed=%d/%d", taskId, state.Status, state.Completed, state.Total)
+}
+
+// StopBatchTask 停止批量研判任务
+func (l *JSFinderLogic) StopBatchTask(taskId string) error {
+	v, ok := jsfinderAIBatchTasks.Load(taskId)
+	if !ok {
+		return fmt.Errorf("任务不存在或已结束")
+	}
+	state := v.(*batchTaskState)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.Status != "running" {
+		return fmt.Errorf("任务当前状态不允许停止: %s", state.Status)
+	}
+
+	// 关闭通道发送停止信号（close保证所有等待者都能收到）
+	close(state.StopCh)
+	state.Status = "stopping"
+	logx.Infof("[JSFinder-AI] batch task %s stop signal sent", taskId)
+	return nil
+}
+
+// GetBatchProgress 查询批量研判进度
+func (l *JSFinderLogic) GetBatchProgress(req *types.JSFinderAIBatchProgressReq) (*types.JSFinderAIBatchProgressResp, error) {
+	v, ok := jsfinderAIBatchTasks.Load(req.TaskId)
+	if !ok {
+		return &types.JSFinderAIBatchProgressResp{Code: 404, Msg: "任务不存在"}, nil
+	}
+	state := v.(*batchTaskState)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return &types.JSFinderAIBatchProgressResp{
+		Code: 0, Msg: "success",
+		Total: state.Total, Completed: state.Completed, Status: state.Status,
+	}, nil
+}
+
+// ==================== AI研判辅助方法 ====================
+
+// loadAIConfig 加载AI配置（全局配置，跨workspace查找）
+// AI配置是系统级配置，不按workspace隔离，优先使用当前workspace，找不到则遍历其他workspace
+func (l *JSFinderLogic) loadAIConfig(workspaceId string) (*model.APIConfig, error) {
+	return l.loadAIConfigWithCtx(l.ctx, workspaceId)
+}
+
+// loadAIConfigWithCtx 使用指定context加载AI配置（供后台goroutine使用独立context）
+func (l *JSFinderLogic) loadAIConfigWithCtx(ctx context.Context, workspaceId string) (*model.APIConfig, error) {
+	// 按优先级尝试的workspace列表
+	tryWorkspaces := []string{}
+	if workspaceId != "" {
+		tryWorkspaces = append(tryWorkspaces, workspaceId)
+	}
+	tryWorkspaces = append(tryWorkspaces, "all", "default")
+
+	// 1. 先尝试已知的workspace
+	for _, wsId := range tryWorkspaces {
+		cfgModel := model.NewAPIConfigModel(l.svcCtx.MongoDB, wsId)
+		doc, err := cfgModel.FindByPlatform(ctx, "ai")
+		if err == nil && doc != nil {
+			return doc, nil
+		}
+	}
+
+	// 2. 列出所有数据库集合，查找包含ai配置的workspace
+	listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	db := l.svcCtx.MongoDB
+	collections, err := db.ListCollectionNames(listCtx, bson.M{"name": bson.M{"$regex": "_api_config$"}})
+	if err == nil {
+		tried := map[string]bool{}
+		for _, ws := range tryWorkspaces {
+			tried[ws] = true
+		}
+		for _, collName := range collections {
+			// 从集合名提取workspaceId: {ws}_api_config -> ws
+			wsId := collName[:len(collName)-len("_api_config")]
+			if tried[wsId] {
+				continue // 已经尝试过了
+			}
+			tempModel := model.NewAPIConfigModel(db, wsId)
+			doc, err := tempModel.FindByPlatform(ctx, "ai")
+			if err == nil && doc != nil {
+				return doc, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("未配置AI服务，请先在系统设置中配置AI")
+}
+
+// callAIAnalysis 调用大模型研判单条记录
+// 返回 (result="risk"/"no_risk", reason文本, error)
+func (l *JSFinderLogic) callAIAnalysis(cfg *model.APIConfig, doc *model.JSFinderResult) (string, string, error) {
+	client := NewAIClientFromConfig(cfg)
+
+	prompt := buildJSAnalysisPrompt(doc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	content, err := client.Chat(ctx, prompt, 1024)
+	if err != nil {
+		return "", "", err
+	}
+
+	return parseAIAnalysisResult(content)
+}
+
+// buildJSAnalysisPrompt 构造JS扫描结果的风险研判Prompt
+func buildJSAnalysisPrompt(doc *model.JSFinderResult) string {
+	var sb strings.Builder
+	sb.WriteString("你是一个Web安全专家，请判断以下JS扫描发现是否构成真实的敏感信息泄露风险。\n\n")
+	sb.WriteString(fmt.Sprintf("目标URL: %s\n", doc.URL))
+	sb.WriteString(fmt.Sprintf("发现类型: %s\n", doc.VulName))
+	sb.WriteString(fmt.Sprintf("严重级别: %s\n", doc.Severity))
+	if doc.MatcherName != "" {
+		sb.WriteString(fmt.Sprintf("匹配规则: %s\n", doc.MatcherName))
+	}
+	if len(doc.ExtractedResults) > 0 {
+		sb.WriteString(fmt.Sprintf("匹配内容:\n%s\n", strings.Join(doc.ExtractedResults, "\n")))
+	}
+	sb.WriteString(fmt.Sprintf("原始结果: %s\n", doc.Result))
+	sb.WriteString("\n请判断该发现是否为真实的敏感信息泄露风险（如硬编码密钥、真实token/密码、未授权接口泄露真实数据等）。\n")
+	sb.WriteString("注意：普通路径、URL列表、IP地址、公开邮箱、示例值等不构成风险；只有真正有效的密钥、token、密码、身份证、手机号等敏感数据泄露才标记为有风险。\n")
+	sb.WriteString(`请严格按以下JSON格式回复（不要有其他内容）：
+{"result": "risk" 或 "no_risk", "reason": "简短说明判断理由，不超过100字"}`)
+	return sb.String()
+}
+
+// parseAIAnalysisResult 解析AI返回的JSON结果
+func parseAIAnalysisResult(content string) (string, string, error) {
+	content = strings.TrimSpace(content)
+	// 提取被```json ```包裹的内容
+	if strings.Contains(content, "```") {
+		if idx := strings.Index(content, "```"); idx >= 0 {
+			rest := content[idx+3:]
+			if strings.HasPrefix(rest, "json") {
+				rest = rest[4:]
+			}
+			if end := strings.Index(rest, "```"); end >= 0 {
+				content = rest[:end]
+			}
+		}
+	}
+	content = strings.TrimSpace(content)
+
+	var parsed struct {
+		Result string `json:"result"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		// 降级容错：文本中包含"risk"且不包含"no_risk"则判定为risk
+		lower := strings.ToLower(content)
+		if strings.Contains(lower, "no_risk") {
+			return "no_risk", "AI返回格式异常，降级判断为无风险", nil
+		}
+		if strings.Contains(lower, "risk") {
+			return "risk", "AI返回格式异常，降级判断为有风险", nil
+		}
+		return "no_risk", "AI返回格式异常，默认无风险", nil
+	}
+	result := strings.ToLower(parsed.Result)
+	if result != "risk" {
+		result = "no_risk"
+	}
+	return result, parsed.Reason, nil
 }

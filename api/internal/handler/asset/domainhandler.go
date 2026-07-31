@@ -85,3 +85,17 @@ func DomainBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// DomainClearHandler 清空域名
+func DomainClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewDomainClearLogic(r.Context(), svcCtx)
+		resp, err := l.DomainClear(workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

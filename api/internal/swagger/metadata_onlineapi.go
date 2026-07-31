@@ -52,6 +52,13 @@ func init() {
 		Security:    TierAuth,
 		Errors:      []int{400, 500},
 	})
+	register(http.MethodPost, "/api/v1/onlineapi/pull/status", Meta{
+		Tag: tag, TagDesc: tagDesc,
+		Summary:     "自动拉取状态",
+		Description: "返回各平台在线 API 自动拉取的启用状态、上次拉取时间/条数、配额余量与下次执行时间（T3.1）。",
+		RespType:    "OnlinePullStatusResp",
+		Security:    TierAuth,
+	})
 
 	RegisterTypes(
 		types.OnlineSearchReq{},
@@ -63,5 +70,7 @@ func init() {
 		types.APIConfig{},
 		types.APIConfigListResp{},
 		types.APIConfigSaveReq{},
+		types.OnlinePullStatusResp{},
+		types.OnlinePullStatusItem{},
 	)
 }

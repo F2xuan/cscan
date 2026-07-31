@@ -31,8 +31,6 @@ func (r *Reflector) SeedReflector() {
 	}
 }
 
-
-
 // SchemaRef 描述一个 OpenAPI 3.0 schema（内联或 $ref）。
 type SchemaRef = map[string]interface{}
 
@@ -125,6 +123,7 @@ func (r *Reflector) registerNamedStruct(t reflect.Type) {
 
 	props := SchemaRef{}
 	required := []string{}
+	desc := getStructDescription(t)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
@@ -139,6 +138,31 @@ func (r *Reflector) registerNamedStruct(t reflect.Type) {
 			namePart = f.Name
 		}
 		propSchema := r.schemaForType(f.Type)
+
+		// 字段描述
+		fieldDesc := getFieldDescription(f)
+		if fieldDesc != "" {
+			propSchema["description"] = fieldDesc
+		}
+
+		// 示例值
+		if example := f.Tag.Get("example"); example != "" {
+			propSchema["example"] = coerceExample(example, f.Type)
+		}
+
+		// 枚举值
+		if enumStr := f.Tag.Get("enum"); enumStr != "" {
+			enums := parseEnumValues(enumStr, f.Type)
+			if len(enums) > 0 {
+				propSchema["enum"] = enums
+			}
+		}
+
+		// 格式
+		if format := f.Tag.Get("format"); format != "" {
+			propSchema["format"] = format
+		}
+
 		if !opts.optional && !opts.omitempty && !opts.hasDefault {
 			required = append(required, namePart)
 		}
@@ -152,6 +176,9 @@ func (r *Reflector) registerNamedStruct(t reflect.Type) {
 	schema := SchemaRef{
 		"type":       "object",
 		"properties": props,
+	}
+	if desc != "" {
+		schema["description"] = desc
 	}
 	if len(required) > 0 {
 		schema["required"] = required
@@ -234,7 +261,14 @@ func (r *Reflector) schemaForType(t reflect.Type) SchemaRef {
 			if namePart == "" {
 				namePart = f.Name
 			}
-			props[namePart] = r.schemaForType(f.Type)
+			propSchema := r.schemaForType(f.Type)
+			if desc := getFieldDescription(f); desc != "" {
+				propSchema["description"] = desc
+			}
+			if example := f.Tag.Get("example"); example != "" {
+				propSchema["example"] = coerceExample(example, f.Type)
+			}
+			props[namePart] = propSchema
 		}
 		return SchemaRef{"type": "object", "properties": props}
 	case reflect.Interface:
@@ -291,6 +325,85 @@ func coerceDefault(s string) interface{} {
 	return s
 }
 
+// coerceExample 将 example tag 值转换为对应类型
+func coerceExample(s string, t reflect.Type) interface{} {
+	if s == "" {
+		return s
+	}
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Bool:
+		return s == "true"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if n, err := atoi64(s); err == nil {
+			return n
+		}
+	case reflect.Float32, reflect.Float64:
+		if f, err := parseFloat(s); err == nil {
+			return f
+		}
+	}
+	return s
+}
+
+// parseEnumValues 解析 enum tag "a|b|c" 为值数组
+func parseEnumValues(s string, t reflect.Type) []interface{} {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, "|")
+	out := make([]interface{}, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		for t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+		switch t.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			if n, err := atoi64(p); err == nil {
+				out = append(out, n)
+				continue
+			}
+		case reflect.Bool:
+			out = append(out, p == "true")
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// getStructDescription 获取结构体的描述
+// 注意：reflect.Type 无法直接访问 struct tag，需通过 StructField 或注释约定实现
+func getStructDescription(t reflect.Type) string {
+	// 结构体级别的描述暂通过类型名到描述的映射提供
+	// 如需为特定结构体添加描述，可在此处扩展
+	structDescriptions := map[string]string{}
+	if desc, ok := structDescriptions[t.Name()]; ok {
+		return desc
+	}
+	return ""
+}
+
+// getFieldDescription 获取字段描述（从 swagger/desc/comment tag）
+func getFieldDescription(f reflect.StructField) string {
+	if desc := f.Tag.Get("swagger"); desc != "" {
+		return desc
+	}
+	if desc := f.Tag.Get("desc"); desc != "" {
+		return desc
+	}
+	if desc := f.Tag.Get("comment"); desc != "" {
+		return desc
+	}
+	return ""
+}
+
 func atoi64(s string) (int64, error) {
 	var n int64
 	var sign int64 = 1
@@ -311,8 +424,50 @@ func atoi64(s string) (int64, error) {
 	return n * sign, nil
 }
 
+func parseFloat(s string) (float64, error) {
+	var f float64
+	var sign float64 = 1
+	i := 0
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		if s[0] == '-' {
+			sign = -1
+		}
+		i = 1
+	}
+	dec := false
+	var div float64 = 1
+	for ; i < len(s); i++ {
+		c := s[i]
+		if c == '.' {
+			if dec {
+				return 0, errBadFloat
+			}
+			dec = true
+			continue
+		}
+		if c < '0' || c > '9' {
+			return 0, errBadFloat
+		}
+		if dec {
+			div *= 10
+			f = f + float64(c-'0')/div
+		} else {
+			f = f*10 + float64(c-'0')
+		}
+	}
+	return f * sign, nil
+}
+
 var errBadInt = &parseError{}
+var errBadFloat = &parseError{msg: "not a float"}
 
-type parseError struct{}
+type parseError struct {
+	msg string
+}
 
-func (e *parseError) Error() string { return "not an integer" }
+func (e *parseError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return "not an integer"
+}

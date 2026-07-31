@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/model"
 	"cscan/pkg/response"
+	"cscan/pkg/xerr"
 	"cscan/scheduler"
 
 	"github.com/google/uuid"
@@ -28,6 +30,7 @@ type CronTaskListReq struct {
 	Page     int    `json:"page,optional"`
 	PageSize int    `json:"pageSize,optional"`
 	Keyword  string `json:"keyword,optional"`
+	TaskType string `json:"taskType,optional"` // 按任务类型过滤：scan / space_engine
 }
 
 // CronTaskListResp 定时任务列表响应
@@ -45,32 +48,57 @@ type CronTaskListRespData struct {
 type CronTaskItem struct {
 	Id           string `json:"id"`
 	Name         string `json:"name"`
-	ScheduleType string `json:"scheduleType"` // cron/once
+	TaskType     string `json:"taskType"` // scan / space_engine
+	ScheduleType string `json:"scheduleType"`
 	CronSpec     string `json:"cronSpec"`
 	ScheduleTime string `json:"scheduleTime"`
 	WorkspaceId  string `json:"workspaceId"`
-	MainTaskId   string `json:"mainTaskId"`
-	TaskName     string `json:"taskName"`
-	Target       string `json:"target"`
-	TargetShort  string `json:"targetShort"` // 截断后的目标（用于列表显示）
-	Config       string `json:"config"`      // 任务配置JSON
 	Status       string `json:"status"`
 	LastRunTime  string `json:"lastRunTime"`
 	NextRunTime  string `json:"nextRunTime"`
 	RunCount     int64  `json:"runCount"`
+
+	// ===== scan 类型字段 =====
+	TargetMode          string   `json:"targetMode,omitempty"`
+	Target              string   `json:"target,omitempty"`
+	TargetShort         string   `json:"targetShort,omitempty"` // 截断后的目标（用于列表显示）
+	AssetIds            []string `json:"assetIds,omitempty"`
+	OrgId               string   `json:"orgId,omitempty"`
+	EnableSubdomainPull bool     `json:"enableSubdomainPull,omitempty"`
+	ConfigSource        string   `json:"configSource,omitempty"`
+	TemplateId          string   `json:"templateId,omitempty"`
+	Config              string   `json:"config,omitempty"`
+
+	// ===== space_engine 类型字段 =====
+	Platform   string `json:"platform,omitempty"`
+	Query      string `json:"query,omitempty"`
+	MaxResults int    `json:"maxResults,omitempty"`
 }
 
 // CronTaskSaveReq 保存定时任务请求
 type CronTaskSaveReq struct {
 	Id           string `json:"id,optional"`
 	Name         string `json:"name"`
-	ScheduleType string `json:"scheduleType"`          // cron: Cron表达式, once: 指定时间
-	CronSpec     string `json:"cronSpec,optional"`     // Cron表达式
-	ScheduleTime string `json:"scheduleTime,optional"` // 指定执行时间 (格式: 2006-01-02 15:04:05)
-	MainTaskId   string `json:"mainTaskId"`            // 关联的任务ID（用于获取初始配置）
-	WorkspaceId  string `json:"workspaceId,optional"`  // 任务所属工作空间ID
-	Target       string `json:"target,optional"`       // 扫描目标（可自定义，不填则使用关联任务的目标）
-	Config       string `json:"config,optional"`       // 任务配置JSON（可自定义，不填则使用关联任务的配置）
+	TaskType     string `json:"taskType"` // scan / space_engine
+	ScheduleType string `json:"scheduleType"`
+	CronSpec     string `json:"cronSpec,optional"`
+	ScheduleTime string `json:"scheduleTime,optional"`
+	WorkspaceId  string `json:"workspaceId,optional"`
+
+	// ===== scan 类型字段 =====
+	TargetMode          string   `json:"targetMode,optional"`
+	Target              string   `json:"target,optional"`
+	AssetIds            []string `json:"assetIds,optional"`
+	OrgId               string   `json:"orgId,optional"`
+	EnableSubdomainPull bool     `json:"enableSubdomainPull,optional"`
+	ConfigSource        string   `json:"configSource,optional"`
+	TemplateId          string   `json:"templateId,optional"`
+	Config              string   `json:"config,optional"`
+
+	// ===== space_engine 类型字段 =====
+	Platform   string `json:"platform,optional"`
+	Query      string `json:"query,optional"`
+	MaxResults int    `json:"maxResults,optional"`
 }
 
 // CronTaskToggleReq 开关定时任务请求
@@ -98,19 +126,27 @@ type CronTaskBatchDeleteReq struct {
 func syncCronTaskToRedis(ctx context.Context, svcCtx *svc.ServiceContext, cronTask *model.CronTask) {
 	cronKey := "cscan:cron:tasks"
 	schedTask := scheduler.CronTask{
-		Id:           cronTask.CronTaskId,
-		Name:         cronTask.Name,
-		ScheduleType: cronTask.ScheduleType,
-		CronSpec:     cronTask.CronSpec,
-		ScheduleTime: cronTask.ScheduleTime,
-		WorkspaceId:  cronTask.WorkspaceId,
-		MainTaskId:   cronTask.MainTaskId,
-		TaskName:     cronTask.TaskName,
-		Target:       cronTask.Target,
-		Config:       cronTask.Config,
-		Status:       cronTask.Status,
-		LastRunTime:  cronTask.LastRunTime,
-		NextRunTime:  cronTask.NextRunTime,
+		Id:                  cronTask.CronTaskId,
+		Name:                cronTask.Name,
+		TaskType:            cronTask.TaskType,
+		ScheduleType:        cronTask.ScheduleType,
+		CronSpec:            cronTask.CronSpec,
+		ScheduleTime:        cronTask.ScheduleTime,
+		WorkspaceId:         cronTask.WorkspaceId,
+		Status:              cronTask.Status,
+		LastRunTime:         cronTask.LastRunTime,
+		NextRunTime:         cronTask.NextRunTime,
+		TargetMode:          cronTask.TargetMode,
+		Target:              cronTask.Target,
+		AssetIds:            cronTask.AssetIds,
+		OrgId:               cronTask.OrgId,
+		EnableSubdomainPull: cronTask.EnableSubdomainPull,
+		ConfigSource:        cronTask.ConfigSource,
+		TemplateId:          cronTask.TemplateId,
+		Config:              cronTask.Config,
+		Platform:            cronTask.Platform,
+		Query:               cronTask.Query,
+		MaxResults:          cronTask.MaxResults,
 	}
 	data, err := json.Marshal(schedTask)
 	if err != nil {
@@ -131,6 +167,43 @@ func removeCronTaskFromRedis(ctx context.Context, svcCtx *svc.ServiceContext, cr
 	svcCtx.RedisClient.Del(ctx, runCountKey)
 }
 
+// expandTemplateConfig 当 configSource=template 时从 ScanTemplateModel 获取模板配置展开为 config JSON
+func expandTemplateConfig(ctx context.Context, svcCtx *svc.ServiceContext, templateId string) (string, error) {
+	if templateId == "" {
+		return "", fmt.Errorf("模板ID不能为空")
+	}
+	tmpl, err := svcCtx.ScanTemplateModel.FindById(ctx, templateId)
+	if err != nil {
+		return "", fmt.Errorf("查询扫描模板失败: %v", err)
+	}
+	if tmpl == nil {
+		return "", fmt.Errorf("扫描模板不存在: %s", templateId)
+	}
+	if tmpl.Config == "" {
+		return "", fmt.Errorf("扫描模板配置为空: %s", templateId)
+	}
+	return tmpl.Config, nil
+}
+
+// resolveAssetTargets 当 targetMode=asset 时从 AssetTargetMetaModel 获取资产列表拼接到 target
+func resolveAssetTargets(ctx context.Context, svcCtx *svc.ServiceContext, workspaceId string, assetIds []string) (string, error) {
+	if len(assetIds) == 0 {
+		return "", nil
+	}
+	metaModel := svcCtx.GetAssetTargetMetaModel(workspaceId)
+	metas, err := metaModel.FindByIDs(ctx, assetIds)
+	if err != nil {
+		return "", fmt.Errorf("查询资产失败: %v", err)
+	}
+	var values []string
+	for _, m := range metas {
+		if m.TargetValue != "" {
+			values = append(values, m.TargetValue)
+		}
+	}
+	return strings.Join(values, "\n"), nil
+}
+
 // CronTaskListHandler 定时任务列表（从MongoDB读取）
 func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -143,8 +216,8 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		workspaceId := middleware.GetWorkspaceId(r.Context())
 		ctx := r.Context()
 
-		// 从MongoDB读取定时任务（关键字过滤在MongoDB层完成）
-		tasks, total, err := svcCtx.CronTaskModel.FindByWorkspaceId(ctx, workspaceId, req.Keyword, req.Page, req.PageSize)
+		// 从MongoDB读取定时任务（关键字和任务类型过滤在MongoDB层完成）
+		tasks, total, err := svcCtx.CronTaskModel.FindByWorkspaceId(ctx, workspaceId, req.Keyword, req.TaskType, req.Page, req.PageSize)
 		if err != nil {
 			response.Error(w, fmt.Errorf("获取定时任务失败: %v", err))
 			return
@@ -156,29 +229,41 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			runCountKey := fmt.Sprintf("cscan:cron:runcount:%s", task.CronTaskId)
 			runCount, _ := svcCtx.RedisClient.Get(ctx, runCountKey).Int64()
 
-			// 截取目标显示（用于列表）
-			targetShort := task.Target
-			if len(targetShort) > 100 {
-				targetShort = targetShort[:100] + "..."
+			item := &CronTaskItem{
+				Id:                  task.CronTaskId,
+				Name:                task.Name,
+				TaskType:            task.TaskType,
+				ScheduleType:        task.ScheduleType,
+				CronSpec:            task.CronSpec,
+				ScheduleTime:        task.ScheduleTime,
+				WorkspaceId:         task.WorkspaceId,
+				Status:              task.Status,
+				LastRunTime:         task.LastRunTime,
+				NextRunTime:         task.NextRunTime,
+				RunCount:            runCount,
+				TargetMode:          task.TargetMode,
+				Target:              task.Target,
+				AssetIds:            task.AssetIds,
+				OrgId:               task.OrgId,
+				EnableSubdomainPull: task.EnableSubdomainPull,
+				ConfigSource:        task.ConfigSource,
+				TemplateId:          task.TemplateId,
+				Config:              task.Config,
+				Platform:            task.Platform,
+				Query:               task.Query,
+				MaxResults:          task.MaxResults,
 			}
 
-			list = append(list, &CronTaskItem{
-				Id:           task.CronTaskId,
-				Name:         task.Name,
-				ScheduleType: task.ScheduleType,
-				CronSpec:     task.CronSpec,
-				ScheduleTime: task.ScheduleTime,
-				WorkspaceId:  task.WorkspaceId,
-				MainTaskId:   task.MainTaskId,
-				TaskName:     task.TaskName,
-				Target:       task.Target,
-				TargetShort:  targetShort,
-				Config:       task.Config,
-				Status:       task.Status,
-				LastRunTime:  task.LastRunTime,
-				NextRunTime:  task.NextRunTime,
-				RunCount:     runCount,
-			})
+			// 截取目标显示（用于列表，仅 scan 类型）
+			if task.TaskType == string(model.CronTaskTypeScan) {
+				targetShort := task.Target
+				if len(targetShort) > 100 {
+					targetShort = targetShort[:100] + "..."
+				}
+				item.TargetShort = targetShort
+			}
+
+			list = append(list, item)
 		}
 
 		if list == nil {
@@ -196,6 +281,79 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// CronTaskDetailReq 获取定时任务详情请求
+type CronTaskDetailReq struct {
+	Id string `json:"id"`
+}
+
+// CronTaskDetailHandler 获取定时任务详情
+func CronTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req CronTaskDetailReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		if req.Id == "" {
+			response.ParamError(w, "任务ID不能为空")
+			return
+		}
+
+		ctx := r.Context()
+		workspaceId := middleware.GetWorkspaceId(ctx)
+		cronTask, err := svcCtx.CronTaskModel.FindByCronTaskId(ctx, req.Id)
+		if err != nil {
+			response.Error(w, fmt.Errorf("查询定时任务失败: %v", err))
+			return
+		}
+		if cronTask == nil {
+			response.ParamError(w, "定时任务不存在")
+			return
+		}
+		// 工作空间隔离：防止越权查看其他工作空间的定时任务
+		if cronTask.WorkspaceId != workspaceId {
+			response.ErrorWithCode(w, xerr.Forbidden, "无权访问该定时任务")
+			return
+		}
+
+		// 从Redis获取运行次数
+		runCountKey := fmt.Sprintf("cscan:cron:runcount:%s", cronTask.CronTaskId)
+		runCount, _ := svcCtx.RedisClient.Get(ctx, runCountKey).Int64()
+
+		item := &CronTaskItem{
+			Id:                  cronTask.CronTaskId,
+			Name:                cronTask.Name,
+			TaskType:            cronTask.TaskType,
+			ScheduleType:        cronTask.ScheduleType,
+			CronSpec:            cronTask.CronSpec,
+			ScheduleTime:        cronTask.ScheduleTime,
+			WorkspaceId:         cronTask.WorkspaceId,
+			Status:              cronTask.Status,
+			LastRunTime:         cronTask.LastRunTime,
+			NextRunTime:         cronTask.NextRunTime,
+			RunCount:            runCount,
+			TargetMode:          cronTask.TargetMode,
+			Target:              cronTask.Target,
+			AssetIds:            cronTask.AssetIds,
+			OrgId:               cronTask.OrgId,
+			EnableSubdomainPull: cronTask.EnableSubdomainPull,
+			ConfigSource:        cronTask.ConfigSource,
+			TemplateId:          cronTask.TemplateId,
+			Config:              cronTask.Config,
+			Platform:            cronTask.Platform,
+			Query:               cronTask.Query,
+			MaxResults:          cronTask.MaxResults,
+		}
+
+		httpx.OkJson(w, map[string]any{
+			"code": 0,
+			"msg":  "success",
+			"data": item,
+		})
+	}
+}
+
 // CronTaskSaveHandler 保存定时任务（MongoDB主存储 + Redis调度缓存同步）
 func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -209,8 +367,11 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, "任务名称不能为空")
 			return
 		}
-		if req.MainTaskId == "" {
-			response.ParamError(w, "请选择关联的扫描任务")
+		if req.TaskType == "" {
+			req.TaskType = string(model.CronTaskTypeScan)
+		}
+		if req.TaskType != string(model.CronTaskTypeScan) && req.TaskType != string(model.CronTaskTypeSpaceEngine) {
+			response.ParamError(w, "无效的任务类型")
 			return
 		}
 		if req.ScheduleType == "" {
@@ -255,76 +416,130 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		if workspaceId == "" || workspaceId == "all" {
 			workspaceId = middleware.GetWorkspaceId(r.Context())
 		}
+		if workspaceId == "" || workspaceId == "all" {
+			workspaceId = "default"
+		}
 		ctx := r.Context()
 
-		// 获取关联任务的信息
-		var mainTask *model.MainTask
-		var foundWorkspaceId string
+		// 构造待持久化的 CronTask 文档（先填充通用字段，类型字段在 switch 内填充）
+		cronTaskId := req.Id
+		isNew := cronTaskId == ""
+		if isNew {
+			cronTaskId = uuid.New().String()
+		}
 
-		if workspaceId == "" || workspaceId == "all" {
-			workspaces, wsErr := svcCtx.WorkspaceModel.FindAll(ctx)
-			if wsErr != nil {
-				logx.Errorf("[CronTaskSave] failed to list workspaces: %v", wsErr)
+		cronTask := &model.CronTask{
+			CronTaskId:   cronTaskId,
+			Name:         req.Name,
+			TaskType:     req.TaskType,
+			ScheduleType: req.ScheduleType,
+			CronSpec:     req.CronSpec,
+			ScheduleTime: req.ScheduleTime,
+			WorkspaceId:  workspaceId,
+			Status:       "enable",
+			NextRunTime:  nextRunTime,
+		}
+
+		// 根据 taskType 做字段校验与补全
+		switch model.CronTaskType(req.TaskType) {
+		case model.CronTaskTypeScan:
+			// 目标模式校验
+			targetMode := req.TargetMode
+			if targetMode == "" {
+				targetMode = string(model.CronTargetModeManual)
 			}
-			workspaceIds := []string{"default"}
-			for _, ws := range workspaces {
-				workspaceIds = append(workspaceIds, ws.Id.Hex())
+			if targetMode != string(model.CronTargetModeManual) && targetMode != string(model.CronTargetModeAsset) {
+				response.ParamError(w, "无效的目标选择模式")
+				return
 			}
-			for _, wsId := range workspaceIds {
-				taskModel := svcCtx.GetMainTaskModel(wsId)
-				task, err := taskModel.FindByTaskId(ctx, req.MainTaskId)
-				if err == nil && task != nil {
-					mainTask = task
-					foundWorkspaceId = wsId
-					break
+			cronTask.TargetMode = targetMode
+
+			var resolvedTarget string
+			switch model.CronTaskTargetMode(targetMode) {
+			case model.CronTargetModeManual:
+				if strings.TrimSpace(req.Target) == "" {
+					response.ParamError(w, "扫描目标不能为空")
+					return
 				}
+				resolvedTarget = req.Target
+			case model.CronTargetModeAsset:
+				if len(req.AssetIds) == 0 {
+					response.ParamError(w, "请选择资产")
+					return
+				}
+				assetTarget, err := resolveAssetTargets(ctx, svcCtx, workspaceId, req.AssetIds)
+				if err != nil {
+					response.Error(w, err)
+					return
+				}
+				if strings.TrimSpace(assetTarget) == "" {
+					response.ParamError(w, "所选资产未解析到有效目标")
+					return
+				}
+				resolvedTarget = assetTarget
+				// 手动输入的目标作为追加（可选）
+				if strings.TrimSpace(req.Target) != "" {
+					resolvedTarget = strings.TrimSpace(resolvedTarget) + "\n" + strings.TrimSpace(req.Target)
+				}
+				cronTask.AssetIds = req.AssetIds
 			}
-		} else {
-			taskModel := svcCtx.GetMainTaskModel(workspaceId)
-			var findErr error
-			mainTask, findErr = taskModel.FindByTaskId(ctx, req.MainTaskId)
-			if findErr != nil {
-				logx.Errorf("[CronTaskSave] failed to find task by taskId=%s in workspace=%s: %v", req.MainTaskId, workspaceId, findErr)
+			cronTask.Target = resolvedTarget
+			cronTask.OrgId = req.OrgId
+			cronTask.EnableSubdomainPull = req.EnableSubdomainPull
+
+			// 配置来源校验
+			configSource := req.ConfigSource
+			if configSource == "" {
+				configSource = string(model.CronConfigSourceCustom)
 			}
-			foundWorkspaceId = workspaceId
-		}
+			if configSource != string(model.CronConfigSourceTemplate) && configSource != string(model.CronConfigSourceCustom) {
+				response.ParamError(w, "无效的配置来源")
+				return
+			}
+			cronTask.ConfigSource = configSource
 
-		if mainTask == nil {
-			response.ParamError(w, "关联的任务不存在")
-			return
-		}
-		workspaceId = foundWorkspaceId
+			var resolvedConfig string
+			switch model.CronTaskConfigSource(configSource) {
+			case model.CronConfigSourceTemplate:
+				if req.TemplateId == "" {
+					response.ParamError(w, "请选择扫描模板")
+					return
+				}
+				tmplConfig, err := expandTemplateConfig(ctx, svcCtx, req.TemplateId)
+				if err != nil {
+					response.Error(w, err)
+					return
+				}
+				resolvedConfig = tmplConfig
+				cronTask.TemplateId = req.TemplateId
+			case model.CronConfigSourceCustom:
+				if strings.TrimSpace(req.Config) == "" {
+					response.ParamError(w, "扫描配置不能为空")
+					return
+				}
+				resolvedConfig = req.Config
+			}
+			cronTask.Config = resolvedConfig
 
-		// 确定使用的目标和配置
-		target := req.Target
-		if target == "" {
-			target = mainTask.Target
+		case model.CronTaskTypeSpaceEngine:
+			if req.Platform == "" {
+				response.ParamError(w, "请选择空间引擎平台")
+				return
+			}
+			if strings.TrimSpace(req.Query) == "" {
+				response.ParamError(w, "查询语句不能为空")
+				return
+			}
+			if req.MaxResults <= 0 {
+				req.MaxResults = 100
+			}
+			cronTask.Platform = req.Platform
+			cronTask.Query = req.Query
+			cronTask.MaxResults = req.MaxResults
 		}
-		config := req.Config
-		if config == "" {
-			logx.Infof("[CronTaskSave] config is empty for cron task '%s', falling back to mainTask.Config (taskId=%s)", req.Name, req.MainTaskId)
-			config = mainTask.Config
-		}
-
-		isNew := req.Id == ""
 
 		if isNew {
 			// 新建 - 写入MongoDB
-			cronTaskId := uuid.New().String()
-			cronTask := &model.CronTask{
-				CronTaskId:   cronTaskId,
-				Name:         req.Name,
-				ScheduleType: req.ScheduleType,
-				CronSpec:     req.CronSpec,
-				ScheduleTime: req.ScheduleTime,
-				WorkspaceId:  workspaceId,
-				MainTaskId:   req.MainTaskId,
-				TaskName:     mainTask.Name,
-				Target:       target,
-				Config:       config,
-				Status:       "enable",
-				NextRunTime:  nextRunTime,
-			}
 			if err := svcCtx.CronTaskModel.Insert(ctx, cronTask); err != nil {
 				response.Error(w, fmt.Errorf("保存定时任务失败: %v", err))
 				return
@@ -342,17 +557,42 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			}
 
 			update := bson.M{
-				"name":          req.Name,
-				"schedule_type": req.ScheduleType,
-				"cron_spec":     req.CronSpec,
-				"schedule_time": req.ScheduleTime,
-				"workspace_id":  workspaceId,
-				"main_task_id":  req.MainTaskId,
-				"task_name":     mainTask.Name,
-				"target":        target,
-				"config":        config,
-				"next_run_time": nextRunTime,
-				"status":        "enable",
+				"name":           req.Name,
+				"task_type":      req.TaskType,
+				"schedule_type":  req.ScheduleType,
+				"cron_spec":      req.CronSpec,
+				"schedule_time":  req.ScheduleTime,
+				"workspace_id":   workspaceId,
+				"next_run_time":  nextRunTime,
+				"status":         "enable",
+				// scan 字段
+				"target_mode":            cronTask.TargetMode,
+				"target":                 cronTask.Target,
+				"asset_ids":              cronTask.AssetIds,
+				"org_id":                 cronTask.OrgId,
+				"enable_subdomain_pull":  cronTask.EnableSubdomainPull,
+				"config_source":          cronTask.ConfigSource,
+				"template_id":            cronTask.TemplateId,
+				"config":                 cronTask.Config,
+				// space_engine 字段
+				"platform":    cronTask.Platform,
+				"query":       cronTask.Query,
+				"max_results": cronTask.MaxResults,
+			}
+			// 清空无关字段（避免类型切换后脏数据残留）
+			if model.CronTaskType(req.TaskType) == model.CronTaskTypeScan {
+				update["platform"] = ""
+				update["query"] = ""
+				update["max_results"] = 0
+			} else {
+				update["target_mode"] = ""
+				update["target"] = ""
+				update["asset_ids"] = nil
+				update["org_id"] = ""
+				update["enable_subdomain_pull"] = false
+				update["config_source"] = ""
+				update["template_id"] = ""
+				update["config"] = ""
 			}
 			if err := svcCtx.CronTaskModel.UpdateByCronTaskId(ctx, req.Id, update); err != nil {
 				response.Error(w, fmt.Errorf("更新定时任务失败: %v", err))
@@ -367,6 +607,15 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 			// 通知调度器重新加载（无论启用/禁用状态，确保内存与MongoDB一致）
 			svcCtx.RedisClient.Publish(ctx, "cscan:cron:reload", req.Id)
+		}
+
+		// 模板使用次数 +1（异步无阻塞）
+		if cronTask.ConfigSource == string(model.CronConfigSourceTemplate) && cronTask.TemplateId != "" {
+			go func(tid string) {
+				if err := svcCtx.ScanTemplateModel.IncrUseCount(context.Background(), tid); err != nil {
+					logx.Errorf("[CronTaskSave] failed to incr template use count: templateId=%s, err=%v", tid, err)
+				}
+			}(cronTask.TemplateId)
 		}
 
 		response.SuccessWithMsg(w, "保存成功")

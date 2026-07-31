@@ -85,3 +85,17 @@ func IPBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// IPClearHandler 清空 IP
+func IPClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewIPClearLogic(r.Context(), svcCtx)
+		resp, err := l.IPClear(workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

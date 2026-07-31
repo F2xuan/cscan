@@ -446,3 +446,17 @@ func AssetTargetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// ScreenshotsClearHandler 清空截图
+func ScreenshotsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewScreenshotsClearLogic(r.Context(), svcCtx)
+		resp, err := l.ScreenshotsClear(workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

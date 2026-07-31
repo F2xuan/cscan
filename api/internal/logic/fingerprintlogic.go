@@ -8,19 +8,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"cscan/api/internal/logic/common"
+	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/rpc/task/pb"
 
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -28,6 +35,24 @@ import (
 	"golang.org/x/text/transform"
 	"gopkg.in/yaml.v3"
 )
+
+// ==================== 指纹批量验证任务状态管理（内存，对标AI研判） ====================
+
+var fingerprintBatchTasks sync.Map // taskId -> *fingerprintBatchTaskState
+
+type fingerprintBatchTaskState struct {
+	mu          sync.Mutex
+	TaskId      string
+	Url         string
+	Scope       string
+	Total       int64
+	Completed   int64
+	Matched     int64
+	Status      string // running / completed / failed / stopped / stopping
+	Results     []types.MatchedFingerprintInfo
+	StopCh      chan struct{}
+	CreateTime  time.Time
+}
 
 // isHexString 检查字符串是否为十六进制字符串
 func isHexString(s string) bool {
@@ -1047,7 +1072,7 @@ func NewFingerprintValidateLogic(ctx context.Context, svcCtx *svc.ServiceContext
 	}
 }
 
-// FingerprintValidate 验证单个指纹是否能匹配目标URL（直接在API服务中执行）
+// FingerprintValidate 验证单个指纹是否能匹配目标URL（通过RPC下发给Worker执行）
 func (l *FingerprintValidateLogic) FingerprintValidate(req *types.FingerprintValidateReq) (*types.FingerprintValidateResp, error) {
 	if req.Url == "" {
 		return &types.FingerprintValidateResp{Code: 400, Msg: "URL不能为空"}, nil
@@ -1056,7 +1081,7 @@ func (l *FingerprintValidateLogic) FingerprintValidate(req *types.FingerprintVal
 		return &types.FingerprintValidateResp{Code: 400, Msg: "指纹ID不能为空"}, nil
 	}
 
-	// 从数据库获取指纹
+	// 从数据库获取指纹（验证存在性）
 	fp, err := l.svcCtx.FingerprintModel.FindById(l.ctx, req.Id)
 	if err != nil {
 		l.Logger.Errorf("FingerprintValidate: find fingerprint failed, id=%s, error=%v", req.Id, err)
@@ -1066,48 +1091,105 @@ func (l *FingerprintValidateLogic) FingerprintValidate(req *types.FingerprintVal
 		return &types.FingerprintValidateResp{Code: 404, Msg: "指纹不存在"}, nil
 	}
 
-	// 获取目标数据
-	data, err := fetchFingerprintData(req.Url)
+	l.Logger.Infof("FingerprintValidate: fingerprintId=%s, name=%s, url=%s", req.Id, fp.Name, req.Url)
+
+	// 通过RPC下发指纹验证任务到Worker
+	rpcReq := &pb.ValidateFingerprintReq{
+		Url:           req.Url,
+		FingerprintId: req.Id,
+	}
+	rpcResp, err := l.svcCtx.TaskRpcClient.ValidateFingerprint(l.ctx, rpcReq)
 	if err != nil {
-		return &types.FingerprintValidateResp{Code: 500, Msg: "获取目标数据失败: " + err.Error()}, nil
+		l.Logger.Errorf("FingerprintValidate: RPC call failed: %v", err)
+		return &types.FingerprintValidateResp{Code: 500, Msg: "验证服务调用失败，请确保Worker服务已启动"}, nil
+	}
+	if !rpcResp.Success {
+		return &types.FingerprintValidateResp{Code: 500, Msg: rpcResp.Message}, nil
 	}
 
-	// 记录指纹验证日志，包含 icon_hash 信息
-	l.Logger.Infof("FingerprintValidate: fingerprintId=%s, name=%s, source=%s, url=%s, icon_hash=%s, rule=%s",
-		fp.Id.Hex(), fp.Name, fp.Source, req.Url, data.FaviconHash, fp.Rule)
-
-	// 对于 Wappalyzer 来源的指纹，优先使用 wappalyzergo 库检测（与扫描器一致）
-	if fp.Source == "wappalyzer" || fp.IsBuiltin {
-		wappalyzerClient, err := wappalyzer.New()
-		if err == nil {
-			apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
-			fpNameLower := strings.ToLower(fp.Name)
-			for app := range apps {
-				if strings.ToLower(app) == fpNameLower {
-					l.Logger.Infof("FingerprintValidate: wappalyzergo detected %s", fp.Name)
-					return &types.FingerprintValidateResp{
-						Code:    0,
-						Msg:     "验证完成",
-						Matched: true,
-						Details: fmt.Sprintf("wappalyzergo 库检测匹配: %s", fp.Name),
-					}, nil
-				}
-			}
-			l.Logger.Infof("FingerprintValidate: wappalyzergo did NOT detect %s, falling back to custom engine", fp.Name)
-		}
+	// 同步等待结果：轮询任务状态（最多30秒）
+	taskId := rpcResp.TaskId
+	result, err := pollFingerprintValidateResult(l.ctx, l.svcCtx, taskId, 30*time.Second)
+	if err != nil {
+		l.Logger.Errorf("FingerprintValidate: wait result failed, taskId=%s, error=%v", taskId, err)
+		return &types.FingerprintValidateResp{Code: 500, Msg: "等待验证结果超时: " + err.Error()}, nil
 	}
-
-	// 使用自定义引擎验证（兼容 ARL 格式和非内置 Wappalyzer 指纹）
-	engine := NewSingleFingerprintEngine(fp)
-	matched, conditions := engine.MatchWithDetails(data)
-	l.Logger.Infof("FingerprintValidate: custom engine matched=%v, conditions=%v", matched, conditions)
+	if result.Error != "" {
+		return &types.FingerprintValidateResp{Code: 500, Msg: result.Error}, nil
+	}
 
 	return &types.FingerprintValidateResp{
 		Code:    0,
 		Msg:     "验证完成",
-		Matched: matched,
-		Details: strings.Join(conditions, "\n"),
+		Matched: result.Matched,
+		Details: result.Details,
 	}, nil
+}
+
+// pollFingerprintValidateResult 轮询等待指纹验证结果（通用函数）
+func pollFingerprintValidateResult(ctx context.Context, svcCtx *svc.ServiceContext, taskId string, timeout time.Duration) (*WorkerFingerprintResult, error) {
+	deadline := time.Now().Add(timeout)
+	pollInterval := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
+
+		// 从Redis读取任务状态（Worker通过UpdateTask接口写入 cscan:task:status:{taskId}）
+		statusKey := "cscan:task:status:" + taskId
+		val, err := svcCtx.RedisClient.Get(ctx, statusKey).Result()
+		if err != nil {
+			// key不存在，继续等待
+			continue
+		}
+
+		var statusData struct {
+			State  string `json:"state"`
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(val), &statusData); err != nil {
+			continue
+		}
+
+		if statusData.State == "SUCCESS" || statusData.State == "FAILURE" {
+			// 解析result字段（Worker写入的JSON）
+			var resultWrapper struct {
+				Status string                  `json:"status"`
+				Result WorkerFingerprintResult `json:"result"`
+				Error  string                  `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(statusData.Result), &resultWrapper); err != nil {
+				return &WorkerFingerprintResult{Error: "解析结果失败: " + err.Error()}, nil
+			}
+			if resultWrapper.Error != "" {
+				resultWrapper.Result.Error = resultWrapper.Error
+			}
+			return &resultWrapper.Result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("等待验证结果超时(%v)", timeout)
+}
+
+// WorkerFingerprintResult Worker返回的指纹验证结果
+type WorkerFingerprintResult struct {
+	Matched      bool              `json:"matched"`
+	Details      string            `json:"details"`
+	Error        string            `json:"error"`
+	MatchedInfos []WorkerMatchedFp `json:"matchedInfos,omitempty"` // 批量验证匹配详情
+	TotalScanned int               `json:"totalScanned,omitempty"`  // 批量验证扫描总数
+}
+
+// WorkerMatchedFp Worker返回的批量验证中匹配的指纹信息
+type WorkerMatchedFp struct {
+	Id                string `json:"id"`
+	Name              string `json:"name"`
+	IsBuiltin         bool   `json:"isBuiltin"`
+	IsActive          bool   `json:"isActive"`
+	MatchedConditions string `json:"matchedConditions"`
 }
 
 // truncateString 截断字符串
@@ -1133,15 +1215,28 @@ func (e *SingleFingerprintEngine) Match(data *FingerprintData) bool {
 }
 
 // MatchWithDetails 执行匹配并返回匹配的条件详情
-func (e *SingleFingerprintEngine) MatchWithDetails(data *FingerprintData) (bool, []string) {
-	fp := e.fp
+func (e *SingleFingerprintEngine) MatchWithDetails(data *FingerprintData, fps ...*model.Fingerprint) (bool, []string) {
+	var fp *model.Fingerprint
+	if len(fps) > 0 && fps[0] != nil {
+		fp = fps[0]
+	} else {
+		fp = e.fp
+	}
+	if fp == nil {
+		return false, nil
+	}
 
 	// 优先使用Rule字段（ARL格式规则语法）
 	if fp.Rule != "" {
 		return matchRuleWithDetails(fp.Rule, data)
 	}
 
-	// 使用Wappalyzer格式规则
+	// 然后尝试ARL webapp.json格式规则（HTML/Headers直接包含匹配，OR关系）
+	if matched, conditions := matchARLWebappRulesWithDetails(fp, data); matched {
+		return matched, conditions
+	}
+
+	// 最后使用Wappalyzer格式规则（正则表达式，AND关系）
 	matched, conditions := matchWappalyzerRulesWithDetails(fp, data)
 	return matched, conditions
 }
@@ -1157,6 +1252,24 @@ type FingerprintData struct {
 	URL          string
 	FaviconHash  string
 	Cookies      string
+}
+
+// extractBaseUrl 从URL中提取基础部分（scheme://host:port）
+func extractBaseUrl(rawUrl string) string {
+	rawUrl = strings.TrimSpace(rawUrl)
+	if rawUrl == "" {
+		return ""
+	}
+	if !strings.Contains(rawUrl, "://") {
+		rawUrl = "http://" + rawUrl
+	}
+	schemeEnd := strings.Index(rawUrl, "://")
+	rest := rawUrl[schemeEnd+3:]
+	slashIdx := strings.Index(rest, "/")
+	if slashIdx == -1 {
+		return rawUrl
+	}
+	return rawUrl[:schemeEnd+3+slashIdx]
 }
 
 // fetchFingerprintData 请求URL获取指纹匹配数据
@@ -1549,7 +1662,7 @@ func matchSingleConditionWithDetails(condition string, data *FingerprintData) (b
 		result = matchBodyWithEncoding(data, value)
 		logx.Infof("matchSingleCondition body: result=%v, value=%s", result, value)
 		if result {
-			matchedValue = findMatchContext(data.Body, value, 50)
+			matchedValue = findMatchContext(data.Body, value, 20)
 		}
 	case "title":
 		result = containsIgnoreCase(data.Title, value)
@@ -1605,7 +1718,8 @@ func matchSingleConditionWithDetails(condition string, data *FingerprintData) (b
 		if negate {
 			detail = fmt.Sprintf("%s != \"%s\"", condType, value)
 		} else {
-			detail = fmt.Sprintf("%s = \"%s\" → 匹配到: %s", condType, value, truncateString(matchedValue, 80))
+			// 截断匹配上下文到40字符，避免过长的metrics等数据污染展示
+			detail = fmt.Sprintf("%s = \"%s\" → 匹配到: %s", condType, value, truncateString(matchedValue, 40))
 		}
 	}
 
@@ -1731,6 +1845,82 @@ func encodeToGBK(s string) ([]byte, error) {
 func matchWappalyzerRules(fp *model.Fingerprint, data *FingerprintData) bool {
 	matched, _ := matchWappalyzerRulesWithDetails(fp, data)
 	return matched
+}
+
+// matchARLWebappRulesWithDetails 匹配ARL webapp.json格式规则并返回匹配详情
+// ARL格式：HTML/Headers等字段是直接包含匹配（OR关系，匹配一个即可）
+// 与Wappalyzer格式的区别：Wappalyzer是正则+AND关系，ARL是直接包含+OR关系
+func matchARLWebappRulesWithDetails(fp *model.Fingerprint, data *FingerprintData) (bool, []string) {
+	var matchedConditions []string
+
+	// HTML/Body匹配 - 支持UTF-8和GBK双编码匹配（OR关系，匹配一个即可）
+	if len(fp.HTML) > 0 {
+		for _, keyword := range fp.HTML {
+			if matchBodyWithEncoding(data, keyword) {
+				matchedConditions = append(matchedConditions, fmt.Sprintf("html 包含 \"%s\" → 匹配到", truncateString(keyword, 50)))
+				return true, matchedConditions
+			}
+		}
+	}
+
+	// Headers匹配 - 直接在header字符串中搜索pattern（OR关系）
+	if len(fp.Headers) > 0 {
+		for key, pattern := range fp.Headers {
+			// 大小写不敏感遍历响应头
+			for hKey, hVal := range data.Headers {
+				if strings.EqualFold(hKey, key) {
+					headerValue := strings.Join(hVal, " ")
+					if pattern == "" {
+						// 只检查key是否存在
+						matchedConditions = append(matchedConditions, fmt.Sprintf("header[%s] 存在 → 匹配到", key))
+						return true, matchedConditions
+					}
+					// 检查header值是否包含pattern
+					if containsIgnoreCase(headerValue, pattern) {
+						matchedConditions = append(matchedConditions, fmt.Sprintf("header[%s] 包含 \"%s\" → 匹配到: %s", key, truncateString(pattern, 50), truncateString(headerValue, 80)))
+						return true, matchedConditions
+					}
+				}
+			}
+		}
+	}
+
+	// Cookies匹配
+	if len(fp.Cookies) > 0 {
+		cookieStr := data.Cookies
+		if cookieStr == "" && data.Headers != nil {
+			cookieStr = strings.Join(data.Headers["Set-Cookie"], " ")
+		}
+		for key, pattern := range fp.Cookies {
+			if containsIgnoreCase(cookieStr, key) {
+				if pattern == "" || containsIgnoreCase(cookieStr, pattern) {
+					matchedConditions = append(matchedConditions, fmt.Sprintf("cookie[%s] 包含 \"%s\" → 匹配到", key, pattern))
+					return true, matchedConditions
+				}
+			}
+		}
+	}
+
+	// Meta匹配
+	if len(fp.Meta) > 0 {
+		for key, pattern := range fp.Meta {
+			metaPatterns := []string{
+				fmt.Sprintf(`(?i)<meta[^>]*name=["']?%s["']?[^>]*content=["']([^"']*)["']`, regexp.QuoteMeta(key)),
+				fmt.Sprintf(`(?i)<meta[^>]*content=["']([^"']*)["'][^>]*name=["']?%s["']?`, regexp.QuoteMeta(key)),
+			}
+			for _, mp := range metaPatterns {
+				re := regexp.MustCompile(mp)
+				if matches := re.FindStringSubmatch(data.Body); len(matches) > 1 {
+					if pattern == "" || containsIgnoreCase(matches[1], pattern) {
+						matchedConditions = append(matchedConditions, fmt.Sprintf("meta[%s] 包含 \"%s\" → 匹配到: %s", key, pattern, truncateString(matches[1], 80)))
+						return true, matchedConditions
+					}
+				}
+			}
+		}
+	}
+
+	return false, nil
 }
 
 // matchWappalyzerRulesWithDetails 匹配Wappalyzer格式规则并返回匹配详情
@@ -1969,64 +2159,404 @@ func matchRegexOrContains(text, pattern string) bool {
 
 // FingerprintBatchValidateLogic 批量验证指纹
 type FingerprintBatchValidateLogic struct {
+	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
 }
 
 func NewFingerprintBatchValidateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *FingerprintBatchValidateLogic {
-	return &FingerprintBatchValidateLogic{ctx: ctx, svcCtx: svcCtx}
+	return &FingerprintBatchValidateLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
 }
 
-// FingerprintBatchValidate 批量验证所有指纹（直接在API服务中执行）
+// FingerprintBatchValidate 批量验证指纹（异步提交，立即返回taskId，前端轮询进度）
 func (l *FingerprintBatchValidateLogic) FingerprintBatchValidate(req *types.FingerprintBatchValidateReq) (*types.FingerprintBatchValidateResp, error) {
 	if req.Url == "" {
 		return &types.FingerprintBatchValidateResp{Code: 400, Msg: "URL不能为空"}, nil
 	}
 
-	startTime := time.Now()
-
-	// 获取目标数据
-	data, err := fetchFingerprintData(req.Url)
-	if err != nil {
-		return &types.FingerprintBatchValidateResp{Code: 500, Msg: "获取目标数据失败: " + err.Error()}, nil
+	scope := req.Scope
+	if scope == "" {
+		scope = "all"
 	}
 
-	// 获取所有启用的指纹
-	filter := map[string]interface{}{"enabled": true}
-	switch req.Scope {
-	case "builtin":
-		filter["is_builtin"] = true
-	case "custom":
-		filter["is_builtin"] = false
-	}
+	l.Logger.Infof("FingerprintBatchValidate(async): url=%s, scope=%s", req.Url, scope)
 
-	fingerprints, err := l.svcCtx.FingerprintModel.Find(l.ctx, filter, 0, 0)
-	if err != nil {
-		return &types.FingerprintBatchValidateResp{Code: 500, Msg: "获取指纹列表失败: " + err.Error()}, nil
-	}
-
-	// 批量验证
-	var matched []types.MatchedFingerprintInfo
-	for _, fp := range fingerprints {
-		engine := NewSingleFingerprintEngine(&fp)
-		if isMatched, conditions := engine.MatchWithDetails(data); isMatched {
-			matched = append(matched, types.MatchedFingerprintInfo{
-				Id:                fp.Id.Hex(),
-				Name:              fp.Name,
-				IsBuiltin:         fp.IsBuiltin,
-				MatchedConditions: strings.Join(conditions, "\n"),
-			})
+	// 涉及主动指纹时需要检查Worker在线
+	needWorker := scope == "active" || scope == "all"
+	if needWorker {
+		workers, err := l.svcCtx.RedisClient.SMembers(l.ctx, "cscan:workers").Result()
+		if err != nil || len(workers) == 0 {
+			return &types.FingerprintBatchValidateResp{Code: 500, Msg: "当前没有在线的扫描节点(Worker)"}, nil
+		}
+		hasActive := false
+		for _, w := range workers {
+			exists, _ := l.svcCtx.RedisClient.Exists(l.ctx, "cscan:worker:"+w).Result()
+			if exists > 0 {
+				hasActive = true
+				break
+			}
+		}
+		if !hasActive {
+			return &types.FingerprintBatchValidateResp{Code: 500, Msg: "当前没有在线的扫描节点(Worker)"}, nil
 		}
 	}
 
-	duration := time.Since(startTime)
+	// 生成API端任务ID（用于前端轮询）
+	apiTaskId := uuid.New().String()
+
+	// 统一异步执行
+	go l.startFingerprintBatchAsync(apiTaskId, req.Url, scope)
+
 	return &types.FingerprintBatchValidateResp{
-		Code:         0,
-		Msg:          fmt.Sprintf("验证完成，共检测 %d 个指纹", len(fingerprints)),
-		MatchedCount: len(matched),
-		Duration:     fmt.Sprintf("%.2fs", duration.Seconds()),
-		Matched:      matched,
+		Code:   0,
+		Msg:    "批量验证任务已提交",
+		TaskId: apiTaskId,
 	}, nil
+}
+
+// startFingerprintBatchAsync 统一批量验证：被动指纹API本地执行（1次HTTP），主动指纹并发下发Worker
+func (l *FingerprintBatchValidateLogic) startFingerprintBatchAsync(apiTaskId, url, scope string) {
+	bgCtx := context.Background()
+
+	state := &fingerprintBatchTaskState{
+		TaskId:     apiTaskId,
+		Url:        url,
+		Scope:      scope,
+		Status:     "running",
+		StopCh:     make(chan struct{}),
+		CreateTime: time.Now(),
+	}
+	fingerprintBatchTasks.Store(apiTaskId, state)
+
+	// 计算总数并开始执行
+	var totalCount int64
+	var passiveFps []model.Fingerprint
+	var activeFps []model.ActiveFingerprint
+
+	// 收集被动指纹（内置+自定义）
+	if scope == "all" || scope == "builtin" || scope == "custom" {
+		allFps, err := l.svcCtx.FingerprintModel.FindPassiveEnabled(bgCtx)
+		if err != nil {
+			l.Logger.Errorf("startFingerprintBatchAsync: get passive fps failed: %v", err)
+		} else {
+			for _, fp := range allFps {
+				if scope == "builtin" && !fp.IsBuiltin {
+					continue
+				}
+				if scope == "custom" && fp.IsBuiltin {
+					continue
+				}
+				passiveFps = append(passiveFps, fp)
+			}
+			totalCount += int64(len(passiveFps))
+		}
+	}
+
+	// 收集主动指纹
+	if scope == "all" || scope == "active" {
+		afps, err := l.svcCtx.ActiveFingerprintModel.FindEnabled(bgCtx)
+		if err != nil {
+			l.Logger.Errorf("startFingerprintBatchAsync: get active fps failed: %v", err)
+		} else {
+			activeFps = afps
+			totalCount += int64(len(activeFps))
+		}
+	}
+
+	state.mu.Lock()
+	state.Total = totalCount
+	state.mu.Unlock()
+
+	if totalCount == 0 {
+		state.mu.Lock()
+		state.Status = "completed"
+		state.mu.Unlock()
+		return
+	}
+
+	// Phase 1: 被动指纹验证（API本地执行，只发1次HTTP请求）
+	if len(passiveFps) > 0 {
+		l.runPassiveFingerprintBatch(bgCtx, state, url, passiveFps)
+	}
+
+	// Phase 2: 主动指纹验证（并发下发Worker）
+	if len(activeFps) > 0 {
+		l.runActiveFingerprintBatch(bgCtx, state, url, activeFps)
+	}
+
+	// 最终状态
+	state.mu.Lock()
+	var matchedResults []types.MatchedFingerprintInfo
+	if state.Status != "failed" {
+		select {
+		case <-state.StopCh:
+			state.Status = "stopped"
+		default:
+			state.Status = "completed"
+		}
+		matchedResults = make([]types.MatchedFingerprintInfo, len(state.Results))
+		copy(matchedResults, state.Results)
+	}
+	finalUrl := state.Url
+	state.mu.Unlock()
+
+	// 同步验证结果到资产库（暴露面管理）
+	if len(matchedResults) > 0 {
+		go l.syncValidateResultsToAssets(bgCtx, finalUrl, matchedResults)
+	}
+}
+
+// runPassiveFingerprintBatch 被动指纹批量验证：1次HTTP请求 + 本地匹配
+func (l *FingerprintBatchValidateLogic) runPassiveFingerprintBatch(ctx context.Context, state *fingerprintBatchTaskState, url string, fps []model.Fingerprint) {
+	l.Logger.Infof("runPassiveFingerprintBatch: url=%s, fps=%d", url, len(fps))
+
+	// 只发1次HTTP请求获取目标数据
+	data, err := fetchFingerprintData(url)
+	if err != nil {
+		l.Logger.Errorf("runPassiveFingerprintBatch: fetch data failed: %v", err)
+		state.mu.Lock()
+		state.Completed += int64(len(fps))
+		state.mu.Unlock()
+		return
+	}
+
+	// 初始化wappalyzergo库（用于wappalyzer来源/内置指纹检测）
+	wappalyzerApps := make(map[string]struct{})
+	wappalyzerClient, wErr := wappalyzer.New()
+	if wErr == nil {
+		apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
+		for app := range apps {
+			wappalyzerApps[strings.ToLower(app)] = struct{}{}
+		}
+	}
+
+	// 批量匹配（所有被动指纹共享同一份data，不重复发HTTP请求）
+	engine := NewSingleFingerprintEngine(nil)
+	for _, fp := range fps {
+		select {
+		case <-state.StopCh:
+			state.mu.Lock()
+			state.Completed += int64(len(fps))
+			state.mu.Unlock()
+			return
+		default:
+		}
+
+		matched := false
+		var conditions []string
+
+		// wappalyzergo库检测（用于wappalyzer来源和内置指纹）
+		if (fp.Source == "wappalyzer" || fp.IsBuiltin) && wErr == nil {
+			if _, ok := wappalyzerApps[strings.ToLower(fp.Name)]; ok {
+				matched = true
+				conditions = append(conditions, fmt.Sprintf("wappalyzergo库检测匹配: %s", fp.Name))
+			}
+		}
+
+		// 自定义规则引擎匹配（Rule字段或Wappalyzer字段规则）
+		if !matched {
+			var ruleConds []string
+			matched, ruleConds = engine.MatchWithDetails(data, &fp)
+			if matched {
+				conditions = append(conditions, ruleConds...)
+			}
+		}
+
+		if matched {
+			state.mu.Lock()
+			state.Matched++
+			state.Results = append(state.Results, types.MatchedFingerprintInfo{
+				Id:                fp.Id.Hex(),
+				Name:              fp.Name,
+				IsBuiltin:         fp.IsBuiltin,
+				IsActive:          false,
+				MatchedConditions: strings.Join(conditions, "\n"),
+			})
+			state.mu.Unlock()
+		}
+
+		state.mu.Lock()
+		state.Completed++
+		state.mu.Unlock()
+	}
+}
+
+// runActiveFingerprintBatch 主动指纹批量验证：并发下发Worker，每个主动指纹单独探测路径
+func (l *FingerprintBatchValidateLogic) runActiveFingerprintBatch(ctx context.Context, state *fingerprintBatchTaskState, url string, afps []model.ActiveFingerprint) {
+	l.Logger.Infof("runActiveFingerprintBatch: url=%s, afps=%d", url, len(afps))
+
+	sem := make(chan struct{}, 3) // 并发3
+	var wg sync.WaitGroup
+	stopped := int32(0)
+
+	for _, afp := range afps {
+		select {
+		case <-state.StopCh:
+			atomic.StoreInt32(&stopped, 1)
+		default:
+		}
+		if atomic.LoadInt32(&stopped) == 1 {
+			break
+		}
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(afpId, afpName string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			// 确保Completed总是递增，即使panic也不遗漏
+			defer func() {
+				if r := recover(); r != nil {
+					l.Logger.Errorf("runActiveFingerprintBatch: panic for afp %s: %v", afpName, r)
+				}
+				state.mu.Lock()
+				state.Completed++
+				state.mu.Unlock()
+			}()
+
+			rpcReq := &pb.ValidateFingerprintReq{
+				Url:        url,
+				ActiveFpId: afpId,
+			}
+			rpcResp, err := l.svcCtx.TaskRpcClient.ValidateFingerprint(ctx, rpcReq)
+			if err != nil {
+				l.Logger.Errorf("runActiveFingerprintBatch: RPC failed for %s: %v", afpName, err)
+				return
+			}
+			if !rpcResp.Success {
+				l.Logger.Errorf("runActiveFingerprintBatch: RPC not success for %s: %s", afpName, rpcResp.Message)
+				return
+			}
+			result, perr := pollFingerprintValidateResult(ctx, l.svcCtx, rpcResp.TaskId, 90*time.Second)
+			if perr != nil {
+				l.Logger.Errorf("runActiveFingerprintBatch: poll timeout for %s: %v", afpName, perr)
+				return
+			}
+			if result.Matched && result.Error == "" {
+				state.mu.Lock()
+				state.Matched++
+				state.Results = append(state.Results, types.MatchedFingerprintInfo{
+					Id:                afpId,
+					Name:              afpName,
+					IsActive:          true,
+					MatchedConditions: result.Details,
+				})
+				state.mu.Unlock()
+			}
+		}(afp.Id.Hex(), afp.Name)
+	}
+
+	wg.Wait()
+}
+
+// ==================== 指纹批量验证进度查询与停止 ====================
+
+// FingerprintBatchProgressLogic 查询指纹批量验证进度
+type FingerprintBatchProgressLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewFingerprintBatchProgressLogic(ctx context.Context, svcCtx *svc.ServiceContext) *FingerprintBatchProgressLogic {
+	return &FingerprintBatchProgressLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *FingerprintBatchProgressLogic) FingerprintBatchProgress(req *types.FingerprintBatchProgressReq) (*types.FingerprintBatchProgressResp, error) {
+	if req.TaskId == "" {
+		return &types.FingerprintBatchProgressResp{Code: 400, Msg: "任务ID不能为空"}, nil
+	}
+
+	if v, ok := fingerprintBatchTasks.Load(req.TaskId); ok {
+		state := v.(*fingerprintBatchTaskState)
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		return &types.FingerprintBatchProgressResp{
+			Code:      0,
+			TaskId:    state.TaskId,
+			Status:    state.Status,
+			Total:     state.Total,
+			Completed: state.Completed,
+			Matched:   state.Matched,
+			Url:       state.Url,
+		}, nil
+	}
+
+	return &types.FingerprintBatchProgressResp{Code: 404, Msg: "任务不存在或已过期"}, nil
+}
+
+// FingerprintBatchResultLogic 获取指纹批量验证结果详情
+type FingerprintBatchResultLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewFingerprintBatchResultLogic(ctx context.Context, svcCtx *svc.ServiceContext) *FingerprintBatchResultLogic {
+	return &FingerprintBatchResultLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *FingerprintBatchResultLogic) FingerprintBatchResult(req *types.FingerprintBatchResultReq) (*types.FingerprintBatchResultResp, error) {
+	if req.TaskId == "" {
+		return &types.FingerprintBatchResultResp{Code: 400, Msg: "任务ID不能为空"}, nil
+	}
+
+	if v, ok := fingerprintBatchTasks.Load(req.TaskId); ok {
+		state := v.(*fingerprintBatchTaskState)
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		return &types.FingerprintBatchResultResp{
+			Code:    0,
+			TaskId:  state.TaskId,
+			Status:  state.Status,
+			Total:   state.Total,
+			Matched: state.Matched,
+			Url:     state.Url,
+			Results: state.Results,
+		}, nil
+	}
+
+	return &types.FingerprintBatchResultResp{Code: 404, Msg: "任务不存在或已过期"}, nil
+}
+
+// FingerprintBatchStopLogic 停止指纹批量验证
+type FingerprintBatchStopLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewFingerprintBatchStopLogic(ctx context.Context, svcCtx *svc.ServiceContext) *FingerprintBatchStopLogic {
+	return &FingerprintBatchStopLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *FingerprintBatchStopLogic) FingerprintBatchStop(req *types.FingerprintBatchStopReq) error {
+	if v, ok := fingerprintBatchTasks.Load(req.TaskId); ok {
+		state := v.(*fingerprintBatchTaskState)
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if state.Status == "running" {
+			state.Status = "stopping"
+			close(state.StopCh)
+		}
+	}
+	return nil
 }
 
 // ==================== 指纹匹配现有资产 ====================
@@ -2769,4 +3299,119 @@ func parseServiceMapping(line string) struct {
 	result.IsHttp = (httpType == "http" || httpType == "true" || httpType == "1")
 
 	return result
+}
+
+// ==================== 验证结果同步到资产库（暴露面管理） ====================
+
+// syncValidateResultsToAssets 将批量验证匹配的指纹同步到资产库的app字段，并更新资产概览
+func (l *FingerprintBatchValidateLogic) syncValidateResultsToAssets(ctx context.Context, rawUrl string, results []types.MatchedFingerprintInfo) {
+	if len(results) == 0 {
+		return
+	}
+
+	// 解析URL获取host/port/scheme
+	u, err := url.Parse(rawUrl)
+	if err != nil {
+		l.Logger.Errorf("syncValidateResultsToAssets: parse url failed: %v", err)
+		return
+	}
+	host := u.Hostname()
+	portStr := u.Port()
+	scheme := strings.ToLower(u.Scheme)
+	if host == "" {
+		l.Logger.Errorf("syncValidateResultsToAssets: empty host from url: %s", rawUrl)
+		return
+	}
+	port := 0
+	switch {
+	case portStr != "":
+		fmt.Sscanf(portStr, "%d", &port)
+	case scheme == "https":
+		port = 443
+	case scheme == "http":
+		port = 80
+	}
+	authority := u.Host
+	if authority == "" {
+		authority = net.JoinHostPort(host, portStr)
+	}
+	isHttp := scheme == "http" || scheme == "https"
+
+	// 获取默认workspace
+	workspaceId := common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, middleware.GetWorkspaceId(l.ctx))
+	if workspaceId == "" || workspaceId == "all" {
+		workspaceId = "default"
+	}
+
+	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	targetMetaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
+	now := time.Now()
+
+	// 收集匹配的app名称（去重）
+	appNames := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, r := range results {
+		if r.Name != "" {
+			if _, ok := seen[r.Name]; !ok {
+				seen[r.Name] = struct{}{}
+				appNames = append(appNames, r.Name)
+			}
+		}
+	}
+	if len(appNames) == 0 {
+		return
+	}
+
+	// 查找现有资产
+	existingAsset, _ := assetModel.FindByHostPort(ctx, host, port)
+	if existingAsset == nil {
+		existingAsset, _ = assetModel.FindByAuthorityOnly(ctx, authority)
+	}
+
+	if existingAsset != nil {
+		// 资产已存在：$addToSet app字段
+		update := bson.M{
+			"$addToSet": bson.M{"app": bson.M{"$each": appNames}},
+			"$set": bson.M{
+				"update":                 true,
+				"last_status_change_time": now,
+				"update_time":            now,
+			},
+		}
+		if isHttp {
+			update["$set"].(bson.M)["is_http"] = true
+		}
+		if err := assetModel.UpdateWithRaw(ctx, existingAsset.Id.Hex(), update); err != nil {
+			l.Logger.Errorf("syncValidateResultsToAssets: update asset failed: %v", err)
+		} else {
+			l.Logger.Infof("syncValidateResultsToAssets: updated asset %s with apps %v", authority, appNames)
+		}
+	} else {
+		// 资产不存在：创建新资产
+		newAsset := &model.Asset{
+			Authority:  authority,
+			Host:       host,
+			Port:       port,
+			Category:   scheme,
+			IsHTTP:     isHttp,
+			App:        appNames,
+			Source:     "manual_validate",
+			IsNewAsset: true,
+			IsUpdated:  true,
+			TaskId:     "manual_validate",
+			CreateTime: now,
+			UpdateTime: now,
+		}
+		if err := assetModel.Insert(ctx, newAsset); err != nil {
+			l.Logger.Errorf("syncValidateResultsToAssets: insert asset failed: %v", err)
+		} else {
+			l.Logger.Infof("syncValidateResultsToAssets: created new asset %s with apps %v", authority, appNames)
+		}
+	}
+
+	// 确保AssetTargetMeta存在并更新暴露面计数
+	domain := ""
+	if err := targetMetaModel.EnsureForAsset(ctx, workspaceId, host, domain, nil); err != nil {
+		l.Logger.Errorf("syncValidateResultsToAssets: EnsureForAsset failed: %v", err)
+	}
 }

@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
-	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -42,6 +40,9 @@ const (
 	WSTypeFileDelete     = "FILE_DELETE"     // 文件删除
 	WSTypeFileMkdir      = "FILE_MKDIR"      // 创建目录
 	WSTypeWorkerInfo     = "WORKER_INFO"     // Worker信息
+	WSTypeLogSyncReq     = "LOG_SYNC_REQ"    // API 请求 Worker 同步日志
+	WSTypeLogSyncResp    = "LOG_SYNC_RESP"   // Worker 返回同步日志数据
+	WSTypeLogSyncAck     = "LOG_SYNC_ACK"    // API 确认日志已写入文件
 )
 
 // WSMessage WebSocket消息结构
@@ -67,6 +68,27 @@ type LogPayload struct {
 // LogBatchPayload 批量日志消息载荷
 type LogBatchPayload struct {
 	Logs []LogPayload `json:"logs"`
+}
+
+// LogSyncReqPayload 日志同步请求载荷（API → Worker）
+type LogSyncReqPayload struct {
+	Filename string `json:"filename"`
+	Offset   int64  `json:"offset"`
+}
+
+// LogSyncRespPayload 日志同步响应载荷（Worker → API）
+type LogSyncRespPayload struct {
+	Filename  string                   `json:"filename"`
+	Logs      []svc.WorkerLogEntry     `json:"logs"`
+	NewOffset int64                    `json:"newOffset"`
+	HasMore   bool                     `json:"hasMore"`
+	NextFile  string                   `json:"nextFile"`
+}
+
+// LogSyncAckPayload 日志同步确认载荷（API → Worker）
+type LogSyncAckPayload struct {
+	Filename string `json:"filename"`
+	Offset   int64  `json:"offset"`
 }
 
 // ControlPayload 控制信号载荷
@@ -277,17 +299,23 @@ type WorkerConnection struct {
 	lastPing        time.Time
 	mu              sync.RWMutex
 	pendingRequests sync.Map // requestId -> chan *WorkerInfoResponse
+
+	// 日志同步游标（记录已成功写入文件的日志位置）
+	syncCursorMu sync.Mutex
+	syncCursor   LogSyncReqPayload // {filename, offset}
+	syncRespChan chan *LogSyncRespPayload // 同步响应通道
 }
 
 // NewWorkerConnection 创建新的Worker连接
 func NewWorkerConnection(conn net.Conn, workerName string, svcCtx *svc.ServiceContext) *WorkerConnection {
 	return &WorkerConnection{
-		conn:       conn,
-		workerName: workerName,
-		svcCtx:     svcCtx,
-		sendChan:   make(chan []byte, 256),
-		closeChan:  make(chan struct{}),
-		lastPing:   time.Now(),
+		conn:         conn,
+		workerName:   workerName,
+		svcCtx:       svcCtx,
+		sendChan:     make(chan []byte, 256),
+		closeChan:    make(chan struct{}),
+		lastPing:     time.Now(),
+		syncRespChan: make(chan *LogSyncRespPayload, 8),
 	}
 }
 
@@ -1184,6 +1212,12 @@ func handleWebSocketConnection(ctx context.Context, conn net.Conn, svcCtx *svc.S
 	// 启动心跳检测
 	go heartbeatChecker(ctx, wc)
 
+	// 启动日志同步循环（定期从 Worker 拉取日志写入文件）
+	go startLogSyncLoop(ctx, wc, svcCtx)
+
+	// 连接建立后立即触发一次日志同步
+	TriggerLogSync(wc)
+
 	// 主循环：读取消息
 	readPump(ctx, conn, wc, svcCtx)
 }
@@ -1228,36 +1262,20 @@ func waitForAuth(ctx context.Context, conn net.Conn, svcCtx *svc.ServiceContext)
 }
 
 // validateInstallKey 验证Install Key
-// 修复 C-19：原将 Redis 故障与"密钥未配置"混为一谈返回 ErrAuthFailed，
-// 导致 Worker 误认为密钥无效。现区分 redis.Nil 与其他 Redis 错误，
-// 基础设施故障返回 503 错误，避免 Worker 误判。
+// 双密钥接受：环境变量 CSCAN_WORKER_KEY（默认 Worker）或 Redis install_key（手动探针）。
+// 基础设施故障返回 503 错误，避免 Worker 误判密钥无效。
 func validateInstallKey(ctx context.Context, svcCtx *svc.ServiceContext, installKey string) error {
 	if installKey == "" {
 		return ErrAuthFailed
 	}
 
-	// 从Redis获取存储的Install Key（带超时，避免 Redis 故障时挂起）
-	installKeyKey := "cscan:worker:install_key"
-	keyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	storedKey, err := svcCtx.RedisClient.Get(keyCtx, installKeyKey).Result()
-	cancel()
-
-	if err != nil {
-		if err == redis.Nil {
-			// 密钥未配置：业务问题
-			logx.Error("[WorkerWS] Install key not configured in Redis")
-			return ErrAuthFailed
-		}
-		// Redis 基础设施故障：返回 503 错误，避免 Worker 误认为密钥无效
-		logx.Errorf("[WorkerWS] Redis unavailable during install key validation: %v", err)
+	// 双密钥校验（环境变量默认密钥 或 Redis install_key）
+	valid, infraError := svcCtx.ValidateWorkerKey(ctx, installKey)
+	if infraError {
+		logx.Errorf("[WorkerWS] Auth service unavailable during key validation")
 		return &WSError{Code: 1004, Message: "认证服务暂时不可用"}
 	}
-	if storedKey == "" {
-		logx.Error("[WorkerWS] Install key not configured in Redis")
-		return ErrAuthFailed
-	}
-
-	if subtle.ConstantTimeCompare([]byte(installKey), []byte(storedKey)) != 1 {
+	if !valid {
 		logx.Errorf("[WorkerWS] Invalid install key attempt")
 		return ErrAuthFailed
 	}
@@ -1412,6 +1430,9 @@ func handleMessage(ctx context.Context, wc *WorkerConnection, svcCtx *svc.Servic
 	case WSTypeTerminalResize:
 		// 终端大小调整响应
 		wc.HandleTerminalResizeResponse(msg.Payload)
+	case WSTypeLogSyncResp:
+		// Worker 返回的日志同步数据
+		handleLogSyncResp(ctx, wc, svcCtx, msg.Payload)
 	default:
 		logx.Infof("[WorkerWS] Unknown message type from %s: %s", wc.GetWorkerName(), msg.Type)
 	}
@@ -1429,7 +1450,10 @@ func handlePong(wc *WorkerConnection) {
 	wc.UpdateLastPing()
 }
 
-// handleLog 处理单条日志消息
+// handleLog 处理单条日志消息（向后兼容：旧版 Worker 仍发送 LOG 消息）
+// 新版 Worker 通过游标同步协议传输日志，不再发送 LOG 消息
+// 保留此 handler 将旧版消息写入文件，避免日志丢失
+// 修复 H-4：Worker 字段强制使用已认证连接名，忽略上报 payload 中可能伪造的名称
 func handleLog(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
 	var logPayload LogPayload
 	if err := json.Unmarshal(payload, &logPayload); err != nil {
@@ -1437,24 +1461,23 @@ func handleLog(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceCon
 		return
 	}
 
-	// 补充时间戳
 	if logPayload.Timestamp == 0 {
 		logPayload.Timestamp = time.Now().UnixMilli()
 	}
 
-	// 仅对 WARN/ERROR 级别日志在 API 端落盘，避免每条 INFO 日志都造成 API 进程内存增长
-	// INFO/DEBUG 日志直接走 Redis 流转发到前端订阅客户端
-	if logPayload.Level == "WARN" || logPayload.Level == "ERROR" {
-		// 修复 m5：原 logx.Infof 导致告警/错误以 INFO 级别落盘，无法按级别过滤和告警
-		logx.Errorf("[WorkerWS] Received log from %s: taskId=%s, level=%s, msg=%s",
-			wc.GetWorkerName(), logPayload.TaskId, logPayload.Level, logPayload.Message)
+	// 写入文件（兼容旧版 Worker）
+	if svcCtx.WorkerLogWriter != nil {
+		svcCtx.WorkerLogWriter.Write(svc.WorkerLogEntry{
+			Ts:     time.UnixMilli(logPayload.Timestamp).Local().Format("2006-01-02T15:04:05.000-07:00"),
+			Level:  logPayload.Level,
+			Worker: wc.GetWorkerName(),
+			TaskId: logPayload.TaskId,
+			Msg:    logPayload.Message,
+		})
 	}
-
-	// 写入Redis日志流
-	writeLogToRedis(ctx, svcCtx, wc.GetWorkerName(), &logPayload)
 }
 
-// handleLogBatch 处理批量日志消息
+// handleLogBatch 处理批量日志消息（向后兼容）
 func handleLogBatch(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
 	var batchPayload LogBatchPayload
 	if err := json.Unmarshal(payload, &batchPayload); err != nil {
@@ -1462,58 +1485,138 @@ func handleLogBatch(ctx context.Context, wc *WorkerConnection, svcCtx *svc.Servi
 		return
 	}
 
-	logx.Infof("[WorkerWS] Received log batch from %s: count=%d", wc.GetWorkerName(), len(batchPayload.Logs))
-
-	for _, logPayload := range batchPayload.Logs {
-		if logPayload.Timestamp == 0 {
-			logPayload.Timestamp = time.Now().UnixMilli()
+	if svcCtx.WorkerLogWriter != nil {
+		entries := make([]svc.WorkerLogEntry, 0, len(batchPayload.Logs))
+		for _, logPayload := range batchPayload.Logs {
+			if logPayload.Timestamp == 0 {
+				logPayload.Timestamp = time.Now().UnixMilli()
+			}
+			entries = append(entries, svc.WorkerLogEntry{
+				Ts:     time.UnixMilli(logPayload.Timestamp).Local().Format("2006-01-02T15:04:05.000-07:00"),
+				Level:  logPayload.Level,
+				Worker: wc.GetWorkerName(),
+				TaskId: logPayload.TaskId,
+				Msg:    logPayload.Message,
+			})
 		}
-		writeLogToRedis(ctx, svcCtx, wc.GetWorkerName(), &logPayload)
+		svcCtx.WorkerLogWriter.WriteBatch(entries)
 	}
 }
 
-// writeLogToRedis 写入日志到Redis
-func writeLogToRedis(ctx context.Context, svcCtx *svc.ServiceContext, workerName string, logPayload *LogPayload) {
-	// 构建日志数据
-	logData := map[string]interface{}{
-		"level":      logPayload.Level,
-		"message":    logPayload.Message,
-		"timestamp":  time.UnixMilli(logPayload.Timestamp).Local().Format("2006-01-02 15:04:05"),
-		"workerName": workerName,
-		"taskId":     logPayload.TaskId,
-	}
-
-	logJSON, err := json.Marshal(logData)
-	if err != nil {
-		logx.Errorf("[WorkerWS] Failed to marshal log: %v", err)
+// handleLogSyncResp 处理 Worker 返回的日志同步数据
+// 修复 H-2：等待日志真正写入磁盘并 Sync 成功后才发送 ACK，避免 API 崩溃导致日志丢失。
+// Worker 只有收到 ACK 才会推进本地持久化游标，因此 ACK 必须作为"已持久化"的承诺。
+func handleLogSyncResp(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
+	var resp LogSyncRespPayload
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		logx.Errorf("[WorkerWS] Invalid log sync response from %s: %v", wc.GetWorkerName(), err)
 		return
 	}
 
-	// 写入全局Worker日志流
-	globalStreamKey := "cscan:worker:logs"
-	svcCtx.RedisClient.XAdd(ctx, &redis.XAddArgs{
-		Stream: globalStreamKey,
-		MaxLen: 10000,
-		Approx: true,
-		Values: map[string]interface{}{"data": string(logJSON)},
+	// 修复 H-4：强制覆盖 Worker 名为已认证连接名，防止恶意 Worker 通过上报数据伪造 Worker 字段穿越路径
+	authedName := wc.GetWorkerName()
+	for i := range resp.Logs {
+		resp.Logs[i].Worker = authedName
+	}
+
+	if len(resp.Logs) == 0 {
+		// 没有新日志，直接 ACK 推进游标
+		sendLogSyncAck(wc, resp.Filename, resp.NewOffset)
+		wc.syncCursorMu.Lock()
+		wc.syncCursor = LogSyncReqPayload{
+			Filename: resp.Filename,
+			Offset:   resp.NewOffset,
+		}
+		wc.syncCursorMu.Unlock()
+		if resp.HasMore && resp.NextFile != "" {
+			wc.syncCursorMu.Lock()
+			wc.syncCursor = LogSyncReqPayload{Filename: resp.NextFile, Offset: 0}
+			wc.syncCursorMu.Unlock()
+		}
+		return
+	}
+
+	// 同步写入文件并等待 Sync 落盘
+	var writeErr error
+	if svcCtx.WorkerLogWriter != nil {
+		writeErr = svcCtx.WorkerLogWriter.SyncWriteBatch(resp.Logs)
+	}
+	if writeErr != nil {
+		// 写入失败：不发送 ACK，Worker 会在下次同步时重发同一批日志（at-least-once）
+		logx.Errorf("[WorkerWS] Failed to sync-write logs from %s: %v, will NOT ack (worker will retry)",
+			wc.GetWorkerName(), writeErr)
+		return
+	}
+
+	// 写入并 Sync 成功后才发送 ACK 给 Worker，更新其本地持久化游标
+	sendLogSyncAck(wc, resp.Filename, resp.NewOffset)
+
+	// 更新 API 端的内存游标
+	wc.syncCursorMu.Lock()
+	wc.syncCursor = LogSyncReqPayload{
+		Filename: resp.Filename,
+		Offset:   resp.NewOffset,
+	}
+	wc.syncCursorMu.Unlock()
+
+	// 如果还有更多数据且需要切换到下一个文件（跨日），更新游标
+	// NextFile 非空表示当前文件已读完，需要切换到下一个文件从头开始
+	if resp.HasMore && resp.NextFile != "" {
+		wc.syncCursorMu.Lock()
+		wc.syncCursor = LogSyncReqPayload{Filename: resp.NextFile, Offset: 0}
+		wc.syncCursorMu.Unlock()
+	}
+}
+
+// sendLogSyncAck 发送日志同步确认给 Worker
+func sendLogSyncAck(wc *WorkerConnection, filename string, offset int64) {
+	ack := LogSyncAckPayload{
+		Filename: filename,
+		Offset:   offset,
+	}
+	payloadData, _ := json.Marshal(ack)
+	wc.Send(&WSMessage{
+		Type:    WSTypeLogSyncAck,
+		Payload: payloadData,
 	})
+}
 
-	// 发布到实时频道
-	svcCtx.RedisClient.Publish(ctx, "cscan:worker:logs:realtime", string(logJSON))
+// TriggerLogSync 触发一次日志同步（用户点击刷新按钮时调用）
+// 向 Worker 发送 LOG_SYNC_REQ，请求从当前游标位置开始的新日志
+func TriggerLogSync(wc *WorkerConnection) {
+	wc.syncCursorMu.Lock()
+	cursor := wc.syncCursor
+	wc.syncCursorMu.Unlock()
 
-	// 如果有taskId，也写入任务专属日志流
-	if logPayload.TaskId != "" {
-		taskStreamKey := "cscan:task:logs:" + logPayload.TaskId
-		svcCtx.RedisClient.XAdd(ctx, &redis.XAddArgs{
-			Stream: taskStreamKey,
-			MaxLen: 5000,
-			Approx: true,
-			Values: map[string]interface{}{"data": string(logJSON)},
-		})
+	req := LogSyncReqPayload{
+		Filename: cursor.Filename,
+		Offset:   cursor.Offset,
+	}
+	payloadData, _ := json.Marshal(req)
+	wc.Send(&WSMessage{
+		Type:    WSTypeLogSyncReq,
+		Payload: payloadData,
+	})
+}
 
-		// 发布到任务专属实时频道
-		taskPubsubChannel := "cscan:task:logs:realtime:" + logPayload.TaskId
-		svcCtx.RedisClient.Publish(ctx, taskPubsubChannel, string(logJSON))
+// startLogSyncLoop 启动日志同步循环（每个 Worker 连接一个 goroutine）
+// 定期向 Worker 请求新日志，写入文件
+func startLogSyncLoop(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-wc.closeChan:
+			return
+		case <-ticker.C:
+			if wc.isClosed() {
+				return
+			}
+			TriggerLogSync(wc)
+		}
 	}
 }
 

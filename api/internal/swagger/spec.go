@@ -10,10 +10,10 @@ import (
 
 // RouteInfo 描述一个 REST 路由的最小元信息（足够生成 OpenAPI 3.0 文档）。
 type RouteInfo struct {
-	Method  string `json:"-"`
-	Path    string `json:"-"`
-	Group   string `json:"-"` // 业务分组，如 "user"、"asset"
-	Summary string `json:"-"`
+	Method   string   `json:"-"`
+	Path     string   `json:"-"`
+	Group    string   `json:"-"` // 业务分组，如 "user"、"asset"
+	Summary  string   `json:"-"`
 	AuthTier AuthTier `json:"-"` // 鉴权层级：public/worker/auth/admin/console/terminal/container
 }
 
@@ -76,6 +76,12 @@ func SpecHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(specCache)
 }
 
+// ResetSpec 重置缓存（用于开发热重载或测试）
+func ResetSpec() {
+	specOnce = sync.Once{}
+	specCache = nil
+}
+
 // buildSpec 聚合路由 + 元数据 + 反射器，构造完整 OpenAPI 3.0 文档缓存到 specCache。
 func buildSpec() {
 	collectedMu.Lock()
@@ -89,7 +95,9 @@ func buildSpec() {
 	tagSet := make(map[string]struct{}, 32)
 
 	for _, rt := range routes {
-		if !strings.HasPrefix(rt.Path, "/api/v1/") && rt.Path != "/health" {
+		if !strings.HasPrefix(rt.Path, "/api/v1/") &&
+			!strings.HasPrefix(rt.Path, "/api/open/") &&
+			rt.Path != "/health" {
 			continue
 		}
 		oaPath := openapiPath(rt.Path)
@@ -101,7 +109,7 @@ func buildSpec() {
 			method = "post"
 		}
 		if paths[oaPath][method] != nil {
-			continue // 跳过重复（如 GET/POST 同路径）
+			continue // 跳过重复
 		}
 
 		meta, hasMeta := LookupMeta(rt.Method, rt.Path)
@@ -111,6 +119,7 @@ func buildSpec() {
 		var reqType, respType string
 		var security []map[string][]string
 		var errors []int
+		deprecated := false
 
 		if hasMeta {
 			tag = meta.Tag
@@ -128,11 +137,11 @@ func buildSpec() {
 			respType = meta.RespType
 			security = securityFor(meta.Security)
 			errors = meta.Errors
+			deprecated = meta.Deprecated
 			if meta.Tag != "" {
 				tagDescriptions[tag] = firstNonEmpty(meta.TagDesc, tagDescriptions[tag])
 			}
 		} else {
-			// 无 metadata 时根据 AuthTier 推断 security
 			tier := rt.AuthTier
 			if tier == "" {
 				tier = inferTierFromPath(rt.Path)
@@ -146,28 +155,34 @@ func buildSpec() {
 			"tags":        []string{tag},
 			"summary":     summary,
 			"operationId": method + "_" + strings.ReplaceAll(strings.Trim(rt.Path, "/"), "/", "_"),
-			"responses":   buildResponses(respType, security, errors),
+			"responses":   buildResponses(r, respType, security, errors),
 		}
 		if description != "" {
 			op["description"] = description
 		}
+		if deprecated {
+			op["deprecated"] = true
+		}
 		if len(security) > 0 {
 			op["security"] = security
 		}
+
+		// 请求参数处理
+		isGet := method == "get" || method == "delete"
+		hasPathParams := strings.Contains(rt.Path, ":")
+
 		if reqType != "" {
 			if ref := r.MustRef(reqType); ref != nil {
-				op["requestBody"] = map[string]interface{}{
-					"required": true,
-					"content": map[string]interface{}{
-						"application/json": map[string]interface{}{
-							"schema": ref,
-						},
-					},
+				if isGet {
+					// GET 请求：尝试将结构体字段转为 query 参数
+					op["parameters"] = buildQueryParameters(r, reqType)
+				} else {
+					// POST/PUT: requestBody
+					op["requestBody"] = buildRequestBody(ref)
 				}
 			}
-		} else if method == "post" && !strings.Contains(rt.Path, ":") {
-			// POST 且无 path 参数但元数据未声明 reqType 时，注入一个开放 JSON 对象，
-			// 让 Swagger UI Try it out 至少有可编辑的 JSON 输入框（避免 Execute 空 body 被 400）。
+		} else if method == "post" && !hasPathParams && !isOpenAPI(rt.Path) {
+			// POST 且无 path 参数但元数据未声明 reqType 时，注入一个开放 JSON 对象
 			op["requestBody"] = map[string]interface{}{
 				"required": false,
 				"content": map[string]interface{}{
@@ -181,10 +196,18 @@ func buildSpec() {
 				},
 			}
 		}
+
 		// path parameters（如 /static/avatars/:filename）
-		if strings.Contains(rt.Path, ":") {
-			op["parameters"] = pathParameters(rt.Path)
+		if hasPathParams {
+			pathParams := pathParameters(rt.Path)
+			if existing, ok := op["parameters"].([]map[string]interface{}); ok {
+				op["parameters"] = append(existing, pathParams...)
+			} else {
+				op["parameters"] = pathParams
+			}
 		}
+
+		// 添加 x-code-samples 扩展（可选）
 		paths[oaPath][method] = op
 	}
 
@@ -224,11 +247,24 @@ func buildSpec() {
 	}
 
 	spec := map[string]interface{}{
-		"openapi": "3.0.0",
+		"openapi": "3.0.3",
 		"info": map[string]interface{}{
 			"title":       "CSCAN API",
 			"version":     "v1",
 			"description": "CSCAN 分布式网络资产扫描平台 REST API。\n\n所有业务接口前缀 `/api/v1/*`，除健康检查与登录外均统一 POST + JSON Body。\n\n响应统一信封：`{code, msg, data}`，业务错误回 HTTP 200 + body.code，鉴权失败回 HTTP 401 / 403。",
+			"contact": map[string]interface{}{
+				"name":  "CSCAN Team",
+				"email": "s*****@*******",
+			},
+			"license": map[string]interface{}{
+				"name": "Internal Use Only",
+			},
+		},
+		"servers": []map[string]interface{}{
+			{
+				"url":         "/",
+				"description": "当前服务器",
+			},
 		},
 		"tags":       tagList,
 		"paths":      paths,
@@ -237,6 +273,11 @@ func buildSpec() {
 
 	buf, _ := json.MarshalIndent(spec, "", "  ")
 	specCache = buf
+}
+
+// isOpenAPI 判断是否为开放 API 路径（/api/open/ 前缀）
+func isOpenAPI(path string) bool {
+	return strings.HasPrefix(path, "/api/open/")
 }
 
 // inferTierFromPath 在 metadata 缺失时，根据路径前缀推断鉴权层级。
@@ -260,6 +301,8 @@ func inferTierFromPath(path string) AuthTier {
 		return TierAdmin
 	case strings.HasPrefix(path, "/api/v1/login"), strings.HasPrefix(path, "/api/v1/theme/config/get"), strings.HasPrefix(path, "/api/v1/worker/download"), strings.HasPrefix(path, "/api/v1/worker/validate"), strings.HasPrefix(path, "/api/v1/worker/ws"):
 		return TierPublic
+	case strings.HasPrefix(path, "/api/open/"):
+		return TierAuth
 	}
 	return TierAuth
 }
@@ -316,6 +359,12 @@ func fallbackGroup(rt RouteInfo) string {
 		return "HTTP 服务映射"
 	case "health", "system":
 		return "系统"
+	case "branding":
+		return "品牌配置"
+	case "open":
+		return "开放 API"
+	case "cert":
+		return "证书管理"
 	}
 	return g
 }
@@ -342,33 +391,56 @@ func securityFor(tier AuthTier) []map[string][]string {
 	return []map[string][]string{{"BearerAuth": {}}}
 }
 
+// buildRequestBody 构造 OpenAPI requestBody 节点
+func buildRequestBody(schemaRef map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"required": true,
+		"content": map[string]interface{}{
+			"application/json": map[string]interface{}{
+				"schema": schemaRef,
+			},
+		},
+	}
+}
+
 // buildResponses 构造 OpenAPI responses 节点。
-// 200 始终存在，关联 RespType；401/403 视 security 决定；500 + 业务错误码（400/10001 等）按需追加。
-func buildResponses(respType string, security []map[string][]string, errors []int) map[string]interface{} {
+func buildResponses(r *Reflector, respType string, security []map[string][]string, errors []int) map[string]interface{} {
 	resp := map[string]interface{}{}
 
-	// 200
+	// 200 成功响应
 	successSchema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"code": map[string]interface{}{"type": "integer", "description": "业务码，0 表示成功"},
-			"msg":  map[string]interface{}{"type": "string", "description": "提示信息"},
+			"code": map[string]interface{}{
+				"type":        "integer",
+				"description": "业务码，0 表示成功",
+				"example":     0,
+			},
+			"msg": map[string]interface{}{
+				"type":        "string",
+				"description": "提示信息",
+				"example":     "success",
+			},
 		},
 		"required": []string{"code", "msg"},
 	}
+
 	if respType != "" {
-		successSchema["properties"] = map[string]interface{}{
-			"code": map[string]interface{}{"type": "integer"},
-			"msg":  map[string]interface{}{"type": "string"},
-			"data": responseSchemaRef(respType),
+		// 有具名响应类型：data 字段引用该类型
+		if ref := r.MustRef(respType); ref != nil {
+			props := successSchema["properties"].(map[string]interface{})
+			props["data"] = ref
 		}
 	} else {
-		successSchema["properties"] = map[string]interface{}{
-			"code": map[string]interface{}{"type": "integer"},
-			"msg":  map[string]interface{}{"type": "string"},
-			"data": map[string]interface{}{"type": "object", "description": "可选数据载荷"},
+		// 无具名响应：data 为可选 object
+		props := successSchema["properties"].(map[string]interface{})
+		props["data"] = map[string]interface{}{
+			"type":        "object",
+			"description": "可选数据载荷",
+			"nullable":    true,
 		}
 	}
+
 	resp["200"] = map[string]interface{}{
 		"description": "成功响应",
 		"content": map[string]interface{}{
@@ -394,13 +466,6 @@ func buildResponses(respType string, security []map[string][]string, errors []in
 				},
 			},
 		}
-		// 仅 admin / console 类才补 403
-		for _, s := range security {
-			if _, ok := s["BearerAuth"]; !ok {
-				continue
-			}
-			// TierAdmin / TierConsole / TierTerminal / TierContainer 都视为需要 403 描述
-		}
 		resp["403"] = map[string]interface{}{
 			"description": "禁止访问：权限不足",
 			"content": map[string]interface{}{
@@ -417,29 +482,33 @@ func buildResponses(respType string, security []map[string][]string, errors []in
 		}
 	}
 
-	// 业务错误码（400、500、10001 等）
+	// 业务错误码
 	added500 := false
+	added400 := false
 	for _, code := range errors {
 		switch code {
 		case 400:
-			resp["400"] = map[string]interface{}{
-				"description": "参数校验失败",
-				"content": map[string]interface{}{
-					"application/json": map[string]interface{}{
-						"schema": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"code": map[string]interface{}{"type": "integer", "example": 400},
-								"msg":  map[string]interface{}{"type": "string", "example": "参数错误"},
+			if !added400 {
+				resp["400"] = map[string]interface{}{
+					"description": "请求参数错误",
+					"content": map[string]interface{}{
+						"application/json": map[string]interface{}{
+							"schema": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"code": map[string]interface{}{"type": "integer", "example": 400},
+									"msg":  map[string]interface{}{"type": "string", "example": "参数错误"},
+								},
 							},
 						},
 					},
-				},
+				}
+				added400 = true
 			}
 		case 500:
 			if !added500 {
 				resp["500"] = map[string]interface{}{
-					"description": "服务器错误",
+					"description": "服务器内部错误",
 					"content": map[string]interface{}{
 						"application/json": map[string]interface{}{
 							"schema": map[string]interface{}{
@@ -459,14 +528,59 @@ func buildResponses(respType string, security []map[string][]string, errors []in
 	return resp
 }
 
-// responseSchemaRef 把响应结构体名映射到 OpenAPI schema（若是 types 包注册过的命名结构体则 $ref；否则 object）。
-func responseSchemaRef(respType string) interface{} {
-	// 由于 reflector 在 buildSpec 中已被 SeedReflector 调用，这里直接生成 inline placeholder
-	// 名称解析在 reflector 中完成；spec 生成阶段已确保 schemas 已收集
-	return map[string]interface{}{"$ref": "#/components/schemas/" + respType}
+// buildQueryParameters 尝试将请求结构体字段转换为 query 参数
+func buildQueryParameters(r *Reflector, typeName string) []map[string]interface{} {
+	schema, ok := r.schemas[typeName]
+	if !ok {
+		return nil
+	}
+	props, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	required, _ := schema["required"].([]string)
+	requiredSet := make(map[string]bool)
+	for _, f := range required {
+		requiredSet[f] = true
+	}
+
+	var params []map[string]interface{}
+	for name, propRaw := range props {
+		prop, ok := propRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// 跳过嵌套对象和数组（query 参数不适合复杂类型）
+		propType, _ := prop["type"].(string)
+		if propType == "object" || propType == "array" {
+			continue
+		}
+		param := map[string]interface{}{
+			"name":     name,
+			"in":       "query",
+			"required": requiredSet[name],
+			"schema": map[string]interface{}{
+				"type": propType,
+			},
+		}
+		if desc, ok := prop["description"].(string); ok && desc != "" {
+			param["description"] = desc
+		}
+		if example, ok := prop["example"]; ok {
+			param["example"] = example
+		}
+		if def, ok := prop["default"]; ok {
+			param["schema"].(map[string]interface{})["default"] = def
+		}
+		if format, ok := prop["format"].(string); ok && format != "" {
+			param["schema"].(map[string]interface{})["format"] = format
+		}
+		params = append(params, param)
+	}
+	return params
 }
 
-// pathParameters 把 :param 形式路径补出 OpenAPI parameters 节点。
+// pathParameters 把 :param 风格路径补出 OpenAPI parameters 节点。
 func pathParameters(p string) []map[string]interface{} {
 	parts := strings.Split(p, "/")
 	var out []map[string]interface{}
@@ -477,7 +591,11 @@ func pathParameters(p string) []map[string]interface{} {
 				"name":     name,
 				"in":       "path",
 				"required": true,
-				"schema":   map[string]interface{}{"type": "string"},
+				"schema": map[string]interface{}{
+					"type":    "string",
+					"example": name,
+				},
+				"description": "路径参数: " + name,
 			})
 		}
 	}

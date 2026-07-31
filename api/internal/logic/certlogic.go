@@ -1,0 +1,282 @@
+package logic
+
+import (
+	"context"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"cscan/api/internal/logic/common"
+	"cscan/api/internal/svc"
+	"cscan/api/internal/types"
+	"cscan/model"
+	"cscan/pkg/xerr"
+
+	"github.com/zeromicro/go-zero/core/logx"
+)
+
+type CertLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewCertLogic(ctx context.Context, svcCtx *svc.ServiceContext) *CertLogic {
+	return &CertLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+// SaveCerts worker 上报的证书结果批量 upsert
+func (l *CertLogic) SaveCerts(req *types.SaveCertReq) error {
+	if req.WorkspaceId == "" {
+		return xerr.NewParamError("workspaceId cannot be empty")
+	}
+	if len(req.Results) == 0 {
+		return nil
+	}
+
+	docs := make([]*model.Cert, 0, len(req.Results))
+	for _, r := range req.Results {
+		authority := r.Authority
+		if authority == "" {
+			authority = r.Host + ":" + strconv.Itoa(r.Port)
+		}
+		docs = append(docs, &model.Cert{
+			WorkspaceId:  req.WorkspaceId,
+			TaskId:       req.MainTaskId,
+			Host:         r.Host,
+			Port:         r.Port,
+			Authority:    authority,
+			Subject:      model.CertNameInfo(r.Subject),
+			SubjectDN:   r.SubjectDN,
+			Issuer:       model.CertNameInfo(r.Issuer),
+			IssuerDN:   r.IssuerDN,
+			SerialNumber: r.SerialNumber,
+			SigAlg:      r.SigAlg,
+			NotBefore:   parseCertTime(r.NotBefore),
+			NotAfter:    parseCertTime(r.NotAfter),
+			Version:     r.Version,
+			SANs:        r.SANs,
+			Fingerprints: r.Fingerprints,
+			IsSelfSigned: r.IsSelfSigned,
+		})
+	}
+
+	m := l.svcCtx.GetCertModel(req.WorkspaceId)
+	// 修复 M-15：EnsureIndexes 和 UpsertMany 的错误必须向上返回，不能吞掉
+	if err := m.EnsureIndexes(l.ctx); err != nil {
+		l.Logger.Errorf("SaveCerts EnsureIndexes Error: %v", err)
+		return xerr.NewServerError("ensure indexes failed: " + err.Error())
+	}
+	if err := m.UpsertMany(l.ctx, docs); err != nil {
+		l.Logger.Errorf("SaveCerts UpsertMany Error: %v", err)
+		return xerr.NewServerError("upsert certs failed: " + err.Error())
+	}
+	return nil
+}
+
+// GetCertList 证书列表（分页 + 多维过滤，默认按到期时间升序：最紧急在前）
+func (l *CertLogic) GetCertList(req *types.CertListReq) (*types.CertListResp, error) {
+	filter := l.buildCertFilter(req)
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 10
+	}
+
+	sortDir := -1
+	if req.Sort == "notAfter" {
+		sortDir = 1
+	}
+
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, req.WorkspaceId)
+
+	var total int64
+	var allResults []*model.Cert
+
+	if len(wsIds) > 1 || req.WorkspaceId == "" || req.WorkspaceId == "all" {
+		needTotal := req.Page * req.PageSize
+		emptyFilter := len(filter) == 0
+		for _, wsId := range wsIds {
+			m := l.svcCtx.GetCertModel(wsId)
+			wsTotal, _ := m.Count(l.ctx, filter)
+			if emptyFilter {
+				t, _ := m.Count(l.ctx, bson.M{})
+				wsTotal = t
+			}
+			total += wsTotal
+			if wsTotal == 0 {
+				continue
+			}
+			limit := needTotal
+			if int64(wsTotal) < int64(limit) {
+				limit = int(wsTotal)
+			}
+			opt := options.Find().
+				SetLimit(int64(limit)).
+				SetSort(bson.D{{Key: "not_after", Value: sortDir}})
+			wsResults, _ := m.Find(l.ctx, filter, opt)
+			allResults = append(allResults, wsResults...)
+		}
+
+		sort.Slice(allResults, func(i, j int) bool {
+			if sortDir < 0 {
+				return allResults[i].NotAfter.After(allResults[j].NotAfter)
+			}
+			return allResults[i].NotAfter.Before(allResults[j].NotAfter)
+		})
+
+		start := (req.Page - 1) * req.PageSize
+		end := start + req.PageSize
+		if start > len(allResults) {
+			start = len(allResults)
+		}
+		if end > len(allResults) {
+			end = len(allResults)
+		}
+		allResults = allResults[start:end]
+	} else {
+		m := l.svcCtx.GetCertModel(req.WorkspaceId)
+		var err error
+		// 修复 M-15：修正 Count 的错误接收（原代码 total, _ = ... 后又检查从未赋值的 err）
+		total, err = m.Count(l.ctx, filter)
+		if err != nil {
+			return nil, xerr.NewServerError("Count cert Error: " + err.Error())
+		}
+		opt := options.Find().
+			SetSkip(int64((req.Page - 1) * req.PageSize)).
+			SetLimit(int64(req.PageSize)).
+			SetSort(bson.D{{Key: "not_after", Value: sortDir}})
+		allResults, err = m.Find(l.ctx, filter, opt)
+		if err != nil {
+			return nil, xerr.NewServerError("Find cert Error: " + err.Error())
+		}
+	}
+
+	respList := make([]*types.Cert, 0, len(allResults))
+	for _, r := range allResults {
+		respList = append(respList, toCertType(r))
+	}
+
+	return &types.CertListResp{
+		Code:  0,
+		Msg:   "success",
+		Total: total,
+		List:  respList,
+	}, nil
+}
+
+// GetCertDetail 单条证书详情
+func (l *CertLogic) GetCertDetail(req *types.CertDetailReq) (*types.CertDetailResp, error) {
+	id := strings.TrimSpace(req.Id)
+	if id == "" {
+		return &types.CertDetailResp{Code: 400, Msg: "id 不能为空"}, nil
+	}
+
+	wsIds := []string{strings.TrimSpace(req.WorkspaceId)}
+	if wsIds[0] == "" || wsIds[0] == "all" {
+		wsIds = common.GetWorkspaceIds(l.ctx, l.svcCtx, req.WorkspaceId)
+	}
+
+	for _, wsId := range wsIds {
+		doc, err := l.svcCtx.GetCertModel(wsId).FindByID(l.ctx, id)
+		if err != nil {
+			continue
+		}
+		if doc == nil {
+			continue
+		}
+		return &types.CertDetailResp{
+			Code: 0,
+			Msg:  "success",
+			Data: toCertType(doc),
+		}, nil
+	}
+
+	return &types.CertDetailResp{Code: xerr.CertNotFound, Msg: "未找到该证书"}, nil
+}
+
+// buildCertFilter 构造证书列表过滤条件
+func (l *CertLogic) buildCertFilter(req *types.CertListReq) bson.M {
+	filter := bson.M{}
+	if req.Query != "" {
+		filter["$or"] = []bson.M{
+			{"host": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"authority": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"subject_dn": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"issuer_dn": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"sans": bson.M{"$regex": req.Query, "$options": "i"}},
+		}
+	}
+	if req.Issuer != "" {
+		filter["issuer_dn"] = bson.M{"$regex": req.Issuer, "$options": "i"}
+	}
+	if req.ExpiredBefore != "" {
+		if ts, err := strconv.ParseInt(req.ExpiredBefore, 10, 64); err == nil {
+			filter["not_after"] = bson.M{"$lte": time.Unix(ts, 0)}
+		}
+	}
+	if req.ExpiredAfter != "" {
+		if ts, err := strconv.ParseInt(req.ExpiredAfter, 10, 64); err == nil {
+			if existing, ok := filter["not_after"].(bson.M); ok {
+				existing["$gte"] = time.Unix(ts, 0)
+			} else {
+				filter["not_after"] = bson.M{"$gte": time.Unix(ts, 0)}
+			}
+		}
+	}
+	return filter
+}
+
+// parseCertTime 解析证书时间字符串（worker 经 JSON 上报的为 RFC3339 格式）
+func parseCertTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		if t2, err2 := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err2 == nil {
+			return t2
+		}
+		return time.Time{}
+	}
+	return t
+}
+
+// toCertType 将 model.Cert 转换为 API 类型（时间格式化）
+func toCertType(r *model.Cert) *types.Cert {
+	if r == nil {
+		return nil
+	}
+	return &types.Cert{
+		Id:           r.Id.Hex(),
+		WorkspaceId: r.WorkspaceId,
+		TaskId:       r.TaskId,
+		Host:         r.Host,
+		Port:         r.Port,
+		Authority:    r.Authority,
+		Subject:      types.CertNameInfo(r.Subject),
+		SubjectDN:   r.SubjectDN,
+		Issuer:       types.CertNameInfo(r.Issuer),
+		IssuerDN:    r.IssuerDN,
+		SerialNumber: r.SerialNumber,
+		SigAlg:      r.SigAlg,
+		NotBefore:   formatTimeIfNotZero(r.NotBefore),
+		NotAfter:    formatTimeIfNotZero(r.NotAfter),
+		Version:     r.Version,
+		SANs:        r.SANs,
+		Fingerprints: r.Fingerprints,
+		IsSelfSigned: r.IsSelfSigned,
+		CreateTime:   formatTimeIfNotZero(r.CreateTime),
+		UpdateTime:   formatTimeIfNotZero(r.UpdateTime),
+	}
+}

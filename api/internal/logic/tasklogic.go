@@ -32,7 +32,7 @@ type MainTaskListLogic struct {
 // hasAnyScanPhaseEnabled 检查任务配置中是否至少启用了一项扫描阶段
 // 扫描阶段包括：子域名扫描/端口扫描/端口识别/指纹识别/目录扫描/漏洞扫描/弱口令扫描/JS扫描
 func hasAnyScanPhaseEnabled(taskConfig map[string]interface{}) bool {
-	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "dirscan", "pocscan", "brutescan", "jsfinder"}
+	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "dirscan", "pocscan", "brutescan", "jsfinder", "certcheck"}
 	for _, phase := range phases {
 		section, ok := taskConfig[phase].(map[string]interface{})
 		if !ok {
@@ -277,26 +277,26 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		}
 
 		list = append(list, types.MainTask{
-			Id:           t.Id.Hex(),
-			TaskId:       t.TaskId, // UUID，用于日志查询
-			Name:         t.Name,
-			Target:       t.Target,
-			Config:       t.Config,
-			ProfileId:    t.ProfileId,
-			ProfileName:  t.ProfileName,
-			Tags:         t.Tags,
-			Status:       status,
-			CurrentPhase: currentPhase,
-			Progress:     progress,
-			Result:       t.Result,
-			IsCron:       t.IsCron,
-			CronRule:     t.CronRule,
-			CreateTime:   t.CreateTime.Local().Format("2006-01-02 15:04:05"),
-			StartTime:    startTime,
-			EndTime:      endTime,
-			SubTaskCount: t.SubTaskCount,
-			SubTaskDone:  subTaskDone,
-			WorkspaceId:  tw.workspaceId,
+			Id:                t.Id.Hex(),
+			TaskId:            t.TaskId, // UUID，用于日志查询
+			Name:              t.Name,
+			Target:            t.Target,
+			Config:            t.Config,
+			ProfileId:         t.ProfileId,
+			ProfileName:       t.ProfileName,
+			Tags:              t.Tags,
+			Status:            status,
+			CurrentPhase:      currentPhase,
+			Progress:          progress,
+			Result:            t.Result,
+			IsCron:            t.IsCron,
+			CronRule:          t.CronRule,
+			CreateTime:        t.CreateTime.Local().Format("2006-01-02 15:04:05"),
+			StartTime:         startTime,
+			EndTime:           endTime,
+			SubTaskCount:      t.SubTaskCount,
+			SubTaskDone:       subTaskDone,
+			WorkspaceId:       tw.workspaceId,
 		})
 	}
 
@@ -305,6 +305,153 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		Msg:   "success",
 		Total: int(total),
 		List:  list,
+	}, nil
+}
+
+type MainTaskDetailLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewMainTaskDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *MainTaskDetailLogic {
+	return &MainTaskDetailLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+// MainTaskDetail 按 id 查询单个任务详情，复用列表的状态推断与实时进度逻辑。
+// 通知中心/快捷入口跳转只携带任务 id，故 workspaceId 为空时跨工作空间查找。
+func (l *MainTaskDetailLogic) MainTaskDetail(req *types.MainTaskDetailReq, headerWorkspaceId string) (*types.MainTaskDetailResp, error) {
+	if req.Id == "" {
+		return &types.MainTaskDetailResp{Code: 400, Msg: "id不能为空"}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
+	defer cancel()
+
+	// 确定优先查询的工作空间：优先请求体，其次 header
+	wsId := req.WorkspaceId
+	if wsId == "" {
+		wsId = headerWorkspaceId
+	}
+
+	var task *model.MainTask
+	var foundWsId string
+
+	// 1. 优先在指定工作空间直查（绝大多数场景命中）
+	if wsId != "" && wsId != "all" {
+		t, err := l.svcCtx.GetMainTaskModel(wsId).FindById(ctx, req.Id)
+		if err != nil {
+			l.Logger.Errorf("MainTaskDetail: query failed, id=%s, ws=%s, err=%v", req.Id, wsId, err)
+			return &types.MainTaskDetailResp{Code: 500, Msg: "查询失败"}, nil
+		}
+		if t != nil {
+			task = t
+			foundWsId = wsId
+		}
+	}
+
+	// 2. 未命中则跨工作空间查找（跨空间快捷入口只带 id）
+	if task == nil {
+		wsIds := common.GetWorkspaceIds(ctx, l.svcCtx, "all")
+		for _, ws := range wsIds {
+			if ws == wsId {
+				continue // 已查过
+			}
+			t, err := l.svcCtx.GetMainTaskModel(ws).FindById(ctx, req.Id)
+			if err != nil || t == nil {
+				continue
+			}
+			task = t
+			foundWsId = ws
+			break
+		}
+	}
+
+	if task == nil {
+		return &types.MainTaskDetailResp{Code: 404, Msg: "任务不存在"}, nil
+	}
+
+	t := *task
+	progress := t.Progress
+	currentPhase := t.CurrentPhase
+	subTaskDone := t.SubTaskDone
+	status := t.Status
+
+	// 状态为空时按进度推断（兼容旧数据）
+	if status == "" {
+		if progress >= 100 || (t.SubTaskCount > 0 && subTaskDone >= t.SubTaskCount) {
+			status = "SUCCESS"
+		} else if progress > 0 || subTaskDone > 0 {
+			status = "STARTED"
+		} else {
+			status = "CREATED"
+		}
+	}
+
+	// 执行中/等待中：从 Redis 取实时 currentPhase 并按子任务重算进度
+	if (status == "STARTED" || status == "PENDING") && l.svcCtx.RedisClient != nil {
+		mainKey := fmt.Sprintf("cscan:task:progress:%s", t.TaskId)
+		if data, err := l.svcCtx.RedisClient.Get(ctx, mainKey).Result(); err == nil && data != "" {
+			var progressData map[string]interface{}
+			if json.Unmarshal([]byte(data), &progressData) == nil {
+				if phase, ok := progressData["currentPhase"].(string); ok && phase != "" {
+					currentPhase = phase
+				}
+			}
+		}
+		subTaskCount := t.SubTaskCount
+		if subTaskCount <= 0 {
+			subTaskCount = 1
+		}
+		if subTaskCount > 0 {
+			progress = subTaskDone * 100 / subTaskCount
+			if progress > 100 {
+				progress = 100
+			}
+			if progress > 99 && subTaskDone < subTaskCount {
+				progress = 99
+			}
+		}
+	}
+
+	startTime := ""
+	endTime := ""
+	if t.StartTime != nil {
+		startTime = t.StartTime.Local().Format("2006-01-02 15:04:05")
+	}
+	if t.EndTime != nil {
+		endTime = t.EndTime.Local().Format("2006-01-02 15:04:05")
+	}
+
+	return &types.MainTaskDetailResp{
+		Code: 0,
+		Msg:  "success",
+		Data: types.MainTask{
+			Id:                t.Id.Hex(),
+			TaskId:            t.TaskId,
+			Name:              t.Name,
+			Target:            t.Target,
+			Config:            t.Config,
+			ProfileId:         t.ProfileId,
+			ProfileName:       t.ProfileName,
+			Tags:              t.Tags,
+			Status:            status,
+			CurrentPhase:      currentPhase,
+			Progress:          progress,
+			Result:            t.Result,
+			IsCron:            t.IsCron,
+			CronRule:          t.CronRule,
+			CreateTime:        t.CreateTime.Local().Format("2006-01-02 15:04:05"),
+			StartTime:         startTime,
+			EndTime:           endTime,
+			SubTaskCount:      t.SubTaskCount,
+			SubTaskDone:       subTaskDone,
+			WorkspaceId:       foundWsId,
+		},
 	}, nil
 }
 
@@ -1515,49 +1662,55 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 	if limit <= 0 {
 		limit = 100
 	}
-
-	// 从Redis Stream读取任务专属日志 (cscan:task:logs:{taskId})
-	streamKey := "cscan:task:logs:" + req.TaskId
-	l.Logger.Infof("GetTaskLogs: querying Redis stream key=%s, limit=%d, search=%s", streamKey, limit, req.Search)
-
-	logs, err := l.svcCtx.RedisClient.XRevRangeN(l.ctx, streamKey, "+", "-", int64(limit*10)).Result()
-	if err != nil {
-		l.Logger.Errorf("GetTaskLogs: failed to read logs from Redis, taskId=%s, streamKey=%s, error=%v", req.TaskId, streamKey, err)
-		// 返回空列表而不是错误
-		return &types.GetTaskLogsResp{Code: 0, Msg: "Redis查询失败: " + err.Error(), List: []types.TaskLogEntry{}}, nil
+	if limit > 10000 {
+		limit = 10000
 	}
 
-	l.Logger.Infof("GetTaskLogs: found %d log entries in Redis stream", len(logs))
+	// 从 Worker 日志文件读取，按 taskId 过滤
+	// 遍历所有 Worker 的日志文件
+	if l.svcCtx.WorkerLogReader == nil {
+		return &types.GetTaskLogsResp{Code: 0, Msg: "日志读取器未初始化", List: []types.TaskLogEntry{}}, nil
+	}
 
-	// 解析日志条目
-	result := make([]types.TaskLogEntry, 0)
+	// 获取最新日期
+	date, _ := l.svcCtx.WorkerLogReader.FindLatestDate()
+	if date == "" {
+		return &types.GetTaskLogsResp{Code: 0, Msg: "暂无日志", List: []types.TaskLogEntry{}}, nil
+	}
+
+	// 遍历所有 Worker，读取并过滤 taskId
+	workers, _ := l.svcCtx.WorkerLogReader.ListWorkers(date)
+	result := make([]types.TaskLogEntry, 0, limit)
 	searchLower := strings.ToLower(req.Search)
 
-	// XRevRange返回的是倒序，我们需要正序显示，所以从后往前遍历
-	for i := len(logs) - 1; i >= 0; i-- {
-		if data, ok := logs[i].Values["data"].(string); ok {
-			var entry types.TaskLogEntry
-			if err := json.Unmarshal([]byte(data), &entry); err == nil {
-				// 放宽匹配条件：匹配主任务ID或子任务ID
-				if entry.TaskId == req.TaskId || getMainTaskIdFromLog(entry.TaskId) == req.TaskId {
-					// 模糊搜索过滤
-					if req.Search != "" {
-						// 搜索 message、level、workerName 字段（不区分大小写）
-						if !strings.Contains(strings.ToLower(entry.Message), searchLower) &&
-							!strings.Contains(strings.ToLower(entry.Level), searchLower) &&
-							!strings.Contains(strings.ToLower(entry.WorkerName), searchLower) {
-							continue
-						}
-					}
-					result = append(result, entry)
-					// 达到限制数量后停止
-					if len(result) >= limit {
-						break
-					}
-				}
-			} else {
-				l.Logger.Errorf("GetTaskLogs: failed to unmarshal log entry: %v", err)
+	for _, workerName := range workers {
+		entries, _ := l.svcCtx.WorkerLogReader.ReadByTaskId(workerName, req.TaskId, date, limit)
+		for _, e := range entries {
+			// 匹配主任务ID或子任务ID
+			if e.TaskId != req.TaskId && getMainTaskIdFromLog(e.TaskId) != req.TaskId {
+				continue
 			}
+			// 模糊搜索过滤
+			if req.Search != "" {
+				if !strings.Contains(strings.ToLower(e.Msg), searchLower) &&
+					!strings.Contains(strings.ToLower(e.Level), searchLower) &&
+					!strings.Contains(strings.ToLower(e.Worker), searchLower) {
+					continue
+				}
+			}
+			result = append(result, types.TaskLogEntry{
+				Timestamp:  e.Ts,
+				Level:      e.Level,
+				WorkerName: e.Worker,
+				TaskId:     e.TaskId,
+				Message:    e.Msg,
+			})
+			if len(result) >= limit {
+				break
+			}
+		}
+		if len(result) >= limit {
+			break
 		}
 	}
 

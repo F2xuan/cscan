@@ -37,6 +37,7 @@ const (
 	ScopeJSFinder     APIScope = "jsfinder"
 	ScopeBlacklist    APIScope = "blacklist"
 	ScopeWeakpass     APIScope = "weakpass"
+	ScopeReadonly     APIScope = "readonly"
 )
 
 // ScopeGroupMeta 描述一个分组的可读信息
@@ -69,6 +70,7 @@ func ScopeGroups() []ScopeGroupMeta {
 		{ScopeJSFinder, "JSFinder", "JavaScript 外链发现"},
 		{ScopeBlacklist, "黑名单", "黑名单规则配置"},
 		{ScopeWeakpass, "弱口令字典", "弱口令字典管理"},
+		{ScopeReadonly, "开放 API（只读）", "第三方系统只读查询资产/漏洞/证书"},
 	}
 }
 
@@ -165,6 +167,12 @@ func splitScope(s string) (group, action string) {
 // 末段动词未能识别为 CRUD 时默认归为 read。
 func RouteToScope(path string) APIScope {
 	const prefix = "/api/v1/"
+	const openPrefix = "/api/open/v1/"
+	// 开放 API：统一归到 readonly 分组的 read 动作，
+	// 只有持有 readonly / readonly:read / "*" scope 的 PAT 才能调用。
+	if strings.HasPrefix(path, openPrefix) {
+		return APIScope(string(ScopeReadonly) + ":" + ActionRead)
+	}
 	if !strings.HasPrefix(path, prefix) {
 		return ScopeAll
 	}

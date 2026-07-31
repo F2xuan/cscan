@@ -3,9 +3,7 @@ package logic
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -13,7 +11,6 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -164,43 +161,18 @@ func (l *WorkerInstallLogic) RefreshInstallKey() (*types.WorkerRefreshKeyResp, e
 }
 
 // ValidateInstallKey 验证安装密钥
-// 修复 C-21：原使用 != 普通字符串比较，存在时序攻击风险，改用 subtle.ConstantTimeCompare
-// 修复 C-19 同类问题：区分 redis.Nil（未配置→401）与其他 Redis 错误（→503）
+// 双密钥接受：环境变量 CSCAN_WORKER_KEY（默认 Worker）或 Redis install_key（手动探针）。
+// 区分 redis.Nil（未配置→401）与其他 Redis 错误（→503）。
 func (l *WorkerInstallLogic) ValidateInstallKey(req *types.WorkerValidateKeyReq) (*types.WorkerValidateKeyResp, error) {
-	rdb := l.svcCtx.RedisClient
-
-	// 获取当前安装密钥（带超时，避免 Redis 故障时挂起）
-	installKeyKey := "cscan:worker:install_key"
-	keyCtx, cancel := context.WithTimeout(l.ctx, 3*time.Second)
-	storedKey, err := rdb.Get(keyCtx, installKeyKey).Result()
-	cancel()
-
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return &types.WorkerValidateKeyResp{
-				Code:  401,
-				Msg:   "安装密钥未配置",
-				Valid: false,
-			}, nil
-		}
-		// Redis 基础设施故障：返回 503，避免 Worker 误认为密钥无效
-		logx.Errorf("[WorkerInstall] Redis unavailable during key validation: %v", err)
+	valid, infraError := l.svcCtx.ValidateWorkerKey(l.ctx, req.InstallKey)
+	if infraError {
 		return &types.WorkerValidateKeyResp{
 			Code:  503,
 			Msg:   "认证服务暂时不可用",
 			Valid: false,
 		}, nil
 	}
-	if storedKey == "" {
-		return &types.WorkerValidateKeyResp{
-			Code:  401,
-			Msg:   "安装密钥未配置",
-			Valid: false,
-		}, nil
-	}
-
-	// 修复 C-21：使用常量时间比较，防止时序攻击
-	if subtle.ConstantTimeCompare([]byte(req.InstallKey), []byte(storedKey)) != 1 {
+	if !valid {
 		l.Logger.Errorf("[WorkerInstall] Invalid install key attempt: %s", req.InstallKey)
 		return &types.WorkerValidateKeyResp{
 			Code:  401,
@@ -213,7 +185,7 @@ func (l *WorkerInstallLogic) ValidateInstallKey(req *types.WorkerValidateKeyReq)
 	workerInfo := fmt.Sprintf(`{"ip":"%s","os":"%s","arch":"%s","registerTime":"%s"}`,
 		req.WorkerIP, req.WorkerOS, req.WorkerArch, time.Now().Format("2006-01-02 15:04:05"))
 	registerKey := fmt.Sprintf("cscan:worker:register:%s", req.WorkerName)
-	rdb.Set(l.ctx, registerKey, workerInfo, 24*time.Hour)
+	l.svcCtx.RedisClient.Set(l.ctx, registerKey, workerInfo, 24*time.Hour)
 
 	l.Logger.Infof("[WorkerInstall] Worker registered: name=%s, ip=%s, os=%s, arch=%s",
 		req.WorkerName, req.WorkerIP, req.WorkerOS, req.WorkerArch)

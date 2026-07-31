@@ -29,8 +29,8 @@ func NewAssetTargetDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 // AssetTargetDelete 删除顶层资产元信息。
-// delete_assets=true 时连带删除 {wsId}_asset 中匹配该目标的所有资产 + 关联 {wsId}_vul，
-// 以及该目标的目录扫描结果（dirscan_result）与 JSFinder 结果（{wsId}_jsfinder）。
+// delete_assets=true 时连带删除匹配该目标的所有资产（含 host 和 domain/ip 维度）、
+// 关联漏洞、目录扫描结果、JSFinder 结果及资产历史记录。
 // delete_assets=false 仅删 meta 记录，业务数据保持原样。
 func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteReq, workspaceId string) (*types.AssetTargetDeleteResp, error) {
 	targetId := strings.TrimSpace(req.TargetId)
@@ -50,20 +50,35 @@ func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteR
 
 	var deletedAssets int64
 	if req.DeleteAssets {
+		// 构建综合过滤条件，同时匹配 host 和 domain/ip 字段，
+		// 确保 host 为 IP 但 domain 匹配的关联资产也能被级联删除。
 		hostFilter := hostFilterForTarget(tType, tValue)
+		var cascadeFilter bson.M
+		if tType == model.AssetTargetTypeIP {
+			cascadeFilter = bson.M{"$or": []bson.M{
+				{"host": tValue},
+				{"ip.ipv4.ip": tValue},
+			}}
+		} else {
+			cascadeFilter = bson.M{"$or": []bson.M{
+				{"host": hostFilter},
+				{"domain": hostFilter},
+			}}
+		}
+
 		assetModel := l.svcCtx.GetAssetModel(owningWs)
-		n, err := assetModel.DeleteByFilter(l.ctx, bson.M{"host": hostFilter})
+		n, err := assetModel.DeleteByFilter(l.ctx, cascadeFilter)
 		if err != nil {
 			l.Logger.Errorf("[AssetTargetDelete] delete assets ws=%s fail: %v", owningWs, err)
 		} else {
 			deletedAssets = n
 		}
 		vulModel := l.svcCtx.GetVulModel(owningWs)
-		if _, err := vulModel.DeleteByFilter(l.ctx, bson.M{"host": hostFilter}); err != nil {
+		if _, err := vulModel.DeleteByFilter(l.ctx, cascadeFilter); err != nil {
 			l.Logger.Errorf("[AssetTargetDelete] delete vul ws=%s fail: %v", owningWs, err)
 		}
 
-		// 级联清理目录扫描结果（全局 dirscan_result 集合，按 workspace_id + host 限定）
+		// 级联清理目录扫描结果（全局 dirscan_result 集合，按 workspace_id + host/domain 限定）
 		dirModel := l.svcCtx.GetDirScanResultModel()
 		if dirModel != nil {
 			dirFilter := bson.M{"workspace_id": owningWs, "host": hostFilter}
@@ -76,6 +91,12 @@ func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteR
 		jsModel := l.svcCtx.GetJSFinderResultModel(owningWs)
 		if _, err := jsModel.DeleteMany(l.ctx, bson.M{"host": hostFilter}); err != nil {
 			l.Logger.Errorf("[AssetTargetDelete] delete jsfinder ws=%s fail: %v", owningWs, err)
+		}
+
+		// 级联清理资产历史记录（per-ws 集合 {wsId}_asset_history）
+		histModel := l.svcCtx.GetAssetHistoryModel(owningWs)
+		if _, err := histModel.DeleteByFilter(l.ctx, cascadeFilter); err != nil {
+			l.Logger.Errorf("[AssetTargetDelete] delete asset history ws=%s fail: %v", owningWs, err)
 		}
 	}
 

@@ -159,6 +159,8 @@ func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq, workspaceId st
 				StatusText:   statusText,
 				Title:        asset.Title,
 				Screenshot:   asset.Screenshot,
+				CreateTime:   formatScreenshotTime(asset.CreateTime),
+				UpdateTime:   formatScreenshotTime(asset.UpdateTime),
 				LastUpdated:  formatScreenshotTime(asset.UpdateTime),
 				Technologies: technologies,
 				HttpHeader:   asset.HttpHeader,

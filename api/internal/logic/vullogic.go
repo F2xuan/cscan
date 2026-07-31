@@ -75,6 +75,23 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 	if req.RiskSource != "" {
 		filter["risk_source"] = req.RiskSource
 	}
+	// T1.3: 按生命周期状态过滤（不传时行为不变）
+	if req.Status != "" {
+		filter["status"] = req.Status
+	}
+	// T4.3: 快速筛选——"🆕 新发现"：first_seen_time 在窗口内（口径与 dashboard/changes 的 riskNewInWindow 一致，默认 7 天）
+	if req.IsNew {
+		days := req.FirstSeenWithinDays
+		if days <= 0 {
+			days = 7
+		}
+		cutoff := time.Now().AddDate(0, 0, -days)
+		filter["first_seen_time"] = bson.M{"$gte": cutoff}
+	}
+	// T4.3: 快速筛选——"待确认"：目标不可达、待复验确认
+	if req.VerifyPending {
+		filter["verify_pending"] = true
+	}
 	if len(req.KeywordAny) > 0 {
 		orClauses := make([]bson.M, 0, len(req.KeywordAny)*2)
 		for _, kw := range req.KeywordAny {
@@ -131,8 +148,17 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 			allVuls = append(allVuls, wsVuls...)
 		}
 
-		// 按创建时间排序
+		// 排序：T4.3 支持严重度排序，否则维持原创建时间排序
 		sort.Slice(allVuls, func(i, j int) bool {
+			if req.Sort == "severity" {
+				if severityRank(allVuls[i].Severity) != severityRank(allVuls[j].Severity) {
+					return severityRank(allVuls[i].Severity) > severityRank(allVuls[j].Severity)
+				}
+				if !allVuls[i].FirstSeenTime.Equal(allVuls[j].FirstSeenTime) {
+					return allVuls[i].FirstSeenTime.After(allVuls[j].FirstSeenTime)
+				}
+				return allVuls[i].CreateTime.After(allVuls[j].CreateTime)
+			}
 			return allVuls[i].CreateTime.After(allVuls[j].CreateTime)
 		})
 
@@ -156,7 +182,12 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 		}
 
 		// 查询列表
-		vuls, err = vulModel.Find(l.ctx, filter, req.Page, req.PageSize)
+		if req.Sort == "severity" {
+			// T4.3: 严重度等级降序 + first_seen_time 降序（服务端聚合排序，分页正确）
+			vuls, err = vulModel.FindBySeveritySort(l.ctx, filter, req.Page, req.PageSize)
+		} else {
+			vuls, err = vulModel.Find(l.ctx, filter, req.Page, req.PageSize)
+		}
 		if err != nil {
 			return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
 		}
@@ -180,6 +211,16 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 			ScanCount:        v.ScanCount,
 			MatcherName:      v.MatcherName,
 			ExtractedResults: v.ExtractedResults,
+			// T1.3: 状态字段
+			Status:         v.Status,
+			FixedAt:        formatTimeIfNotZero(v.FixedAt),
+			LastVerifiedAt: formatTimeIfNotZero(v.LastVerifiedAt),
+			// 单条复验状态与结论
+			ReverifyStatus:     v.ReverifyStatus,
+			ReverifyConclusion: v.ReverifyConclusion,
+			ReverifyAt:         formatTimeIfNotZero(v.ReverifyAt),
+			ReverifyBy:         v.ReverifyBy,
+			ReverifyMessage:    v.ReverifyMessage,
 		}
 		// 新增字段 - 时间追踪
 		if !v.FirstSeenTime.IsZero() {
@@ -197,6 +238,24 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 		Total: int(total),
 		List:  list,
 	}, nil
+}
+
+// severityRank 将严重度字符串映射为可排序等级（T4.3）
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 5
+	case "high":
+		return 4
+	case "medium":
+		return 3
+	case "low":
+		return 2
+	case "info":
+		return 1
+	default:
+		return 0
+	}
 }
 
 // VulLogic 漏洞管理逻辑
@@ -315,7 +374,7 @@ func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err
 	// 聚合统计走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
 	cacheKey := "vul_stat:" + workspaceId
 	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		var total, critical, high, medium, low, info, week, month int64
+		var total, critical, high, medium, low, info, week, month, open, fixed, ignored int64
 		now := time.Now()
 
 		// 获取需要查询的工作空间列表
@@ -335,6 +394,9 @@ func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err
 			info += stats.Info
 			week += stats.Week
 			month += stats.Month
+			open += stats.Open
+			fixed += stats.Fixed
+			ignored += stats.Ignored
 		}
 
 		return &types.VulStatResp{
@@ -348,6 +410,9 @@ func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err
 			Info:     int(info),
 			Week:     int(week),
 			Month:    int(month),
+			Open:     int(open),
+			Fixed:    int(fixed),
+			Ignored:  int(ignored),
 		}, nil
 	})
 	if cacheErr != nil {
@@ -423,6 +488,17 @@ func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq, workspaceId string) 
 		References:  vul.References,
 		// 时间追踪
 		ScanCount: vul.ScanCount,
+		// T1.3: 状态字段
+		Status:           vul.Status,
+		FixedAt:          formatTimeIfNotZero(vul.FixedAt),
+		LastVerifiedAt:   formatTimeIfNotZero(vul.LastVerifiedAt),
+		FixConfirmSource: vul.FixConfirmSource,
+		// 单条复验状态与结论
+		ReverifyStatus:     vul.ReverifyStatus,
+		ReverifyConclusion: vul.ReverifyConclusion,
+		ReverifyAt:         formatTimeIfNotZero(vul.ReverifyAt),
+		ReverifyBy:         vul.ReverifyBy,
+		ReverifyMessage:    vul.ReverifyMessage,
 	}
 
 	// 时间追踪字段
@@ -449,5 +525,65 @@ func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq, workspaceId string) 
 		Code: 0,
 		Msg:  "success",
 		Data: detail,
+	}, nil
+}
+
+// VulUpdateStatusLogic 漏洞状态批量更新（T1.3）
+type VulUpdateStatusLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewVulUpdateStatusLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulUpdateStatusLogic {
+	return &VulUpdateStatusLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+// VulUpdateStatus 批量更新漏洞生命周期状态（open/fixed/ignored）。
+// 校验状态合法性；对所有相关 workspace 执行批量更新并汇总实际修改条数。
+func (l *VulUpdateStatusLogic) VulUpdateStatus(req *types.VulUpdateStatusReq, workspaceId string) (resp *types.VulUpdateStatusResp, err error) {
+	if len(req.Ids) == 0 {
+		return &types.VulUpdateStatusResp{Code: 400, Msg: "请选择要更新的漏洞"}, nil
+	}
+	// 校验状态合法性（防止非法字符串写入）
+	var valid bool
+	switch req.Status {
+	case model.VulStatusOpen, model.VulStatusFixed, model.VulStatusIgnored:
+		valid = true
+	}
+	if !valid {
+		return &types.VulUpdateStatusResp{Code: 400, Msg: "非法的漏洞状态: " + req.Status}, nil
+	}
+
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	source := model.VulFixSourceManual
+	var totalUpdated int64
+	for _, wsId := range wsIds {
+		vulModel := l.svcCtx.GetVulModel(wsId)
+		var n int64
+		var uerr error
+		switch req.Status {
+		case model.VulStatusFixed:
+			n, uerr = vulModel.MarkFixed(l.ctx, req.Ids, source)
+		case model.VulStatusOpen:
+			n, uerr = vulModel.MarkOpen(l.ctx, req.Ids, source)
+		case model.VulStatusIgnored:
+			n, uerr = vulModel.MarkIgnored(l.ctx, req.Ids)
+		}
+		if uerr != nil {
+			l.Logger.Errorf("[VulUpdateStatus] update workspace=%s failed: %v", wsId, uerr)
+			continue
+		}
+		totalUpdated += n
+	}
+
+	return &types.VulUpdateStatusResp{
+		Code:    0,
+		Msg:     "success",
+		Updated: int(totalUpdated),
 	}, nil
 }

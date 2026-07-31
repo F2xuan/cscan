@@ -19,17 +19,26 @@ import (
 
 // TaskBuilder handles common task creation logic
 type TaskBuilder struct {
-	ctx    context.Context
-	svcCtx *svc.ServiceContext
-	log    logx.Logger
+	ctx      context.Context
+	svcCtx   *svc.ServiceContext
+	log      logx.Logger
+	Priority int // 入队优先级（默认 PriorityLow=1）；自动触发任务注入 Background=0 以降低优先级
 }
 
 func NewTaskBuilder(ctx context.Context, svcCtx *svc.ServiceContext) *TaskBuilder {
 	return &TaskBuilder{
-		ctx:    ctx,
-		svcCtx: svcCtx,
-		log:    logx.WithContext(ctx),
+		ctx:      ctx,
+		svcCtx:   svcCtx,
+		log:      logx.WithContext(ctx),
+		Priority: scheduler.PriorityLow,
 	}
+}
+
+// WithPriority 设置入队优先级（不改变现有调用点行为，默认 PriorityLow）。
+// T3.5 自动深度扫描任务注入 scheduler.PriorityBackground，使其排在所有手动/正常任务之后。
+func (b *TaskBuilder) WithPriority(p int) *TaskBuilder {
+	b.Priority = p
+	return b
 }
 
 // BuildAndPushSubTasks splits targets and pushes sub-tasks to Redis queue
@@ -42,25 +51,11 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	splitter := scheduler.NewTargetSplitter(batchSize)
 	batches := splitter.SplitTargets(task.Target)
 
-	// Scheme 1: Asynchronous prewrite using context.WithoutCancel to prevent HTTP context cancellation
-	bgCtx := context.WithoutCancel(b.ctx)
-	timeoutCtx, cancel := context.WithTimeout(bgCtx, 10*time.Minute)
-	go func(ctx context.Context, cancelFunc context.CancelFunc) {
-		defer cancelFunc()
-		defer func() {
-			if r := recover(); r != nil {
-				logx.WithContext(ctx).Errorf("TaskBuilder: panic in async prewrite for task %s: %v", task.TaskId, r)
-			}
-		}()
-		asyncBuilder := &TaskBuilder{
-			ctx:    ctx,
-			svcCtx: b.svcCtx,
-			log:    logx.WithContext(ctx),
-		}
-		if err := asyncBuilder.prewriteInitialAssets(workspaceId, task, taskConfig, batches); err != nil {
-			asyncBuilder.log.Errorf("TaskBuilder: async prewrite initial assets failed for task %s: %v", task.TaskId, err)
-		}
-	}(timeoutCtx, cancel)
+	// 注意：此处原先会异步 prewrite 初始资产——用 GenerateAssetsFromTargetsWithoutDNS 把用户输入的
+	// 文本目标直接 upsert 进资产表（Source="user_input", IsNewAsset=true）。这在 worker 尚未进行任何
+	// 存活/端口/指纹识别前就把目标录入暴露面，属逻辑错误，已移除。
+	// 资产统一由 worker 扫描完成后通过 SaveTaskResult RPC 回写（rpc/task/internal/logic/savetaskresultlogic.go），
+	// prewriteInitialAssets 等函数保留但不再调用，待后续清理。
 
 	// 3. Calculate SubTask Count
 	// subTaskCount = 批次数 × 启用模块数
@@ -125,7 +120,7 @@ func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, 
 		WorkspaceId: workspaceId,
 		TaskName:    task.Name,
 		Config:      string(configBytes),
-		Priority:    1,
+		Priority:    b.Priority,
 		Workers:     workers,
 	}
 

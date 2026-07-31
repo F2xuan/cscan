@@ -159,9 +159,11 @@ func TestScopeAllowed(t *testing.T) {
 	}
 }
 
-func TestAllScopes_Covers20GroupsBy4Actions(t *testing.T) {
+func TestAllScopes_CoversGroupsBy4Actions(t *testing.T) {
 	all := AllScopes()
-	if got, want := len(all), 20*4; got != want {
+	// 每个已知分组（不含 "*"）衍生 4 个 <group>:<action> 组合
+	want := len(ScopeGroups()) * len(ScopeActions())
+	if got := len(all); got != want {
 		t.Errorf("AllScopes len = %d, want %d", got, want)
 	}
 }

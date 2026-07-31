@@ -56,6 +56,9 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 				HighRiskFingerprints:  c.HighRiskFilter.HighRiskFingerprints,
 				HighRiskPorts:         c.HighRiskFilter.HighRiskPorts,
 				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
+				NewAssetNotify:        c.HighRiskFilter.NewAssetNotify,
+				NewRiskNotify:         c.HighRiskFilter.NewRiskNotify,
+				FixedNotify:           c.HighRiskFilter.FixedNotify,
 			}
 		}
 		list = append(list, item)
@@ -209,6 +212,8 @@ func (l *NotifyConfigSaveLogic) NotifyConfigSave(req *types.NotifyConfigSaveReq)
 			HighRiskPorts:         convertPortsToIntSlice(req.HighRiskFilter.HighRiskPorts),
 			HighRiskPocSeverities: convertSeveritiesToEnglish(req.HighRiskFilter.HighRiskPocSeverities),
 			NewAssetNotify:        req.HighRiskFilter.NewAssetNotify,
+			NewRiskNotify:         req.HighRiskFilter.NewRiskNotify,
+			FixedNotify:           req.HighRiskFilter.FixedNotify,
 		}
 	}
 

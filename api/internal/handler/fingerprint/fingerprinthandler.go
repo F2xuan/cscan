@@ -236,6 +236,63 @@ func FingerprintBatchValidateHandler(svcCtx *svc.ServiceContext) http.HandlerFun
 	}
 }
 
+// FingerprintBatchProgressHandler 查询指纹批量验证进度
+func FingerprintBatchProgressHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.FingerprintBatchProgressReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewFingerprintBatchProgressLogic(r.Context(), svcCtx)
+		resp, err := l.FingerprintBatchProgress(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// FingerprintBatchResultHandler 获取指纹批量验证结果详情
+func FingerprintBatchResultHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.FingerprintBatchResultReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewFingerprintBatchResultLogic(r.Context(), svcCtx)
+		resp, err := l.FingerprintBatchResult(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// FingerprintBatchStopHandler 停止指纹批量验证
+func FingerprintBatchStopHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.FingerprintBatchStopReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewFingerprintBatchStopLogic(r.Context(), svcCtx)
+		err := l.FingerprintBatchStop(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, map[string]interface{}{"code": 0, "msg": "已发送停止信号"})
+	}
+}
+
 // HttpServiceMappingListHandler HTTP服务映射列表
 func HttpServiceMappingListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

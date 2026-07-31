@@ -126,45 +126,45 @@ type UserPasswordChangeReq struct {
 }
 
 type UserPasswordChangeResp struct {
-	Code         int    `json:"code"`
-	Msg          string `json:"msg"`
-	MustReLogin  bool   `json:"mustReLogin"`
+	Code        int    `json:"code"`
+	Msg         string `json:"msg"`
+	MustReLogin bool   `json:"mustReLogin"`
 }
 
 type UserTokenCreateReq struct {
 	Name      string   `json:"name"`
 	ExpiresAt int64    `json:"expiresAt,omitempty"` // unix seconds, 0 = 永久
-	Scopes    []string `json:"scopes,optional"` // 空或含 "*" 表示全量
+	Scopes    []string `json:"scopes,optional"`     // 空或含 "*" 表示全量
 }
 
 type UserTokenCreateResp struct {
-	Code      int      `json:"code"`
-	Msg       string   `json:"msg"`
-	Token     string   `json:"token"`     // 仅本次返回明文
-	Id        string   `json:"id"`
-	Name      string   `json:"name"`
-	Prefix    string   `json:"prefix"`
-	Scopes    []string `json:"scopes"`
-	ExpiresAt int64    `json:"expiresAt,omitempty"`
-	CreateTime int64  `json:"createTime"`
+	Code       int      `json:"code"`
+	Msg        string   `json:"msg"`
+	Token      string   `json:"token"` // 仅本次返回明文
+	Id         string   `json:"id"`
+	Name       string   `json:"name"`
+	Prefix     string   `json:"prefix"`
+	Scopes     []string `json:"scopes"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	CreateTime int64    `json:"createTime"`
 }
 
 type UserTokenListItem struct {
-	Id          string   `json:"id"`
-	Name        string   `json:"name"`
-	Prefix      string   `json:"prefix"`
-	PlainToken  string   `json:"plainToken"`
-	Scopes      []string `json:"scopes"`
-	ExpiresAt   int64    `json:"expiresAt,omitempty"`
-	LastUsedAt  int64    `json:"lastUsedAt,omitempty"`
-	LastUsedIP  string   `json:"lastUsedIp,omitempty"`
-	Status      string   `json:"status"`
-	CreateTime  int64    `json:"createTime"`
+	Id         string   `json:"id"`
+	Name       string   `json:"name"`
+	Prefix     string   `json:"prefix"`
+	PlainToken string   `json:"plainToken"`
+	Scopes     []string `json:"scopes"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	LastUsedAt int64    `json:"lastUsedAt,omitempty"`
+	LastUsedIP string   `json:"lastUsedIp,omitempty"`
+	Status     string   `json:"status"`
+	CreateTime int64    `json:"createTime"`
 }
 
 type UserTokenListResp struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
+	Code int                 `json:"code"`
+	Msg  string              `json:"msg"`
 	List []UserTokenListItem `json:"list"`
 }
 
@@ -189,11 +189,11 @@ type UserTokenScopeGroup struct {
 }
 
 type UserTokenScopeListResp struct {
-	Code    int                    `json:"code"`
-	Msg     string                 `json:"msg"`
-	List    []UserTokenScopeItem   `json:"list"`    // 兼容字段：扁平 <group>:<action>
+	Code    int                   `json:"code"`
+	Msg     string                `json:"msg"`
+	List    []UserTokenScopeItem  `json:"list"`    // 兼容字段：扁平 <group>:<action>
 	Groups  []UserTokenScopeGroup `json:"groups"`  // 分组矩阵：20 组 × 4 动作
-	Actions []string               `json:"actions"` // ["read","create","update","delete"]
+	Actions []string              `json:"actions"` // ["read","create","update","delete"]
 }
 
 // ==================== 工作空间 ====================
@@ -322,6 +322,7 @@ type AssetListReq struct {
 	OrgId             string `json:"orgId,optional"`
 	OnlyNew           bool   `json:"onlyNew,optional"`
 	OnlyUpdated       bool   `json:"onlyUpdated,optional"`
+	NewWithinDays     int    `json:"newWithinDays,optional"` // 0表示不过滤；>0 表示仅统计近 N 天按 first_seen_time 判定的新增资产（T1.2）
 	ExcludeCdn        bool   `json:"excludeCdn,optional"`
 	SortByUpdate      bool   `json:"sortByUpdate,optional"`
 	SortByRisk        bool   `json:"sortByRisk,optional"`
@@ -361,6 +362,53 @@ type IconHashStatItem struct {
 	IconData      string `json:"iconData"`                // base64 图片数据
 	IconHashBytes string `json:"iconHashBytes,omitempty"` // 同 iconData，兼容前端字段名
 	Count         int    `json:"count"`
+}
+
+// ==================== 资产变化快照（T1.1） ====================
+type AssetDiffListReq struct {
+	Page       int    `json:"page,default=1"`
+	PageSize   int    `json:"pageSize,default=20"`
+	TaskId     string `json:"taskId,optional"`     // 按任务过滤
+	DiffType   string `json:"diffType,optional"`   // asset / vul
+	ChangeType string `json:"changeType,optional"` // added / updated / resolved
+	StartTime  string `json:"startTime,optional"`  // RFC3339，时间范围过滤
+	EndTime    string `json:"endTime,optional"`
+}
+
+type AssetDiffItem struct {
+	Id         string        `json:"id"`
+	TaskId     string        `json:"taskId"`
+	DiffType   string        `json:"diffType"`
+	ChangeType string        `json:"changeType"`
+	TargetKey  string        `json:"targetKey"`
+	Summary    string        `json:"summary,omitempty"`
+	Changes    []FieldChange `json:"changes,omitempty"`
+	CreateTime string        `json:"createTime"`
+}
+
+type AssetDiffListResp struct {
+	Code  int             `json:"code"`
+	Msg   string          `json:"msg"`
+	Total int             `json:"total"`
+	List  []AssetDiffItem `json:"list"`
+}
+
+type AssetDiffStatReq struct {
+	StartTime string `json:"startTime,optional"`
+	EndTime   string `json:"endTime,optional"`
+}
+
+type AssetDiffStatItem struct {
+	DiffType   string `json:"diffType"`
+	ChangeType string `json:"changeType"`
+	Count      int64  `json:"count"`
+}
+
+type AssetDiffStatResp struct {
+	Code  int                 `json:"code"`
+	Msg   string              `json:"msg"`
+	Total int64               `json:"total"`
+	List  []AssetDiffStatItem `json:"list"`
 }
 
 type AssetDeleteReq struct {
@@ -657,6 +705,8 @@ type ScreenshotItem struct {
 	StatusText   string       `json:"statusText"`   // 状态文本
 	Title        string       `json:"title"`        // 页面标题
 	Screenshot   string       `json:"screenshot"`   // 截图URL
+	CreateTime   string       `json:"createTime"`   // 创建时间
+	UpdateTime   string       `json:"updateTime"`   // 更新时间
 	LastUpdated  string       `json:"lastUpdated"`  // 最后更新时间
 	Technologies []Technology `json:"technologies"` // 技术栈
 	HttpHeader   string       `json:"httpHeader"`   // HTTP响应头
@@ -772,6 +822,19 @@ type MainTaskListResp struct {
 	List  []MainTask `json:"list"`
 }
 
+// MainTaskDetailReq 任务详情请求
+type MainTaskDetailReq struct {
+	Id          string `json:"id"`                   // 任务ID（MainTask.Id.Hex()）
+	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID，为空时跨工作空间查找
+}
+
+// MainTaskDetailResp 任务详情响应
+type MainTaskDetailResp struct {
+	Code int      `json:"code"`
+	Msg  string   `json:"msg"`
+	Data MainTask `json:"data"`
+}
+
 type MainTaskCreateReq struct {
 	Name        string   `json:"name"`
 	Target      string   `json:"target"`
@@ -782,6 +845,32 @@ type MainTaskCreateReq struct {
 	Tags        []string `json:"tags,optional"`        // 任务标签
 	Workers     []string `json:"workers,optional"`     // 指定执行任务的 Worker 列表
 	WorkspaceId string   `json:"workspaceId,optional"` // 任务所属工作空间ID
+}
+
+// ===== T4.1 一键扫描 + 智能模板推荐 =====
+
+// TaskQuickCreateReq 一键扫描请求：仅传目标 + 可选模式，后端智能识别类型并选扫描阶段
+type TaskQuickCreateReq struct {
+	Targets     string `json:"targets"`              // 目标字符串，支持逗号/换行/分号分隔
+	Mode        string `json:"mode,optional"`        // 扫描模式：quick（默认）/ full
+	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID
+}
+
+// TaskQuickCreateResp 一键扫描响应
+type TaskQuickCreateResp struct {
+	Code             int    `json:"code"`
+	Msg              string `json:"msg"`
+	TaskId           string `json:"taskId"`           // 任务 _id hex（用于跳转详情）
+	RecommendedType  string `json:"recommendedType"`  // 智能推荐类型：port / domain / web
+	Mode             string `json:"mode"`             // 实际采用的模式
+	EstimatedMinutes int    `json:"estimatedMinutes"` // 预估耗时（分钟）
+}
+
+// ===== T4.2 引导式首次体验 =====
+type UserOnboardingStatusResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Done bool   `json:"done"`
 }
 
 type TaskProfile struct {
@@ -878,6 +967,19 @@ type Vul struct {
 	FirstSeenTime string `json:"firstSeenTime,omitempty"`
 	LastSeenTime  string `json:"lastSeenTime,omitempty"`
 	ScanCount     int    `json:"scanCount,omitempty"`
+	// 漏洞生命周期状态（T1.3）
+	Status           string `json:"status,omitempty"`
+	FixedAt          string `json:"fixedAt,omitempty"`
+	LastVerifiedAt   string `json:"lastVerifiedAt,omitempty"`
+	FixConfirmSource string `json:"fixConfirmSource,omitempty"`
+	// 复验待确认标记（T3.3）：目标不可达时置位，不误判为已修复
+	VerifyPending bool `json:"verifyPending,omitempty"`
+	// 单条复验（worker 复测）状态与结论
+	ReverifyStatus     string `json:"reverifyStatus,omitempty"`
+	ReverifyConclusion string `json:"reverifyConclusion,omitempty"`
+	ReverifyAt         string `json:"reverifyAt,omitempty"`
+	ReverifyBy         string `json:"reverifyBy,omitempty"`
+	ReverifyMessage    string `json:"reverifyMessage,omitempty"`
 }
 
 // VulEvidence 漏洞证据链
@@ -917,6 +1019,19 @@ type VulDetail struct {
 	FirstSeenTime string `json:"firstSeenTime,omitempty"`
 	LastSeenTime  string `json:"lastSeenTime,omitempty"`
 	ScanCount     int    `json:"scanCount,omitempty"`
+	// 漏洞生命周期状态（T1.3）
+	Status           string `json:"status,omitempty"`
+	FixedAt          string `json:"fixedAt,omitempty"`
+	LastVerifiedAt   string `json:"lastVerifiedAt,omitempty"`
+	FixConfirmSource string `json:"fixConfirmSource,omitempty"`
+	// 复验待确认标记（T3.3）：目标不可达时置位，不误判为已修复
+	VerifyPending bool `json:"verifyPending,omitempty"`
+	// 单条复验（worker 复测）状态与结论
+	ReverifyStatus     string `json:"reverifyStatus,omitempty"`
+	ReverifyConclusion string `json:"reverifyConclusion,omitempty"`
+	ReverifyAt         string `json:"reverifyAt,omitempty"`
+	ReverifyBy         string `json:"reverifyBy,omitempty"`
+	ReverifyMessage    string `json:"reverifyMessage,omitempty"`
 }
 
 // VulDetailReq 漏洞详情请求
@@ -932,20 +1047,30 @@ type VulDetailResp struct {
 }
 
 type VulListReq struct {
-	Page       int      `json:"page,default=1"`
-	PageSize   int      `json:"pageSize,default=20"`
-	Query      string   `json:"query,optional"`
-	Authority  string   `json:"authority,optional"`
-	Severity   string   `json:"severity,optional"`
-	Source     string   `json:"source,optional"`
-	Host       string   `json:"host,optional"`
-	Port       int      `json:"port,optional"`
+	Page      int    `json:"page,default=1"`
+	PageSize  int    `json:"pageSize,default=20"`
+	Query     string `json:"query,optional"`
+	Authority string `json:"authority,optional"`
+	Severity  string `json:"severity,optional"`
+	Source    string `json:"source,optional"`
+	Host      string `json:"host,optional"`
+	Port      int    `json:"port,optional"`
 	// Phase 5: 敏感信息/敏感目录页面复用 /vul/list 时下发的固定过滤。
 	// IsRisk 为 nil 时忽略，非 nil 时精确匹配 is_risk 字段。
-	IsRisk     *bool    `json:"isRisk,optional"`
-	RiskSource string   `json:"riskSource,optional"`
+	IsRisk     *bool  `json:"isRisk,optional"`
+	RiskSource string `json:"riskSource,optional"`
 	// KeywordAny：命中 vul_name 或 tags 任一关键字即视为匹配（大小写不敏感）。
 	KeywordAny []string `json:"keywordAny,optional"`
+	// T1.3: 按生命周期状态过滤（open/fixed/ignored）；不传时行为不变
+	Status string `json:"status,optional"`
+	// T4.3: 快速筛选——"🆕 新发现"：仅返回 first_seen_time 在窗口内的漏洞（口径与工作台风险变化卡片 riskNewInWindow 一致）
+	IsNew bool `json:"isNew,optional"`
+	// T4.3: 新发现窗口天数（默认 7，与 dashboard/changes 一致）；仅 IsNew=true 时生效
+	FirstSeenWithinDays int `json:"firstSeenWithinDays,optional"`
+	// T4.3: 快速筛选——"待确认"：仅返回 verify_pending=true 的漏洞（目标不可达、待复验确认）
+	VerifyPending bool `json:"verifyPending,optional"`
+	// T4.3: 排序方式。"severity"=严重度等级降序+first_seen_time降序；不传时维持原 create_time 降序（不回归）
+	Sort string `json:"sort,optional"`
 }
 
 type VulListResp struct {
@@ -963,6 +1088,20 @@ type VulBatchDeleteReq struct {
 	Ids []string `json:"ids"`
 }
 
+// VulUpdateStatusReq 批量更新漏洞生命周期状态（T1.3）
+type VulUpdateStatusReq struct {
+	Ids    []string `json:"ids"`             // 漏洞 ID 列表
+	Status string   `json:"status"`          // open / fixed / ignored
+	Remark string   `json:"remark,optional"` // 忽略/修复备注（可选）
+}
+
+// VulUpdateStatusResp 更新状态响应
+type VulUpdateStatusResp struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	Updated int    `json:"updated"` // 实际更新的条数
+}
+
 // VulStatResp 漏洞统计响应
 type VulStatResp struct {
 	Code     int    `json:"code"`
@@ -975,6 +1114,37 @@ type VulStatResp struct {
 	Info     int    `json:"info"`
 	Week     int    `json:"week"`  // 近7天
 	Month    int    `json:"month"` // 近30天
+	// T1.3: 生命周期状态计数
+	Open    int `json:"open"`
+	Fixed   int `json:"fixed"`
+	Ignored int `json:"ignored"`
+}
+
+// ==================== 工作台变化（T1.5） ====================
+type DashboardChangesReq struct {
+	Days int `json:"days,optional"` // 统计窗口天数，默认 7
+}
+
+type DashboardChangesResp struct {
+	Code  int           `json:"code"`
+	Msg   string        `json:"msg"`
+	Asset *AssetChanges `json:"asset,omitempty"`
+	Risk  *RiskChanges  `json:"risk,omitempty"`
+}
+
+type AssetChanges struct {
+	Total       int64            `json:"total"`                // 资产总数
+	NewInWindow int64            `json:"newInWindow"`          // 窗口内新增资产
+	GrowthRate  float64          `json:"growthRate"`           // 增长率（%）
+	ByCategory  map[string]int64 `json:"byCategory,omitempty"` // 窗口内新增按分类
+}
+
+type RiskChanges struct {
+	Open          int64            `json:"open"`                 // 待处理风险数
+	NewInWindow   int64            `json:"newInWindow"`          // 窗口内新发现风险
+	FixedInWindow int64            `json:"fixedInWindow"`        // 窗口内已修复
+	NetChange     int64            `json:"netChange"`            // 净变化 = 新增 - 已修复
+	BySeverity    map[string]int64 `json:"bySeverity,omitempty"` // 窗口内新增按严重度
 }
 
 // TaskStatResp 任务统计响应
@@ -1108,6 +1278,59 @@ type OnlineImportAllResp struct {
 	TotalPages   int    `json:"totalPages"`   // 总页数
 }
 
+// OnlineImportTaskSubmitResp 导入任务提交响应（返回taskId用于轮询）
+type OnlineImportTaskSubmitResp struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	TaskId string `json:"taskId"`
+}
+
+// OnlineImportTaskProgressReq 查询导入任务进度请求
+type OnlineImportTaskProgressReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// OnlineImportTaskProgressResp 导入任务进度响应
+type OnlineImportTaskProgressResp struct {
+	Code       int    `json:"code"`
+	Msg        string `json:"msg"`
+	TaskId     string `json:"taskId"`
+	Status     string `json:"status"` // running/completed/failed/stopped
+	Total      int    `json:"total"`  // 总条数（全部导入时为预估总数，当前页为当前页条数）
+	Completed  int    `json:"completed"`
+	Imported   int    `json:"imported"` // 成功导入数
+	Skipped    int    `json:"skipped"`  // 跳过数（空host/重复等）
+	ErrorMsg   string `json:"errorMsg,omitempty"`
+	Platform   string `json:"platform"`
+	ImportType string `json:"importType"` // current/all
+	StartTime  string `json:"startTime"`
+	EndTime    string `json:"endTime,omitempty"`
+}
+
+// OnlineImportTaskResultReq 查询导入任务结果请求
+type OnlineImportTaskResultReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// OnlineImportTaskResultResp 导入任务结果响应
+type OnlineImportTaskResultResp struct {
+	Code         int    `json:"code"`
+	Msg          string `json:"msg"`
+	TaskId       string `json:"taskId"`
+	Status       string `json:"status"`
+	Total        int    `json:"total"`
+	Completed    int    `json:"completed"`
+	Imported     int    `json:"imported"`
+	Skipped      int    `json:"skipped"`
+	ErrorMsg     string `json:"errorMsg,omitempty"`
+	Platform     string `json:"platform"`
+	ImportType   string `json:"importType"`
+	StartTime    string `json:"startTime"`
+	EndTime      string `json:"endTime,omitempty"`
+	TotalFetched int    `json:"totalFetched"` // ImportAll专用：API获取到的总条数
+	TotalPages   int    `json:"totalPages"`   // ImportAll专用：总页数
+}
+
 // ==================== API配置 ====================
 type APIConfig struct {
 	Id         string `json:"id"`
@@ -1117,6 +1340,20 @@ type APIConfig struct {
 	Version    string `json:"version"` // fofa版本: v4/v5
 	Status     string `json:"status"`
 	CreateTime string `json:"createTime"`
+	// T3.1 自动拉取配置
+	AutoPullEnabled   bool     `json:"autoPullEnabled"`
+	CronSpec          string   `json:"cronSpec"`
+	Queries           []string `json:"queries"`
+	MaxResultsPerPull int      `json:"maxResultsPerPull"`
+	DailyCallLimit    int      `json:"dailyCallLimit"`
+	// T3.1 拉取运行状态（前端展示）
+	LastPullTime   string `json:"lastPullTime"`
+	LastPullCount  int    `json:"lastPullCount"`
+	LastPullStatus string `json:"lastPullStatus"` // ok/error/quota_exhausted/disabled
+	LastPullError  string `json:"lastPullError"`
+	DailyCallUsed  int    `json:"dailyCallUsed"`
+	DailyCallDate  string `json:"dailyCallDate"`
+	NextRunTime    string `json:"nextRunTime"`
 }
 
 type APIConfigListResp struct {
@@ -1131,6 +1368,35 @@ type APIConfigSaveReq struct {
 	Key      string `json:"key"`
 	Secret   string `json:"secret,optional"`
 	Version  string `json:"version,optional"` // fofa版本: v4/v5
+	Status   string `json:"status,optional"`  // enable/disable
+	// T3.1 自动拉取配置
+	AutoPullEnabled   bool     `json:"autoPullEnabled,optional"`
+	CronSpec          string   `json:"cronSpec,optional"`
+	Queries           []string `json:"queries,optional"`
+	MaxResultsPerPull int      `json:"maxResultsPerPull,optional"`
+	DailyCallLimit    int      `json:"dailyCallLimit,optional"`
+}
+
+// OnlinePullStatusItem 单个平台的自动拉取运行状态（T3.1）
+type OnlinePullStatusItem struct {
+	Platform        string `json:"platform"`
+	AutoPullEnabled bool   `json:"autoPullEnabled"`
+	CronSpec        string `json:"cronSpec"`
+	LastPullTime    string `json:"lastPullTime"`
+	LastPullCount   int    `json:"lastPullCount"`
+	LastPullStatus  string `json:"lastPullStatus"`
+	LastPullError   string `json:"lastPullError"`
+	DailyCallUsed   int    `json:"dailyCallUsed"`
+	DailyCallLimit  int    `json:"dailyCallLimit"`
+	DailyCallDate   string `json:"dailyCallDate"`
+	NextRunTime     string `json:"nextRunTime"`
+}
+
+// OnlinePullStatusResp 自动拉取状态响应（T3.1）
+type OnlinePullStatusResp struct {
+	Code int                    `json:"code"`
+	Msg  string                 `json:"msg"`
+	List []OnlinePullStatusItem `json:"list"`
 }
 
 // ==================== POC标签映射 ====================
@@ -1637,16 +1903,17 @@ type PocValidationResultQueryResp struct {
 // FingerprintBatchValidateReq 批量验证指纹请求
 type FingerprintBatchValidateReq struct {
 	Url   string `json:"url"`            // 目标URL
-	Scope string `json:"scope,optional"` // 范围: all, builtin, custom
+	Scope string `json:"scope,optional"` // 范围: all, builtin, custom, active
 }
 
-// FingerprintBatchValidateResp 批量验证指纹响应
+// FingerprintBatchValidateResp 批量验证指纹响应（异步提交返回taskId）
 type FingerprintBatchValidateResp struct {
 	Code         int                      `json:"code"`
 	Msg          string                   `json:"msg"`
-	MatchedCount int                      `json:"matchedCount"` // 匹配数量
-	Duration     string                   `json:"duration"`     // 耗时
-	Matched      []MatchedFingerprintInfo `json:"matched"`      // 匹配的指纹列表
+	TaskId       string                   `json:"taskId"`       // 异步任务ID，用于轮询进度
+	MatchedCount int                      `json:"matchedCount"` // 匹配数量（同步模式）
+	Duration     string                   `json:"duration"`     // 耗时（同步模式）
+	Matched      []MatchedFingerprintInfo `json:"matched"`      // 匹配的指纹列表（同步模式）
 }
 
 // MatchedFingerprintInfo 匹配的指纹信息
@@ -1654,7 +1921,47 @@ type MatchedFingerprintInfo struct {
 	Id                string `json:"id"`
 	Name              string `json:"name"`
 	IsBuiltin         bool   `json:"isBuiltin"`
+	IsActive          bool   `json:"isActive"`
 	MatchedConditions string `json:"matchedConditions"` // 命中的条件
+}
+
+// FingerprintBatchProgressReq 指纹批量验证进度查询请求
+type FingerprintBatchProgressReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// FingerprintBatchProgressResp 指纹批量验证进度查询响应（轻量，不含结果详情）
+type FingerprintBatchProgressResp struct {
+	Code      int    `json:"code"`
+	Msg       string `json:"msg"`
+	TaskId    string `json:"taskId"`
+	Status    string `json:"status"` // running / completed / failed / stopped
+	Total     int64  `json:"total"`
+	Completed int64  `json:"completed"`
+	Matched   int64  `json:"matched"`
+	Url       string `json:"url"`
+}
+
+// FingerprintBatchResultReq 指纹批量验证结果查询请求
+type FingerprintBatchResultReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// FingerprintBatchResultResp 指纹批量验证结果查询响应
+type FingerprintBatchResultResp struct {
+	Code    int                      `json:"code"`
+	Msg     string                   `json:"msg"`
+	TaskId  string                   `json:"taskId"`
+	Status  string                   `json:"status"`
+	Total   int64                    `json:"total"`
+	Matched int64                    `json:"matched"`
+	Url     string                   `json:"url"`
+	Results []MatchedFingerprintInfo `json:"results"`
+}
+
+// FingerprintBatchStopReq 停止指纹批量验证请求
+type FingerprintBatchStopReq struct {
+	TaskId string `json:"taskId"`
 }
 
 // ==================== HTTP服务设置 ====================
@@ -1816,6 +2123,67 @@ type ReportDetailResp struct {
 type ReportExportReq struct {
 	TaskId string `json:"taskId"`
 	Format string `json:"format,optional"` // excel, pdf (默认excel)
+}
+
+// ==================== 周期报告（日报/周报/月报） T5.1 ====================
+type ReportPeriodicGenerateReq struct {
+	Period      string `json:"period"`       // daily / weekly / monthly
+	End         string `json:"end,optional"` // 截止日期 2006-01-02，默认今天
+	WorkspaceId string `json:"workspaceId,optional"`
+}
+
+// ReportPeriodicItem 周期报告中最紧急事项明细
+type ReportPeriodicItem struct {
+	Key        string `json:"key"` // target_key / authority
+	Summary    string `json:"summary"`
+	Severity   string `json:"severity,omitempty"`
+	RefType    string `json:"refType,omitempty"` // vul / cert
+	CreateTime string `json:"createTime"`
+}
+
+// ReportPeriodicSeverityStat 新增漏洞按严重级别分布
+type ReportPeriodicSeverityStat struct {
+	Critical int64 `json:"critical"`
+	High     int64 `json:"high"`
+	Medium   int64 `json:"medium"`
+	Low      int64 `json:"low"`
+	Info     int64 `json:"info"`
+	Unknown  int64 `json:"unknown"`
+}
+
+// ReportPeriodicTrend 与上一周期对比的环比增量
+type ReportPeriodicTrend struct {
+	NewAssetsDelta int64 `json:"newAssetsDelta"`
+	NewVulnsDelta  int64 `json:"newVulnsDelta"`
+	FixedDelta     int64 `json:"fixedDelta"`
+}
+
+// ReportPeriodicData 周期报告数据
+type ReportPeriodicData struct {
+	Period             string                     `json:"period"`
+	Start              string                     `json:"start"`
+	End                string                     `json:"end"`
+	PrevStart          string                     `json:"prevStart"`
+	PrevEnd            string                     `json:"prevEnd"`
+	NewAssets          int64                      `json:"newAssets"`
+	NewVulns           int64                      `json:"newVulns"`
+	NewVulnsBySeverity ReportPeriodicSeverityStat `json:"newVulnsBySeverity"`
+	Fixed              int64                      `json:"fixed"`
+	TopItems           []ReportPeriodicItem       `json:"topItems"`
+	Trend              ReportPeriodicTrend        `json:"trend"`
+}
+
+type ReportPeriodicGenerateResp struct {
+	Code int                 `json:"code"`
+	Msg  string              `json:"msg"`
+	Data *ReportPeriodicData `json:"data"`
+}
+
+type ReportPeriodicExportReq struct {
+	Period      string `json:"period"`
+	End         string `json:"end,optional"`
+	WorkspaceId string `json:"workspaceId,optional"`
+	Format      string `json:"format,optional"` // excel（默认）
 }
 
 // ==================== 用户扫描配置 ====================
@@ -2356,6 +2724,9 @@ type HighRiskFilter struct {
 	HighRiskPorts         interface{} `json:"highRiskPorts"`         // 高危端口列表（支持 int[] 或 string[]）
 	HighRiskPocSeverities []string    `json:"highRiskPocSeverities"` // 高危POC严重级别: critical, high, medium, low 或中文
 	NewAssetNotify        bool        `json:"newAssetNotify"`        // 新资产发现时通知
+	// T1.4: 明细开关（指针，nil 视为默认开，兼容旧配置缺字段）
+	NewRiskNotify *bool `json:"newRiskNotify,omitempty"` // 新风险明细是否通知（默认开）
+	FixedNotify   *bool `json:"fixedNotify,omitempty"`   // 已修复漏洞是否通知（默认开）
 }
 
 // NotifyConfigListResp 通知配置列表响应
@@ -2452,7 +2823,10 @@ type HighRiskFilterConfig struct {
 	HighRiskPorts         []int    `bson:"high_risk_ports" json:"highRiskPorts"`                  // 高危端口列表
 	HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"` // 高危POC严重级别
 	NewAssetNotify        bool     `bson:"new_asset_notify" json:"newAssetNotify"`                // 新资产发现时通知
-	UpdateTime            string   `bson:"update_time" json:"updateTime"`                         // 更新时间
+	// T1.4: 明细开关（指针，nil 视为默认开，兼容旧配置缺字段）
+	NewRiskNotify *bool  `bson:"new_risk_notify,omitempty" json:"newRiskNotify,omitempty"` // 新风险明细是否通知（默认开）
+	FixedNotify   *bool  `bson:"fixed_notify,omitempty" json:"fixedNotify,omitempty"`      // 已修复漏洞是否通知（默认开）
+	UpdateTime    string `bson:"update_time" json:"updateTime"`                            // 更新时间
 }
 
 // HighRiskFilterConfigResp 高危过滤配置响应
@@ -2469,6 +2843,8 @@ type HighRiskFilterConfigSaveReq struct {
 	HighRiskPorts         []int    `json:"highRiskPorts,optional"`
 	HighRiskPocSeverities []string `json:"highRiskPocSeverities,optional"`
 	NewAssetNotify        bool     `json:"newAssetNotify,optional"`
+	NewRiskNotify         *bool    `json:"newRiskNotify,optional"`
+	FixedNotify           *bool    `json:"fixedNotify,optional"`
 }
 
 // ==================== 资产指纹和端口统计 ====================
@@ -2619,8 +2995,8 @@ type ScanTemplateUseReq struct {
 
 // ThemeConfig 全局主题配置
 type ThemeConfig struct {
-	Theme      string `json:"theme"`      // 主题模式: light/dark/system
-	ColorTheme string `json:"colorTheme"` // 颜色主题: default/pure-white/forest-green/...
+	Theme      string `json:"theme"`                // 主题模式: light/dark/system
+	ThemeStyle string `json:"themeStyle,omitempty"` // 界面款式
 	UpdateTime string `json:"updateTime,omitempty"`
 }
 
@@ -2634,7 +3010,7 @@ type ThemeConfigResp struct {
 // ThemeConfigSaveReq 保存主题配置请求
 type ThemeConfigSaveReq struct {
 	Theme      string `json:"theme"`
-	ColorTheme string `json:"colorTheme"`
+	ThemeStyle string `json:"themeStyle"`
 }
 
 // ==================== 全局品牌配置（Logo / 标题） ====================
@@ -3058,6 +3434,11 @@ type JSFinderResult struct {
 	Response         string   `json:"response,omitempty"`
 	CreateTime       string   `json:"createTime,omitempty"`
 	UpdateTime       string   `json:"updateTime,omitempty"`
+	// AI研判字段
+	AIStatus     string `json:"aiStatus,omitempty"`
+	AIResult     string `json:"aiResult,omitempty"`
+	AIAnalyzedAt string `json:"aiAnalyzedAt,omitempty"`
+	AIReason     string `json:"aiReason,omitempty"`
 }
 
 type SaveJSFinderResultReq struct {
@@ -3067,13 +3448,16 @@ type SaveJSFinderResultReq struct {
 }
 
 type JSFinderListReq struct {
-	WorkspaceId string `json:"workspaceId,optional" form:"workspaceId,optional"`
-	Query       string `json:"query,optional" form:"query,optional"`
-	Page        int    `json:"page,default=1" form:"page,default=1"`
-	PageSize    int    `json:"pageSize,default=10" form:"pageSize,default=10"`
-	Severity    string `json:"severity,optional" form:"severity,optional"`
-	Tags        string `json:"tags,optional" form:"tags,optional"`
-	MatcherName string `json:"matcherName,optional" form:"matcherName,optional"`
+	WorkspaceId string   `json:"workspaceId,optional" form:"workspaceId,optional"`
+	Query       string   `json:"query,optional" form:"query,optional"`
+	Page        int      `json:"page,default=1" form:"page,default=1"`
+	PageSize    int      `json:"pageSize,default=10" form:"pageSize,default=10"`
+	Severity    string   `json:"severity,optional" form:"severity,optional"`
+	Tags        string   `json:"tags,optional" form:"tags,optional"`
+	TagsAny     []string `json:"tagsAny,optional" form:"tagsAny,optional"`
+	MatcherName string   `json:"matcherName,optional" form:"matcherName,optional"`
+	AIResult    string   `json:"aiResult,optional" form:"aiResult,optional"` // risk/no_risk，敏感信息页面传"risk"
+	AIStatus    string   `json:"aiStatus,optional" form:"aiStatus,optional"` // pending/completed
 }
 
 type JSFinderListResp struct {
@@ -3095,6 +3479,390 @@ type JSFinderDetailResp struct {
 	Code int             `json:"code"`
 	Msg  string          `json:"msg"`
 	Data *JSFinderResult `json:"data,omitempty"`
+}
+
+// ==================== JSFinder AI研判 ====================
+
+// JSFinderAIAnalyzeReq 单条AI研判请求
+type JSFinderAIAnalyzeReq struct {
+	WorkspaceId string `json:"workspaceId,optional"`
+	Id          string `json:"id"` // 单条记录ID
+}
+
+// JSFinderAIAnalyzeResp 单条AI研判响应
+type JSFinderAIAnalyzeResp struct {
+	Code int                    `json:"code"`
+	Msg  string                 `json:"msg"`
+	Data *JSFinderAIAnalyzeData `json:"data,omitempty"`
+}
+
+type JSFinderAIAnalyzeData struct {
+	Id           string `json:"id"`
+	AIStatus     string `json:"aiStatus"` // pending/completed
+	AIResult     string `json:"aiResult"` // risk/no_risk
+	AIReason     string `json:"aiReason"`
+	AIAnalyzedAt string `json:"aiAnalyzedAt"`
+}
+
+// JSFinderAIBatchAnalyzeReq 批量研判请求
+// 三种模式：
+// 1. 指定Ids：研判选中的数据
+// 2. 指定筛选条件（Query/Severity/Tags/MatcherName等）：研判符合条件的未研判数据
+// 3. 都不指定：研判所有未研判数据
+type JSFinderAIBatchAnalyzeReq struct {
+	WorkspaceId string   `json:"workspaceId,optional"`
+	Ids         []string `json:"ids,optional"` // 选中的记录ID列表，优先级最高
+
+	// 筛选条件（与列表查询一致，不传则查询所有未研判）
+	Query       string   `json:"query,optional"`
+	Severity    string   `json:"severity,optional"`
+	Tags        string   `json:"tags,optional"`
+	MatcherName string   `json:"matcherName,optional"`
+	TagsAny     []string `json:"tagsAny,optional"`
+	AIStatus    string   `json:"aiStatus,optional"`
+	AIResult    string   `json:"aiResult,optional"`
+}
+
+// JSFinderAIBatchAnalyzeResp 批量研判响应（异步，立即返回任务已启动）
+type JSFinderAIBatchAnalyzeResp struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	TaskId string `json:"taskId"` // 异步任务ID，可用于轮询进度
+	Total  int64  `json:"total"`  // 待研判总数
+}
+
+// JSFinderAIBatchProgressReq 批量研判进度查询
+type JSFinderAIBatchProgressReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// JSFinderAIBatchProgressResp 批量研判进度响应
+type JSFinderAIBatchProgressResp struct {
+	Code      int    `json:"code"`
+	Msg       string `json:"msg"`
+	Total     int64  `json:"total"`
+	Completed int64  `json:"completed"`
+	Status    string `json:"status"` // running/completed/failed/stopped/stopping
+}
+
+// JSFinderAIStopBatchReq 停止批量研判请求
+type JSFinderAIStopBatchReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// JSFinderAIStopBatchResp 停止批量研判响应
+type JSFinderAIStopBatchResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+// ==================== DirScan AI研判 ====================
+
+// DirScanResult 目录扫描结果响应项（与model.DirScanResult对应，时间为字符串）
+type DirScanResult struct {
+	Id            string `json:"id"`
+	WorkspaceId   string `json:"workspaceId"`
+	MainTaskId    string `json:"mainTaskId,omitempty"`
+	Authority     string `json:"authority"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	URL           string `json:"url"`
+	Path          string `json:"path"`
+	StatusCode    int    `json:"statusCode"`
+	ContentLength int64  `json:"contentLength"`
+	ContentType   string `json:"contentType"`
+	Title         string `json:"title"`
+	RedirectURL   string `json:"redirectUrl"`
+	ContentWords  int64  `json:"contentWords"`
+	ContentLines  int64  `json:"contentLines"`
+	Duration      int64  `json:"duration"`
+	Request       string `json:"request,omitempty"`
+	Response      string `json:"response,omitempty"`
+	CreateTime    string `json:"createTime"`
+	UpdateTime    string `json:"updateTime"`
+	ScanTime      string `json:"scanTime,omitempty"`
+	Version       int64  `json:"version,omitempty"`
+	// AI研判字段
+	AIStatus     string `json:"aiStatus,omitempty"`
+	AIResult     string `json:"aiResult,omitempty"`
+	AIAnalyzedAt string `json:"aiAnalyzedAt,omitempty"`
+	AIReason     string `json:"aiReason,omitempty"`
+}
+
+// DirScanResultListReq 目录扫描列表请求
+type DirScanResultListReq struct {
+	WorkspaceId string `json:"workspaceId,optional"`
+	TaskId      string `json:"taskId,optional"`
+	Authority   string `json:"authority,optional"`
+	Url         string `json:"url,optional"`
+	Path        string `json:"path,optional"`
+	StatusCode  int    `json:"statusCode,optional"`
+	SizeMin     *int64 `json:"sizeMin,optional"`
+	SizeMax     *int64 `json:"sizeMax,optional"`
+	Page        int    `json:"page,default=1"`
+	PageSize    int    `json:"pageSize,default=20"`
+	SortField   string `json:"sortField,optional"`
+	SortOrder   string `json:"sortOrder,optional"`
+	Query       string `json:"query,optional"`
+	AIStatus    string `json:"aiStatus,optional"`
+	AIResult    string `json:"aiResult,optional"`
+}
+
+// DirScanResultListResp 目录扫描列表响应
+type DirScanResultListResp struct {
+	Code  int              `json:"code"`
+	Msg   string           `json:"msg"`
+	Total int64            `json:"total"`
+	List  []*DirScanResult `json:"list"`
+}
+
+// DirScanDetailReq 单条详情请求
+type DirScanDetailReq struct {
+	WorkspaceId string `json:"workspaceId,optional"`
+	Id          string `json:"id"`
+}
+
+// DirScanDetailResp 单条详情响应
+type DirScanDetailResp struct {
+	Code int            `json:"code"`
+	Msg  string         `json:"msg"`
+	Data *DirScanResult `json:"data,omitempty"`
+}
+
+// DirScanAIAnalyzeReq 单条AI研判请求
+type DirScanAIAnalyzeReq struct {
+	WorkspaceId string `json:"workspaceId,optional"`
+	Id          string `json:"id"`
+}
+
+// DirScanAIAnalyzeData 单条AI研判返回数据
+type DirScanAIAnalyzeData struct {
+	Id           string `json:"id"`
+	AIStatus     string `json:"aiStatus"`
+	AIResult     string `json:"aiResult"`
+	AIReason     string `json:"aiReason"`
+	AIAnalyzedAt string `json:"aiAnalyzedAt"`
+}
+
+// DirScanAIAnalyzeResp 单条AI研判响应
+type DirScanAIAnalyzeResp struct {
+	Code int                   `json:"code"`
+	Msg  string                `json:"msg"`
+	Data *DirScanAIAnalyzeData `json:"data,omitempty"`
+}
+
+// DirScanAIBatchAnalyzeReq 批量研判请求
+type DirScanAIBatchAnalyzeReq struct {
+	WorkspaceId string   `json:"workspaceId,optional"`
+	Ids         []string `json:"ids,optional"`
+	Query       string   `json:"query,optional"`
+	StatusCode  int      `json:"statusCode,optional"`
+	Path        string   `json:"path,optional"`
+	Authority   string   `json:"authority,optional"`
+}
+
+// DirScanAIBatchAnalyzeResp 批量研判响应
+type DirScanAIBatchAnalyzeResp struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	TaskId string `json:"taskId"`
+	Total  int64  `json:"total"`
+}
+
+// DirScanAIBatchProgressReq 批量研判进度请求
+type DirScanAIBatchProgressReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// DirScanAIBatchProgressResp 批量研判进度响应
+type DirScanAIBatchProgressResp struct {
+	Code      int    `json:"code"`
+	Msg       string `json:"msg"`
+	Total     int64  `json:"total"`
+	Completed int64  `json:"completed"`
+	Status    string `json:"status"`
+}
+
+// DirScanAIStopBatchReq 停止批量研判请求
+type DirScanAIStopBatchReq struct {
+	TaskId string `json:"taskId"`
+}
+
+// DirScanAIStopBatchResp 停止批量研判响应
+type DirScanAIStopBatchResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+// ==================== 证书采集（指纹识别附加产出，ARL 风格） ====================
+
+// CertNameInfo 证书主体/颁发者结构化字段
+type CertNameInfo struct {
+	Country      string `json:"country,omitempty"`
+	Province     string `json:"province,omitempty"`
+	Locality     string `json:"locality,omitempty"`
+	Organization string `json:"organization,omitempty"`
+	OrgUnit      string `json:"orgUnit,omitempty"`
+	CommonName   string `json:"commonName,omitempty"`
+	Email        string `json:"email,omitempty"`
+}
+
+// Cert 证书采集结果（指纹识别阶段附加产出，对齐 model.Cert）
+type Cert struct {
+	Id           string            `json:"id,omitempty"`
+	WorkspaceId  string            `json:"workspaceId,omitempty"`
+	TaskId       string            `json:"taskId,omitempty"`
+	Host         string            `json:"host"`
+	Port         int               `json:"port"`
+	Authority    string            `json:"authority"`
+	Subject      CertNameInfo      `json:"subject"`
+	SubjectDN    string            `json:"subjectDN"`
+	Issuer       CertNameInfo      `json:"issuer"`
+	IssuerDN     string            `json:"issuerDN"`
+	SerialNumber string            `json:"serialNumber"`
+	SigAlg       string            `json:"sigAlg"`
+	NotBefore    string            `json:"notBefore,omitempty"`
+	NotAfter     string            `json:"notAfter,omitempty"`
+	Version      int               `json:"version"`
+	SANs         []string          `json:"sans,omitempty"`
+	Fingerprints map[string]string `json:"fingerprints,omitempty"`
+	IsSelfSigned bool              `json:"isSelfSigned"`
+	CreateTime   string            `json:"createTime,omitempty"`
+	UpdateTime   string            `json:"updateTime,omitempty"`
+}
+
+// SaveCertReq worker 上报证书结果请求
+type SaveCertReq struct {
+	WorkspaceId string  `json:"workspaceId"`
+	MainTaskId  string  `json:"mainTaskId,omitempty"`
+	Results     []*Cert `json:"results"`
+}
+
+// CertListReq 证书列表请求
+type CertListReq struct {
+	WorkspaceId   string `json:"workspaceId,optional" form:"workspaceId,optional"`
+	Query         string `json:"query,optional" form:"query,optional"`                 // 按 host/authority/subjectDN/issuerDN/SAN 模糊匹配
+	Issuer        string `json:"issuer,optional" form:"issuer,optional"`               // 按颁发机构 DN 模糊过滤
+	ExpiredBefore string `json:"expiredBefore,optional" form:"expiredBefore,optional"` // 到期时间 <= 该时间戳（秒）
+	ExpiredAfter  string `json:"expiredAfter,optional" form:"expiredAfter,optional"`   // 到期时间 >= 该时间戳（秒）
+	Sort          string `json:"sort,optional" form:"sort,optional"`                   // notAfter / -notAfter；默认 -notAfter（最紧急在前）
+	Page          int    `json:"page,default=1" form:"page,default=1"`
+	PageSize      int    `json:"pageSize,default=10" form:"pageSize,default=10"`
+}
+
+// CertListResp 证书列表响应
+type CertListResp struct {
+	Code  int     `json:"code"`
+	Msg   string  `json:"msg"`
+	Total int64   `json:"total"`
+	List  []*Cert `json:"list"`
+}
+
+// CertDetailReq 证书详情请求
+type CertDetailReq struct {
+	WorkspaceId string `json:"workspaceId,optional"`
+	Id          string `json:"id"`
+}
+
+// CertDetailResp 证书详情响应
+type CertDetailResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data *Cert  `json:"data,omitempty"`
+}
+
+// ==================== 弱口令/敏感信息持续复验配置（T3.3/T3.4） ====================
+
+// ReverifyConfig 复验配置（API 层表示，对齐 model.ReverifyConfig；与 T3.4 敏感信息复验共用）
+type ReverifyConfig struct {
+	Id               string `json:"id,omitempty"`
+	WorkspaceId      string `json:"workspaceId"`
+	WeakPassEnabled  bool   `json:"weakPassEnabled"`
+	ExposureEnabled  bool   `json:"exposureEnabled"`
+	CronSpec         string `json:"cronSpec"`
+	MaxTargetsPerRun int    `json:"maxTargetsPerRun"`
+	Concurrency      int    `json:"concurrency"`
+	// 运行状态字段（runNow / pull/status 读取）
+	LastRunTime   string `json:"lastRunTime,omitempty"`
+	LastRunStatus string `json:"lastRunStatus,omitempty"`
+	LastRunCount  int    `json:"lastRunCount"`
+	LastRunError  string `json:"lastRunError,omitempty"`
+	NextRunTime   string `json:"nextRunTime,omitempty"`
+	CreateTime    string `json:"createTime,omitempty"`
+	UpdateTime    string `json:"updateTime,omitempty"`
+}
+
+// ReverifyConfigGetReq 获取复验配置请求
+type ReverifyConfigGetReq struct {
+	WorkspaceId string `json:"workspaceId"`
+}
+
+// ReverifyConfigGetResp 获取复验配置响应（无配置时返回默认值，weakPassEnabled=false）
+type ReverifyConfigGetResp struct {
+	Code   int             `json:"code"`
+	Msg    string          `json:"msg"`
+	Config *ReverifyConfig `json:"config"`
+}
+
+// ReverifyConfigSaveReq 保存复验配置请求
+type ReverifyConfigSaveReq struct {
+	WorkspaceId      string `json:"workspaceId"`
+	WeakPassEnabled  bool   `json:"weakPassEnabled"`
+	ExposureEnabled  bool   `json:"exposureEnabled"`
+	CronSpec         string `json:"cronSpec"`
+	MaxTargetsPerRun int    `json:"maxTargetsPerRun"`
+	Concurrency      int    `json:"concurrency"`
+}
+
+// ReverifyConfigSaveResp 保存复验配置响应
+type ReverifyConfigSaveResp struct {
+	Code   int             `json:"code"`
+	Msg    string          `json:"msg"`
+	Config *ReverifyConfig `json:"config"`
+}
+
+// ReverifyRunNowReq 立即触发弱口令复验请求
+type ReverifyRunNowReq struct {
+	WorkspaceId string `json:"workspaceId"`
+}
+
+// ReverifyRunNowResp 立即触发弱口令复验响应
+type ReverifyRunNowResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+// ==================== 单条漏洞复验（人工触发，worker 执行复测，T-复验闭环） ====================
+
+// VulReverifyReq 单条/批量漏洞复验请求（前端点击"复验"按钮触发）
+type VulReverifyReq struct {
+	WorkspaceId string   `json:"workspaceId,optional"` // 缺省时由服务端从上下文推断
+	Ids         []string `json:"ids"`                  // 漏洞 ID 列表
+}
+
+// VulReverifyResp 单条/批量漏洞复验响应
+type VulReverifyResp struct {
+	Code       int      `json:"code"`
+	Msg        string   `json:"msg"`
+	TaskIds    []string `json:"taskIds,omitempty"`    // 下发的复验任务 ID 列表
+	Reverified []string `json:"reverified,omitempty"` // 实际进入复验中的漏洞 ID 列表
+}
+
+// WorkerVulReverifyReq Worker 复测完成后回传的复验结果（worker 专用端点）
+type WorkerVulReverifyReq struct {
+	WorkspaceId string `json:"workspaceId"`
+	VulnId      string `json:"vulnId"`
+	Conclusion  string `json:"conclusion"` // fixed / still_vuln / unreachable / reachable_untested
+	Reviewer    string `json:"reviewer"`
+	Message     string `json:"message"`
+	ReverifyAt  string `json:"reverifyAt"` // RFC3339
+}
+
+// WorkerVulReverifyResp Worker 复验结果回传响应
+type WorkerVulReverifyResp struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	Success bool   `json:"success"`
 }
 
 // ==================== 容器日志 ====================
@@ -3135,9 +3903,9 @@ type ContainerLogLine struct {
 }
 
 type ContainerLogsFetchResp struct {
-	Code int                 `json:"code"`
-	Msg  string              `json:"msg"`
-	List []ContainerLogLine  `json:"list"`
+	Code int                `json:"code"`
+	Msg  string             `json:"msg"`
+	List []ContainerLogLine `json:"list"`
 }
 
 // ==================== 资产目标（顶层资产：IP/主域名） ====================
@@ -3161,19 +3929,19 @@ type AssetTargetListItem struct {
 	TaskCount    int      `json:"taskCount"`
 
 	// Phase 4 burble：list 行内联 exposure/risk 计数（来自 meta denormalize 字段，可能为 0 表示未初始化）
-	ExposureSubdomains int `json:"exposureSubdomains,omitempty"`
-	ExposureIps        int `json:"exposureIps,omitempty"`
-	ExposurePorts      int `json:"exposurePorts,omitempty"`
-	ExposureSites      int `json:"exposureSites,omitempty"`
-	ExposureIcons      int `json:"exposureIcons,omitempty"`
-	ExposureApps       int `json:"exposureApps,omitempty"`
-	ExposureDirs       int `json:"exposureDirs,omitempty"`
-	ExposureJs         int `json:"exposureJs,omitempty"`
+	ExposureSubdomains  int `json:"exposureSubdomains,omitempty"`
+	ExposureIps         int `json:"exposureIps,omitempty"`
+	ExposurePorts       int `json:"exposurePorts,omitempty"`
+	ExposureSites       int `json:"exposureSites,omitempty"`
+	ExposureIcons       int `json:"exposureIcons,omitempty"`
+	ExposureApps        int `json:"exposureApps,omitempty"`
+	ExposureDirs        int `json:"exposureDirs,omitempty"`
+	ExposureJs          int `json:"exposureJs,omitempty"`
 	ExposureScreenshots int `json:"exposureScreenshots,omitempty"`
-	RiskSensitiveInfo  int `json:"riskSensitiveInfo,omitempty"`
-	RiskSensitiveDir   int `json:"riskSensitiveDir,omitempty"`
-	RiskVulnHigh       int `json:"riskVulnHigh,omitempty"`
-	RiskVulnTotal      int `json:"riskVulnTotal,omitempty"`
+	RiskSensitiveInfo   int `json:"riskSensitiveInfo,omitempty"`
+	RiskSensitiveDir    int `json:"riskSensitiveDir,omitempty"`
+	RiskVulnHigh        int `json:"riskVulnHigh,omitempty"`
+	RiskVulnTotal       int `json:"riskVulnTotal,omitempty"`
 }
 
 type AssetTargetListResp struct {
@@ -3200,10 +3968,10 @@ type AssetTargetExposureStats struct {
 }
 
 type AssetTargetRiskStats struct {
-	SensitiveInfo      int                          `json:"sensitiveInfo"`
-	SensitiveDir       int                          `json:"sensitiveDir"`
-	VulnHigh           int                          `json:"vulnHigh"`
-	VulnTotal          int                          `json:"vulnTotal"`
+	SensitiveInfo      int                           `json:"sensitiveInfo"`
+	SensitiveDir       int                           `json:"sensitiveDir"`
+	VulnHigh           int                           `json:"vulnHigh"`
+	VulnTotal          int                           `json:"vulnTotal"`
 	SensitiveInfoItems []AssetTargetSensitiveVulItem `json:"sensitiveInfoItems,omitempty"`
 	SensitiveDirItems  []AssetTargetSensitiveVulItem `json:"sensitiveDirItems,omitempty"`
 	SensitivePathItems []AssetTargetSensitiveDirItem `json:"sensitivePathItems,omitempty"`
@@ -3233,15 +4001,15 @@ type AssetTargetSensitiveDirItem struct {
 }
 
 type AssetTargetDetailData struct {
-	Meta     AssetTargetListItem       `json:"meta"`
-	Exposure AssetTargetExposureStats  `json:"exposure"`
-	Risk     AssetTargetRiskStats      `json:"risk"`
+	Meta     AssetTargetListItem      `json:"meta"`
+	Exposure AssetTargetExposureStats `json:"exposure"`
+	Risk     AssetTargetRiskStats     `json:"risk"`
 }
 
 type AssetTargetDetailResp struct {
-	Code int                    `json:"code"`
-	Msg  string                 `json:"msg"`
-	Data AssetTargetDetailData  `json:"data"`
+	Code int                   `json:"code"`
+	Msg  string                `json:"msg"`
+	Data AssetTargetDetailData `json:"data"`
 }
 
 type AssetTargetUpdateReq struct {

@@ -21,6 +21,7 @@ const (
 	UsernameKey    ContextKey = "username"
 	RoleKey        ContextKey = "role"
 	WorkspaceIdKey ContextKey = "workspaceId"
+	TokenIdKey     ContextKey = "tokenId"
 )
 
 // PATLookup 由调用方注入的 PAT 认证回调。
@@ -144,6 +145,7 @@ func (m *AuthMiddleware) handlePAT(w http.ResponseWriter, r *http.Request, token
 	newCtx = context.WithValue(newCtx, UsernameKey, "")
 	newCtx = context.WithValue(newCtx, RoleKey, role)
 	newCtx = context.WithValue(newCtx, WorkspaceIdKey, r.Header.Get("X-Workspace-Id"))
+	newCtx = context.WithValue(newCtx, TokenIdKey, tokenId.Hex())
 
 	// 异步记录使用信息，避免阻塞请求
 	if m.PATRecorder != nil {
@@ -221,6 +223,14 @@ func GetRole(ctx context.Context) string {
 // GetWorkspaceId 从Context获取工作空间ID
 func GetWorkspaceId(ctx context.Context) string {
 	if v := ctx.Value(WorkspaceIdKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// GetTokenId 从Context获取当前 PAT 的 tokenId（未走 PAT 认证时为空）
+func GetTokenId(ctx context.Context) string {
+	if v := ctx.Value(TokenIdKey); v != nil {
 		return v.(string)
 	}
 	return ""

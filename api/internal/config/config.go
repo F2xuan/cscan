@@ -30,6 +30,8 @@ type DockerConfig struct {
 	ContainerPrefix string   `json:",optional"`
 	ImageRegistry   string   `json:",optional"`
 	ExtraNames      []string `json:",optional"`
+	LogDir          string   `json:",optional"` // 容器日志本地存储目录,默认 log/containers
+	RetentionDays   int      `json:",optional"` // 日志保留天数,默认 7
 }
 
 // LoadSecretFromEnv 从环境变量加载 JWT secret，优先级高于配置文件

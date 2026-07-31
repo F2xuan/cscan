@@ -2,13 +2,11 @@ package middleware
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"time"
 
-	"github.com/redis/go-redis/v9"
+	"cscan/api/internal/svc"
+
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -17,13 +15,13 @@ const WorkerNameKey ContextKey = "workerName"
 
 // WorkerAuthMiddleware Worker认证中间件
 type WorkerAuthMiddleware struct {
-	RedisClient *redis.Client
+	svcCtx *svc.ServiceContext
 }
 
 // NewWorkerAuthMiddleware 创建Worker认证中间件
-func NewWorkerAuthMiddleware(redisClient *redis.Client) *WorkerAuthMiddleware {
+func NewWorkerAuthMiddleware(svcCtx *svc.ServiceContext) *WorkerAuthMiddleware {
 	return &WorkerAuthMiddleware{
-		RedisClient: redisClient,
+		svcCtx: svcCtx,
 	}
 }
 
@@ -42,34 +40,17 @@ func (m *WorkerAuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// 从Redis获取存储的Install Key（带超时，避免 Redis 故障时挂起）
-		installKeyKey := "cscan:worker:install_key"
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		storedKey, err := m.RedisClient.Get(ctx, installKeyKey).Result()
-		cancel()
-
-		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				// 密钥未配置：业务问题，返回 401
-				workerUnauthorized(w, "服务端未配置安装密钥")
-				logx.Errorf("[WorkerAuth] Install key not configured in Redis")
-				return
-			}
+		// 统一双密钥校验（环境变量 CSCAN_WORKER_KEY 或 Redis install_key）
+		valid, infraError := m.svcCtx.ValidateWorkerKey(r.Context(), installKey)
+		if infraError {
 			// Redis 基础设施故障：返回 503，避免 Worker 误认为密钥无效
-			logx.Errorf("[WorkerAuth] Redis unavailable during worker auth: %v", err)
+			logx.Errorf("[WorkerAuth] Auth service unavailable from %s", r.RemoteAddr)
 			workerServiceUnavailable(w, "认证服务暂时不可用")
 			return
 		}
-		if storedKey == "" {
-			workerUnauthorized(w, "服务端未配置安装密钥")
-			logx.Errorf("[WorkerAuth] Install key not configured in Redis")
-			return
-		}
-
-		// 验证Install Key
-		if subtle.ConstantTimeCompare([]byte(installKey), []byte(storedKey)) != 1 {
+		if !valid {
 			workerUnauthorized(w, "Worker认证密钥无效")
-			logx.Errorf("[WorkerAuth] Invalid install key attempt from %s", r.RemoteAddr)
+			logx.Errorf("[WorkerAuth] Invalid worker key attempt from %s", r.RemoteAddr)
 			return
 		}
 

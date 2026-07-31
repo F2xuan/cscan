@@ -61,9 +61,19 @@ func init() {
 	register(http.MethodPost, "/api/v1/vul/stat", Meta{
 		Tag: tag, TagDesc: tagDesc,
 		Summary:     "漏洞统计",
-		Description: "返回当前工作空间漏洞按严重等级（Critical/High/Medium/Low/Info）的分布与近 7 / 30 天增长。",
+		Description: "返回当前工作空间漏洞按严重等级（Critical/High/Medium/Low/Info）的分布与近 7 / 30 天增长，以及生命周期状态计数（open/fixed/ignored）。",
 		RespType:    "VulStatResp",
 		Security:    TierAuth,
+	})
+
+	register(http.MethodPost, "/api/v1/vul/updateStatus", Meta{
+		Tag: tag, TagDesc: tagDesc,
+		Summary:     "批量更新漏洞状态",
+		Description: "批量将漏洞标记为 open / fixed / ignored（T1.3 漏洞生命周期状态机）。返回实际更新的条数。",
+		ReqType:     "VulUpdateStatusReq",
+		RespType:    "VulUpdateStatusResp",
+		Security:    TierAuth,
+		Errors:      []int{400, 10401, 500},
 	})
 
 	RegisterTypes(
@@ -76,5 +86,7 @@ func init() {
 		types.VulDeleteReq{},
 		types.VulBatchDeleteReq{},
 		types.VulStatResp{},
+		types.VulUpdateStatusReq{},
+		types.VulUpdateStatusResp{},
 	)
 }

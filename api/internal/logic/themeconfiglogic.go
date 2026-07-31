@@ -44,8 +44,7 @@ func (l *ThemeConfigGetLogic) ThemeConfigGet() (*types.ThemeConfigResp, error) {
 			Code: 0,
 			Msg:  "success",
 			Config: &types.ThemeConfig{
-				Theme:      "system",
-				ColorTheme: "default",
+				Theme: "system",
 			},
 		}, nil
 	}
@@ -77,7 +76,7 @@ func (l *ThemeConfigSaveLogic) ThemeConfigSave(req *types.ThemeConfigSaveReq) (*
 
 	config := types.ThemeConfig{
 		Theme:      req.Theme,
-		ColorTheme: req.ColorTheme,
+		ThemeStyle: req.ThemeStyle,
 		UpdateTime: time.Now().Format("2006-01-02 15:04:05"),
 	}
 

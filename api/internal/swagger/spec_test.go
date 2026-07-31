@@ -39,8 +39,8 @@ func init() {
 
 func TestSpecHandler_OpenAPIVersion(t *testing.T) {
 	spec := requestSpec(t)
-	if spec["openapi"] != "3.0.0" {
-		t.Fatalf("openapi version: got %v want 3.0.0", spec["openapi"])
+	if spec["openapi"] != "3.0.3" {
+		t.Fatalf("openapi version: got %v want 3.0.3", spec["openapi"])
 	}
 	info, _ := spec["info"].(map[string]interface{})
 	if info["title"] != "CSCAN API" {

@@ -41,6 +41,8 @@ var ExpectedEndpoints = []APIEndpoint{
 	{Method: http.MethodPost, Path: "/api/v1/user/update"},
 	{Method: http.MethodPost, Path: "/api/v1/user/delete"},
 	{Method: http.MethodPost, Path: "/api/v1/user/resetPassword"},
+	{Method: http.MethodPost, Path: "/api/v1/user/onboarding/status"},
+	{Method: http.MethodPost, Path: "/api/v1/user/onboarding/complete"},
 
 	// Workspace
 	{Method: http.MethodPost, Path: "/api/v1/workspace/list"},
@@ -55,9 +57,12 @@ var ExpectedEndpoints = []APIEndpoint{
 	// Asset management
 	{Method: http.MethodPost, Path: "/api/v1/asset/list"},
 	{Method: http.MethodPost, Path: "/api/v1/asset/stat"},
+	{Method: http.MethodPost, Path: "/api/v1/dashboard/changes"},
 	{Method: http.MethodPost, Path: "/api/v1/asset/delete"},
 	{Method: http.MethodPost, Path: "/api/v1/asset/batchDelete"},
 	{Method: http.MethodPost, Path: "/api/v1/asset/clear"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/diff/list"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/diff/stat"},
 
 	// Site management
 	{Method: http.MethodPost, Path: "/api/v1/asset/site/list"},
@@ -104,6 +109,8 @@ var ExpectedEndpoints = []APIEndpoint{
 	{Method: http.MethodPost, Path: "/api/v1/vul/detail"},
 	{Method: http.MethodPost, Path: "/api/v1/vul/stat"},
 	{Method: http.MethodPost, Path: "/api/v1/vul/delete"},
+	{Method: http.MethodPost, Path: "/api/v1/vul/clear"},
+	{Method: http.MethodPost, Path: "/api/v1/vul/updateStatus"},
 
 	// Worker management
 	{Method: http.MethodPost, Path: "/api/v1/worker/list"},
@@ -116,6 +123,7 @@ var ExpectedEndpoints = []APIEndpoint{
 	{Method: http.MethodPost, Path: "/api/v1/onlineapi/import"},
 	{Method: http.MethodPost, Path: "/api/v1/onlineapi/config/list"},
 	{Method: http.MethodPost, Path: "/api/v1/onlineapi/config/save"},
+	{Method: http.MethodPost, Path: "/api/v1/onlineapi/pull/status"},
 
 	// POC management
 	{Method: http.MethodPost, Path: "/api/v1/poc/custom/list"},
@@ -133,12 +141,49 @@ var ExpectedEndpoints = []APIEndpoint{
 	// Report
 	{Method: http.MethodPost, Path: "/api/v1/report/detail"},
 	{Method: http.MethodPost, Path: "/api/v1/report/export"},
+	{Method: http.MethodPost, Path: "/api/v1/report/periodic/generate"},
+	{Method: http.MethodPost, Path: "/api/v1/report/periodic/export"},
+
+	// 开放 API（只读，T5.5）：/api/open/v1/ 前缀，PAT + readonly scope
+	{Method: http.MethodGet, Path: "/api/open/v1/assets"},
+	{Method: http.MethodGet, Path: "/api/open/v1/assets/:id"},
+	{Method: http.MethodGet, Path: "/api/open/v1/vulns"},
+	{Method: http.MethodGet, Path: "/api/open/v1/vulns/:id"},
+	{Method: http.MethodGet, Path: "/api/open/v1/certs"},
+	{Method: http.MethodGet, Path: "/api/open/v1/certs/:id"},
 
 	// Notify
 	{Method: http.MethodPost, Path: "/api/v1/notify/config/list"},
 	{Method: http.MethodPost, Path: "/api/v1/notify/config/save"},
 	{Method: http.MethodPost, Path: "/api/v1/notify/config/delete"},
 	{Method: http.MethodPost, Path: "/api/v1/notify/config/test"},
+
+	// 证书结果（T2.2）
+	{Method: http.MethodPost, Path: "/api/v1/worker/cert/save"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/list"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/stat"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/detail"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/recheck"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/clear"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/batchDelete"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/config/get"},
+	{Method: http.MethodPost, Path: "/api/v1/cert/config/save"},
+
+	// CT 日志子域发现（T3.2）
+	{Method: http.MethodPost, Path: "/api/v1/ct/config/get"},
+	{Method: http.MethodPost, Path: "/api/v1/ct/config/save"},
+	{Method: http.MethodPost, Path: "/api/v1/ct/pull/status"},
+
+	// 弱口令/敏感信息持续复验（T3.3 / T3.4）
+	{Method: http.MethodPost, Path: "/api/v1/vul/reverify/config/get"},
+	{Method: http.MethodPost, Path: "/api/v1/vul/reverify/config/save"},
+	{Method: http.MethodPost, Path: "/api/v1/vul/reverify/runNow"},
+
+	// 新资产自动深度扫描策略（T3.5）
+	{Method: http.MethodPost, Path: "/api/v1/task/autoPolicy/list"},
+	{Method: http.MethodPost, Path: "/api/v1/task/autoPolicy/save"},
+	{Method: http.MethodPost, Path: "/api/v1/task/autoPolicy/delete"},
+	{Method: http.MethodPost, Path: "/api/v1/task/quickCreate"},
 }
 
 // ResponseField represents a required field in API response
@@ -422,8 +467,15 @@ func TestProperty7_APIEndpointBackwardCompatibility(t *testing.T) {
 				return false
 			}
 
-			// Verify endpoint follows API versioning pattern
-			if len(endpoint.Path) < 8 || endpoint.Path[:8] != "/api/v1/" {
+			// Verify endpoint follows API versioning pattern (business or open-api prefix)
+			valid := false
+			if len(endpoint.Path) >= 8 && endpoint.Path[:8] == "/api/v1/" {
+				valid = true
+			}
+		if len(endpoint.Path) >= 13 && endpoint.Path[:13] == "/api/open/v1/" {
+			valid = true
+		}
+			if !valid {
 				return false
 			}
 
@@ -967,8 +1019,15 @@ func TestJSONOmitemptyBehavior(t *testing.T) {
 // Validates: Requirements 9.1
 func TestAPIVersionPrefix(t *testing.T) {
 	for _, ep := range ExpectedEndpoints {
-		if len(ep.Path) < 8 || ep.Path[:8] != "/api/v1/" {
-			t.Errorf("Endpoint %s does not use /api/v1/ prefix", ep.Path)
+		valid := false
+		if len(ep.Path) >= 8 && ep.Path[:8] == "/api/v1/" {
+			valid = true
+		}
+		if len(ep.Path) >= 13 && ep.Path[:13] == "/api/open/v1/" {
+			valid = true
+		}
+		if !valid {
+			t.Errorf("Endpoint %s does not use /api/v1/ or /api/open/v1/ prefix", ep.Path)
 		}
 	}
 }

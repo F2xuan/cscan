@@ -50,6 +50,8 @@ func (l *HighRiskFilterConfigGetLogic) HighRiskFilterConfigGet() (*types.HighRis
 				HighRiskPorts:         []int{},
 				HighRiskPocSeverities: []string{},
 				NewAssetNotify:        false,
+				NewRiskNotify:         nil, // nil 视为默认开
+				FixedNotify:           nil,
 			},
 		}, nil
 	}
@@ -85,6 +87,8 @@ func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.High
 		HighRiskPorts:         convertPortsToIntSlice(req.HighRiskPorts),
 		HighRiskPocSeverities: convertSeveritiesToEnglish(req.HighRiskPocSeverities),
 		NewAssetNotify:        req.NewAssetNotify,
+		NewRiskNotify:         req.NewRiskNotify,
+		FixedNotify:           req.FixedNotify,
 		UpdateTime:            time.Now().Format("2006-01-02 15:04:05"),
 	}
 

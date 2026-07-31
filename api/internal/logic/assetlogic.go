@@ -290,9 +290,15 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 		}
 	}
 
-	// 只看新资产
+	// 只看新资产（旧路径：new 标记，保留兼容）
 	if req.OnlyNew {
 		filter["new"] = true
+	}
+	// T1.2: 新增窗口筛选 —— 基于 first_seen_time 的"近 N 天新增"口径，解决 G1（new 永久 true 造成虚高）。
+	// new 旧路径保留兼容；NewWithinDays=0 表示不过滤。
+	if req.NewWithinDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -req.NewWithinDays)
+		filter["first_seen_time"] = bson.M{"$gte": cutoff}
 	}
 	// 只看有更新
 	if req.OnlyUpdated {
@@ -617,12 +623,13 @@ func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp
 			}
 		}
 
-		// 转换为排序后的列表
-		topPorts = sortMapToStatItemsInt(portMap, 10)
-		topService = sortMapToStatItems(serviceMap, 10)
-		topApp = sortMapToStatItems(appMap, 10)
-		topTitle = sortMapToStatItems(titleMap, 10)
-		topIconHash = sortIconHashMap(iconHashMap, 10)
+		// 转换为排序后的列表（返回top50，前端默认展示top10，支持展开更多）
+		const statTopN = 50
+		topPorts = sortMapToStatItemsInt(portMap, statTopN)
+		topService = sortMapToStatItems(serviceMap, statTopN)
+		topApp = sortMapToStatItems(appMap, statTopN)
+		topTitle = sortMapToStatItems(titleMap, statTopN)
+		topIconHash = sortIconHashMap(iconHashMap, statTopN)
 		riskDistribution = riskMap
 	} else {
 		assetModel := l.svcCtx.GetAssetModel(workspaceId)
@@ -636,8 +643,8 @@ func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp
 			updatedCount = overview.UpdatedCount
 		}
 
-		// Top端口
-		portStats, _ := assetModel.AggregatePort(l.ctx, 10)
+		// Top端口（返回top50，前端默认展示top10）
+		portStats, _ := assetModel.AggregatePort(l.ctx, 50)
 		topPorts = make([]types.StatItem, 0, len(portStats))
 		for _, s := range portStats {
 			topPorts = append(topPorts, types.StatItem{
@@ -647,7 +654,7 @@ func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp
 		}
 
 		// Top服务
-		serviceStats, _ := assetModel.Aggregate(l.ctx, "service", 10)
+		serviceStats, _ := assetModel.Aggregate(l.ctx, "service", 50)
 		topService = make([]types.StatItem, 0, len(serviceStats))
 		for _, s := range serviceStats {
 			topService = append(topService, types.StatItem{
@@ -657,7 +664,7 @@ func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp
 		}
 
 		// Top应用（使用专门的AggregateApp方法展开数组）
-		appStats, _ := assetModel.AggregateApp(l.ctx, 10)
+		appStats, _ := assetModel.AggregateApp(l.ctx, 50)
 		topApp = make([]types.StatItem, 0, len(appStats))
 		for _, s := range appStats {
 			topApp = append(topApp, types.StatItem{
@@ -667,7 +674,7 @@ func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp
 		}
 
 		// Top标题
-		titleStats, _ := assetModel.Aggregate(l.ctx, "title", 10)
+		titleStats, _ := assetModel.Aggregate(l.ctx, "title", 50)
 		topTitle = make([]types.StatItem, 0, len(titleStats))
 		for _, s := range titleStats {
 			if s.Field != "" {
@@ -679,7 +686,7 @@ func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp
 		}
 
 		// Top IconHash
-		iconHashStats, _ := assetModel.AggregateIconHash(l.ctx, 10)
+		iconHashStats, _ := assetModel.AggregateIconHash(l.ctx, 50)
 		topIconHash = make([]types.IconHashStatItem, 0, len(iconHashStats))
 		for _, s := range iconHashStats {
 			iconData := ""
@@ -806,6 +813,9 @@ func (l *AssetClearLogic) AssetClear(workspaceId string) (resp *types.BaseResp, 
 		// 清空对应的资产历史表
 		historyModel := l.svcCtx.GetAssetHistoryModel(wsId)
 		historyModel.Clear(l.ctx)
+
+		// 失效 stat 缓存，避免清空后统计数据残留
+		l.svcCtx.QueryCache.Delete("asset_stat:" + wsId)
 	}
 
 	// 清理可能残留的 all_asset 集合（早期 bug 误写入数据到此集合）
@@ -818,6 +828,161 @@ func (l *AssetClearLogic) AssetClear(workspaceId string) (resp *types.BaseResp, 
 	}
 
 	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 条资产"}, nil
+}
+
+// DomainClearLogic 清空域名
+type DomainClearLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewDomainClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *DomainClearLogic {
+	return &DomainClearLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *DomainClearLogic) DomainClear(workspaceId string) (resp *types.BaseResp, err error) {
+	var totalDeleted int64
+	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	for _, wsId := range workspaceIds {
+		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+		filter := bson.M{
+			"$or": []bson.M{
+				{"category": "domain"},
+				{"domain": bson.M{"$exists": true, "$ne": ""}},
+				{"source": "subfinder"},
+			},
+		}
+		deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
+		totalDeleted += deleted
+	}
+
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 个域名"}, nil
+}
+
+// IPClearLogic 清空 IP
+type IPClearLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewIPClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *IPClearLogic {
+	return &IPClearLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *IPClearLogic) IPClear(workspaceId string) (resp *types.BaseResp, err error) {
+	var totalDeleted int64
+	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	for _, wsId := range workspaceIds {
+		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+		// IP 类型资产：host 是 IP 地址
+		filter := bson.M{
+			"$and": []bson.M{
+				{"host": bson.M{"$exists": true, "$ne": ""}},
+				{"host": bson.M{"$regex": `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$`}},
+			},
+		}
+		deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
+		totalDeleted += deleted
+	}
+
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 个 IP"}, nil
+}
+
+// SiteClearLogic 清空站点
+type SiteClearLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewSiteClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SiteClearLogic {
+	return &SiteClearLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *SiteClearLogic) SiteClear(workspaceId string) (resp *types.BaseResp, err error) {
+	var totalDeleted int64
+	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	for _, wsId := range workspaceIds {
+		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+		// 站点类型资产：有 httpStatus 字段
+		filter := bson.M{
+			"httpStatus": bson.M{"$exists": true, "$ne": ""},
+		}
+		deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
+		totalDeleted += deleted
+	}
+
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 个站点"}, nil
+}
+
+// PortClearLogic 清空端口
+type PortClearLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewPortClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *PortClearLogic {
+	return &PortClearLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *PortClearLogic) PortClear() (resp *types.BaseResp, err error) {
+	// 端口数据来源于资产，清空所有资产即可
+	// 但这里不删除资产本身，仅返回提示（端口是资产的聚合视图）
+	return &types.BaseResp{Code: 0, Msg: "端口数据为资产聚合视图，请通过清空资产来清理端口数据"}, nil
+}
+
+// ScreenshotsClearLogic 清空截图
+type ScreenshotsClearLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewScreenshotsClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ScreenshotsClearLogic {
+	return &ScreenshotsClearLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *ScreenshotsClearLogic) ScreenshotsClear(workspaceId string) (resp *types.BaseResp, err error) {
+	var totalUpdated int64
+	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	for _, wsId := range workspaceIds {
+		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+		result, err := assetModel.UpdateManyByFilter(l.ctx, bson.M{"screenshot": bson.M{"$exists": true, "$ne": ""}}, bson.M{"$set": bson.M{"screenshot": ""}})
+		if err != nil {
+			l.Logger.Errorf("清空工作空间 %s 截图失败: %v", wsId, err)
+			continue
+		}
+		totalUpdated += result
+	}
+
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalUpdated, 10) + " 条截图"}, nil
 }
 
 // AssetHistoryLogic 资产历史记录

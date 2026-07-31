@@ -3,8 +3,8 @@ package logic
 import (
 	"context"
 	"fmt"
-	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"cscan/api/internal/logic/common"
@@ -13,11 +13,55 @@ import (
 	"cscan/model"
 	"cscan/onlineapi"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// onlineImportTaskState 在线导入任务状态
+type onlineImportTaskState struct {
+	mu          sync.RWMutex
+	TaskId      string    `json:"taskId"`
+	Status      string    `json:"status"` // running/completed/failed
+	Total       int       `json:"total"`
+	Completed   int       `json:"completed"`
+	Imported    int       `json:"imported"`
+	Skipped     int       `json:"skipped"`
+	ErrorMsg    string    `json:"errorMsg,omitempty"`
+	Platform    string    `json:"platform"`
+	ImportType  string    `json:"importType"` // current/all
+	StartTime   time.Time `json:"startTime"`
+	EndTime     time.Time `json:"endTime,omitempty"`
+	TotalFetched int      `json:"totalFetched"` // ImportAll专用
+	TotalPages  int       `json:"totalPages"`   // ImportAll专用
+}
+
+// onlineImportTasks 全局任务存储（taskId -> *onlineImportTaskState）
+var onlineImportTasks sync.Map
+
+func init() {
+	// 定期清理已完成/失败超过 1 小时的导入任务，防止内存泄漏
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-1 * time.Hour)
+			onlineImportTasks.Range(func(key, value any) bool {
+				state := value.(*onlineImportTaskState)
+				state.mu.RLock()
+				shouldDelete := (state.Status == "completed" || state.Status == "failed") && state.EndTime.Before(cutoff)
+				state.mu.RUnlock()
+				if shouldDelete {
+					onlineImportTasks.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
+}
+
+// OnlineAPILogic 在线API逻辑
 type OnlineAPILogic struct {
 	ctx context.Context
 	svc *svc.ServiceContext
@@ -25,28 +69,6 @@ type OnlineAPILogic struct {
 
 func NewOnlineAPILogic(ctx context.Context, svc *svc.ServiceContext) *OnlineAPILogic {
 	return &OnlineAPILogic{ctx: ctx, svc: svc}
-}
-
-// parseApps 解析指纹字符串，支持逗号分隔，过滤空值
-func parseApps(product string) []string {
-	if product == "" {
-		return nil
-	}
-
-	var apps []string
-	// 支持中英文逗号分隔
-	parts := strings.FieldsFunc(product, func(r rune) bool {
-		return r == ',' || r == '，' || r == ';' || r == '；'
-	})
-
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			apps = append(apps, p)
-		}
-	}
-
-	return apps
 }
 
 func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq, workspaceId string) (*types.OnlineSearchResp, error) {
@@ -130,151 +152,60 @@ func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq, workspaceId string) 
 	return &types.OnlineSearchResp{Code: 0, Msg: "success", Total: total, List: results}, nil
 }
 
-// extractDomain 从 host 字段中提取域名部分（去除协议前缀、端口、路径）
-// 如果提取结果是 IP 地址则返回空字符串
-func extractDomain(host string) string {
-	cleaned := cleanHost(host)
-	if cleaned == "" {
-		return ""
-	}
-	// 如果是 IP 地址，不作为域名返回
-	if net.ParseIP(cleaned) != nil {
-		return ""
-	}
-	return cleaned
-}
-
-// resolveHostAndDomain 从在线搜索结果中解析 host 和 domain
-// 优先从 rawHost 提取域名作为 host（资产标识），IP 仅存到 Ip 字段
-// 返回值: host（用于 Authority/Host 字段）, domain（用于 Domain 字段）
-func resolveHostAndDomain(rawHost, rawIP, rawDomain string) (host, domain string) {
-	// 从 rawHost 中提取域名（去掉协议/端口/路径）
-	hostDomain := extractDomain(rawHost)
-
-	if hostDomain != "" {
-		// rawHost 是域名（如 "https://ueapp-oss-static.leapmotor.com" → "ueapp-oss-static.leapmotor.com"）
-		host = hostDomain
-		domain = hostDomain
-	} else {
-		// rawHost 是 IP 或为空，用 cleanHost 清理后作为 host
-		host = cleanHost(rawHost)
-		if host == "" {
-			host = rawIP
-		}
-		domain = rawDomain
-	}
-	return
-}
-
-// cleanHost removes protocol, paths, and port from host string
-func cleanHost(host string) string {
-	host = strings.TrimSpace(host)
-	if strings.HasPrefix(host, "http://") {
-		host = strings.TrimPrefix(host, "http://")
-	} else if strings.HasPrefix(host, "https://") {
-		host = strings.TrimPrefix(host, "https://")
-	}
-	// Remove path
-	if idx := strings.Index(host, "/"); idx > 0 {
-		host = host[:idx]
-	}
-	// Remove port if present (e.g. example.com:8080 -> example.com)
-	// Ignore IPv6 brackets for now, assuming standard output from APIs
-	if idx := strings.LastIndex(host, ":"); idx > 0 {
-		// Verify if it's likely a port (not part of IPv6 address without brackets)
-		// Simple check: if there are multiple colons, it might be IPv6.
-		// But usually host:port has only one colon or is [ipv6]:port.
-		// If input is 1.2.3.4:80, colons=1.
-		// If input is example.com:80, colons=1.
-		// If input is ::1, colons>1.
-		if strings.Count(host, ":") == 1 || strings.Contains(host, "]:") {
-			host = host[:idx]
-		}
-	}
-	return host
-}
-
-func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string) (*types.BaseResp, error) {
+// Import 导入当前页资产（同步执行，由handler异步调用并上报进度）
+func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string, state *onlineImportTaskState) (*types.BaseResp, error) {
 	// 将 "all" 解析为真实的默认工作空间，避免写入 all_asset 集合
 	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svc, workspaceId)
 	assetModel := l.svc.GetAssetModel(workspaceId)
+	targetMetaModel := l.svc.GetAssetTargetMetaModel(workspaceId)
 
-	count := 0
-	for _, a := range req.Assets {
-		apps := parseApps(a.Product)
+	imported := 0 // 新增数
+	skipped := 0  // 跳过（空主机 + 已存在）
+	total := len(req.Assets)
 
-		// 优先从 host 字段提取域名作为资产标识，IP 只存到 Ip 字段
-		host, domain := resolveHostAndDomain(a.Host, a.IP, a.Domain)
-
-		// Skip if host is empty
-		if host == "" {
+	for i, a := range req.Assets {
+		// 复用 onlineapi.BuildAsset 公共构造（与定时拉取一致），保持手动导入行为不变
+		asset := onlineapi.BuildAsset(a.Host, a.IP, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.City, a.Banner, a.Product, a.Port, req.Platform)
+		// 手动导入来源固定为 "onlineapi"（批量/拉取路径用 "onlineapi-<platform>"）
+		asset.Source = "onlineapi"
+		// Skip if host is empty（BuildAsset 内部已解析，空 host 视为无效）
+		if asset.Host == "" {
+			skipped++
+			state.mu.Lock()
+			state.Completed = i + 1
+			state.Skipped = skipped
+			state.mu.Unlock()
 			continue
 		}
 
-		// Construct correct Authority format (host:port)
-		authority := fmt.Sprintf("%s:%d", host, a.Port)
-
-		// 自动添加标签
-		// 使用 title case: fofa -> Fofa
-		platformTag := req.Platform
-		if len(platformTag) > 0 {
-			platformTag = strings.ToUpper(platformTag[:1]) + platformTag[1:]
+		// 使用 UpsertWithResult 区分新增和已存在
+		res, err := assetModel.UpsertWithResult(l.ctx, asset)
+		if err != nil {
+			logx.Errorf("Import: upsert asset host=%s failed: %v", asset.Host, err)
+		} else if res.IsNew {
+			imported++
+		} else {
+			// 资产已存在（重复导入），计入跳过
+			skipped++
 		}
-		if platformTag == "" {
-			platformTag = "OnlineAPI"
-		}
-
-		labels := []string{"OnlineAPI", platformTag}
-
-		asset := &model.Asset{
-			Authority: authority,
-			Host:      host,
-			Port:      a.Port,
-			Service:   a.Protocol,
-			Title:     a.Title,
-			App:       apps,
-			Source:    "onlineapi", // 明确来源
-			Labels:    labels,      // 添加标签
-			IsHTTP:    a.Protocol == "http" || a.Protocol == "https",
-			// Map optional fields
-			Domain: domain,
-			Server: a.Server,
-			Banner: a.Banner,
-			// Initialize default fields to ensure compatibility
-			IsNewAsset: true,
-			CreateTime: time.Now(),
-			UpdateTime: time.Now(),
+		// 同步创建/更新顶层资产（AssetTargetMeta），确保资产出现在资产概览中
+		if err := targetMetaModel.EnsureForAsset(l.ctx, workspaceId, asset.Host, asset.Domain, nil); err != nil {
+			logx.Errorf("Import: failed to ensure target meta for host=%s: %v", asset.Host, err)
 		}
 
-		// Populate IP info if available
-		if a.IP != "" {
-			asset.Ip = model.IP{
-				IpV4: []model.IPV4{{IPName: a.IP, Location: a.Country + " " + a.City}},
-			}
-		}
-
-		// 使用 Upsert，如果资产已存在，Upsert 方法内应处理标签合并逻辑(虽然model层目前Upsert是覆盖set，
-		// 但通常导入希望覆盖或标记。如果需要保留原有标签，需要修改Model层逻辑，但作为导入功能，标记来源优先)
-		// 注意：model.Asset.Upsert 目前是 $set labels，会覆盖旧标签。
-		// 为了不覆盖用户已有的自定义标签，我们应该改为 AddLabel 或在 Upsert 中做特殊处理。
-		// 但由于 Upsert 是全量更新，这里我们假设导入是“更新/新增”操作。
-		// 如果想保留原标签，需要先查后更，这会影响性能。
-		// 考虑到性能，暂且覆盖标签或仅在新建时添加。
-		// 修正策略：为了简单且高效，我们让 Upsert 处理基本信息，标签作为属性之一。
-		// 如果资产已存在，用户可能已经打过标签，覆盖可能不妥。
-		// 但在线导入通常是新资产或更新基础信息。
-		// 让我们依赖 model.Asset 的逻辑。当前 logic 中构造了 asset 对象。
-
-		if err := assetModel.Upsert(l.ctx, asset); err == nil {
-			count++
-		}
+		state.mu.Lock()
+		state.Completed = i + 1
+		state.Imported = imported
+		state.Skipped = skipped
+		state.mu.Unlock()
 	}
 
-	return &types.BaseResp{Code: 0, Msg: fmt.Sprintf("成功导入%d条资产", count)}, nil
+	_ = total // total used for state initialization
+	return &types.BaseResp{Code: 0, Msg: fmt.Sprintf("成功新增%d条资产，跳过%d条（空主机/已存在）", imported, skipped)}, nil
 }
 
-// ImportAll 导入全部资产（自动遍历所有页面）
-func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId string) (*types.OnlineImportAllResp, error) {
+// ImportAll 导入全部资产（自动遍历所有页面，同步执行，由handler异步调用并上报进度）
+func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId string, state *onlineImportTaskState) (*types.OnlineImportAllResp, error) {
 	// 先用原始 workspaceId 获取API配置（配置存储在原始集合中）
 	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
 	config, err := configModel.FindByPlatform(l.ctx, req.Platform)
@@ -289,13 +220,22 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 	// 将 "all" 解析为真实的默认工作空间，避免资产写入 all_asset 集合
 	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svc, workspaceId)
 	assetModel := l.svc.GetAssetModel(workspaceId)
+	targetMetaModel := l.svc.GetAssetTargetMetaModel(workspaceId)
 	pageSize := req.PageSize
 	if pageSize <= 0 {
-		pageSize = 100
+		pageSize = 500
 	}
 
-	// Hunter 和 Quake 单次最大 100
-	if req.Platform == "hunter" || req.Platform == "quake" {
+	// 各平台单次最大条数限制：
+	// - FOFA: 单次最大500（高级会员上限），API QPS限制1次/秒，需要足够间隔
+	// - Hunter: 官方限制单次最大100
+	// - Quake: 官方限制单次最大100
+	switch req.Platform {
+	case "fofa":
+		if pageSize > 500 {
+			pageSize = 500
+		}
+	case "hunter", "quake":
 		if pageSize > 100 {
 			pageSize = 100
 		}
@@ -307,9 +247,13 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 
 	totalFetched := 0
 	totalImport := 0
+	totalSkipped := 0
 	currentPage := 1
-	apiTotal := 0        // API 报告的总结果数（Hunter/Quake 有此字段）
-	hasAPITotal := false // 标记是否有可用的 API 总数
+	emptyPageCount := 0  // 连续空页计数（处理API不稳定返回空的情况）
+	const maxEmptyPages = 2
+	// FOFA请求重试参数（QPS限制1次/秒，错误码45012=请求过快）
+	const maxRateLimitRetries = 3
+	const rateLimitWait = 2 * time.Second
 
 PageLoop:
 	for {
@@ -324,18 +268,31 @@ PageLoop:
 		switch req.Platform {
 		case "fofa":
 			client := onlineapi.NewFofaClient(config.Key, config.Version)
-			result, err := client.Search(l.ctx, req.Query, currentPage, pageSize)
-			if err != nil {
-				if currentPage == 1 {
-					return &types.OnlineImportAllResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
+			var result *onlineapi.FofaResult
+			var err error
+			// FOFA限流重试：遇到45012错误等待后重试
+			for retry := 0; retry <= maxRateLimitRetries; retry++ {
+				result, err = client.Search(l.ctx, req.Query, currentPage, pageSize)
+				if err != nil {
+					errStr := err.Error()
+					// 45012 = 请求速度过快，等待后重试
+					if strings.Contains(errStr, "45012") && retry < maxRateLimitRetries {
+						logx.Infof("ImportAll fofa page=%d rate limited (45012), waiting %v before retry %d", currentPage, rateLimitWait, retry+1)
+						time.Sleep(rateLimitWait)
+						continue
+					}
+					if currentPage == 1 {
+						return &types.OnlineImportAllResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
+					}
+					// 非首页错误（非限流），记录日志后终止
+					logx.Errorf("ImportAll fofa page=%d error: %v", currentPage, err)
+					break PageLoop
 				}
-				break PageLoop
+				break
 			}
-			// FOFA 的 size 字段是查询匹配的总结果数，用于判断分页终止
-			if currentPage == 1 && result.Size > 0 {
-				apiTotal = result.Size
-				hasAPITotal = true
-			}
+			// FOFA 的 results 数组长度即为本页返回条数
+			// FOFA API 限制：普通会员最多返回前100条，高级会员前500条，企业版更多
+			// FOFA 的 Size 字段含义：v1版是查询匹配总数，v5版是当前页条数，不依赖此字段
 			rawResultCount = len(result.Results)
 			assets := client.ParseResults(result)
 			for _, a := range assets {
@@ -357,11 +314,13 @@ PageLoop:
 				if currentPage == 1 {
 					return &types.OnlineImportAllResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
 				}
+				logx.Errorf("ImportAll hunter page=%d error: %v", currentPage, err)
 				break PageLoop
 			}
-			if currentPage == 1 {
-				apiTotal = result.Data.Total
-				hasAPITotal = true
+			if currentPage == 1 && result.Data.Total > 0 {
+				state.mu.Lock()
+				state.Total = result.Data.Total
+				state.mu.Unlock()
 			}
 			rawResultCount = len(result.Data.Arr)
 			for _, a := range result.Data.Arr {
@@ -384,14 +343,16 @@ PageLoop:
 				if currentPage == 1 {
 					return &types.OnlineImportAllResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
 				}
+				logx.Errorf("ImportAll quake page=%d error: %v", currentPage, err)
 				break PageLoop
 			}
 			if result.Data.IsExhausted {
 				break PageLoop
 			}
-			if currentPage == 1 {
-				apiTotal = result.Meta.Pagination.Total
-				hasAPITotal = true
+			if currentPage == 1 && result.Meta.Pagination.Total > 0 {
+				state.mu.Lock()
+				state.Total = result.Meta.Pagination.Total
+				state.mu.Unlock()
 			}
 			rawResultCount = len(result.Data.Items)
 			for _, a := range result.Data.Items {
@@ -407,86 +368,81 @@ PageLoop:
 
 		// 没有更多数据了
 		if rawResultCount == 0 {
+			emptyPageCount++
+			if emptyPageCount >= maxEmptyPages {
+				// 连续空页，确认没有更多数据
+				break
+			}
+			// 偶尔空页可能是API不稳定，等待后重试一次
+			if currentPage > 1 {
+				time.Sleep(500 * time.Millisecond)
+				currentPage++
+				continue
+			}
 			break
 		}
+		emptyPageCount = 0 // 重置空页计数
 
 		// 用 API 原始返回条数累加，而非 ParseResults 过滤后的条数
-		// ParseResults 会过滤 len(row)<15 的行，导致 len(results) < rawResultCount
 		totalFetched += rawResultCount
 
 		// 导入当前页的资产
 		for _, a := range results {
-			apps := parseApps(a.Product)
-
-			// 优先从 host 字段提取域名作为资产标识，IP 只存到 Ip 字段
-			host, domain := resolveHostAndDomain(a.Host, a.IP, a.Domain)
-
-			// Skip if host is empty
-			if host == "" {
+			// 复用 onlineapi.BuildAsset 公共构造（与定时拉取一致），保持批量导入行为不变
+			asset := onlineapi.BuildAsset(a.Host, a.IP, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.City, a.Banner, a.Product, a.Port, req.Platform)
+			asset.Source = "onlineapi-" + req.Platform
+			// Skip if host is empty（BuildAsset 内部已解析，空 host 视为无效）
+			if asset.Host == "" {
+				totalSkipped++
+				state.mu.Lock()
+				state.Completed++
+				state.Skipped = totalSkipped
+				state.TotalFetched = totalFetched
+				state.mu.Unlock()
 				continue
 			}
 
-			// Construct correct Authority format (host:port)
-			authority := fmt.Sprintf("%s:%d", host, a.Port)
-
-			// 自动添加标签
-			platformTag := req.Platform
-			if len(platformTag) > 0 {
-				platformTag = strings.ToUpper(platformTag[:1]) + platformTag[1:]
-			}
-			labels := []string{"OnlineAPI", platformTag}
-
-			asset := &model.Asset{
-				Authority: authority,
-				Host:      host,
-				Port:      a.Port,
-				Service:   a.Protocol,
-				Title:     a.Title,
-				App:       apps,
-				Source:    "onlineapi-" + req.Platform, // 明确来源
-				Labels:    labels,                      // 添加标签
-				IsHTTP:    a.Protocol == "http" || a.Protocol == "https",
-				// Map optional fields
-				Domain: domain,
-				Server: a.Server,
-				Banner: a.Banner,
-				// Initialize default fields
-				IsNewAsset: true,
-				CreateTime: time.Now(),
-				UpdateTime: time.Now(),
-			}
-
-			// Populate IP info if available
-			if a.IP != "" {
-				asset.Ip = model.IP{
-					IpV4: []model.IPV4{{IPName: a.IP, Location: a.Country + " " + a.City}},
-				}
-			}
-
-			if err := assetModel.Upsert(l.ctx, asset); err == nil {
+			// 使用 UpsertWithResult 区分新增和已存在
+			res, err := assetModel.UpsertWithResult(l.ctx, asset)
+			if err != nil {
+				logx.Errorf("ImportAll: upsert asset host=%s failed: %v", asset.Host, err)
+			} else if res.IsNew {
 				totalImport++
+			} else {
+				// 资产已存在（重复导入），计入跳过
+				totalSkipped++
 			}
+			// 同步创建/更新顶层资产（AssetTargetMeta），确保资产出现在资产概览中
+			if err := targetMetaModel.EnsureForAsset(l.ctx, workspaceId, asset.Host, asset.Domain, nil); err != nil {
+				logx.Errorf("ImportAll: failed to ensure target meta for host=%s: %v", asset.Host, err)
+			}
+
+			state.mu.Lock()
+			state.Completed++
+			state.Imported = totalImport
+			state.Skipped = totalSkipped
+			state.TotalFetched = totalFetched
+			state.mu.Unlock()
 		}
 
 		// 判断是否还有更多数据
-		if hasAPITotal {
-			// Hunter/Quake 有总数，用总数判断
-			if totalFetched >= apiTotal {
-				break
-			}
-		} else if rawResultCount < pageSize {
-			// FOFA 没有总数字段，用 API 原始返回条数判断（而非解析后的条数，
-			// 因为 ParseResults 会过滤 len(row)<15 的行导致计数偏少）
+		// 如果本页返回条数小于请求的pageSize，说明已经到最后一页
+		if rawResultCount < pageSize {
 			break
 		}
 
 		currentPage++
+
+		// 分页请求间添加足够延迟，避免触发API限流
+		// - FOFA: QPS限制1次/秒，至少间隔1秒
+		// - Hunter/Quake: 间隔1秒保险
+		time.Sleep(1500 * time.Millisecond)
 	}
 
 	totalPages := currentPage
-	msg := fmt.Sprintf("成功导入 %d 条资产", totalImport)
-	if totalFetched > totalImport {
-		msg = fmt.Sprintf("成功导入 %d 条资产（共获取 %d 条，%d 条重复已合并）", totalImport, totalFetched, totalFetched-totalImport)
+	msg := fmt.Sprintf("成功新增 %d 条资产", totalImport)
+	if totalSkipped > 0 {
+		msg += fmt.Sprintf("，跳过 %d 条（空主机/已存在）", totalSkipped)
 	}
 	return &types.OnlineImportAllResp{
 		Code:         0,
@@ -495,6 +451,93 @@ PageLoop:
 		TotalImport:  totalImport,
 		TotalPages:   totalPages,
 	}, nil
+}
+
+// ===== 导入任务进度/结果查询 =====
+
+// SubmitImportTask 提交导入任务（返回taskId）
+// platform/importType/total 在创建时原子写入，避免竞态读取
+func SubmitImportTask(platform, importType string, total int) string {
+	taskId := uuid.New().String()
+	state := &onlineImportTaskState{
+		TaskId:     taskId,
+		Status:     "running",
+		Platform:   platform,
+		ImportType: importType,
+		Total:      total,
+		StartTime:  time.Now(),
+	}
+	onlineImportTasks.Store(taskId, state)
+	return taskId
+}
+
+// GetOnlineImportTaskState 获取任务状态（供handler使用，直接操作state指针）
+func GetOnlineImportTaskState(taskId string) (*onlineImportTaskState, bool) {
+	v, ok := onlineImportTasks.Load(taskId)
+	if !ok {
+		return nil, false
+	}
+	return v.(*onlineImportTaskState), true
+}
+
+// GetImportTaskProgress 获取导入任务进度
+func (l *OnlineAPILogic) GetImportTaskProgress(req *types.OnlineImportTaskProgressReq) (*types.OnlineImportTaskProgressResp, error) {
+	if req.TaskId == "" {
+		return &types.OnlineImportTaskProgressResp{Code: 400, Msg: "任务ID不能为空"}, nil
+	}
+
+	if v, ok := onlineImportTasks.Load(req.TaskId); ok {
+		state := v.(*onlineImportTaskState)
+		state.mu.RLock()
+		defer state.mu.RUnlock()
+		return &types.OnlineImportTaskProgressResp{
+			Code:       0,
+			TaskId:     state.TaskId,
+			Status:     state.Status,
+			Total:      state.Total,
+			Completed:  state.Completed,
+			Imported:   state.Imported,
+			Skipped:    state.Skipped,
+			ErrorMsg:   state.ErrorMsg,
+			Platform:   state.Platform,
+			ImportType: state.ImportType,
+			StartTime:  state.StartTime.Local().Format("2006-01-02 15:04:05.000"),
+			EndTime:    formatOptTime(state.EndTime),
+		}, nil
+	}
+
+	return &types.OnlineImportTaskProgressResp{Code: 404, Msg: "任务不存在或已过期"}, nil
+}
+
+// GetImportTaskResult 获取导入任务结果
+func (l *OnlineAPILogic) GetImportTaskResult(req *types.OnlineImportTaskResultReq) (*types.OnlineImportTaskResultResp, error) {
+	if req.TaskId == "" {
+		return &types.OnlineImportTaskResultResp{Code: 400, Msg: "任务ID不能为空"}, nil
+	}
+
+	if v, ok := onlineImportTasks.Load(req.TaskId); ok {
+		state := v.(*onlineImportTaskState)
+		state.mu.RLock()
+		defer state.mu.RUnlock()
+		return &types.OnlineImportTaskResultResp{
+			Code:         0,
+			TaskId:       state.TaskId,
+			Status:       state.Status,
+			Total:        state.Total,
+			Completed:    state.Completed,
+			Imported:     state.Imported,
+			Skipped:      state.Skipped,
+			ErrorMsg:     state.ErrorMsg,
+			Platform:     state.Platform,
+			ImportType:   state.ImportType,
+			StartTime:    state.StartTime.Local().Format("2006-01-02 15:04:05.000"),
+			EndTime:      formatOptTime(state.EndTime),
+			TotalFetched: state.TotalFetched,
+			TotalPages:   state.TotalPages,
+		}, nil
+	}
+
+	return &types.OnlineImportTaskResultResp{Code: 404, Msg: "任务不存在或已过期"}, nil
 }
 
 func (l *OnlineAPILogic) ConfigList(workspaceId string) (*types.APIConfigListResp, error) {
@@ -520,27 +563,44 @@ func (l *OnlineAPILogic) ConfigList(workspaceId string) (*types.APIConfigListRes
 	return &types.APIConfigListResp{Code: 0, Msg: "success", List: list}, nil
 }
 
+// PullStatus 返回本工作空间各平台的自动拉取运行状态（已废弃：自动拉取迁移至空间引擎定时任务，返回空列表）。
+func (l *OnlineAPILogic) PullStatus(workspaceId string) (*types.OnlinePullStatusResp, error) {
+	return &types.OnlinePullStatusResp{Code: 0, Msg: "success", List: []types.OnlinePullStatusItem{}}, nil
+}
+
 func (l *OnlineAPILogic) ConfigSave(req *types.APIConfigSaveReq, workspaceId string) (*types.BaseResp, error) {
 	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
 
 	if req.Id != "" {
-		update := bson.M{
-			"key":         req.Key,
-			"secret":      req.Secret,
-			"version":     req.Version,
-			"update_time": time.Now(),
+		update := bson.M{"update_time": time.Now()}
+		// 仅在有值时覆盖凭证，避免配置更新时误清空 Key/Secret
+		if req.Key != "" {
+			update["key"] = req.Key
+		}
+		if req.Secret != "" {
+			update["secret"] = req.Secret
+		}
+		if req.Version != "" {
+			update["version"] = req.Version
+		}
+		if req.Status != "" {
+			update["status"] = req.Status
 		}
 		if err := configModel.Update(l.ctx, req.Id, update); err != nil {
 			return &types.BaseResp{Code: 500, Msg: "更新失败"}, nil
 		}
 	} else {
+		status := req.Status
+		if status == "" {
+			status = "enable"
+		}
 		doc := &model.APIConfig{
 			Id:       primitive.NewObjectID(),
 			Platform: req.Platform,
 			Key:      req.Key,
 			Secret:   req.Secret,
 			Version:  req.Version,
-			Status:   "enable",
+			Status:   status,
 		}
 		if err := configModel.Insert(l.ctx, doc); err != nil {
 			return &types.BaseResp{Code: 500, Msg: "保存失败"}, nil
@@ -555,4 +615,12 @@ func maskSecret(s string) string {
 		return "****"
 	}
 	return s[:4] + "****" + s[len(s)-4:]
+}
+
+// formatOptTime 格式化可选时间字段；为零值返回空字符串（避免展示 0001-01-01）
+func formatOptTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Local().Format("2006-01-02 15:04:05.000")
 }

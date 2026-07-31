@@ -132,3 +132,27 @@ func VulStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// VulUpdateStatusHandler 批量更新漏洞生命周期状态（T1.3）
+func VulUpdateStatusHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.VulUpdateStatusReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		if len(req.Ids) == 0 {
+			response.Error(w, xerr.NewParamError("请选择要更新的漏洞"))
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewVulUpdateStatusLogic(r.Context(), svcCtx)
+		resp, err := l.VulUpdateStatus(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

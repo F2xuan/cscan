@@ -149,27 +149,40 @@ if not defined JWT_SECRET (
 goto :eof
 
 :init_env_file
-REM Initialize .env file with JWT secret
+REM Initialize .env file with JWT secret and Worker default key
+set "JWT_EXISTS=0"
+set "WORKER_KEY_EXISTS=0"
 if exist ".env" (
-    REM Check if CSCAN_JWT_SECRET already exists in .env
     findstr /B "CSCAN_JWT_SECRET=" .env >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo [CSCAN] CSCAN_JWT_SECRET already exists in .env, skipping.
-        goto :eof
-    )
-    REM Append to existing .env
+    if !errorlevel! equ 0 set "JWT_EXISTS=1"
+    findstr /B "CSCAN_WORKER_KEY=" .env >nul 2>&1
+    if !errorlevel! equ 0 set "WORKER_KEY_EXISTS=1"
+)
+
+if "!JWT_EXISTS!"=="1" if "!WORKER_KEY_EXISTS!"=="1" (
+    echo [CSCAN] CSCAN_JWT_SECRET and CSCAN_WORKER_KEY already exist in .env, skipping.
+    goto :eof
+)
+
+if not exist ".env" (
+    echo # CSCAN Environment Config (auto-generated, do not commit)> .env
+    echo # JWT Secret: Used for JWT token signing, changing it requires re-login>> .env
+)
+
+if "!JWT_EXISTS!"=="0" (
     call :generate_jwt_secret
     echo. >> .env
     echo # CSCAN JWT Secret (auto-generated, keep secret)>> .env
     echo CSCAN_JWT_SECRET=!JWT_SECRET!>> .env
     echo [CSCAN] Appended CSCAN_JWT_SECRET to .env
-) else (
-    REM Create new .env
+)
+
+if "!WORKER_KEY_EXISTS!"=="0" (
     call :generate_jwt_secret
-    echo # CSCAN Environment Config (auto-generated, do not commit)>> .env
-    echo # JWT Secret: Used for JWT token signing, changing it requires re-login>> .env
-    echo CSCAN_JWT_SECRET=!JWT_SECRET!>> .env
-    echo [CSCAN] Created .env with CSCAN_JWT_SECRET
+    echo. >> .env
+    echo # CSCAN Worker Default Key (auto-generated, default worker auth)>> .env
+    echo CSCAN_WORKER_KEY=!JWT_SECRET!>> .env
+    echo [CSCAN] Appended CSCAN_WORKER_KEY to .env
 )
 goto :eof
 
@@ -204,7 +217,8 @@ echo.
 echo URL: https://localhost:7777
 echo Account: admin / 123456
 echo.
-echo Note: Deploy workers before scanning.
+echo Note: Default worker started with services.
+echo       Install more probes from admin panel if needed.
 echo ========================================
 goto :pause_return
 
@@ -266,12 +280,13 @@ set /p "confirm=Confirm upgrade? Services will restart. (Y/N): "
 if /i not "!confirm!"=="Y" goto :cancel_upgrade
 
 :do_upgrade
+call :init_env_file
 echo [CSCAN] Pulling latest images...
-docker compose pull cscan-api cscan-rpc cscan-web
+docker compose pull cscan-api cscan-rpc cscan-web cscan-worker
 if %errorlevel% neq 0 goto :pull_fail
 
 echo [CSCAN] Restarting services...
-docker compose up -d cscan-api cscan-rpc cscan-web
+docker compose up -d cscan-api cscan-rpc cscan-web cscan-worker
 if %errorlevel% neq 0 goto :restart_fail
 
 echo [CSCAN] Cleaning up old images...
@@ -345,20 +360,23 @@ echo Select Service Log:
 echo 1. cscan-api
 echo 2. cscan-rpc
 echo 3. cscan-web
-echo 4. All Services
+echo 4. cscan-worker
+echo 5. All Services
 echo 0. Back
 set /p "log_opt=Enter option: "
 
 if "%log_opt%"=="1" docker logs -f --tail 100 cscan_api
 if "%log_opt%"=="2" docker logs -f --tail 100 cscan_rpc
 if "%log_opt%"=="3" docker logs -f --tail 100 cscan_web
-if "%log_opt%"=="4" docker compose logs -f --tail 100
+if "%log_opt%"=="4" docker logs -f --tail 100 cscan_worker
+if "%log_opt%"=="5" docker compose logs -f --tail 100
 if "%log_opt%"=="0" goto :main_menu
 goto :pause_return
 
 :start
 echo.
 echo [CSCAN] Starting services...
+call :init_env_file
 docker compose up -d
 if %errorlevel% neq 0 (
     echo [CSCAN] Start failed.
@@ -381,7 +399,7 @@ goto :pause_return
 :restart
 echo.
 echo [CSCAN] Restarting services...
-docker compose restart cscan-api cscan-rpc cscan-web
+docker compose restart cscan-api cscan-rpc cscan-web cscan-worker
 if %errorlevel% neq 0 (
     echo [CSCAN] Restart failed.
     goto :pause_return

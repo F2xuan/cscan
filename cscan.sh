@@ -6,7 +6,7 @@
 # 版本信息
 SCRIPT_VERSION="1.0"
 COMPOSE_FILE="docker-compose.yaml"
-SERVICES=("cscan-api" "cscan-rpc" "cscan-web")
+SERVICES=("cscan-api" "cscan-rpc" "cscan-web" "cscan-worker")
 GITHUB_REPO="tangxiaofeng7/cscan"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 REGISTRY="registry.cn-hangzhou.aliyuncs.com/txf7"
@@ -218,27 +218,45 @@ generate_jwt_secret() {
     fi
 }
 
-# 初始化 .env 文件（JWT Secret 等）
+# 初始化 .env 文件（JWT Secret、Worker Default Key 等）
 init_env_file() {
+    local jwt_exists=false worker_key_exists=false
+
     if [ -f ".env" ]; then
-        # 检查 .env 中是否已有 CSCAN_JWT_SECRET
-        if grep -q "^CSCAN_JWT_SECRET=" .env 2>/dev/null; then
-            info "检测到 .env 中已有 CSCAN_JWT_SECRET，跳过生成"
+        grep -q "^CSCAN_JWT_SECRET=" .env 2>/dev/null && jwt_exists=true
+        grep -q "^CSCAN_WORKER_KEY=" .env 2>/dev/null && worker_key_exists=true
+
+        if [ "$jwt_exists" = true ] && [ "$worker_key_exists" = true ]; then
+            info "检测到 .env 中已有 CSCAN_JWT_SECRET 和 CSCAN_WORKER_KEY，跳过生成"
             return
         fi
-        # 追加到已有 .env
-        local secret=$(generate_jwt_secret)
-        echo "" >> .env
-        echo "# CSCAN JWT Secret (自动生成，请勿泄露)" >> .env
-        echo "CSCAN_JWT_SECRET=${secret}" >> .env
-        info "已在 .env 中追加 CSCAN_JWT_SECRET"
+
+        # 追加缺失的密钥
+        if [ "$jwt_exists" = false ]; then
+            local secret=$(generate_jwt_secret)
+            echo "" >> .env
+            echo "# CSCAN JWT Secret (自动生成，请勿泄露)" >> .env
+            echo "CSCAN_JWT_SECRET=${secret}" >> .env
+            info "已在 .env 中追加 CSCAN_JWT_SECRET"
+        fi
+        if [ "$worker_key_exists" = false ]; then
+            local wkey=$(generate_jwt_secret)
+            echo "" >> .env
+            echo "# CSCAN Worker Default Key (自动生成，默认 Worker 节点认证用，与手动安装密钥独立)" >> .env
+            echo "CSCAN_WORKER_KEY=${wkey}" >> .env
+            info "已在 .env 中追加 CSCAN_WORKER_KEY"
+        fi
     else
         # 创建新的 .env
         local secret=$(generate_jwt_secret)
+        local wkey=$(generate_jwt_secret)
         echo "# CSCAN 环境配置 (自动生成，请勿提交到版本控制)" > .env
         echo "# JWT Secret: 用于签发和验证 JWT Token，更换后已登录用户需重新登录" >> .env
         echo "CSCAN_JWT_SECRET=${secret}" >> .env
-        info "已创建 .env 并生成 CSCAN_JWT_SECRET"
+        echo "" >> .env
+        echo "# Worker Default Key: 默认 Worker 节点认证密钥（与手动安装密钥独立）" >> .env
+        echo "CSCAN_WORKER_KEY=${wkey}" >> .env
+        info "已创建 .env 并生成 CSCAN_JWT_SECRET 和 CSCAN_WORKER_KEY"
     fi
 }
 
@@ -296,6 +314,7 @@ show_version() {
             "cscan-api") container_name="cscan_api" ;;
             "cscan-rpc") container_name="cscan_rpc" ;;
             "cscan-web") container_name="cscan_web" ;;
+            "cscan-worker") container_name="cscan_worker" ;;
         esac
 
         local status=$(docker inspect --format='{{.State.Status}}' "$container_name" 2>/dev/null || echo "未运行")
@@ -325,7 +344,7 @@ wait_for_healthy() {
 
     while [ $elapsed -lt $timeout ]; do
         local all_running=true
-        for service in "cscan_api" "cscan_rpc" "cscan_web"; do
+        for service in "cscan_api" "cscan_rpc" "cscan_web" "cscan_worker"; do
             local status=$(docker inspect --format='{{.State.Status}}' "$service" 2>/dev/null)
             if [ "$status" != "running" ]; then
                 all_running=false
@@ -361,7 +380,7 @@ show_install_success() {
     echo ""
     warning "默认账号: admin / 123456"
     echo ""
-    warning "注意: 执行扫描前需要先部署 Worker 节点"
+    warning "默认 Worker 节点已随服务启动，如需更多节点可在管理后台获取安装命令手动部署"
     echo "========================================"
 }
 
@@ -371,7 +390,7 @@ upgrade_cscan() {
 
     # 检查是否有运行中的容器
     local running=false
-    for service in "cscan_api" "cscan_rpc" "cscan_web"; do
+    for service in "cscan_api" "cscan_rpc" "cscan_web" "cscan_worker"; do
         if docker ps --format '{{.Names}}' | grep -q "^${service}$"; then
             running=true
             break
@@ -407,6 +426,7 @@ upgrade_cscan() {
     fi
 
     # 拉取最新镜像
+    init_env_file
     info "正在拉取最新镜像..."
     $COMPOSE_CMD pull "${SERVICES[@]}" || abort "拉取镜像失败"
 
@@ -458,7 +478,6 @@ uninstall_cscan() {
         for service in "${SERVICES[@]}"; do
             docker rmi "registry.cn-hangzhou.aliyuncs.com/txf7/${service}:latest" 2>/dev/null
         done
-        docker rmi "registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest" 2>/dev/null
         docker rmi "docker.1ms.run/redis:7-alpine" 2>/dev/null
         docker rmi "docker.1ms.run/mongo:6" 2>/dev/null
     fi
@@ -472,7 +491,8 @@ show_logs() {
     echo "1. cscan-api"
     echo "2. cscan-rpc"
     echo "3. cscan-web"
-    echo "4. 所有服务"
+    echo "4. cscan-worker"
+    echo "5. 所有服务"
     echo "0. 返回"
     echo -n "请选择: "
     read opt
@@ -481,7 +501,8 @@ show_logs() {
         1) docker logs -f --tail 100 cscan_api ;;
         2) docker logs -f --tail 100 cscan_rpc ;;
         3) docker logs -f --tail 100 cscan_web ;;
-        4) $COMPOSE_CMD logs -f --tail 100 ;;
+        4) docker logs -f --tail 100 cscan_worker ;;
+        5) $COMPOSE_CMD logs -f --tail 100 ;;
         0) return ;;
         *) warning "无效选项" ;;
     esac
@@ -504,6 +525,7 @@ stop_cscan() {
 # 启动服务
 start_cscan() {
     info "正在启动服务..."
+    init_env_file
     $COMPOSE_CMD up -d || abort "启动失败"
     wait_for_healthy
     info "服务已启动"

@@ -13,5 +13,6 @@ docs/
 .trellis/
 .worktrees/
 /data
+/log
 .codebuddy/
 AGENTS.md

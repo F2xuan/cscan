@@ -110,6 +110,10 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 	vulModel := l.svcCtx.GetVulModel(workspaceId)
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
 
+	// T1.1: 漏洞新增变化快照模型与批量缓冲
+	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB, workspaceId)
+	var vulDiffs []model.ScanDiff
+
 	// 创建资产缓存，减少重复查询
 	assetCache := NewAssetCache()
 
@@ -118,6 +122,7 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 	assetVulCount := make(map[string]int)    // Key: "host:port", Value: vul count
 
 	var savedCount int32
+	var newVulCount int32 // 本次新增的漏洞数（UpsertedCount>0），用于幂等累加 vul_count
 
 	for _, pbVul := range in.Vuls {
 		// 解析 URL 获取 host 和 port（如果 Authority 为空）
@@ -196,6 +201,14 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		if len(pbVul.Tags) > 0 {
 			vul.Tags = pbVul.Tags
 		}
+
+		// T3.3: 打通 risk_source 落库传输链。scanner 层赋值的 RiskSource 在 gRPC/pb 边界被丢弃
+		// （pb.VulDocument 无该字段），故在此按 Source 归一化写入，使复验（FindOpenByRiskSource）
+		// 与风险视图可按来源查询。不强改 is_risk，避免影响既有风险分桶。
+		if rs := deriveRiskSource(pbVul); rs != "" {
+			vul.RiskSource = rs
+		}
+
 		pbVulName := ""
 		if pbVul.VulName != nil {
 			pbVulName = *pbVul.VulName
@@ -205,9 +218,16 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		// 使用Upsert避免重复
 		// Note: The Upsert method in VulModel already handles scan_count and timestamps
 		// which provides basic history tracking through first_seen_time and last_seen_time
-		if err := vulModel.Upsert(ctx, vul); err != nil {
-			l.Logger.Errorf("SaveVulResult: failed to upsert vul: %v", err)
-			continue
+		// 修复 H-5：Upsert 失败立即返回错误给 Worker，Worker 因 gRPC 错误会重试整批，
+		// 避免部分漏洞静默丢失（原实现 continue 后仍返回 Success:true，Worker 停止重试）。
+		res, err := vulModel.Upsert(ctx, vul)
+		if err != nil {
+			l.Logger.Errorf("SaveVulResult: failed to upsert vul (host=%s port=%d poc=%s): %v", host, port, pbVul.PocFile, err)
+			return &pb.SaveVulResultResp{
+				Success: false,
+				Message: fmt.Sprintf("failed to save vul at host=%s port=%d poc=%s: %v", host, port, pbVul.PocFile, err),
+				Total:   savedCount,
+			}, err
 		}
 		savedCount++
 
@@ -217,13 +237,30 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		if val, ok := assetRiskMap[key]; !ok || score > val {
 			assetRiskMap[key] = score
 		}
-		assetVulCount[key]++
+
+		// 修复 H-6：基于本次 UpsertedCount（新增漏洞数）幂等累加 vul_count，
+		// 不再依赖 isMainTaskTerminal 判断。Worker 扫描过程中持续保存漏洞，
+		// 只有真正新增的才累加，避免重复上报导致计数虚高。
+		isNewVul := res != nil && res.UpsertedCount > 0
+		if isNewVul {
+			newVulCount++
+			assetVulCount[key]++
+			// T1.1: 仅当本次为新增漏洞（UpsertedCount>0）才记录 added 快照
+			vulDiffs = append(vulDiffs, model.ScanDiff{
+				TaskId:      in.MainTaskId,
+				WorkspaceId: workspaceId,
+				DiffType:    model.ScanDiffTypeVul,
+				ChangeType:  model.ScanDiffChangeAdded,
+				Severity:    pbVul.Severity,
+				TargetKey:   fmt.Sprintf("%s:%d:%s", host, port, pbVul.PocFile),
+				Summary:     vul.VulName,
+			})
+		}
 	}
 
 	// 批量更新资产风险评分
-	// 仅在任务进入终态（SUCCESS/FAILURE/COMPLETED）时累加 vul_count，避免扫描过程中反复覆盖导致统计虚高
-	// vul_count 使用 $inc 原子累加（本次新增漏洞数），不再用 $set 覆盖
-	isTaskTerminal := l.isMainTaskTerminal(in.MainTaskId, workspaceId)
+	// 修复 H-6：vul_count 使用 $inc 原子累加"本次新增漏洞数"（基于 UpsertedCount 精确统计），
+	// 不再依赖任务终态判断，扫描过程中即可实时更新，且幂等（重复上报相同漏洞不会重复计数）。
 	for key, maxScore := range assetRiskMap {
 		parts := strings.Split(key, ":")
 		if len(parts) != 2 {
@@ -253,41 +290,42 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		setFields := bson.M{
 			"last_scan_time": time.Now(),
 		}
+		needUpdate := false
 		// Update if new score is higher
 		if maxScore > asset.RiskScore {
 			setFields["risk_score"] = maxScore
 			setFields["risk_level"] = riskLevel
+			needUpdate = true
 		}
 
 		rawUpdate := bson.M{
 			"$set": setFields,
 		}
 
-		// 仅在任务终态时累加 vul_count（避免扫描过程中统计虚高/被覆盖）
-		if isTaskTerminal {
-			rawUpdate["$inc"] = bson.M{"vul_count": assetVulCount[key]}
+		// 始终累加本次新增漏洞数（幂等：仅基于 UpsertedCount，重复漏洞不累加）
+		newCount := assetVulCount[key]
+		if newCount > 0 {
+			rawUpdate["$inc"] = bson.M{"vul_count": int(newCount)}
+			needUpdate = true
 		}
 
-		// Also update if this is a new vulnerability (increase count but don't decrease score)
-		if _, exists := assetCache.assets[key]; exists {
-			// Asset was already in cache, update the risk if higher
-			if maxScore > asset.RiskScore {
-				if err := assetModel.UpdateWithRaw(ctx, asset.Id.Hex(), rawUpdate); err != nil {
-					l.Logger.Errorf("Failed to update asset risk: %v", err)
-				}
-			} else if isTaskTerminal {
-				// 风险评分未提升但任务已终态，仍需累加 vul_count
-				if err := assetModel.UpdateWithRaw(ctx, asset.Id.Hex(), rawUpdate); err != nil {
-					l.Logger.Errorf("Failed to update asset vul_count: %v", err)
-				}
+		if needUpdate {
+			if err := assetModel.UpdateWithRaw(ctx, asset.Id.Hex(), rawUpdate); err != nil {
+				l.Logger.Errorf("Failed to update asset risk/vul_count: %v", err)
 			}
-		} else {
-			// New asset, insert it (already done by getOrCreate)
-			l.Logger.Infof("[SaveVulResult] Created new asset for vulnerability: %s:%d, risk_score: %.1f", host, port, maxScore)
 		}
 	}
 
-	l.Logger.Infof("SaveVulResult: saved %d vulnerabilities, updated %d assets", savedCount, len(assetRiskMap))
+	l.Logger.Infof("SaveVulResult: saved %d vulnerabilities (new=%d), updated %d assets", savedCount, newVulCount, len(assetRiskMap))
+
+	// T1.1: 批量写入本次新增漏洞的变化快照。失败仅记录日志，不阻断主流程。
+	if len(vulDiffs) > 0 {
+		if err := diffModel.BatchInsert(ctx, vulDiffs); err != nil {
+			l.Logger.Errorf("[ScanDiff] vul batch insert failed (task=%s): %v", in.MainTaskId, err)
+		} else {
+			l.Logger.Infof("[ScanDiff] wrote %d vul diff records for task=%s", len(vulDiffs), in.MainTaskId)
+		}
+	}
 
 	// 打印保存成功的漏洞详情
 	for _, pbVul := range in.Vuls {
@@ -304,6 +342,18 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		Message: "Vulnerabilities saved successfully",
 		Total:   savedCount,
 	}, nil
+}
+
+// deriveRiskSource 依据漏洞来源（Source）归一化 risk_source，打通 risk 视图落库传输链（T3.3）。
+// 集中在此单点处理，避免改造 gRPC pb / worker mapper / API handler 多环传输。
+func deriveRiskSource(pbVul *pb.VulDocument) string {
+	switch pbVul.Source {
+	case "brutescan":
+		return model.VulRiskSourceWeakPass
+	case "certcheck":
+		return model.VulRiskSourceCertExpiry
+	}
+	return ""
 }
 
 // isMainTaskTerminal 检查主任务是否处于终态（SUCCESS/FAILURE/COMPLETED）

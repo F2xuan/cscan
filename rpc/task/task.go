@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 
+	"cscan/pkg"
 	"cscan/rpc/task/internal/config"
 	"cscan/rpc/task/internal/server"
 	"cscan/rpc/task/internal/svc"
@@ -26,6 +27,12 @@ func main() {
 	conf.MustLoad(*configFile, &c)
 	logx.MustSetup(c.Log)
 	logx.DisableStat()
+
+	// 安装日志过滤器（RPC服务端不需要过滤HTTP access log，但保留接口一致性）
+	originalWriter := logx.Reset()
+	filteredWriter := pkg.NewFilteredLogWriter(originalWriter, []string{})
+	logx.SetWriter(filteredWriter)
+
 	fmt.Println(`
    ______ _____  ______          _   _ 
   / ____/ ____|/ __ \ \        / / | \ | |

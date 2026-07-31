@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"cscan/model"
 	"cscan/pkg/notify"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"
 	"cscan/scheduler"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"google.golang.org/grpc/codes"
@@ -58,16 +60,15 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 		return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
 	}
 
-	// 如果任务完成或失败，清理执行记录
+	// 先读取 taskInfo（workspaceId/mainTaskId 等），再在终态时删除
+	// 修复：原代码先 Del taskInfoKey 再在 updateTaskInDBWithPhase 中 Get，导致 redis: nil
+	var taskInfoData string
 	if state == "SUCCESS" || state == "FAILURE" || state == "COMPLETED" {
-		if err := l.svcCtx.TaskRecoveryManager.RemoveTaskExecution(taskId); err != nil {
-			l.Logger.Errorf("UpdateTask: failed to remove task execution: %v", err)
-		}
-		// 清理任务信息（检查 Redis 错误）
 		taskInfoKey := "cscan:task:info:" + taskId
-		if err := l.svcCtx.RedisClient.Del(ctx, taskInfoKey).Err(); err != nil {
-			l.Logger.Errorf("UpdateTask: failed to Del taskInfo, taskId=%s, error=%v", taskId, err)
-			return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+		if data, err := l.svcCtx.RedisClient.Get(ctx, taskInfoKey).Result(); err == nil {
+			taskInfoData = data
+		} else if err != redis.Nil {
+			l.Logger.Errorf("UpdateTask: failed to Get taskInfo before delete, taskId=%s, error=%v", taskId, err)
 		}
 	}
 
@@ -101,8 +102,19 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 		}
 	}
 
-	// 如果任务完成或失败，添加到完成集合
+	// 如果任务完成或失败，清理执行记录和任务信息
 	if state == "SUCCESS" || state == "FAILURE" || state == "COMPLETED" {
+		if err := l.svcCtx.TaskRecoveryManager.RemoveTaskExecution(taskId); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to remove task execution: %v", err)
+		}
+		// 清理任务信息（检查 Redis 错误）
+		taskInfoKey := "cscan:task:info:" + taskId
+		if err := l.svcCtx.RedisClient.Del(ctx, taskInfoKey).Err(); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to Del taskInfo, taskId=%s, error=%v", taskId, err)
+			return nil, status.Errorf(codes.Unavailable, "redis update failed: %v", err)
+		}
+
+		// 添加到完成集合
 		completedKey := "cscan:task:completed"
 		taskInfo := scheduler.TaskInfo{
 			TaskId: taskId,
@@ -115,7 +127,8 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 	}
 
 	// 更新数据库中的任务状态（包括开始时间、结束时间、进度、当前阶段）
-	l.updateTaskInDBWithPhase(taskId, state, in.Result, in.Phase)
+	// 传入已读取的 taskInfoData，避免再次读取已删除的 key
+	l.updateTaskInDBWithPhase(taskId, state, in.Result, in.Phase, taskInfoData)
 
 	return &pb.UpdateTaskResp{
 		Success: true,
@@ -125,11 +138,12 @@ func (l *UpdateTaskLogic) UpdateTask(in *pb.UpdateTaskReq) (*pb.UpdateTaskResp, 
 
 // updateTaskInDB 更新数据库中的任务状态
 func (l *UpdateTaskLogic) updateTaskInDB(taskId, state, result string) {
-	l.updateTaskInDBWithPhase(taskId, state, result, "")
+	l.updateTaskInDBWithPhase(taskId, state, result, "", "")
 }
 
 // updateTaskInDBWithPhase 更新数据库中的任务状态（包含阶段）
-func (l *UpdateTaskLogic) updateTaskInDBWithPhase(taskId, state, result, phase string) {
+// taskInfoData: 预读取的 taskInfo JSON（终态时由调用方提前读取，避免 Del 后再 Get 导致 redis:nil）
+func (l *UpdateTaskLogic) updateTaskInDBWithPhase(taskId, state, result, phase, taskInfoData string) {
 	// 如果状态为空且阶段为空，只是进度更新，不更新数据库状态
 	if state == "" && phase == "" {
 		l.Logger.Infof("UpdateTask: state and phase are empty for taskId=%s, skipping DB update (progress only)", taskId)
@@ -137,27 +151,42 @@ func (l *UpdateTaskLogic) updateTaskInDBWithPhase(taskId, state, result, phase s
 	}
 
 	// 从Redis获取任务信息（workspaceId）
-	taskInfoKey := "cscan:task:info:" + taskId
-	taskInfoData, err := l.svcCtx.RedisClient.Get(l.ctx, taskInfoKey).Result()
-	if err != nil {
-		l.Logger.Errorf("UpdateTask: failed to get task info from Redis, taskId=%s, error=%v", taskId, err)
-		return
-	}
-
+	// 如果调用方已预读取（终态时 taskInfo 已被 Del），直接使用
 	var taskInfo map[string]interface{}
-	if err := json.Unmarshal([]byte(taskInfoData), &taskInfo); err != nil {
-		l.Logger.Errorf("UpdateTask: failed to parse task info, taskId=%s, error=%v", taskId, err)
-		return
+	if taskInfoData != "" {
+		if err := json.Unmarshal([]byte(taskInfoData), &taskInfo); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to parse pre-read task info, taskId=%s, error=%v", taskId, err)
+			return
+		}
+	} else {
+		taskInfoKey := "cscan:task:info:" + taskId
+		data, err := l.svcCtx.RedisClient.Get(l.ctx, taskInfoKey).Result()
+		if err != nil {
+			l.Logger.Errorf("UpdateTask: failed to get task info from Redis, taskId=%s, error=%v", taskId, err)
+			return
+		}
+		if err := json.Unmarshal([]byte(data), &taskInfo); err != nil {
+			l.Logger.Errorf("UpdateTask: failed to parse task info, taskId=%s, error=%v", taskId, err)
+			return
+		}
 	}
 
 	workspaceId, _ := taskInfo["workspaceId"].(string)
-	mainTaskId, _ := taskInfo["mainTaskId"].(string) // MongoDB ObjectID (Hex)
+	mainTaskId, _ := taskInfo["mainTaskId"].(string) // MongoDB ObjectID (Hex) 或 UUID（快速验证类任务）
 	subTaskCount := 1
 	if count, ok := taskInfo["subTaskCount"].(float64); ok {
 		subTaskCount = int(count)
 	}
 	if workspaceId == "" {
 		l.Logger.Errorf("UpdateTask: workspaceId is empty, taskId=%s", taskId)
+		return
+	}
+
+	// 快速验证类任务（指纹验证、POC验证）的 taskId/mainTaskId 是 UUID 格式，
+	// 不是有效的 MongoDB ObjectID，且这类任务不在 MongoDB 中创建 MainTask 记录，
+	// 因此跳过数据库更新（结果已通过 Redis statusKey 返回给 API）。
+	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
+		l.Logger.Debugf("UpdateTask: taskId=%s has non-ObjectID mainTaskId=%s (quick validation task), skipping DB update", taskId, mainTaskId)
 		return
 	}
 
@@ -268,6 +297,19 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 		return
 	}
 
+	// T1.2: baseline 抑制。首次扫描完成时建立基线；首次扫描产生的新增只入 scan_diff，
+	// 不进通知（避免 G2 通知轰炸）。基线仅建立一次，后续扫描不再抑制。
+	baselineModel := model.NewWorkspaceBaselineModel(l.svcCtx.MongoDB)
+	baselineJustEstablished := false
+	if existing, gerr := baselineModel.Get(l.ctx, workspaceId); gerr == nil && existing == nil {
+		if _, eerr := baselineModel.Establish(l.ctx, workspaceId, mainTaskId); eerr != nil {
+			l.Logger.Errorf("[Baseline] establish failed: %v", eerr)
+		} else {
+			baselineJustEstablished = true
+			l.Logger.Infof("[Baseline] established for workspace=%s task=%s", workspaceId, mainTaskId)
+		}
+	}
+
 	// 获取资产和漏洞统计
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
 	vulModel := l.svcCtx.GetVulModel(workspaceId)
@@ -306,6 +348,8 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 				HighRiskPorts:         c.HighRiskFilter.HighRiskPorts,
 				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
 				NewAssetNotify:        c.HighRiskFilter.NewAssetNotify,
+				NewRiskNotify:         c.HighRiskFilter.NewRiskNotify,
+				FixedNotify:           c.HighRiskFilter.FixedNotify,
 			}
 		}
 		configItems = append(configItems, item)
@@ -389,108 +433,20 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 	// 收集高危信息（用于高危过滤判断）
 	result.HighRiskInfo = l.collectHighRiskInfo(workspaceId, mainTaskId, configItems)
 
+	// T1.2: 首次扫描（刚建立基线）不产生新增资产通知，仅发常规完成通知
+	if baselineJustEstablished && result.HighRiskInfo != nil {
+		result.HighRiskInfo.NewAssetCount = 0
+		result.HighRiskInfo.NewAssetList = nil
+	}
+
 	// 异步发送通知
 	notify.SendNotificationAsync(l.ctx, configItems, result)
 	l.Logger.Infof("sendTaskNotification: notification queued for task %s, status=%s", mainTaskId, status)
 }
 
-// collectHighRiskInfo 收集任务的高危信息
+// collectHighRiskInfo 收集任务的高危信息（委托给公共实现，消除重复 B5）
 func (l *UpdateTaskLogic) collectHighRiskInfo(workspaceId, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
-	// 检查是否有配置启用了高危过滤
-	hasHighRiskFilter := false
-	var allFingerprints []string
-	var allPorts []int
-	var allSeverities []string
-
-	for _, cfg := range configs {
-		if cfg.HighRiskFilter != nil && cfg.HighRiskFilter.Enabled {
-			hasHighRiskFilter = true
-			allFingerprints = append(allFingerprints, cfg.HighRiskFilter.HighRiskFingerprints...)
-			allPorts = append(allPorts, cfg.HighRiskFilter.HighRiskPorts...)
-			allSeverities = append(allSeverities, cfg.HighRiskFilter.HighRiskPocSeverities...)
-		}
-	}
-
-	l.Logger.Infof("[HIGH-RISK COLLECT] workspaceId=%s, mainTaskId=%s, hasHighRiskFilter=%v, fingerprints=%v, ports=%v, severities=%v",
-		workspaceId, mainTaskId, hasHighRiskFilter, allFingerprints, allPorts, allSeverities)
-
-	// 如果没有配置启用高危过滤，不需要收集
-	if !hasHighRiskFilter {
-		return nil
-	}
-
-	info := &notify.HighRiskInfo{
-		HighRiskFingerprints:  []string{},
-		HighRiskPorts:         []int{},
-		HighRiskVulSeverities: make(map[string]int),
-	}
-
-	// 收集高危指纹（从资产的指纹中匹配）
-	if len(allFingerprints) > 0 {
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-		assets, err := assetModel.FindByTaskId(l.ctx, mainTaskId)
-		l.Logger.Infof("[HIGH-RISK COLLECT] Fingerprint check: assetCount=%d, err=%v", len(assets), err)
-		if err == nil {
-			fingerprintSet := make(map[string]bool)
-			for _, fp := range allFingerprints {
-				fingerprintSet[fp] = true
-			}
-			foundFpSet := make(map[string]bool)
-			for _, asset := range assets {
-				for _, fp := range asset.Fingerprints {
-					if fingerprintSet[fp] && !foundFpSet[fp] {
-						info.HighRiskFingerprints = append(info.HighRiskFingerprints, fp)
-						foundFpSet[fp] = true
-					}
-				}
-			}
-			l.Logger.Infof("[HIGH-RISK COLLECT] Found fingerprints: %v", info.HighRiskFingerprints)
-		}
-	}
-
-	// 收集高危端口（从资产的端口中匹配）
-	if len(allPorts) > 0 {
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-		assets, err := assetModel.FindByTaskId(l.ctx, mainTaskId)
-		l.Logger.Infof("[HIGH-RISK COLLECT] Port check: assetCount=%d, err=%v", len(assets), err)
-		if err == nil {
-			portSet := make(map[int]bool)
-			for _, port := range allPorts {
-				portSet[port] = true
-			}
-			foundPortSet := make(map[int]bool)
-			for _, asset := range assets {
-				if portSet[asset.Port] && !foundPortSet[asset.Port] {
-					info.HighRiskPorts = append(info.HighRiskPorts, asset.Port)
-					foundPortSet[asset.Port] = true
-				}
-			}
-			l.Logger.Infof("[HIGH-RISK COLLECT] Found ports: %v", info.HighRiskPorts)
-		}
-	}
-
-	// 收集高危漏洞统计
-	if len(allSeverities) > 0 {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-		vuls, err := vulModel.Find(l.ctx, bson.M{"task_id": mainTaskId}, 0, 0)
-		l.Logger.Infof("[HIGH-RISK COLLECT] Severity check: vulCount=%d, err=%v", len(vuls), err)
-		if err == nil {
-			severitySet := make(map[string]bool)
-			for _, s := range allSeverities {
-				severitySet[s] = true
-			}
-			for _, vul := range vuls {
-				if severitySet[vul.Severity] {
-					info.HighRiskVulSeverities[vul.Severity]++
-					info.HighRiskVulCount++
-				}
-			}
-			l.Logger.Infof("[HIGH-RISK COLLECT] Found severities: %v", info.HighRiskVulSeverities)
-		}
-	}
-
-	l.Logger.Infof("[HIGH-RISK COLLECT] Final result: %+v", info)
-	return info
+	return collectHighRiskInfoShared(l.ctx, l.svcCtx, workspaceId, mainTaskId, configs)
 }
 
 // loadGlobalHighRiskFilter 从 system_config 集合加载全局高危过滤配置
@@ -509,11 +465,13 @@ func (l *UpdateTaskLogic) loadGlobalHighRiskFilter() *notify.HighRiskFilter {
 	}
 
 	var config struct {
-		Enabled               bool     `bson:"enabled" json:"enabled"`
+		Enabled               bool   `bson:"enabled" json:"enabled"`
 		HighRiskFingerprints  []string `bson:"high_risk_fingerprints" json:"highRiskFingerprints"`
-		HighRiskPorts         []int    `bson:"high_risk_ports" json:"highRiskPorts"`
+		HighRiskPorts         []int  `bson:"high_risk_ports" json:"highRiskPorts"`
 		HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"`
-		NewAssetNotify        bool     `bson:"new_asset_notify" json:"newAssetNotify"`
+		NewAssetNotify        bool   `bson:"new_asset_notify" json:"newAssetNotify"`
+		NewRiskNotify         *bool  `bson:"new_risk_notify,omitempty" json:"newRiskNotify,omitempty"`
+		FixedNotify           *bool  `bson:"fixed_notify,omitempty" json:"fixedNotify,omitempty"`
 	}
 
 	if err := bson.Unmarshal(result.Config, &config); err != nil {
@@ -521,8 +479,8 @@ func (l *UpdateTaskLogic) loadGlobalHighRiskFilter() *notify.HighRiskFilter {
 		return nil
 	}
 
-	l.Logger.Infof("loadGlobalHighRiskFilter: enabled=%v, fingerprints=%v, ports=%v, severities=%v, newAsset=%v",
-		config.Enabled, config.HighRiskFingerprints, config.HighRiskPorts, config.HighRiskPocSeverities, config.NewAssetNotify)
+	l.Logger.Infof("loadGlobalHighRiskFilter: enabled=%v, fingerprints=%v, ports=%v, severities=%v, newAsset=%v, newRisk=%v, fixed=%v",
+		config.Enabled, config.HighRiskFingerprints, config.HighRiskPorts, config.HighRiskPocSeverities, config.NewAssetNotify, config.NewRiskNotify, config.FixedNotify)
 
 	return &notify.HighRiskFilter{
 		Enabled:               config.Enabled,
@@ -530,5 +488,20 @@ func (l *UpdateTaskLogic) loadGlobalHighRiskFilter() *notify.HighRiskFilter {
 		HighRiskPorts:         config.HighRiskPorts,
 		HighRiskPocSeverities: config.HighRiskPocSeverities,
 		NewAssetNotify:        config.NewAssetNotify,
+		NewRiskNotify:         config.NewRiskNotify,
+		FixedNotify:           config.FixedNotify,
 	}
+}
+
+// isValidObjectID 判断字符串是否为有效的 MongoDB ObjectID（24位十六进制）
+func isValidObjectID(s string) bool {
+	if len(s) != 24 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

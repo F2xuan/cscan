@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cscan/model"
 	"cscan/pkg/notify"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"
@@ -42,6 +43,20 @@ func (l *IncrSubTaskDoneLogic) IncrSubTaskDone(in *pb.IncrSubTaskDoneReq) (*pb.I
 		return &pb.IncrSubTaskDoneResp{
 			Success: false,
 			Message: "workspaceId or mainTaskId is empty",
+		}, nil
+	}
+
+	// 快速验证类任务（指纹验证、POC验证）的 mainTaskId 是 UUID 格式，
+	// 不是有效的 MongoDB ObjectID，且这类任务不在 MongoDB 中创建 MainTask 记录，
+	// 直接返回成功（结果已通过 Redis statusKey 返回给 API）。
+	if !isValidObjectID(in.MainTaskId) {
+		l.Logger.Debugf("IncrSubTaskDone: mainTaskId=%s is not a valid ObjectID (quick validation task), skipping", in.MainTaskId)
+		return &pb.IncrSubTaskDoneResp{
+			Success:      true,
+			Message:      "ok (quick validation task, no DB record)",
+			SubTaskDone:  1,
+			SubTaskCount: 1,
+			AllDone:      true,
 		}, nil
 	}
 
@@ -138,6 +153,19 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 		return
 	}
 
+	// T1.2: baseline 抑制。首次扫描完成时建立基线；首次扫描产生的新增只入 scan_diff，
+	// 不进通知（避免 G2 通知轰炸）。基线仅建立一次，后续扫描不再抑制。
+	baselineModel := model.NewWorkspaceBaselineModel(l.svcCtx.MongoDB)
+	baselineJustEstablished := false
+	if existing, gerr := baselineModel.Get(l.ctx, workspaceId); gerr == nil && existing == nil {
+		if _, eerr := baselineModel.Establish(l.ctx, workspaceId, mainTaskId); eerr != nil {
+			l.Logger.Errorf("[Baseline] establish failed: %v", eerr)
+		} else {
+			baselineJustEstablished = true
+			l.Logger.Infof("[Baseline] established for workspace=%s task=%s", workspaceId, mainTaskId)
+		}
+	}
+
 	// 获取资产和漏洞统计
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
 	vulModel := l.svcCtx.GetVulModel(workspaceId)
@@ -176,6 +204,8 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 				HighRiskPorts:         c.HighRiskFilter.HighRiskPorts,
 				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
 				NewAssetNotify:        c.HighRiskFilter.NewAssetNotify,
+				NewRiskNotify:         c.HighRiskFilter.NewRiskNotify,
+				FixedNotify:           c.HighRiskFilter.FixedNotify,
 			}
 		}
 		configItems = append(configItems, item)
@@ -237,111 +267,20 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 	// 收集高危信息（用于高危过滤判断）
 	result.HighRiskInfo = l.collectHighRiskInfo(workspaceId, mainTaskId, configItems)
 
+	// T1.2: 首次扫描（刚建立基线）不产生新增资产通知，仅发常规完成通知
+	if baselineJustEstablished && result.HighRiskInfo != nil {
+		result.HighRiskInfo.NewAssetCount = 0
+		result.HighRiskInfo.NewAssetList = nil
+	}
+
 	// 异步发送通知
 	notify.SendNotificationAsync(l.ctx, configItems, result)
 	l.Logger.Infof("sendTaskNotification: notification queued for task %s, status=%s", mainTaskId, status)
 }
 
-// collectHighRiskInfo 收集任务的高危信息
+// collectHighRiskInfo 收集任务的高危信息（委托给公共实现，消除重复 B5）
 func (l *IncrSubTaskDoneLogic) collectHighRiskInfo(workspaceId, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
-	// 检查是否有配置启用了高危过滤
-	hasHighRiskFilter := false
-	hasNewAssetNotify := false
-	var allFingerprints []string
-	var allPorts []int
-	var allSeverities []string
-
-	for _, cfg := range configs {
-		if cfg.HighRiskFilter != nil && cfg.HighRiskFilter.Enabled {
-			hasHighRiskFilter = true
-			allFingerprints = append(allFingerprints, cfg.HighRiskFilter.HighRiskFingerprints...)
-			allPorts = append(allPorts, cfg.HighRiskFilter.HighRiskPorts...)
-			allSeverities = append(allSeverities, cfg.HighRiskFilter.HighRiskPocSeverities...)
-			if cfg.HighRiskFilter.NewAssetNotify {
-				hasNewAssetNotify = true
-			}
-		}
-	}
-
-	// 如果没有配置启用高危过滤，不需要收集
-	if !hasHighRiskFilter {
-		return nil
-	}
-
-	info := &notify.HighRiskInfo{
-		HighRiskFingerprints:  []string{},
-		HighRiskPorts:         []int{},
-		HighRiskVulSeverities: make(map[string]int),
-	}
-
-	// 收集高危指纹（从资产的指纹中匹配）
-	if len(allFingerprints) > 0 {
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-		assets, err := assetModel.FindByTaskId(l.ctx, mainTaskId)
-		if err == nil {
-			fingerprintSet := make(map[string]bool)
-			for _, fp := range allFingerprints {
-				fingerprintSet[fp] = true
-			}
-			foundFpSet := make(map[string]bool)
-			for _, asset := range assets {
-				for _, fp := range asset.Fingerprints {
-					if fingerprintSet[fp] && !foundFpSet[fp] {
-						info.HighRiskFingerprints = append(info.HighRiskFingerprints, fp)
-						foundFpSet[fp] = true
-					}
-				}
-			}
-		}
-	}
-
-	// 收集高危端口（从资产的端口中匹配）
-	if len(allPorts) > 0 {
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-		assets, err := assetModel.FindByTaskId(l.ctx, mainTaskId)
-		if err == nil {
-			portSet := make(map[int]bool)
-			for _, port := range allPorts {
-				portSet[port] = true
-			}
-			foundPortSet := make(map[int]bool)
-			for _, asset := range assets {
-				if portSet[asset.Port] && !foundPortSet[asset.Port] {
-					info.HighRiskPorts = append(info.HighRiskPorts, asset.Port)
-					foundPortSet[asset.Port] = true
-				}
-			}
-		}
-	}
-
-	// 收集高危漏洞统计
-	if len(allSeverities) > 0 {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-		vuls, err := vulModel.Find(l.ctx, bson.M{"task_id": mainTaskId}, 0, 0)
-		if err == nil {
-			severitySet := make(map[string]bool)
-			for _, s := range allSeverities {
-				severitySet[s] = true
-			}
-			for _, vul := range vuls {
-				if severitySet[vul.Severity] {
-					info.HighRiskVulSeverities[vul.Severity]++
-					info.HighRiskVulCount++
-				}
-			}
-		}
-	}
-
-	// 收集新资产数量（如果启用了新资产通知）
-	if hasNewAssetNotify {
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-		newAssetCount, err := assetModel.CountNewByTaskId(l.ctx, mainTaskId)
-		if err == nil {
-			info.NewAssetCount = int(newAssetCount)
-		}
-	}
-
-	return info
+	return collectHighRiskInfoShared(l.ctx, l.svcCtx, workspaceId, mainTaskId, configs)
 }
 
 // loadGlobalHighRiskFilter 从 system_config 集合加载全局高危过滤配置
@@ -359,11 +298,13 @@ func (l *IncrSubTaskDoneLogic) loadGlobalHighRiskFilter() *notify.HighRiskFilter
 	}
 
 	var config struct {
-		Enabled               bool     `bson:"enabled" json:"enabled"`
+		Enabled               bool   `bson:"enabled" json:"enabled"`
 		HighRiskFingerprints  []string `bson:"high_risk_fingerprints" json:"highRiskFingerprints"`
-		HighRiskPorts         []int    `bson:"high_risk_ports" json:"highRiskPorts"`
+		HighRiskPorts         []int  `bson:"high_risk_ports" json:"highRiskPorts"`
 		HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"`
-		NewAssetNotify        bool     `bson:"new_asset_notify" json:"newAssetNotify"`
+		NewAssetNotify        bool   `bson:"new_asset_notify" json:"newAssetNotify"`
+		NewRiskNotify         *bool  `bson:"new_risk_notify,omitempty" json:"newRiskNotify,omitempty"`
+		FixedNotify           *bool  `bson:"fixed_notify,omitempty" json:"fixedNotify,omitempty"`
 	}
 
 	if err := bson.Unmarshal(result.Config, &config); err != nil {
@@ -377,6 +318,8 @@ func (l *IncrSubTaskDoneLogic) loadGlobalHighRiskFilter() *notify.HighRiskFilter
 		HighRiskPorts:         config.HighRiskPorts,
 		HighRiskPocSeverities: config.HighRiskPocSeverities,
 		NewAssetNotify:        config.NewAssetNotify,
+		NewRiskNotify:         config.NewRiskNotify,
+		FixedNotify:           config.FixedNotify,
 	}
 }
 

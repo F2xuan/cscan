@@ -2039,6 +2039,7 @@ type ValidateFingerprintReq struct {
 	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`                     // 目标URL
 	FingerprintId string                 `protobuf:"bytes,2,opt,name=fingerprintId,proto3" json:"fingerprintId,omitempty"` // 指纹ID（可选，为空则验证所有）
 	Scope         string                 `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`                 // 范围: all, builtin, custom
+	ActiveFpId    string                 `protobuf:"bytes,4,opt,name=activeFpId,proto3" json:"activeFpId,omitempty"`       // 主动指纹ID（验证主动指纹时使用）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2090,6 +2091,13 @@ func (x *ValidateFingerprintReq) GetFingerprintId() string {
 func (x *ValidateFingerprintReq) GetScope() string {
 	if x != nil {
 		return x.Scope
+	}
+	return ""
+}
+
+func (x *ValidateFingerprintReq) GetActiveFpId() string {
+	if x != nil {
+		return x.ActiveFpId
 	}
 	return ""
 }
@@ -2181,6 +2189,7 @@ type ValidateFingerprintResp struct {
 	Duration      string                    `protobuf:"bytes,5,opt,name=duration,proto3" json:"duration,omitempty"`          // 耗时
 	Details       string                    `protobuf:"bytes,6,opt,name=details,proto3" json:"details,omitempty"`            // 单个指纹验证详情
 	MatchedList   []*MatchedFingerprintInfo `protobuf:"bytes,7,rep,name=matchedList,proto3" json:"matchedList,omitempty"`    // 批量验证匹配列表
+	TaskId        string                    `protobuf:"bytes,8,opt,name=taskId,proto3" json:"taskId,omitempty"`              // 任务ID（用于查询异步结果）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2262,6 +2271,13 @@ func (x *ValidateFingerprintResp) GetMatchedList() []*MatchedFingerprintInfo {
 		return x.MatchedList
 	}
 	return nil
+}
+
+func (x *ValidateFingerprintResp) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
 }
 
 // POC验证请求
@@ -4039,17 +4055,20 @@ const file_task_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12=\n" +
 	"\ffingerprints\x18\x03 \x03(\v2\x19.task.FingerprintDocumentR\ffingerprints\x12\x14\n" +
-	"\x05count\x18\x04 \x01(\x05R\x05count\"f\n" +
+	"\x05count\x18\x04 \x01(\x05R\x05count\"\x86\x01\n" +
 	"\x16ValidateFingerprintReq\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12$\n" +
 	"\rfingerprintId\x18\x02 \x01(\tR\rfingerprintId\x12\x14\n" +
-	"\x05scope\x18\x03 \x01(\tR\x05scope\"\xa4\x01\n" +
+	"\x05scope\x18\x03 \x01(\tR\x05scope\x12\x1e\n" +
+	"\n" +
+	"activeFpId\x18\x04 \x01(\tR\n" +
+	"activeFpId\"\xa4\x01\n" +
 	"\x16MatchedFingerprintInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
 	"\bcategory\x18\x03 \x01(\tR\bcategory\x12\x1c\n" +
 	"\tisBuiltin\x18\x04 \x01(\bR\tisBuiltin\x12,\n" +
-	"\x11matchedConditions\x18\x05 \x01(\tR\x11matchedConditions\"\x81\x02\n" +
+	"\x11matchedConditions\x18\x05 \x01(\tR\x11matchedConditions\"\x99\x02\n" +
 	"\x17ValidateFingerprintResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
@@ -4057,7 +4076,8 @@ const file_task_proto_rawDesc = "" +
 	"\fmatchedCount\x18\x04 \x01(\x05R\fmatchedCount\x12\x1a\n" +
 	"\bduration\x18\x05 \x01(\tR\bduration\x12\x18\n" +
 	"\adetails\x18\x06 \x01(\tR\adetails\x12>\n" +
-	"\vmatchedList\x18\a \x03(\v2\x1c.task.MatchedFingerprintInfoR\vmatchedList\"\xb4\x02\n" +
+	"\vmatchedList\x18\a \x03(\v2\x1c.task.MatchedFingerprintInfoR\vmatchedList\x12\x16\n" +
+	"\x06taskId\x18\b \x01(\tR\x06taskId\"\xb4\x02\n" +
 	"\x0eValidatePocReq\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x14\n" +
 	"\x05pocId\x18\x02 \x01(\tR\x05pocId\x12\x18\n" +

@@ -35,6 +35,10 @@ func NewCheckTaskLogic(ctx context.Context, svcCtx *svc.ServiceContext) *CheckTa
 // 当 svcCtx.Scheduler.IsPriorityBucketEnabled()=true 时，公共队列走 5 级分桶路径
 // 用单 Lua 脚本原子完成 Worker 专属队列 + p4~p0 分桶弹出 + taskInfo/execution 持久化
 // 修复历史问题：原 CheckTask 只读 cscan:task:queue 单 ZSet，分桶开启后任务无法被消费
+//
+// 长轮询机制：队列为空时订阅 Pub/Sub "cscan:task:available"，等待新任务通知，
+// 最长等待 longPollTimeout（默认 25s），被唤醒或超时后重试弹出。
+// 这将 Worker 空闲时的空轮询频率从 2~10s/次 降低到接近 0。
 func (l *CheckTaskLogic) CheckTask(in *pb.CheckTaskReq) (*pb.CheckTaskResp, error) {
 	// 说明：不在函数入口回写 l.ctx 加超时。原实现 l.ctx = ctx 会把 5s 超时的 ctx
 	// 留在 struct 字段，defer cancel() 后任何逃逸使用 l.ctx 的代码会拿到已取消的 context。
@@ -46,31 +50,93 @@ func (l *CheckTaskLogic) CheckTask(in *pb.CheckTaskReq) (*pb.CheckTaskResp, erro
 	workerQueueKey := "cscan:task:queue:worker:" + strings.ToLower(workerName)
 	processingKey := "cscan:task:processing"
 
+	// 第一次尝试：立即弹出任务
+	if task := l.tryPopTask(workerQueueKey, publicQueueKey, processingKey, workerName); task != nil {
+		return task, nil
+	}
+
+	// 队列为空，进入长轮询等待
+	// 等待 Pub/Sub 通知或超时，最长 25 秒（HTTP 超时通常 30s+，留 5s 余量）
+	return l.waitForTask(workerQueueKey, publicQueueKey, processingKey, workerName)
+}
+
+// tryPopTask 尝试从队列中弹出一个任务，成功返回任务，失败返回 nil
+func (l *CheckTaskLogic) tryPopTask(workerQueueKey, publicQueueKey, processingKey, workerName string) *pb.CheckTaskResp {
 	// 分桶路径：单脚本原子完成 Worker 专属队列 + 5 级公共分桶弹出
 	if l.svcCtx.Scheduler != nil && l.svcCtx.Scheduler.IsPriorityBucketEnabled() {
-		return l.popTaskFromBuckets(workerQueueKey, publicQueueKey, processingKey, workerName)
+		task, err := l.popTaskFromBuckets(workerQueueKey, publicQueueKey, processingKey, workerName)
+		if err != nil {
+			l.Logger.Errorf("CheckTask: failed to pop from buckets: %v", err)
+			return nil
+		}
+		if task != nil && task.IsExist {
+			return task
+		}
+		return nil
 	}
 
 	// 默认路径：Worker 专属队列 → 公共单 ZSet 队列（两次调用）
-	// 1. 优先从 Worker 专属队列获取任务（使用 ZPopMin 原子操作）
 	task, err := l.popTaskFromQueue(workerQueueKey, processingKey, workerName)
 	if err != nil {
 		l.Logger.Errorf("CheckTask: failed to pop from worker queue: %v", err)
 	}
 	if task != nil {
-		return task, nil
+		return task
 	}
 
-	// 2. 从公共队列获取任务（使用 ZPopMin 原子操作）
 	task, err = l.popTaskFromQueue(publicQueueKey, processingKey, workerName)
 	if err != nil {
 		l.Logger.Errorf("CheckTask: failed to pop from public queue: %v", err)
 	}
-	if task != nil {
-		return task, nil
+	return task
+}
+
+// longPollTimeout 长轮询最大等待时间
+const longPollTimeout = 25 * time.Second
+
+// waitForTask 长轮询等待新任务可用
+// 订阅 Redis Pub/Sub "cscan:task:available"，收到通知后重试弹出。
+// 同时有一个安全网 ticker（每 5s 重试一次），防止 Pub/Sub 消息丢失导致永久等待。
+func (l *CheckTaskLogic) waitForTask(workerQueueKey, publicQueueKey, processingKey, workerName string) (*pb.CheckTaskResp, error) {
+	// 订阅任务可用通知通道
+	pubsub := l.svcCtx.RedisClient.Subscribe(l.ctx, "cscan:task:available")
+	defer pubsub.Close()
+
+	// 确保订阅成功（等待订阅确认）
+	if _, err := pubsub.Receive(l.ctx); err != nil {
+		// 订阅失败，降级为立即返回空（Worker 会在下个轮询周期重试）
+		l.Logger.Debugf("CheckTask: subscribe to task:available failed: %v, returning empty", err)
+		return &pb.CheckTaskResp{IsExist: false}, nil
 	}
 
-	return &pb.CheckTaskResp{IsExist: false}, nil
+	ch := pubsub.Channel()
+
+	// 创建超时上下文（限制长轮询总时长）
+	pollCtx, cancel := context.WithTimeout(l.ctx, longPollTimeout)
+	defer cancel()
+
+	// 安全网 Ticker：每 5s 主动重试一次（防止 Pub/Sub 消息丢失）
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pollCtx.Done():
+			// 超时，返回空
+			return &pb.CheckTaskResp{IsExist: false}, nil
+		case <-ch:
+			// 收到新任务通知，尝试弹出
+			if task := l.tryPopTask(workerQueueKey, publicQueueKey, processingKey, workerName); task != nil {
+				return task, nil
+			}
+			// 通知到了但任务被其他 Worker 抢先获取，继续等待
+		case <-ticker.C:
+			// 安全网：定时重试弹出
+			if task := l.tryPopTask(workerQueueKey, publicQueueKey, processingKey, workerName); task != nil {
+				return task, nil
+			}
+		}
+	}
 }
 
 // atomicPopTaskScript 原子化弹出任务 Lua 脚本
@@ -355,11 +421,14 @@ func (l *CheckTaskLogic) popTaskFromBuckets(workerQueueKey, bucketPrefix, proces
 // updateMainTaskToStarted 更新主任务状态为 STARTED
 func (l *CheckTaskLogic) updateMainTaskToStarted(mainTaskId, workspaceId string) {
 	if mainTaskId == "" || workspaceId == "" {
-		l.Logger.Errorf("CheckTask: updateMainTaskToStarted called with empty params: mainTaskId='%s', workspaceId='%s'", mainTaskId, workspaceId)
 		return
 	}
 
-	l.Logger.Infof("CheckTask: updating main task status to STARTED, mainTaskId=%s, workspaceId=%s", mainTaskId, workspaceId)
+	// 快速验证类任务（指纹验证、POC验证）的 mainTaskId 是 UUID，不是 ObjectID，
+	// 且没有 MongoDB MainTask 记录，跳过 DB 更新。
+	if !isValidObjectID(mainTaskId) {
+		return
+	}
 
 	// MongoDB 操作使用 5s 超时保护，避免无 deadline 时挂起（局部 ctx，不回写 l.ctx）
 	mongoCtx, cancel := context.WithTimeout(l.ctx, 5*time.Second)
@@ -368,15 +437,13 @@ func (l *CheckTaskLogic) updateMainTaskToStarted(mainTaskId, workspaceId string)
 	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
 	task, err := taskModel.FindById(mongoCtx, mainTaskId)
 	if err != nil {
-		l.Logger.Errorf("CheckTask: failed to find main task %s in workspace %s: %v", mainTaskId, workspaceId, err)
+		l.Logger.Errorf("CheckTask: failed to find main task %s: %v", mainTaskId, err)
 		return
 	}
 	if task == nil {
-		l.Logger.Errorf("CheckTask: main task %s not found in workspace %s", mainTaskId, workspaceId)
+		l.Logger.Errorf("CheckTask: main task %s not found", mainTaskId)
 		return
 	}
-
-	l.Logger.Infof("CheckTask: found main task, id=%s, taskId=%s, current status='%s'", task.Id.Hex(), task.TaskId, task.Status)
 
 	// PENDING、CREATED 或空状态都更新为 STARTED
 	if task.Status == "PENDING" || task.Status == "CREATED" || task.Status == "" {
@@ -386,11 +453,7 @@ func (l *CheckTaskLogic) updateMainTaskToStarted(mainTaskId, workspaceId string)
 			"start_time": now,
 		}
 		if err := taskModel.Update(mongoCtx, mainTaskId, update); err != nil {
-			l.Logger.Errorf("CheckTask: failed to update main task status: %v", err)
-		} else {
-			l.Logger.Infof("CheckTask: main task %s status updated from '%s' to STARTED successfully", mainTaskId, task.Status)
+			l.Logger.Errorf("CheckTask: failed to update main task %s status: %v", mainTaskId, err)
 		}
-	} else {
-		l.Logger.Infof("CheckTask: main task %s status is '%s', not updating to STARTED", mainTaskId, task.Status)
 	}
 }

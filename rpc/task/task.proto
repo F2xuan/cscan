@@ -273,6 +273,7 @@ message ValidateFingerprintReq {
   string url = 1;           // 目标URL
   string fingerprintId = 2; // 指纹ID（可选，为空则验证所有）
   string scope = 3;         // 范围: all, builtin, custom
+  string activeFpId = 4;    // 主动指纹ID（验证主动指纹时使用）
 }
 
 // 匹配的指纹信息
@@ -293,6 +294,7 @@ message ValidateFingerprintResp {
   string duration = 5;                           // 耗时
   string details = 6;                            // 单个指纹验证详情
   repeated MatchedFingerprintInfo matchedList = 7; // 批量验证匹配列表
+  string taskId = 8;                             // 任务ID（用于查询异步结果）
 }
 // POC验证请求
 message ValidatePocReq {

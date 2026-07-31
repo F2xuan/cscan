@@ -44,6 +44,9 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
 	targetMetaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
+	// T1.1: 变化基线快照模型，本次保存产出的新增/更新变化在此聚合后批量写入。
+	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB, workspaceId)
+	var diffs []model.ScanDiff
 	// 登记顶层资产 meta 的 host 去重集合：同一次 SaveTaskResult 内同一目标只登记一次。
 	seenTargets := make(map[string]struct{})
 
@@ -229,16 +232,33 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 			asset.FirstSeenTaskId = in.MainTaskId // 记录首次发现的任务ID
 			asset.LastStatusChangeTime = now      // 记录状态变化时间
 
-			if err := assetModel.Insert(l.ctx, asset); err != nil {
-				l.Logger.Errorf("Insert asset failed: %v", err)
-				continue
-			}
-			newAsset++
+		if err := assetModel.Insert(l.ctx, asset); err != nil {
+			l.Logger.Errorf("Insert asset failed: %v", err)
+			continue
+		}
+		newAsset++
+		// T1.1: 记录本次新增资产（唯一真源为落库时刻）
+		diffs = append(diffs, model.ScanDiff{
+			TaskId:      in.MainTaskId,
+			WorkspaceId: workspaceId,
+			DiffType:    model.ScanDiffTypeAsset,
+			ChangeType:  model.ScanDiffChangeAdded,
+			TargetKey:   asset.Authority,
+			Summary:     asset.Host,
+		})
 		} else {
 			// 更新已存在的资产
 			// 判断是否是不同任务的更新
 			// 只要任务ID不同（或者之前没有任务ID），就认为是新一轮扫描
 			isDifferentTask := existing.TaskId != in.MainTaskId
+
+			// 使用共享 helper 构造更新文档，统一空值守护 / 状态字段 / update_time 门控
+			// 同时返回字段级 diff（changes），供历史记录与 T1.1 变化快照复用，避免重复计算
+			opts := model.AssetWriteOptions{
+				TaskId:          in.MainTaskId,
+				IsDifferentTask: isDifferentTask,
+			}
+			update, changes := model.BuildAssetUpdateDoc(asset, existing, opts)
 
 			// 只有当任务ID不同时才保存历史记录（表示是新一轮扫描，需要记录上一次的状态）
 			// 这样可以确保在任务的第一次保存时就记录历史，避免后续更新覆盖旧状态
@@ -248,12 +268,6 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				// 检查是否已存在同一任务的历史记录（避免重复）
 				exists, _ := historyModel.ExistsByAssetIdAndTaskId(l.ctx, existing.Id.Hex(), existing.TaskId)
 				if !exists {
-					// 使用 helper 的统一 diff，覆盖 header/body/screenshot/cert 等大字段
-					changes := model.DiffAssetChanges(existing, asset, model.AssetWriteOptions{
-						IsDifferentTask: true,
-						TaskId:          in.MainTaskId,
-					})
-
 					// 只有当有实际变更时才保存历史记录
 					if len(changes) > 0 {
 						history := model.SnapshotFromAsset(existing, existing.TaskId, existing.UpdateTime, changes)
@@ -268,19 +282,24 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				}
 			}
 
-			// 使用共享 helper 构造更新文档，统一空值守护 / 状态字段 / update_time 门控
-			opts := model.AssetWriteOptions{
-				TaskId:          in.MainTaskId,
-				IsDifferentTask: isDifferentTask,
-			}
-			update, _ := model.BuildAssetUpdateDoc(asset, existing, opts)
-
 			if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), update); err != nil {
 				l.Logger.Errorf("Update asset failed: %v", err)
 				continue
 			}
 			if isDifferentTask {
 				updateAsset++
+				// T1.1: 仅当存在字段级变化时记录 updated 快照，避免无变化也写入噪声
+				if len(changes) > 0 {
+					diffs = append(diffs, model.ScanDiff{
+						TaskId:      in.MainTaskId,
+						WorkspaceId: workspaceId,
+						DiffType:    model.ScanDiffTypeAsset,
+						ChangeType:  model.ScanDiffChangeUpdated,
+						TargetKey:   existing.Authority,
+						Summary:     existing.Host,
+						Changes:     changes,
+					})
+				}
 			}
 		}
 		totalAsset++
@@ -307,6 +326,15 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 	}
 
 	l.Logger.Infof("SaveTaskResult: total=%d, new=%d, update=%d", totalAsset, newAsset, updateAsset)
+
+	// T1.1: 批量写入本次扫描的变化快照（新增/更新）。失败仅记录日志，不阻断主流程。
+	if len(diffs) > 0 {
+		if err := diffModel.BatchInsert(l.ctx, diffs); err != nil {
+			l.Logger.Errorf("[ScanDiff] batch insert failed (task=%s): %v", in.MainTaskId, err)
+		} else {
+			l.Logger.Infof("[ScanDiff] wrote %d diff records for task=%s", len(diffs), in.MainTaskId)
+		}
+	}
 
 	return &pb.SaveTaskResultResp{
 		Success:     true,

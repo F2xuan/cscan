@@ -28,3 +28,11 @@ TaskRpc:
   Endpoints:
     - cscan-rpc:9000
   Timeout: 30000
+  NonBlock: true  # 非阻塞拨号：API 可在 RPC 未启动时正常启动，调用时才报错
+
+Docker:
+  Host: ""
+  ContainerPrefix: "cscan"
+  ImageRegistry: "registry.cn-hangzhou.aliyuncs.com/txf7/"
+  LogDir: "log/containers"
+  RetentionDays: 7

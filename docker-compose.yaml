@@ -52,8 +52,11 @@ services:
       - TZ=Asia/Shanghai
       - GOMAXPROCS=4
       - CSCAN_JWT_SECRET=${CSCAN_JWT_SECRET}
+      - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY}
     volumes:
       - cscan_api_data:/app/data
+      - ./log:/app/log
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "8888:8888"
     depends_on:
@@ -122,6 +125,34 @@ services:
     networks:
       - cscan_network
 
+  # CSCAN Worker 默认节点（随主服务一键启动）
+  cscan-worker:
+    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest
+    container_name: cscan_worker
+    logging: *default-logging
+    environment:
+      - TZ=Asia/Shanghai
+      - CSCAN_SERVER=http://cscan-api:8888
+      - CSCAN_KEY=${CSCAN_WORKER_KEY}
+      - CSCAN_NAME=cscan-default-worker
+      - CSCAN_CONCURRENCY=5
+    depends_on:
+      cscan-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - cscan_network
+    volumes:
+      - cscan_worker_logs:/app/log
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
 volumes:
   cscan_redis_data:
     driver: local
@@ -130,6 +161,8 @@ volumes:
   cscan_ssl_certs:
     driver: local
   cscan_api_data:
+    driver: local
+  cscan_worker_logs:
     driver: local
 
 networks:

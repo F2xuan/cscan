@@ -18,6 +18,8 @@ services:
       - "6379:6379"
     volumes:
       - cscan_redis_data_dev:/data
+    environment:
+      - TZ=Asia/Shanghai
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -35,6 +37,8 @@ services:
     volumes:
       - cscan_mongodb_data_dev:/data/db
       - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    environment:
+      - TZ=Asia/Shanghai
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]

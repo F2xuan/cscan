@@ -16,7 +16,14 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
+      - TZ=Asia/Shanghai
       - CSCAN_SERVER=${CSCAN_SERVER}
       - CSCAN_KEY=${CSCAN_KEY}
       - CSCAN_NAME=${CSCAN_NAME:-}
       - CSCAN_CONCURRENCY=${CSCAN_CONCURRENCY:-5}
+    volumes:
+      - cscan_worker_logs:/app/log
+
+volumes:
+  cscan_worker_logs:
+    driver: local

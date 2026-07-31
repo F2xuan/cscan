@@ -2,7 +2,6 @@ package worker
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -111,19 +110,23 @@ func (l *TaskLogger) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
 }
 
-// ==================== WebSocket Logger ====================
+// ==================== File-based Logger (本地文件 + 游标同步) ====================
 
-// WorkerLoggerWS WebSocket日志记录器
+// WorkerLoggerWS Worker 日志记录器
+// 日志先写入本地文件（事实源），通过游标同步机制传输到 API 端
+// 不再使用内存缓冲区，断连时日志持续写入文件，重连后从游标续传
 type WorkerLoggerWS struct {
 	workerName string
-	wsClient   *WorkerWSClient
+	fileLogger *FileLogger
 }
 
-// NewWorkerLoggerWS 创建WebSocket日志记录器
+// NewWorkerLoggerWS 创建日志记录器
+// wsClient 参数保留兼容性，但日志不再通过 wsClient.SendLogImmediate 发送
+// 实际同步由 LogSyncManager 通过游标协议完成
 func NewWorkerLoggerWS(workerName string, wsClient *WorkerWSClient) *WorkerLoggerWS {
 	return &WorkerLoggerWS{
 		workerName: workerName,
-		wsClient:   wsClient,
+		fileLogger: globalFileLogger,
 	}
 }
 
@@ -135,16 +138,14 @@ func (l *WorkerLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
 
-	// DEBUG 级别日志仅本地输出，不通过 WebSocket 发送
+	// DEBUG 级别日志仅本地输出，不写入文件（避免指纹探测等大量 DEBUG 日志）
 	if level == LevelDebug {
 		return
 	}
 
-	// 通过WebSocket立即发送（不缓冲）
-	if l.wsClient != nil && l.wsClient.IsConnected() {
-		if err := l.wsClient.SendLogImmediate("", level, msg); err != nil {
-			logx.Infof("[WorkerLoggerWS] Failed to send log via WebSocket: %v", err)
-		}
+	// 写入本地文件（事实源），游标同步机制会自动将其传输到 API
+	if l.fileLogger != nil {
+		l.fileLogger.Write(level, "", msg)
 	}
 }
 
@@ -164,26 +165,21 @@ func (l *WorkerLoggerWS) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
 }
 
-// TaskLoggerWS WebSocket任务日志记录器
+// TaskLoggerWS 任务日志记录器
+// 日志先写入本地文件（事实源），通过游标同步机制传输到 API 端
+// 不再使用内存缓冲区，断连时日志持续写入文件，重连后从游标续传
 type TaskLoggerWS struct {
 	workerName string
 	taskId     string
-	wsClient   *WorkerWSClient
-
-	// 日志缓冲区（WebSocket 断连时暂存日志）
-	buffer   []WSLogPayload
-	bufferMu sync.Mutex
-	maxBuf   int // 缓冲区最大条数
+	fileLogger *FileLogger
 }
 
-// NewTaskLoggerWS 创建WebSocket任务日志记录器
+// NewTaskLoggerWS 创建任务日志记录器
 func NewTaskLoggerWS(workerName, taskId string, wsClient *WorkerWSClient) *TaskLoggerWS {
 	return &TaskLoggerWS{
 		workerName: workerName,
 		taskId:     taskId,
-		wsClient:   wsClient,
-		buffer:     make([]WSLogPayload, 0, 100),
-		maxBuf:     1000,
+		fileLogger: globalFileLogger,
 	}
 }
 
@@ -195,72 +191,14 @@ func (l *TaskLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
 
-	// DEBUG 级别日志仅本地输出，不通过 WebSocket 发送（避免指纹探测等大量 DEBUG 日志导致日志爆炸）
+	// DEBUG 级别日志仅本地输出，不写入文件（避免指纹探测等大量 DEBUG 日志）
 	if level == LevelDebug {
 		return
 	}
 
-	if l.wsClient == nil {
-		return
-	}
-
-	connected := l.wsClient.IsConnected()
-
-	if connected {
-		// 先 flush 缓冲区
-		l.flushBuffer()
-		// 发送当前日志
-		if err := l.wsClient.SendLogImmediate(l.taskId, level, msg); err != nil {
-			logx.Infof("[TaskLoggerWS] Failed to send log via WebSocket: %v", err)
-		}
-	} else {
-		// WebSocket 断连，写入缓冲区
-		l.bufferToQueue(level, msg)
-	}
-}
-
-// bufferToQueue 将日志写入缓冲区
-func (l *TaskLoggerWS) bufferToQueue(level, msg string) {
-	l.bufferMu.Lock()
-	defer l.bufferMu.Unlock()
-
-	// 超出上限时丢弃最旧日志
-	if len(l.buffer) >= l.maxBuf {
-		l.buffer = l.buffer[1:]
-	}
-
-	l.buffer = append(l.buffer, WSLogPayload{
-		TaskId:    l.taskId,
-		Level:     level,
-		Message:   msg,
-		Timestamp: time.Now().UnixMilli(),
-	})
-}
-
-// flushBuffer 将缓冲区日志发送到 WebSocket
-func (l *TaskLoggerWS) flushBuffer() {
-	l.bufferMu.Lock()
-	if len(l.buffer) == 0 {
-		l.bufferMu.Unlock()
-		return
-	}
-	logs := l.buffer
-	l.buffer = make([]WSLogPayload, 0, 100)
-	l.bufferMu.Unlock()
-
-	// 批量发送
-	if err := l.wsClient.SendLogBatch(logs); err != nil {
-		logx.Infof("[TaskLoggerWS] Failed to flush %d buffered logs: %v", len(logs), err)
-		// 发送失败，放回缓冲区（但不超出上限）
-		l.bufferMu.Lock()
-		remaining := l.maxBuf - len(l.buffer)
-		if remaining > 0 {
-			if len(logs) > remaining {
-				logs = logs[len(logs)-remaining:]
-			}
-			l.buffer = append(l.buffer, logs...)
-		}
-		l.bufferMu.Unlock()
+	// 写入本地文件（事实源），游标同步机制会自动将其传输到 API
+	if l.fileLogger != nil {
+		l.fileLogger.Write(level, l.taskId, msg)
 	}
 }
 
@@ -278,4 +216,27 @@ func (l *TaskLoggerWS) Warn(format string, args ...interface{}) {
 
 func (l *TaskLoggerWS) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
+}
+
+// ==================== 全局 FileLogger 实例 ====================
+
+// globalFileLogger 全局文件日志器，由 Worker 初始化时设置
+// 所有 Logger 实例共享同一个 FileLogger，日志统一写入同一文件
+var globalFileLogger *FileLogger
+
+// InitGlobalFileLogger 初始化全局文件日志器
+func InitGlobalFileLogger(logDir, workerName string) {
+	globalFileLogger = NewFileLogger(logDir, workerName)
+}
+
+// GetGlobalFileLogger 获取全局文件日志器
+func GetGlobalFileLogger() *FileLogger {
+	return globalFileLogger
+}
+
+// UpdateGlobalFileLoggerWorkerName 更新全局文件日志器的 worker 名称（rename 后调用）
+func UpdateGlobalFileLoggerWorkerName(name string) {
+	if globalFileLogger != nil {
+		globalFileLogger.SetWorkerName(name)
+	}
 }

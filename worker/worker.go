@@ -2,11 +2,16 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -22,6 +27,7 @@ import (
 	"cscan/scanner/brute"
 	"cscan/scheduler"
 
+	"github.com/projectdiscovery/wappalyzergo"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -41,8 +47,8 @@ type WorkerConfig struct {
 	// 开启后 taskChan 退化为预留槽位计数器，任务实际进入 TaskQueueManager
 	// 由 GetTaskPriority 推断优先级，按 Urgent>High>Normal>Low 顺序出队
 	EnableTaskQueueManager bool          `json:"enableTaskQueueManager"`
-	MaxQueueSize           int           `json:"maxQueueSize"`  // 0 表示默认 100
-	MaxWaitTime            time.Duration `json:"maxWaitTime"`   // 0 表示默认 5 分钟
+	MaxQueueSize           int           `json:"maxQueueSize"` // 0 表示默认 100
+	MaxWaitTime            time.Duration `json:"maxWaitTime"`  // 0 表示默认 5 分钟
 }
 
 // Worker 工作节点
@@ -85,6 +91,10 @@ type Worker struct {
 
 	// 日志组件
 	logger Logger
+
+	// Wappalyzer 指纹识别客户端（单例，避免重复初始化）
+	wappalyzerClient *wappalyzer.Wappalyze
+	wappalyzerOnce   sync.Once
 
 	// 系统信息收集器
 	sysInfoCollector *SysInfoCollector
@@ -163,13 +173,11 @@ func (w *Worker) taskLog(taskId, level, format string, args ...interface{}) {
 	}
 }
 
-// cleanupTaskLogger 清理任务日志记录器，flush 残余缓冲
+// cleanupTaskLogger 清理任务日志记录器
 func (w *Worker) cleanupTaskLogger(taskId string) {
 	mainTaskId := getMainTaskId(taskId)
-	if val, loaded := w.taskLoggers.LoadAndDelete(mainTaskId); loaded {
-		logger := val.(*TaskLoggerWS)
-		logger.flushBuffer()
-	}
+	// 日志已写入本地文件，无需 flush 缓冲区
+	w.taskLoggers.Delete(mainTaskId)
 }
 
 // VulnerabilityBuffer 批量缓冲保存漏洞
@@ -265,6 +273,20 @@ func (b *VulnerabilityBuffer) Flush(ctx context.Context, saver func([]*scanner.V
 	}
 }
 
+// getWappalyzerClient 懒初始化 wappalyzer 客户端（单例）
+func (w *Worker) getWappalyzerClient() *wappalyzer.Wappalyze {
+	w.wappalyzerOnce.Do(func() {
+		client, err := wappalyzer.New()
+		if err != nil {
+			logx.Errorf("[Worker] Failed to init wappalyzer client: %v", err)
+			return
+		}
+		w.wappalyzerClient = client
+		logx.Info("[Worker] Wappalyzer client initialized")
+	})
+	return w.wappalyzerClient
+}
+
 // NewWorker 创建Worker
 func NewWorker(config WorkerConfig) (*Worker, error) {
 	// 自动获取本机IP地址
@@ -315,7 +337,11 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	wsConfig := DefaultWSClientConfig(config.ServerAddr, config.Name, config.InstallKey)
 	w.wsClient = NewWorkerWSClient(wsConfig)
 
-	// 更新 logger 为 WebSocket 版本，将日志发送到服务器
+	// 初始化日志同步：本地文件写入 + 游标同步
+	// Worker 日志先写入本地文件（事实源），通过 WebSocket 游标同步到 API 端文件
+	InitLogSync("log", config.Name, w.wsClient)
+
+	// 更新 logger 为 WebSocket 版本（实际写入本地文件，由游标同步传输到 API）
 	w.logger = NewWorkerLoggerWS(config.Name, w.wsClient)
 
 	// 设置控制信号处理函数
@@ -440,6 +466,8 @@ func (w *Worker) handleWorkerControl(action, param string) {
 	case "rename":
 		w.logger.Info("Renaming worker to: %s", param)
 		w.config.Name = param
+		// 更新文件日志器的 worker 名称
+		UpdateGlobalFileLoggerWorkerName(param)
 		// 更新日志前缀（使用 WebSocket 版本）
 		w.logger = NewWorkerLoggerWS(param, w.wsClient)
 		// 立即发送心跳，让服务端更新状态
@@ -778,7 +806,11 @@ func (w *Worker) fetchTasksWithRecovery() {
 }
 
 // fetchTasksLoop 任务拉取循环（内部方法）
-// 使用自适应调度器动态调整拉取间隔
+// 配合服务端长轮询机制：
+//   - 有任务时：短间隔快速拉取，尽量填满 Worker 槽位
+//   - 无任务时：服务端通过 Pub/Sub 长轮询 hold 请求最多 25s，
+//     返回空后客户端只需短暂 sleep（1s）防止极端情况下的空转，
+//     相比旧方案（空闲时 3~10s 轮询一次）大幅减少空请求
 func (w *Worker) fetchTasksLoop() {
 	for {
 		select {
@@ -787,27 +819,15 @@ func (w *Worker) fetchTasksLoop() {
 		default:
 			hasTask := w.pullTask()
 
-			// 使用自适应调度器获取动态拉取间隔
-			var interval time.Duration
-			if w.adaptiveScheduler != nil {
-				interval = w.adaptiveScheduler.GetPullInterval()
-				if hasTask {
-					// 有任务时使用较短间隔
-					interval = interval / 2
-					if interval < 50*time.Millisecond {
-						interval = 50 * time.Millisecond
-					}
-				}
+			if hasTask {
+				// 有任务时短暂等待后立即拉取下一个（尽量填满并发槽位）
+				// 服务端长轮询在此场景下立即返回，不会 hold
+				time.Sleep(50 * time.Millisecond)
 			} else {
-				// 回退到固定间隔
-				if hasTask {
-					interval = 100 * time.Millisecond
-				} else {
-					interval = 500 * time.Millisecond
-				}
+				// 无任务时：服务端已经通过长轮询等待了最多 25s，
+				// 这里只需短暂 sleep 防止极端情况下的空转（如网络错误导致立即返回）
+				time.Sleep(1 * time.Second)
 			}
-
-			time.Sleep(interval)
 		}
 	}
 }
@@ -1256,9 +1276,9 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// PAUSE 信号下跳过，恢复后由新一轮执行递增。
 	// 此 defer 在 cleanup state defer 之后注册，按 LIFO 先执行，可在控制信号被清除前读取。
 	finalIncrSent := false
-	targetCount := 0    // 仅用于日志展示
-	expectedIncr := 1   // 单 sub-task 应发增量 = enabledModules + 1，配置解析后赋真值
-	incrSent := 0       // 已发出的增量数
+	targetCount := 0  // 仅用于日志展示
+	expectedIncr := 1 // 单 sub-task 应发增量 = enabledModules + 1，配置解析后赋真值
+	incrSent := 0     // 已发出的增量数
 	defer func() {
 		if finalIncrSent {
 			return
@@ -1319,6 +1339,31 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	if taskType == "poc_batch_validate" {
 		w.taskLog(task.TaskId, LevelInfo, "Step 7b: Executing POC batch validate task")
 		w.executePocBatchValidateTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "fingerprint_validate" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7c: Executing fingerprint validate task")
+		w.executeFingerprintValidateTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "fingerprint_batch_validate" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7c2: Executing fingerprint batch validate task")
+		w.executeFingerprintBatchValidateTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "active_fingerprint_validate" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7d: Executing active fingerprint validate task")
+		w.executeActiveFingerprintValidateTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "active_fingerprint_batch_validate" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7d2: Executing active fingerprint batch validate task")
+		w.executeActiveFingerprintBatchValidateTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "vuln_reverify" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7e: Executing vuln reverify task")
+		w.executeVulnReverifyTask(ctx, task, taskConfig, startTime)
 		return
 	}
 
@@ -2231,6 +2276,12 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
 						w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
 					})
+
+					// 指纹识别阶段附加产出的证书采集结果：本阶段为内联处理（未走 resultChan），
+					// 需在此处直接落库，否则 CertResults 会被丢弃，UI 证书列表将无数据。
+					if len(result.CertResults) > 0 {
+						w.saveCertResults(ctx, task.WorkspaceId, task.MainTaskId, result.CertResults)
+					}
 				}
 			}
 			completedPhases["fingerprint"] = true
@@ -2554,6 +2605,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 								CustomTemplates: groupTemplates,
 								TagMappings:     nil,
 								CustomHeaders:   config.PocScan.CustomHeaders,
+								ForceScan:       config.PocScan.ForceScan,
 								OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 									vulCount++
 									w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
@@ -2651,6 +2703,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 						CustomTemplates: templates,
 						TagMappings:     config.PocScan.TagMappings,
 						CustomHeaders:   config.PocScan.CustomHeaders,
+						ForceScan:       config.PocScan.ForceScan,
 						OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 							vulCount++
 							w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
@@ -2714,14 +2767,23 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 // updateTaskStatus 更新任务状态
 func (w *Worker) updateTaskStatus(ctx context.Context, taskId string, status string, result string) {
-	// 如果任务完成（SUCCESS/FAILURE），同时更新进度
-	progress := 0
+	// 如果任务完成（SUCCESS/FAILURE），同时更新进度和phase，合并为一次HTTP调用
 	if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
-		progress = 100
+		_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
+			TaskId:   taskId,
+			State:    status,
+			Worker:   w.config.Name,
+			Result:   result,
+			Progress: 100,
+			Phase:    "完成",
+		})
+		if err != nil {
+			w.taskLog(taskId, LevelError, "update task status failed: %v", err)
+		}
+		return
 	}
-	w.updateTaskProgressWithPhase(ctx, taskId, progress, result, "完成")
 
-	// 通过 HTTP 接口更新任务状态
+	// 非终态（如STARTED）：仅更新状态
 	_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
 		TaskId: taskId,
 		State:  status,
@@ -3119,6 +3181,54 @@ func (w *Worker) handleResult(result *scanner.ScanResult) {
 	ctx := context.Background()
 	w.saveAssetResult(ctx, result.WorkspaceId, result.MainTaskId, "", result.Assets)
 	w.saveVulResult(ctx, result.WorkspaceId, result.MainTaskId, result.Vulnerabilities)
+	// 证书采集结果（指纹识别附加产出）经 HTTP API 批量 upsert
+	if len(result.CertResults) > 0 {
+		w.saveCertResults(ctx, result.WorkspaceId, result.MainTaskId, result.CertResults)
+	}
+}
+
+// saveCertResults 将指纹识别阶段附加产出的证书结果经 HTTP API 落库。
+func (w *Worker) saveCertResults(ctx context.Context, workspaceId, mainTaskId string, certs []*scanner.CertResult) {
+	if len(certs) == 0 {
+		return
+	}
+	items := make([]*CertResultItem, 0, len(certs))
+	for _, c := range certs {
+		items = append(items, &CertResultItem{
+			Host:         c.Host,
+			Port:         c.Port,
+			Authority:    c.Authority,
+			Subject:      c.Subject,
+			SubjectDN:    c.SubjectDN,
+			Issuer:       c.Issuer,
+			IssuerDN:     c.IssuerDN,
+			SerialNumber: c.SerialNumber,
+			SigAlg:       c.SigAlg,
+			NotBefore:    c.NotBefore,
+			NotAfter:     c.NotAfter,
+			Version:      c.Version,
+			SANs:         c.SANs,
+			Fingerprints: c.Fingerprints,
+			IsSelfSigned: c.IsSelfSigned,
+		})
+	}
+
+	req := &SaveCertResultReq{
+		WorkspaceId: workspaceId,
+		MainTaskId:  mainTaskId,
+		Results:     items,
+	}
+
+	resp, err := w.httpClient.SaveCertResult(ctx, req)
+	if err != nil {
+		w.taskLog(mainTaskId, LevelError, "CertResult save failed: %v", err)
+		return
+	}
+	if resp != nil && resp.Code != 0 {
+		w.taskLog(mainTaskId, LevelWarn, "CertResult save response: %s", resp.Msg)
+		return
+	}
+	w.taskLog(mainTaskId, LevelInfo, "CertResult: saved %d certificates", len(certs))
 }
 
 // keepAliveLoop 心跳循环（内部方法）
@@ -3128,8 +3238,8 @@ func (w *Worker) keepAliveLoop() {
 	w.sendHeartbeat()
 
 	const (
-		normalInterval  = 30 * time.Second  // 正常心跳间隔
-		circuitInterval = 60 * time.Second  // 熔断期间心跳间隔
+		normalInterval   = 30 * time.Second // 正常心跳间隔
+		circuitInterval  = 60 * time.Second // 熔断期间心跳间隔
 		circuitThreshold = 5                // 连续失败多少次进入熔断
 	)
 
@@ -3969,9 +4079,6 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 	defer func() {
 		if r := recover(); r != nil {
 			w.taskLog(task.TaskId, LevelError, "POC validation task panic recovered: %v, stack: %s", r, string(getStackTrace()))
-			// 更新任务状态为失败
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, fmt.Sprintf("POC validation panic: %v", r))
-			// 保存失败结果
 			batchId, _ := taskConfig["batchId"].(string)
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, fmt.Sprintf("POC validation panic: %v", r))
 		}
@@ -3996,7 +4103,6 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 	if url == "" {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC验证失败: URL为空", task.TaskId)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "URL为空")
 		w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "URL为空")
 		return
 	}
@@ -4009,7 +4115,6 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 	nucleiScanner, ok := w.scanners["nuclei"]
 	if !ok {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC验证失败: Nuclei扫描器未初始化", task.TaskId)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "Nuclei扫描器未初始化")
 		w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "Nuclei扫描器未初始化")
 		return
 	}
@@ -4025,19 +4130,16 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		resp, err := w.httpClient.GetPocById(ctx, pocId, pocType)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: failed to get POC - %v", task.TaskId, err)
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "Failed to get POC: "+err.Error())
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "Failed to get POC: "+err.Error())
 			return
 		}
 		if !resp.Success {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: POC not found - %s", task.TaskId, resp.Msg)
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "POC not found: "+resp.Msg)
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "POC not found: "+resp.Msg)
 			return
 		}
 		if resp.Content == "" {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: POC content is empty", task.TaskId)
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "POC content is empty")
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "POC content is empty")
 			return
 		}
@@ -4076,7 +4178,6 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 		if len(templates) == 0 {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: no POC templates found", task.TaskId)
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "No POC templates found")
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "No POC templates found")
 			return
 		}
@@ -4105,23 +4206,16 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: %v", task.TaskId, err)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, fmt.Sprintf("Scan failed: %v", err))
 		w.savePocValidationResult(ctx, task.TaskId, batchId, nil, fmt.Sprintf("Scan failed: %v", err))
 		return
 	}
 
 	// 构建验证结果
 	var validationResults []*PocValidationResult
-	matched := false
-	vulCount := 0
-	if result != nil {
-		vulCount = len(result.Vulnerabilities)
-	}
 
 	w.taskLog(task.TaskId, LevelInfo, "[%s] Scan completed, duration: %.2fs", task.TaskId, duration)
 
 	if result != nil && len(result.Vulnerabilities) > 0 {
-		matched = true
 		for _, vul := range result.Vulnerabilities {
 			// 优先使用配置中的POC信息
 			resultPocName := pocName
@@ -4166,15 +4260,181 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		w.taskLog(task.TaskId, LevelInfo, "[%s] No vulnerability found", task.TaskId)
 	}
 
-	// 先更新任务状态和进度
-	resultMsg := fmt.Sprintf("Validation completed: matched=%v, vuls=%d, duration=%.2fs", matched, vulCount, duration)
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, resultMsg)
-
-	// 最后保存验证结果到Redis（包含详细的results JSON数据）
-	// 注意：必须在updateTaskStatus之后调用，否则result字段会被纯文本覆盖，
-	// 导致RPC层解析results失败，前端误判为"未发现漏洞"
+	// 保存验证结果到Redis（包含详细的results JSON数据，终态更新）
 	w.savePocValidationResult(ctx, task.TaskId, batchId, validationResults, "")
 	// 注意：taskExecuted 由 executeTask 的 defer 递增，无需在此处理
+}
+
+// executeVulnReverifyTask 执行单条漏洞复验（复测）任务
+// 通过关联的 nuclei 模板重新对目标发起探测，依据是否再次命中判定漏洞是否修复
+func (w *Worker) executeVulnReverifyTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
+	// panic 恢复：兜底回传一个"可达未测"结论，避免前端一直卡在"复验中"
+	defer func() {
+		if r := recover(); r != nil {
+			w.taskLog(task.TaskId, LevelError, "Vuln reverify task panic recovered: %v, stack: %s", r, string(getStackTrace()))
+			w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionReachableUntested, fmt.Sprintf("reverify panic: %v", r))
+		}
+	}()
+
+	vulnId, _ := taskConfig["vulnId"].(string)
+	workspaceId, _ := taskConfig["workspaceId"].(string)
+	if workspaceId == "" {
+		workspaceId = task.WorkspaceId
+	}
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+	authority, _ := taskConfig["authority"].(string)
+	host, _ := taskConfig["host"].(string)
+	url, _ := taskConfig["url"].(string)
+	pocFile, _ := taskConfig["pocFile"].(string)
+
+	// port 在任务配置中可能以 int / float64 / string 多种形态下发，统一归一化
+	port := ""
+	switch p := taskConfig["port"].(type) {
+	case string:
+		port = p
+	case int:
+		if p > 0 {
+			port = strconv.Itoa(p)
+		}
+	case int32:
+		if p > 0 {
+			port = strconv.Itoa(int(p))
+		}
+	case float64:
+		if p > 0 {
+			port = strconv.Itoa(int(p))
+		}
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "[%s] 收到漏洞复验任务, vulnId: %s, target: %s, pocFile: %s", task.TaskId, vulnId, url, pocFile)
+
+	if vulnId == "" {
+		w.taskLog(task.TaskId, LevelError, "[%s] 漏洞复验失败: vulnId为空", task.TaskId)
+		return
+	}
+
+	// 构造复测目标：优先 url，其次 authority，最后 host[:port]
+	target := url
+	if target == "" {
+		if authority != "" {
+			target = authority
+		} else if host != "" {
+			if port != "" {
+				target = host + ":" + port
+			} else {
+				target = host
+			}
+		}
+	}
+	if target == "" {
+		w.taskLog(task.TaskId, LevelError, "[%s] 漏洞复验失败: 无法构造复测目标", task.TaskId)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionUnreachable, "无法构造复测目标(url/authority/host均为空)")
+		return
+	}
+
+	nucleiScanner, ok := w.scanners["nuclei"]
+	if !ok {
+		w.taskLog(task.TaskId, LevelError, "[%s] 漏洞复验失败: Nuclei扫描器未初始化", task.TaskId)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionReachableUntested, "Nuclei扫描器未初始化")
+		return
+	}
+
+	// 没有关联模板则无法精准复测，按"可达未测"兜底
+	if pocFile == "" {
+		w.taskLog(task.TaskId, LevelInfo, "[%s] 漏洞无关联POC模板，无法精准复测，按可达未测处理", task.TaskId)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionReachableUntested, "漏洞无关联POC模板，无法精准复测")
+		return
+	}
+
+	// 通过 HTTP 接口按 pocFile(即 nuclei TemplateID) 获取模板内容
+	w.taskLog(task.TaskId, LevelInfo, "[%s] Loading reverify template: %s", task.TaskId, pocFile)
+	resp, err := w.httpClient.GetTemplates(ctx, &TemplatesReq{
+		NucleiTemplateIds: []string{pocFile},
+	})
+	if err != nil {
+		msg := "获取复验模板失败: " + err.Error()
+		w.taskLog(task.TaskId, LevelError, "[%s] %s", task.TaskId, msg)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionUnreachable, msg)
+		return
+	}
+	if !resp.Success || len(resp.Templates) == 0 {
+		msg := "复验模板为空"
+		if resp.Msg != "" {
+			msg = "获取复验模板失败: " + resp.Msg
+		}
+		w.taskLog(task.TaskId, LevelError, "[%s] %s", task.TaskId, msg)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionUnreachable, msg)
+		return
+	}
+
+	// 使用关联的 nuclei 模板对目标重新发起探测
+	nucleiOpts := &scanner.NucleiOptions{
+		RateLimit:       50,
+		Concurrency:     10,
+		CustomTemplates: resp.Templates,
+		CustomPocOnly:   true,
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "[%s] Initializing Nuclei scan engine for reverify...", task.TaskId)
+	w.taskLog(task.TaskId, LevelInfo, "[%s] Reverify scanning target: %s", task.TaskId, target)
+
+	result, err := nucleiScanner.Scan(ctx, &scanner.ScanConfig{
+		Targets: []string{target},
+		Options: nucleiOpts,
+	})
+	duration := time.Since(startTime).Seconds()
+
+	if err != nil {
+		msg := fmt.Sprintf("复测扫描失败: %v", err)
+		w.taskLog(task.TaskId, LevelError, "[%s] %s", task.TaskId, msg)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionUnreachable, msg)
+		return
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "[%s] Reverify scan completed, duration: %.2fs", task.TaskId, duration)
+
+	if result != nil && len(result.Vulnerabilities) > 0 {
+		// 复测仍命中漏洞 -> 漏洞未修复
+		w.taskLog(task.TaskId, LevelInfo, "[%s] 复验结论: 漏洞仍然存在(still_vuln)", task.TaskId)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionStillVuln, "复测仍命中漏洞，漏洞未修复")
+	} else {
+		// 复测未命中漏洞 -> 漏洞已修复
+		w.taskLog(task.TaskId, LevelInfo, "[%s] 复验结论: 漏洞已修复(fixed)", task.TaskId)
+		w.reportReverifyResult(ctx, task, taskConfig, model.ReverifyConclusionFixed, "复测未命中漏洞，漏洞已修复")
+	}
+}
+
+// reportReverifyResult 将复验结论上报给 API 服务
+func (w *Worker) reportReverifyResult(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, conclusion, message string) {
+	vulnId, _ := taskConfig["vulnId"].(string)
+	workspaceId, _ := taskConfig["workspaceId"].(string)
+	if workspaceId == "" {
+		workspaceId = task.WorkspaceId
+	}
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+	reviewer, _ := taskConfig["reviewer"].(string)
+
+	resp, err := w.httpClient.SaveVulReverify(ctx, &VulReverifyReq{
+		WorkspaceId: workspaceId,
+		VulnId:      vulnId,
+		Conclusion:  conclusion,
+		Reviewer:    reviewer,
+		Message:     message,
+		ReverifyAt:  time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "[%s] 复验结果上报失败: %v", task.TaskId, err)
+		return
+	}
+	if !resp.Success {
+		w.taskLog(task.TaskId, LevelError, "[%s] 复验结果上报失败: %s", task.TaskId, resp.Msg)
+		return
+	}
+	w.taskLog(task.TaskId, LevelInfo, "[%s] 复验结果上报成功: %s", task.TaskId, conclusion)
 }
 
 // executePocBatchValidateTask 执行POC批量验证任务（使用单个Nuclei引擎扫描所有目标）
@@ -4183,8 +4443,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 	defer func() {
 		if r := recover(); r != nil {
 			w.taskLog(task.TaskId, LevelError, "POC batch validation task panic recovered: %v, stack: %s", r, string(getStackTrace()))
-			// 更新任务状态为失败
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, fmt.Sprintf("POC batch validation panic: %v", r))
+			w.savePocValidationResult(ctx, task.TaskId, "", nil, fmt.Sprintf("POC batch validation panic: %v", r))
 		}
 	}()
 
@@ -4214,7 +4473,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 
 	if len(urls) == 0 {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 目标列表为空", task.TaskId)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "目标列表为空")
+		w.savePocValidationResult(ctx, task.TaskId, "", nil, "目标列表为空")
 		return
 	}
 
@@ -4230,7 +4489,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 	nucleiScanner, ok := w.scanners["nuclei"].(*scanner.NucleiScanner)
 	if !ok {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: Nuclei扫描器未初始化", task.TaskId)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "Nuclei扫描器未初始化")
+		w.savePocValidationResult(ctx, task.TaskId, "", nil, "Nuclei扫描器未初始化")
 		return
 	}
 
@@ -4244,12 +4503,12 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		resp, err := w.httpClient.GetPocById(ctx, pocId, pocType)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 获取POC失败 - %v", task.TaskId, err)
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "获取POC失败: "+err.Error())
+			w.savePocValidationResult(ctx, task.TaskId, "", nil, "获取POC失败: "+err.Error())
 			return
 		}
 		if !resp.Success || resp.Content == "" {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: POC不存在或内容为空", task.TaskId)
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "POC不存在或内容为空")
+			w.savePocValidationResult(ctx, task.TaskId, "", nil, "POC不存在或内容为空")
 			return
 		}
 		templates = []string{resp.Content}
@@ -4259,7 +4518,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		w.taskLog(task.TaskId, LevelInfo, "[%s] POC template loaded: %s", task.TaskId, pocName)
 	} else {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 未指定POC ID", task.TaskId)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "未指定POC ID")
+		w.savePocValidationResult(ctx, task.TaskId, "", nil, "未指定POC ID")
 		return
 	}
 
@@ -4317,13 +4576,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		}
 	}
 
-	// 先更新任务状态和进度
-	resultMsg := fmt.Sprintf("Batch scan completed: targets=%d, vuls=%d, duration=%.2fs", len(urls), vulCount, duration)
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, resultMsg)
-
-	// 最后保存验证结果到Redis（包含详细的results JSON数据）
-	// 注意：必须在updateTaskStatus之后调用，否则result字段会被纯文本覆盖，
-	// 导致RPC层解析results失败，前端误判为"未发现漏洞"
+	// 保存验证结果到Redis（包含详细的results JSON数据，终态更新）
 	w.savePocValidationResult(ctx, task.TaskId, "", validationResults, "")
 	// 注意：taskExecuted 由 executeTask 的 defer 递增，无需在此处理
 }
@@ -4365,19 +4618,874 @@ func (w *Worker) savePocValidationResult(ctx context.Context, taskId, batchId st
 		return
 	}
 
-	// 通过 HTTP 接口更新任务结果
+	// 终态更新：包含 state、worker、result（JSON），不应再由后续 updateTaskStatus 覆盖
 	status := scheduler.TaskStatusSuccess
 	if errorMsg != "" {
 		status = scheduler.TaskStatusFailure
 	}
 	_, err = w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
-		TaskId: taskId,
-		State:  status,
-		Result: string(resultJson),
+		TaskId:   taskId,
+		State:    status,
+		Worker:   w.config.Name,
+		Result:   string(resultJson),
+		Progress: 100,
+		Phase:    "完成",
 	})
 	if err != nil {
 		w.taskLog(taskId, LevelError, "Failed to save POC validation result: %v", err)
 	}
+}
+
+// ==================== 指纹验证任务处理 ====================
+
+// FingerprintValidationResult 指纹验证结果
+type FingerprintValidationResult struct {
+	Matched      bool            `json:"matched"`
+	Details      string          `json:"details"`
+	MatchedList  []string        `json:"matchedList,omitempty"`
+	MatchedInfos []MatchedFpInfo `json:"matchedInfos,omitempty"` // 批量验证匹配详情
+	TotalScanned int             `json:"totalScanned,omitempty"` // 批量验证扫描总数
+	StatusCode   int             `json:"statusCode,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Path         string          `json:"path,omitempty"`        // 主动指纹探测路径
+	MatchedRule  string          `json:"matchedRule,omitempty"` // 主动指纹匹配的规则名
+	PathResults  []PathResult    `json:"pathResults,omitempty"` // 主动指纹各路径结果
+}
+
+// MatchedFpInfo 批量验证中匹配的指纹信息
+type MatchedFpInfo struct {
+	Id                string `json:"id"`
+	Name              string `json:"name"`
+	IsBuiltin         bool   `json:"isBuiltin"`
+	IsActive          bool   `json:"isActive"`
+	MatchedConditions string `json:"matchedConditions"`
+}
+
+// PathResult 主动指纹单个路径的验证结果
+type PathResult struct {
+	Path           string `json:"path"`
+	StatusCode     int    `json:"statusCode"`
+	Matched        bool   `json:"matched"`
+	MatchedRule    string `json:"matchedRule,omitempty"`
+	MatchedDetails string `json:"matchedDetails,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
+// executeFingerprintValidateTask 执行被动指纹验证任务
+func (w *Worker) executeFingerprintValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
+	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "正在验证指纹...")
+
+	url, _ := taskConfig["url"].(string)
+	fpId, _ := taskConfig["fingerprintId"].(string)
+
+	if url == "" || fpId == "" {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL或指纹ID为空"})
+		return
+	}
+
+	// 1. 获取目标数据（HTTP请求 + 指纹数据）
+	data, err := w.fetchFingerprintDataForValidate(url)
+	if err != nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "请求目标失败: " + err.Error()})
+		return
+	}
+
+	// 2. 从服务端获取指纹列表（包含目标指纹）
+	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: false})
+	if err != nil || !fpResp.Success {
+		errMsg := "获取指纹列表失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+		return
+	}
+
+	// 3. 找到目标指纹并匹配
+	var result FingerprintValidationResult
+	for _, doc := range fpResp.Fingerprints {
+		if doc.Id == fpId {
+			// 将文档转为 model.Fingerprint 格式
+			fp := &model.Fingerprint{
+				Name:    doc.Name,
+				Rule:    doc.Rule,
+				Source:  doc.Source,
+				Enabled: true,
+			}
+			fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
+
+			// 使用 wappalyzer 库检测（内置/wappalyzer来源）
+			if doc.Source == "wappalyzer" || doc.IsBuiltin {
+				wappalyzerClient := w.getWappalyzerClient()
+				if wappalyzerClient != nil {
+					apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
+					fpNameLower := strings.ToLower(doc.Name)
+					for app := range apps {
+						if strings.ToLower(app) == fpNameLower {
+							result = FingerprintValidationResult{
+								Matched: true,
+								Details: fmt.Sprintf("wappalyzergo 库检测匹配: %s", doc.Name),
+							}
+							break
+						}
+					}
+				}
+			}
+
+			// 如果wappalyzer没匹配，使用自定义引擎（MatchWithId返回匹配的指纹列表）
+			if !result.Matched {
+				engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fp})
+				matchedFps := engine.MatchWithId(data)
+				matched := len(matchedFps) > 0
+				details := "未匹配"
+				if matched {
+					var matchedNames []string
+					for _, m := range matchedFps {
+						matchedNames = append(matchedNames, m.Name)
+					}
+					details = fmt.Sprintf("自定义引擎匹配: %s", strings.Join(matchedNames, ", "))
+				}
+				result = FingerprintValidationResult{
+					Matched: matched,
+					Details: details,
+				}
+			}
+			break
+		}
+	}
+
+	duration := time.Since(startTime).Seconds()
+	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("验证完成, 耗时%.2fs", duration), result)
+}
+
+// executeFingerprintBatchValidateTask 执行批量指纹验证任务
+func (w *Worker) executeFingerprintBatchValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
+	url, _ := taskConfig["url"].(string)
+	scope, _ := taskConfig["scope"].(string)
+
+	if url == "" {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL不能为空"})
+		return
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "Batch fingerprint validate: target=%s, scope=%s", url, scope)
+
+	// 1. 获取目标数据（HTTP请求 + 指纹数据）
+	data, err := w.fetchFingerprintDataForValidate(url)
+	if err != nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "请求目标失败: " + err.Error()})
+		return
+	}
+
+	// 2. 从服务端获取启用的指纹列表
+	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: true})
+	if err != nil || !fpResp.Success {
+		errMsg := "获取指纹列表失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+		return
+	}
+
+	// 3. 根据 scope 过滤指纹
+	var filteredFps []FingerprintDocument
+	for _, doc := range fpResp.Fingerprints {
+		switch scope {
+		case "builtin":
+			if doc.IsBuiltin {
+				filteredFps = append(filteredFps, doc)
+			}
+		case "custom":
+			if !doc.IsBuiltin {
+				filteredFps = append(filteredFps, doc)
+			}
+		default: // "all" 或空
+			filteredFps = append(filteredFps, doc)
+		}
+	}
+
+	// 4. 批量匹配
+	var matchedInfos []MatchedFpInfo
+	var fpsToEngine []*model.Fingerprint
+
+	for _, doc := range filteredFps {
+		fp := &model.Fingerprint{
+			Name:      doc.Name,
+			Rule:      doc.Rule,
+			Source:    doc.Source,
+			IsBuiltin: doc.IsBuiltin,
+			Enabled:   true,
+		}
+		fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
+		fpsToEngine = append(fpsToEngine, fp)
+	}
+
+	// 使用 wappalyzer 库检测（复用单例客户端）
+	wappalyzerApps := make(map[string]struct{})
+	if wappalyzerClient := w.getWappalyzerClient(); wappalyzerClient != nil {
+		apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
+		for app := range apps {
+			wappalyzerApps[strings.ToLower(app)] = struct{}{}
+		}
+	}
+
+	// 逐个匹配
+	for i, doc := range filteredFps {
+		matched := false
+		var matchedConditions []string
+
+		// wappalyzer 检测
+		if (doc.Source == "wappalyzer" || doc.IsBuiltin) && w.wappalyzerClient != nil {
+			if _, ok := wappalyzerApps[strings.ToLower(doc.Name)]; ok {
+				matched = true
+				matchedConditions = append(matchedConditions, fmt.Sprintf("wappalyzergo 库检测匹配: %s", doc.Name))
+			}
+		}
+
+		// 自定义引擎匹配
+		if !matched && fpsToEngine[i].Rule != "" {
+			engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fpsToEngine[i]})
+			matchedFps := engine.MatchWithId(data)
+			if len(matchedFps) > 0 {
+				matched = true
+				for _, m := range matchedFps {
+					matchedConditions = append(matchedConditions, fmt.Sprintf("自定义规则匹配: %s", m.Name))
+				}
+			}
+		}
+
+		if matched {
+			matchedInfos = append(matchedInfos, MatchedFpInfo{
+				Id:                doc.Id,
+				Name:              doc.Name,
+				IsBuiltin:         doc.IsBuiltin,
+				MatchedConditions: strings.Join(matchedConditions, "\n"),
+			})
+		}
+	}
+
+	duration := time.Since(startTime).Seconds()
+	result := FingerprintValidationResult{
+		Matched:      len(matchedInfos) > 0,
+		Details:      fmt.Sprintf("验证完成，共检测 %d 个指纹，匹配 %d 个", len(filteredFps), len(matchedInfos)),
+		MatchedInfos: matchedInfos,
+		TotalScanned: len(filteredFps),
+	}
+
+	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("批量验证完成, 耗时%.2fs, 匹配%d/%d", duration, len(matchedInfos), len(filteredFps)), result)
+}
+
+// executeActiveFingerprintValidateTask 执行主动指纹验证任务
+func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
+	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "正在验证主动指纹...")
+
+	url, _ := taskConfig["url"].(string)
+	activeFpId, _ := taskConfig["activeFpId"].(string)
+
+	if url == "" || activeFpId == "" {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL或主动指纹ID为空"})
+		return
+	}
+
+	// 1. 获取主动指纹配置
+	afpResp, err := w.httpClient.GetActiveFingerprints(ctx, false)
+	if err != nil || !afpResp.Success {
+		errMsg := "获取主动指纹列表失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+		return
+	}
+
+	var activeFp *ActiveFingerprintDocument
+	for _, doc := range afpResp.Fingerprints {
+		if doc.Id == activeFpId {
+			activeFp = &doc
+			break
+		}
+	}
+	if activeFp == nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "主动指纹不存在"})
+		return
+	}
+
+	// 2. 获取同名被动指纹（用于匹配规则）
+	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: false})
+	if err != nil || !fpResp.Success {
+		errMsg := "获取被动指纹列表失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+		return
+	}
+
+	var passiveFps []*model.Fingerprint
+	for _, doc := range fpResp.Fingerprints {
+		if doc.Name == activeFp.Name {
+			fp := &model.Fingerprint{
+				Name:    doc.Name,
+				Rule:    doc.Rule,
+				Source:  doc.Source,
+				Enabled: true,
+			}
+			fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
+			passiveFps = append(passiveFps, fp)
+		}
+	}
+	if len(passiveFps) == 0 {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{
+			Error: fmt.Sprintf("未找到同名被动指纹 '%s'", activeFp.Name),
+		})
+		return
+	}
+
+	// 3. 解析基础URL
+	baseUrl, scheme := extractBaseUrlWithSchemeForWorker(url)
+	if baseUrl == "" {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "无效的URL格式"})
+		return
+	}
+
+	// 4. 遍历每个探测路径
+	anyMatched := false
+	var pathResults []PathResult
+	client := w.createValidateHttpClientForWorker()
+
+	for _, path := range activeFp.Paths {
+		pr := PathResult{Path: path}
+
+		resp, body, finalUrl, err := w.smartHttpRequestForWorker(client, baseUrl, path, scheme)
+		if err != nil {
+			pr.Error = err.Error()
+			pathResults = append(pathResults, pr)
+			continue
+		}
+
+		pr.StatusCode = resp.StatusCode
+
+		// 提取标题
+		title := ""
+		titleRe := regexp.MustCompile(`(?i)<title[^>]*>([^<]*)</title>`)
+		if matches := titleRe.FindStringSubmatch(body); len(matches) > 1 {
+			title = strings.TrimSpace(matches[1])
+		}
+
+		// 构建header字符串
+		var headerStr strings.Builder
+		for key, values := range resp.Header {
+			for _, v := range values {
+				headerStr.WriteString(key)
+				headerStr.WriteString(": ")
+				headerStr.WriteString(v)
+				headerStr.WriteString("\n")
+			}
+		}
+
+		data := &scanner.FingerprintData{
+			Title:        title,
+			Body:         body,
+			BodyBytes:    []byte(body),
+			Headers:      resp.Header,
+			HeaderString: headerStr.String(),
+			Server:       resp.Header.Get("Server"),
+			URL:          finalUrl,
+			Cookies:      resp.Header.Get("Set-Cookie"),
+		}
+
+		// 使用被动指纹规则匹配
+		for _, fp := range passiveFps {
+			engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fp})
+			matchedFps := engine.MatchWithId(data)
+			if len(matchedFps) > 0 {
+				pr.Matched = true
+				pr.MatchedRule = fp.Name
+				pr.MatchedDetails = fmt.Sprintf("自定义引擎匹配: %s", fp.Name)
+				anyMatched = true
+				break
+			}
+		}
+
+		if !pr.Matched {
+			pr.MatchedDetails = "未匹配任何规则"
+		}
+		pathResults = append(pathResults, pr)
+	}
+
+	duration := time.Since(startTime).Seconds()
+
+	// 构建匹配详情（用于API层填充MatchedConditions）
+	details := ""
+	if anyMatched {
+		var matchedPaths []string
+		for _, pr := range pathResults {
+			if pr.Matched {
+				matchedPaths = append(matchedPaths, fmt.Sprintf("路径[%s]匹配规则: %s", pr.Path, pr.MatchedRule))
+			}
+		}
+		details = strings.Join(matchedPaths, "\n")
+	}
+
+	result := FingerprintValidationResult{
+		Matched:     anyMatched,
+		Details:     details,
+		PathResults: pathResults,
+	}
+
+	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("主动指纹验证完成, 耗时%.2fs", duration), result)
+}
+
+// executeActiveFingerprintBatchValidateTask 执行批量主动指纹验证任务
+func (w *Worker) executeActiveFingerprintBatchValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
+	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "正在批量验证主动指纹...")
+
+	url, _ := taskConfig["url"].(string)
+	if url == "" {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL不能为空"})
+		return
+	}
+
+	// 1. 获取启用的主动指纹列表
+	afpResp, err := w.httpClient.GetActiveFingerprints(ctx, true)
+	if err != nil || !afpResp.Success {
+		errMsg := "获取主动指纹列表失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+		return
+	}
+
+	if len(afpResp.Fingerprints) == 0 {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "没有启用的主动指纹"})
+		return
+	}
+
+	// 2. 获取被动指纹列表（用于匹配规则）
+	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: false})
+	if err != nil || !fpResp.Success {
+		errMsg := "获取被动指纹列表失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+		return
+	}
+
+	// 3. 解析基础URL
+	baseUrl, scheme := extractBaseUrlWithSchemeForWorker(url)
+	if baseUrl == "" {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "无效的URL格式"})
+		return
+	}
+
+	// 4. 构建被动指纹名称映射
+	passiveFpByName := make(map[string][]*model.Fingerprint)
+	for _, doc := range fpResp.Fingerprints {
+		fp := &model.Fingerprint{
+			Name:    doc.Name,
+			Rule:    doc.Rule,
+			Source:  doc.Source,
+			Enabled: true,
+		}
+		fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
+		passiveFpByName[doc.Name] = append(passiveFpByName[doc.Name], fp)
+	}
+
+	client := w.createValidateHttpClientForWorker()
+	var matchedInfos []MatchedFpInfo
+	totalScanned := 0
+
+	// 5. 遍历每个主动指纹
+	for _, afp := range afpResp.Fingerprints {
+		passiveFps, ok := passiveFpByName[afp.Name]
+		if !ok || len(passiveFps) == 0 {
+			continue
+		}
+		totalScanned++
+
+		// 遍历每个探测路径
+		fpMatched := false
+		var matchedConds []string
+		for _, path := range afp.Paths {
+			resp, body, finalUrl, err := w.smartHttpRequestForWorker(client, baseUrl, path, scheme)
+			if err != nil {
+				continue
+			}
+
+			// 提取标题
+			title := ""
+			titleRe := regexp.MustCompile(`(?i)<title[^>]*>([^<]*)</title>`)
+			if matches := titleRe.FindStringSubmatch(body); len(matches) > 1 {
+				title = strings.TrimSpace(matches[1])
+			}
+
+			// 构建header字符串
+			var headerStr strings.Builder
+			for key, values := range resp.Header {
+				for _, v := range values {
+					headerStr.WriteString(key)
+					headerStr.WriteString(": ")
+					headerStr.WriteString(v)
+					headerStr.WriteString("\n")
+				}
+			}
+
+			data := &scanner.FingerprintData{
+				Title:        title,
+				Body:         body,
+				BodyBytes:    []byte(body),
+				Headers:      resp.Header,
+				HeaderString: headerStr.String(),
+				Server:       resp.Header.Get("Server"),
+				URL:          finalUrl,
+				Cookies:      resp.Header.Get("Set-Cookie"),
+			}
+
+			// 匹配规则
+			for _, fp := range passiveFps {
+				engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fp})
+				matchedFps := engine.MatchWithId(data)
+				if len(matchedFps) > 0 {
+					fpMatched = true
+					matchedConds = append(matchedConds, fmt.Sprintf("路径 [%s] 匹配规则: %s", path, fp.Name))
+					break
+				}
+			}
+			if fpMatched {
+				break
+			}
+		}
+
+		if fpMatched {
+			matchedInfos = append(matchedInfos, MatchedFpInfo{
+				Id:                afp.Id,
+				Name:              afp.Name,
+				IsActive:          true,
+				MatchedConditions: strings.Join(matchedConds, "\n"),
+			})
+		}
+	}
+
+	duration := time.Since(startTime).Seconds()
+	result := FingerprintValidationResult{
+		Matched:      len(matchedInfos) > 0,
+		Details:      fmt.Sprintf("验证完成，共检测 %d 个主动指纹，匹配 %d 个", totalScanned, len(matchedInfos)),
+		MatchedInfos: matchedInfos,
+		TotalScanned: totalScanned,
+	}
+
+	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("主动指纹批量验证完成, 耗时%.2fs, 匹配%d/%d", duration, len(matchedInfos), totalScanned), result)
+}
+
+// saveFingerprintValidationResult 保存指纹验证结果（终态更新，包含worker字段，不应再调用updateTaskStatus覆盖）
+func (w *Worker) saveFingerprintValidationResult(ctx context.Context, taskId, msg string, result FingerprintValidationResult) {
+	resultData := map[string]interface{}{
+		"taskId":     taskId,
+		"status":     "SUCCESS",
+		"result":     result,
+		"updateTime": time.Now().Local().Format("2006-01-02 15:04:05"),
+	}
+	if result.Error != "" {
+		resultData["status"] = "FAILURE"
+		resultData["error"] = result.Error
+	}
+
+	resultJson, err := json.Marshal(resultData)
+	if err != nil {
+		w.taskLog(taskId, LevelError, "Failed to marshal fingerprint validation result: %v", err)
+		return
+	}
+
+	status := scheduler.TaskStatusSuccess
+	if result.Error != "" {
+		status = scheduler.TaskStatusFailure
+	}
+	// 终态更新：包含 state、worker、result（JSON），不再由后续 updateTaskStatus 覆盖
+	_, err = w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
+		TaskId: taskId,
+		State:  status,
+		Worker: w.config.Name,
+		Result: string(resultJson),
+	})
+	if err != nil {
+		w.taskLog(taskId, LevelError, "Failed to save fingerprint validation result: %v", err)
+	}
+}
+
+// fetchFingerprintDataForValidate 从目标URL获取指纹数据
+func (w *Worker) fetchFingerprintDataForValidate(targetUrl string) (*scanner.FingerprintData, error) {
+	targetUrl = extractBaseUrlForWorker(targetUrl)
+
+	w.logger.Info("[Fingerprint] HTTP GET %s", targetUrl)
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+
+	start := time.Now()
+	resp, err := client.Get(targetUrl)
+	if err != nil {
+		w.logger.Warn("[Fingerprint] HTTP GET %s failed: %v", targetUrl, err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+	w.logger.Info("[Fingerprint] HTTP %s -> %d %s (%dms)", targetUrl, resp.StatusCode, resp.Status, time.Since(start).Milliseconds())
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	body := string(bodyBytes)
+
+	title := ""
+	titleRe := regexp.MustCompile(`(?i)<title[^>]*>([^<]*)</title>`)
+	if matches := titleRe.FindStringSubmatch(body); len(matches) > 1 {
+		title = strings.TrimSpace(matches[1])
+	}
+
+	var headerStr strings.Builder
+	for key, values := range resp.Header {
+		for _, v := range values {
+			headerStr.WriteString(key)
+			headerStr.WriteString(": ")
+			headerStr.WriteString(v)
+			headerStr.WriteString("\n")
+		}
+	}
+
+	faviconHash := w.fetchFaviconHashForWorker(targetUrl, body, client)
+
+	return &scanner.FingerprintData{
+		Title:        title,
+		Body:         body,
+		BodyBytes:    bodyBytes,
+		Headers:      resp.Header,
+		HeaderString: headerStr.String(),
+		Server:       resp.Header.Get("Server"),
+		URL:          targetUrl,
+		FaviconHash:  faviconHash,
+		Cookies:      resp.Header.Get("Set-Cookie"),
+	}, nil
+}
+
+// fetchFaviconHashForWorker 获取favicon并计算MMH3 hash
+func (w *Worker) fetchFaviconHashForWorker(baseUrl, body string, client *http.Client) string {
+	faviconUrl := ""
+	linkRe := regexp.MustCompile(`(?i)<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']`)
+	if matches := linkRe.FindStringSubmatch(body); len(matches) > 1 {
+		faviconUrl = matches[1]
+	}
+	if faviconUrl == "" {
+		linkRe2 := regexp.MustCompile(`(?i)<link[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']`)
+		if matches := linkRe2.FindStringSubmatch(body); len(matches) > 1 {
+			faviconUrl = matches[1]
+		}
+	}
+	if faviconUrl == "" {
+		faviconUrl = "/favicon.ico"
+	}
+	if !strings.HasPrefix(faviconUrl, "http") {
+		if strings.HasPrefix(faviconUrl, "//") {
+			faviconUrl = "https:" + faviconUrl
+		} else if strings.HasPrefix(faviconUrl, "/") {
+			u := extractBaseUrlForWorker(baseUrl)
+			if u != "" {
+				faviconUrl = strings.TrimRight(u, "/") + faviconUrl
+			}
+		} else {
+			u := extractBaseUrlForWorker(baseUrl)
+			if u != "" {
+				faviconUrl = strings.TrimRight(u, "/") + "/" + faviconUrl
+			}
+		}
+	}
+
+	resp, err := client.Get(faviconUrl)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return ""
+	}
+
+	iconBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil || len(iconBytes) == 0 {
+		return ""
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(iconBytes)
+	hash := mmh3Hash32ForWorker([]byte(encoded))
+	return fmt.Sprintf("%d", int32(hash))
+}
+
+// mmh3Hash32ForWorker MurmurHash3 32位实现（与API端一致）
+func mmh3Hash32ForWorker(data []byte) uint32 {
+	const (
+		c1 = 0xcc9e2d51
+		c2 = 0x1b873593
+		r1 = 15
+		r2 = 13
+		m  = 5
+		n  = 0xe6546b64
+	)
+	length := len(data)
+	h1 := uint32(0)
+	pos := 0
+	for pos+4 <= length {
+		k1 := uint32(data[pos]) | uint32(data[pos+1])<<8 | uint32(data[pos+2])<<16 | uint32(data[pos+3])<<24
+		pos += 4
+		k1 *= c1
+		k1 = (k1 << r1) | (k1 >> (32 - r1))
+		k1 *= c2
+		h1 ^= k1
+		h1 = (h1 << r2) | (h1 >> (32 - r2))
+		h1 = h1*m + n
+	}
+	var tail uint32
+	switch length - pos {
+	case 3:
+		tail ^= uint32(data[pos+2]) << 16
+		fallthrough
+	case 2:
+		tail ^= uint32(data[pos+1]) << 8
+		fallthrough
+	case 1:
+		tail ^= uint32(data[pos])
+		tail *= c1
+		tail = (tail << r1) | (tail >> (32 - r1))
+		tail *= c2
+		h1 ^= tail
+	}
+	h1 ^= uint32(length)
+	h1 ^= h1 >> 16
+	h1 *= 0x85ebca6b
+	h1 ^= h1 >> 13
+	h1 *= 0xc2b2ae35
+	h1 ^= h1 >> 16
+	return h1
+}
+
+// createValidateHttpClientForWorker 创建HTTP客户端
+func (w *Worker) createValidateHttpClientForWorker() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   8 * time.Second,
+		KeepAlive: 0,
+	}
+	transport := &http.Transport{
+		DialContext:         dialer.DialContext,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS10},
+		DisableKeepAlives:   true,
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     10 * time.Second,
+		TLSHandshakeTimeout: 8 * time.Second,
+		ForceAttemptHTTP2:   false,
+	}
+	return &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+}
+
+// smartHttpRequestForWorker 智能HTTP请求，自动处理协议切换
+func (w *Worker) smartHttpRequestForWorker(client *http.Client, baseUrl, path, originalScheme string) (*http.Response, string, string, error) {
+	fullUrl := baseUrl + path
+	var urls []string
+
+	switch originalScheme {
+	case "https":
+		urls = append(urls, fullUrl)
+		urls = append(urls, strings.Replace(fullUrl, "https://", "http://", 1))
+	case "http":
+		urls = append(urls, fullUrl)
+	default:
+		urls = append(urls, fullUrl)
+		if strings.HasPrefix(fullUrl, "http://") {
+			urls = append(urls, strings.Replace(fullUrl, "http://", "https://", 1))
+		}
+	}
+
+	var lastErr error
+	for _, url := range urls {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		req.Header.Set("Connection", "close")
+
+		resp, err := client.Do(req)
+		if err == nil {
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+			resp.Body.Close()
+			return resp, string(bodyBytes), url, nil
+		}
+		lastErr = err
+	}
+	return nil, "", "", fmt.Errorf("请求失败: %v", lastErr)
+}
+
+// extractBaseUrlForWorker 从URL提取基础部分
+func extractBaseUrlForWorker(rawUrl string) string {
+	rawUrl = strings.TrimSpace(rawUrl)
+	if rawUrl == "" {
+		return ""
+	}
+	if !strings.Contains(rawUrl, "://") {
+		rawUrl = "http://" + rawUrl
+	}
+	schemeEnd := strings.Index(rawUrl, "://")
+	rest := rawUrl[schemeEnd+3:]
+	slashIdx := strings.Index(rest, "/")
+	if slashIdx == -1 {
+		return rawUrl
+	}
+	return rawUrl[:schemeEnd+3+slashIdx]
+}
+
+// extractBaseUrlWithSchemeForWorker 从URL提取基础部分和协议
+func extractBaseUrlWithSchemeForWorker(rawUrl string) (string, string) {
+	rawUrl = strings.TrimSpace(rawUrl)
+	if rawUrl == "" {
+		return "", ""
+	}
+	var scheme string
+	schemeEnd := strings.Index(rawUrl, "://")
+	if schemeEnd == -1 {
+		rawUrl = "http://" + rawUrl
+		scheme = "http"
+		schemeEnd = 4
+	} else {
+		scheme = rawUrl[:schemeEnd]
+	}
+	rest := rawUrl[schemeEnd+3:]
+	slashIdx := strings.Index(rest, "/")
+	if slashIdx == -1 {
+		return rawUrl, scheme
+	}
+	return rawUrl[:schemeEnd+3+slashIdx], scheme
 }
 
 // WorkerHttpServiceChecker Worker端的HTTP服务检查器实现
@@ -4983,21 +6091,27 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 		return nil
 	}
 
-	// 构建扫描选项，使用 Worker 并发数
-	threads := w.config.Concurrency
+	// 构建扫描选项：前端已隐藏threads/timeout/rate配置，这里使用合理默认值，并用Worker并发数做上限保护
+	threads := config.Threads
 	if threads <= 0 {
-		threads = 10
+		threads = 50 // 默认50并发
+	}
+	if w.config.Concurrency > 0 && threads > w.config.Concurrency {
+		threads = w.config.Concurrency // 不超过Worker并发上限，避免压垮单Worker
 	}
 	timeout := config.Timeout
 	if timeout <= 0 {
-		timeout = 10
+		timeout = 10 // 默认单请求超时10秒
 	}
+	rate := config.Rate
+	// rate=0 表示不限制速率，由ffuf内部按threads全速跑
 
 	opts := &scanner.FFufOptions{
 		Paths:           allPaths,
 		Threads:         threads,
 		Timeout:         timeout,
 		Extensions:      config.Extensions,
+		StatusCodes:     config.StatusCodes,
 		FollowRedirect:  config.FollowRedirect,
 		AutoCalibration: config.AutoCalibration,
 		FilterSize:      config.FilterSize,
@@ -5006,7 +6120,7 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 		FilterRegex:     config.FilterRegex,
 		MatcherMode:     config.MatcherMode,
 		FilterMode:      config.FilterMode,
-		Rate:            config.Rate,
+		Rate:            rate,
 		Recursion:       config.Recursion,
 		RecursionDepth:  config.RecursionDepth,
 	}
@@ -5120,6 +6234,8 @@ func (w *Worker) saveDirScanResults(ctx context.Context, task *scheduler.TaskInf
 			ContentWords:  asset.ContentWords,
 			ContentLines:  asset.ContentLines,
 			Duration:      asset.Duration,
+			Request:       asset.RequestRaw,
+			Response:      asset.ResponseRaw,
 		})
 	}
 

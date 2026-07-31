@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"cscan/scanner"
+
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -167,6 +169,23 @@ type VulResultResp struct {
 	Msg     string `json:"msg"`
 	Success bool   `json:"success"`
 	Total   int32  `json:"total"`
+}
+
+// VulReverifyReq 漏洞复验结果上报请求
+type VulReverifyReq struct {
+	WorkspaceId string `json:"workspaceId"`
+	VulnId      string `json:"vulnId"`
+	Conclusion  string `json:"conclusion"`
+	Reviewer    string `json:"reviewer"`
+	Message     string `json:"message"`
+	ReverifyAt  string `json:"reverifyAt"`
+}
+
+// VulReverifyResp 漏洞复验结果上报响应
+type VulReverifyResp struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	Success bool   `json:"success"`
 }
 
 // HeartbeatReq 心跳请求
@@ -651,6 +670,21 @@ func (c *WorkerHTTPClient) SaveVulResult(ctx context.Context, req *VulResultReq)
 	return &resp, nil
 }
 
+// SaveVulReverify 上报漏洞复验结果
+func (c *WorkerHTTPClient) SaveVulReverify(ctx context.Context, req *VulReverifyReq) (*VulReverifyResp, error) {
+	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/vul/reverify", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp VulReverifyResp
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshal response failed: %w", err)
+	}
+
+	return &resp, nil
+}
+
 // Heartbeat 心跳
 func (c *WorkerHTTPClient) Heartbeat(ctx context.Context, req *HeartbeatReq) (*HeartbeatResp, error) {
 	// 心跳不做内部重试（调用方 sendHeartbeatWithRetry 已有重试逻辑）
@@ -1064,6 +1098,8 @@ type DirScanResultDocument struct {
 	ContentWords  int64  `json:"contentWords"`
 	ContentLines  int64  `json:"contentLines"`
 	Duration      int64  `json:"duration"`
+	Request       string `json:"request,omitempty"`
+	Response      string `json:"response,omitempty"`
 }
 
 // DirScanResultReq 目录扫描结果上报请求
@@ -1115,6 +1151,45 @@ type BaseResp struct {
 // SaveJSFinderResult 保存 JSFinder 扫描结果
 func (c *WorkerHTTPClient) SaveJSFinderResult(ctx context.Context, req *SaveJSFinderResultReq) (*BaseResp, error) {
 	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/jsfinder/save", req)
+	if err != nil {
+		return nil, err
+	}
+	var resp BaseResp
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// CertResultItem 证书采集结果项（与 scanner.CertResult 对齐）
+type CertResultItem struct {
+	Host         string            `json:"host"`
+	Port         int               `json:"port"`
+	Authority    string            `json:"authority"`
+	Subject      scanner.CertNameInfo `json:"subject"`
+	SubjectDN    string            `json:"subjectDN"`
+	Issuer       scanner.CertNameInfo `json:"issuer"`
+	IssuerDN     string            `json:"issuerDN"`
+	SerialNumber string            `json:"serialNumber"`
+	SigAlg       string            `json:"sigAlg"`
+	NotBefore    time.Time         `json:"notBefore"`
+	NotAfter     time.Time         `json:"notAfter"`
+	Version      int               `json:"version"`
+	SANs         []string          `json:"sans,omitempty"`
+	Fingerprints map[string]string `json:"fingerprints,omitempty"`
+	IsSelfSigned bool              `json:"isSelfSigned"`
+}
+
+// SaveCertResultReq 保存证书采集结果请求
+type SaveCertResultReq struct {
+	WorkspaceId string            `json:"workspaceId"`
+	MainTaskId  string            `json:"mainTaskId,omitempty"`
+	Results     []*CertResultItem `json:"results"`
+}
+
+// SaveCertResult 保存证书采集结果（worker → API，镜像 SaveJSFinderResult）
+func (c *WorkerHTTPClient) SaveCertResult(ctx context.Context, req *SaveCertResultReq) (*BaseResp, error) {
+	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/cert/save", req)
 	if err != nil {
 		return nil, err
 	}

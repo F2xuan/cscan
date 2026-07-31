@@ -46,9 +46,12 @@ func (i *TaskRunnerIntegration) CanUseRunner(task *scheduler.TaskInfo) bool {
 		return false
 	}
 
-	// POC 验证任务使用原有逻辑
+	// POC验证、指纹验证、漏洞复验任务使用原有逻辑
 	taskType, _ := taskConfig["taskType"].(string)
-	if taskType == "poc_validate" || taskType == "poc_batch_validate" {
+	if taskType == "poc_validate" || taskType == "poc_batch_validate" ||
+		taskType == "fingerprint_validate" || taskType == "fingerprint_batch_validate" ||
+		taskType == "active_fingerprint_validate" || taskType == "active_fingerprint_batch_validate" ||
+		taskType == "vuln_reverify" {
 		return false
 	}
 
@@ -666,6 +669,12 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 		})
 	}
 
+	// 指纹识别阶段附加产出的证书采集结果：内联处理（executeFingerprint 未走 resultChan），
+	// 需在此处直接落库，否则 CertResults 会被丢弃，UI 证书列表将无数据。
+	if result != nil && len(result.CertResults) > 0 {
+		w.saveCertResults(ctx.Ctx, task.WorkspaceId, task.MainTaskId, result.CertResults)
+	}
+
 	return &PhaseResult{}, nil
 }
 
@@ -834,6 +843,7 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 		CustomTemplates: templates,
 		TagMappings:     config.TagMappings,
 		CustomHeaders:   config.CustomHeaders,
+		ForceScan:       config.ForceScan,
 		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 			vulCount++
 			w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)

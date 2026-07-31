@@ -44,7 +44,7 @@ var DefaultPhaseOrder = []PhaseConfig{
 	{Phase: PhaseBruteScan, Name: "弱口令扫描", Scanner: "brutescan", ProgressStart: 65, ProgressEnd: 75, ContinueOnError: true},
 	{Phase: PhaseDirScan, Name: "目录扫描", Scanner: "ffuf", ProgressStart: 75, ProgressEnd: 80, ContinueOnError: true},
 	{Phase: PhaseJSFinder, Name: "JS扫描", Scanner: "jsfinder", ProgressStart: 80, ProgressEnd: 85, ContinueOnError: true},
-	{Phase: PhasePocScan, Name: "漏洞扫描", Scanner: "nuclei", ProgressStart: 85, ProgressEnd: 100, ContinueOnError: true},
+	{Phase: PhasePocScan, Name: "漏洞扫描", Scanner: "nuclei", ProgressStart: 90, ProgressEnd: 100, ContinueOnError: true},
 }
 
 // TaskRunner 任务执行器

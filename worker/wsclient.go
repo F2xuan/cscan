@@ -39,6 +39,9 @@ const (
 	WSTypeFileDelete     = "FILE_DELETE"     // 文件删除
 	WSTypeFileMkdir      = "FILE_MKDIR"      // 创建目录
 	WSTypeWorkerInfo     = "WORKER_INFO"     // Worker信息
+	WSTypeLogSyncReq     = "LOG_SYNC_REQ"    // API 请求 Worker 同步日志
+	WSTypeLogSyncResp    = "LOG_SYNC_RESP"   // Worker 返回同步日志数据
+	WSTypeLogSyncAck     = "LOG_SYNC_ACK"    // API 确认日志已写入文件
 )
 
 // WSMessage WebSocket消息结构
@@ -70,6 +73,27 @@ type WSLogBatchPayload struct {
 type WSControlPayload struct {
 	TaskId string `json:"taskId"`
 	Action string `json:"action"` // STOP, PAUSE, RESUME
+}
+
+// WSLogSyncReqPayload 日志同步请求载荷（API → Worker）
+type WSLogSyncReqPayload struct {
+	Filename string `json:"filename"` // 上次同步到的文件名 (YYYY-MM-DD.jsonl)，首次为空
+	Offset   int64  `json:"offset"`   // 上次同步到的字节偏移
+}
+
+// WSLogSyncRespPayload 日志同步响应载荷（Worker → API）
+type WSLogSyncRespPayload struct {
+	Filename  string         `json:"filename"`  // 当前读取的文件名
+	Logs      []FileLogEntry `json:"logs"`      // 读取到的日志
+	NewOffset int64          `json:"newOffset"` // 读取后的新偏移
+	HasMore   bool           `json:"hasMore"`   // 是否还有更多数据
+	NextFile  string         `json:"nextFile"`  // 下一个待读文件（跨日续读）
+}
+
+// WSLogSyncAckPayload 日志同步确认载荷（API → Worker）
+type WSLogSyncAckPayload struct {
+	Filename string `json:"filename"` // 已写入的文件名
+	Offset   int64  `json:"offset"`   // 已写入的字节偏移
 }
 
 // ==================== WebSocket Client ====================
@@ -133,6 +157,9 @@ type TerminalOperationHandler interface {
 // WorkerControlHandler Worker级别控制处理函数类型
 type WorkerControlHandler func(action string, param string)
 
+// LogSyncHandler 日志同步请求处理函数类型
+type LogSyncHandler func(req WSLogSyncReqPayload) WSLogSyncRespPayload
+
 // WorkerWSClient Worker WebSocket客户�?
 type WorkerWSClient struct {
 	config               *WSClientConfig
@@ -150,6 +177,7 @@ type WorkerWSClient struct {
 	workerInfoHandler    WorkerInfoHandler
 	fileHandler          FileOperationHandler
 	terminalHandler      TerminalOperationHandler
+	logSyncHandler       LogSyncHandler
 	lastPong             time.Time
 	pongMu               sync.RWMutex
 	reconnecting         atomic.Bool
@@ -192,6 +220,11 @@ func (c *WorkerWSClient) SetFileHandler(handler FileOperationHandler) {
 // SetTerminalHandler 设置终端操作处理函数
 func (c *WorkerWSClient) SetTerminalHandler(handler TerminalOperationHandler) {
 	c.terminalHandler = handler
+}
+
+// SetLogSyncHandler 设置日志同步请求处理函数
+func (c *WorkerWSClient) SetLogSyncHandler(handler LogSyncHandler) {
+	c.logSyncHandler = handler
 }
 
 // IsConnected 检查是否已连接
@@ -803,6 +836,14 @@ func (c *WorkerWSClient) handleMessage(msg *WSMessage) {
 	case WSTypeTerminalResize:
 		// 收到终端大小调整请求
 		c.handleTerminalResizeRequest(msg.Payload)
+
+	case WSTypeLogSyncReq:
+		// 收到日志同步请求
+		c.handleLogSyncReq(msg.Payload)
+
+	case WSTypeLogSyncAck:
+		// 收到日志同步确认，更新本地游标
+		c.handleLogSyncAck(msg.Payload)
 
 	default:
 		logx.Infof("[WSClient] Unknown message type: %s", msg.Type)
@@ -1443,4 +1484,55 @@ func (c *WorkerWSClient) SendTerminalOutput(sessionId string, data []byte) error
 		Type:    WSTypeTerminalOutput,
 		Payload: payloadData,
 	})
+}
+
+// ==================== Log Sync Handlers ====================
+
+// handleLogSyncReq 处理 API 发来的日志同步请求
+// 从本地文件游标位置读取日志，返回给 API
+func (c *WorkerWSClient) handleLogSyncReq(payload json.RawMessage) {
+	var req WSLogSyncReqPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		logx.Infof("[WSClient] Invalid log sync request payload: %v", err)
+		return
+	}
+
+	if c.logSyncHandler == nil {
+		logx.Infof("[WSClient] Log sync handler not set")
+		return
+	}
+
+	// 调用 handler 读取本地文件日志
+	resp := c.logSyncHandler(req)
+
+	payloadData, _ := json.Marshal(resp)
+	if err := c.sendMessage(&WSMessage{
+		Type:    WSTypeLogSyncResp,
+		Payload: payloadData,
+	}); err != nil {
+		logx.Infof("[WSClient] Failed to send log sync response: %v", err)
+	}
+}
+
+// handleLogSyncAck 处理 API 发来的日志同步确认
+// API 确认日志已写入文件后，更新本地游标
+// 修复 M-14：ACK 后触发旧日志清理，根据已同步游标删除过期文件，避免磁盘无限增长
+func (c *WorkerWSClient) handleLogSyncAck(payload json.RawMessage) {
+	var ack WSLogSyncAckPayload
+	if err := json.Unmarshal(payload, &ack); err != nil {
+		logx.Infof("[WSClient] Invalid log sync ack payload: %v", err)
+		return
+	}
+
+	// 更新本地持久化游标
+	if globalCursorManager != nil {
+		if err := globalCursorManager.Update(ack.Filename, ack.Offset); err != nil {
+			logx.Infof("[WSClient] Failed to update sync cursor: %v", err)
+		}
+		// 根据新游标清理已同步的旧日志文件
+		if globalFileLogger != nil {
+			cursor := globalCursorManager.Get()
+			globalFileLogger.Cleanup(cursor)
+		}
+	}
 }

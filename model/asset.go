@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -240,6 +241,58 @@ func (m *AssetModel) FindWithSort(ctx context.Context, filter bson.M, page, page
 		return nil, err
 	}
 	return docs, nil
+}
+
+// FindSubdomainHostsByRootDomain 查询根域名下所有已存在的子域名 host 列表（去重）
+// 用于定时任务"同步拉取所有子域名"功能，把数据库中已有的子域名资产加入扫描目标
+func (m *AssetModel) FindSubdomainHostsByRootDomain(ctx context.Context, rootDomains []string) ([]string, error) {
+	if len(rootDomains) == 0 {
+		return nil, nil
+	}
+
+	// 构造正则：匹配 host == root 或 host 以 .root 结尾
+	var regexPatterns []bson.M
+	for _, root := range rootDomains {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		regexPatterns = append(regexPatterns, bson.M{
+			"host": bson.M{"$regex": "(^|\\.)" + regexp.QuoteMeta(root) + "$", "$options": "i"},
+		})
+	}
+
+	if len(regexPatterns) == 0 {
+		return nil, nil
+	}
+
+	filter := bson.M{"$or": regexPatterns}
+	opts := options.Find().SetProjection(bson.M{"host": 1, "_id": 0})
+
+	cursor, err := m.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	hostSet := make(map[string]struct{})
+	var hosts []string
+	for cursor.Next(ctx) {
+		var result struct {
+			Host string `bson:"host"`
+		}
+		if err := cursor.Decode(&result); err != nil {
+			continue
+		}
+		h := strings.TrimSpace(result.Host)
+		if h != "" {
+			if _, exists := hostSet[h]; !exists {
+				hostSet[h] = struct{}{}
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return hosts, cursor.Err()
 }
 
 // AssetGroupAggRow 是 AggregateGroupByDomain 返回的轻量行，仅包含分组所需字段。
@@ -609,6 +662,15 @@ func (m *AssetModel) UpdateLabels(ctx context.Context, id string, labels []strin
 	return err
 }
 
+// UpdateManyByFilter 批量更新满足条件的资产
+func (m *AssetModel) UpdateManyByFilter(ctx context.Context, filter bson.M, update bson.M) (int64, error) {
+	result, err := m.coll.UpdateMany(ctx, filter, update)
+	if err != nil {
+		return 0, err
+	}
+	return result.ModifiedCount, nil
+}
+
 // AddLabel 添加单个标签
 func (m *AssetModel) AddLabel(ctx context.Context, id string, label string) error {
 	oid, err := primitive.ObjectIDFromHex(id)
@@ -804,6 +866,62 @@ func (m *AssetModel) AggregateOverviewStats(ctx context.Context) (*AssetOverview
 	}
 
 	return stats, nil
+}
+
+// AssetChangeStats 工作台资产变化统计结果
+type AssetChangeStats struct {
+	Total       int64
+	NewInWindow int64
+	ByCategory  map[string]int64
+}
+
+// AggregateChangesStats 统计资产总数、窗口内新增数及新增分类分布（单次 $facet 聚合）
+// 窗口口径与 T1.2 一致：first_seen_time（缺失回退 create_time）>= cutoff
+func (m *AssetModel) AggregateChangesStats(ctx context.Context, cutoff time.Time) (*AssetChangeStats, error) {
+	pipeline := mongo.Pipeline{
+		{{Key: "$facet", Value: bson.D{
+			{Key: "total", Value: bson.A{bson.D{{Key: "$count", Value: "c"}}}},
+			{Key: "newByCat", Value: bson.A{
+				bson.D{{Key: "$match", Value: bson.D{{Key: "$expr", Value: bson.D{{Key: "$gte", Value: bson.A{
+					bson.D{{Key: "$ifNull", Value: bson.A{"$first_seen_time", "$create_time"}}}, cutoff}}}}}}},
+				bson.D{{Key: "$group", Value: bson.D{
+					{Key: "_id", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$category", ""}}}},
+					{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+				}}},
+			}},
+		}}},
+	}
+
+	cursor, err := m.coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	result := &AssetChangeStats{ByCategory: map[string]int64{}}
+	if cursor.Next(ctx) {
+		var facet struct {
+			Total    []struct{ C int64 `bson:"c"` } `bson:"total"`
+			NewByCat []struct {
+				ID    string `bson:"_id"`
+				Count int64  `bson:"count"`
+			} `bson:"newByCat"`
+		}
+		if err := cursor.Decode(&facet); err != nil {
+			return nil, err
+		}
+		if len(facet.Total) > 0 {
+			result.Total = facet.Total[0].C
+		}
+		for _, c := range facet.NewByCat {
+			result.ByCategory[c.ID] = c.Count
+			result.NewInWindow += c.Count
+		}
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // SiteStatsResult 站点统计结果（一次 $facet 聚合替代 4 次 CountDocuments）
@@ -1147,6 +1265,15 @@ func (m *AssetHistoryModel) Clear(ctx context.Context) (int64, error) {
 	return result.DeletedCount, nil
 }
 
+// DeleteByFilter 按条件删除历史记录（供顶层资产级联删除复用）
+func (m *AssetHistoryModel) DeleteByFilter(ctx context.Context, filter bson.M) (int64, error) {
+	result, err := m.coll.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	return result.DeletedCount, nil
+}
+
 // ExistsByAssetIdAndTaskId 检查是否已存在同一资产同一任务的历史记录
 func (m *AssetHistoryModel) ExistsByAssetIdAndTaskId(ctx context.Context, assetId, taskId string) (bool, error) {
 	count, err := m.coll.CountDocuments(ctx, bson.M{"assetId": assetId, "taskId": taskId})
@@ -1169,6 +1296,37 @@ func (m *AssetModel) UpsertByAuthority(ctx context.Context, authority string, up
 	uopts := options.Update().SetUpsert(true)
 	_, err := m.coll.UpdateOne(ctx, filter, update, uopts)
 	return err
+}
+
+// UpsertResult Upsert操作结果
+type UpsertResult struct {
+	IsNew bool // 是否为新插入（true=新增，false=已存在/更新）
+}
+
+// UpsertWithResult 插入或更新资产，返回是否为新增
+func (m *AssetModel) UpsertWithResult(ctx context.Context, doc *Asset) (*UpsertResult, error) {
+	if doc.Authority == "" {
+		return nil, errors.New("asset authority cannot be empty")
+	}
+	if doc.Host == "" {
+		return nil, errors.New("asset host cannot be empty")
+	}
+
+	filter := bson.M{"authority": doc.Authority}
+	existing, _ := m.FindByAuthorityOnly(ctx, doc.Authority)
+	opts := AssetWriteOptions{
+		TaskId:               doc.TaskId,
+		IsDifferentTask:      existing != nil && existing.TaskId != doc.TaskId && doc.TaskId != "",
+		AllowClearUserFields: false,
+	}
+	update, _ := BuildAssetUpdateDoc(doc, existing, opts)
+
+	uopts := options.Update().SetUpsert(true)
+	result, err := m.coll.UpdateOne(ctx, filter, update, uopts)
+	if err != nil {
+		return nil, err
+	}
+	return &UpsertResult{IsNew: result.UpsertedCount > 0}, nil
 }
 
 // Upsert 插入或更新资产

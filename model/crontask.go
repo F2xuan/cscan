@@ -12,24 +12,63 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// CronTaskType 定时任务类型
+type CronTaskType string
+
+const (
+	CronTaskTypeScan       CronTaskType = "scan"        // 资产扫描定时任务（选择顶层资产或手动输入目标）
+	CronTaskTypeSpaceEngine CronTaskType = "space_engine" // 空间引擎定时拉取任务（Fofa/Hunter/Quake）
+)
+
+// CronTaskTargetMode 目标选择模式（仅用于 scan 类型）
+type CronTaskTargetMode string
+
+const (
+	CronTargetModeManual   CronTaskTargetMode = "manual"   // 手动输入目标
+	CronTargetModeAsset    CronTaskTargetMode = "asset"    // 选择顶层资产
+)
+
+// CronTaskConfigSource 扫描配置来源（仅用于 scan 类型）
+type CronTaskConfigSource string
+
+const (
+	CronConfigSourceTemplate CronTaskConfigSource = "template" // 使用扫描模板
+	CronConfigSourceCustom   CronTaskConfigSource = "custom"   // 自定义配置
+)
+
 // CronTask 定时任务（MongoDB持久化模型）
 type CronTask struct {
 	Id           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	CronTaskId   string             `bson:"cron_task_id" json:"cronTaskId"` // 业务ID（UUID，用于跨服务引用）
 	Name         string             `bson:"name" json:"name"`
+	TaskType     string             `bson:"task_type" json:"taskType"` // scan / space_engine
 	ScheduleType string             `bson:"schedule_type" json:"scheduleType"` // cron / once
 	CronSpec     string             `bson:"cron_spec" json:"cronSpec"`
 	ScheduleTime string             `bson:"schedule_time" json:"scheduleTime"`
 	WorkspaceId  string             `bson:"workspace_id" json:"workspaceId"`
-	MainTaskId   string             `bson:"main_task_id" json:"mainTaskId"`
-	TaskName     string             `bson:"task_name" json:"taskName"`
-	Target       string             `bson:"target" json:"target"`
-	Config       string             `bson:"config" json:"config"`
 	Status       string             `bson:"status" json:"status"` // enable / disable
 	LastRunTime  string             `bson:"last_run_time" json:"lastRunTime"`
 	NextRunTime  string             `bson:"next_run_time" json:"nextRunTime"`
 	CreateTime   time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime   time.Time          `bson:"update_time" json:"updateTime"`
+
+	// ===== 扫描任务特有字段 (task_type=scan) =====
+	// 目标选择
+	TargetMode   string   `bson:"target_mode,omitempty" json:"targetMode"` // manual / asset
+	Target       string   `bson:"target,omitempty" json:"target"`          // 手动输入的目标（换行分隔）
+	AssetIds     []string `bson:"asset_ids,omitempty" json:"assetIds"`     // 选择的顶层资产ID列表（AssetTargetMeta._id）
+	OrgId        string   `bson:"org_id,omitempty" json:"orgId"`          // 选择的组织ID（用于按组织筛选资产）
+	EnableSubdomainPull bool `bson:"enable_subdomain_pull,omitempty" json:"enableSubdomainPull"` // 同步拉取所有子域名
+
+	// 扫描配置
+	ConfigSource string `bson:"config_source,omitempty" json:"configSource"` // template / custom
+	TemplateId   string `bson:"template_id,omitempty" json:"templateId"`     // 扫描模板ID
+	Config       string `bson:"config,omitempty" json:"config"`              // 自定义配置JSON（或模板展开后的配置）
+
+	// ===== 空间引擎任务特有字段 (task_type=space_engine) =====
+	Platform    string `bson:"platform,omitempty" json:"platform"`     // fofa / hunter / quake
+	Query       string `bson:"query,omitempty" json:"query"`           // 查询语句
+	MaxResults  int    `bson:"max_results,omitempty" json:"maxResults"` // 单次拉取上限
 }
 
 // CronTaskModel 定时任务数据模型
@@ -45,6 +84,7 @@ func NewCronTaskModel(db *mongo.Database) *CronTaskModel {
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "cron_task_id", Value: 1}}, Options: options.Index().SetUnique(true)},
 		{Keys: bson.D{{Key: "workspace_id", Value: 1}}},
+		{Keys: bson.D{{Key: "task_type", Value: 1}}},
 		{Keys: bson.D{{Key: "status", Value: 1}}},
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 	}
@@ -80,17 +120,21 @@ func (m *CronTaskModel) FindByCronTaskId(ctx context.Context, cronTaskId string)
 	return &doc, nil
 }
 
-// FindByWorkspaceId 根据工作空间查找（支持关键字过滤）
-func (m *CronTaskModel) FindByWorkspaceId(ctx context.Context, workspaceId string, keyword string, page, pageSize int) ([]CronTask, int64, error) {
+// FindByWorkspaceId 根据工作空间查找（支持关键字过滤和任务类型过滤）
+func (m *CronTaskModel) FindByWorkspaceId(ctx context.Context, workspaceId string, keyword string, taskType string, page, pageSize int) ([]CronTask, int64, error) {
 	filter := bson.M{}
 	if workspaceId != "" && workspaceId != "all" {
 		filter["workspace_id"] = workspaceId
+	}
+	if taskType != "" {
+		filter["task_type"] = taskType
 	}
 	if keyword != "" {
 		escapedKeyword := regexp.QuoteMeta(keyword)
 		filter["$or"] = bson.A{
 			bson.M{"name": primitive.Regex{Pattern: escapedKeyword, Options: "i"}},
-			bson.M{"task_name": primitive.Regex{Pattern: escapedKeyword, Options: "i"}},
+			bson.M{"target": primitive.Regex{Pattern: escapedKeyword, Options: "i"}},
+			bson.M{"query": primitive.Regex{Pattern: escapedKeyword, Options: "i"}},
 		}
 	}
 
@@ -136,7 +180,6 @@ func (m *CronTaskModel) FindAll(ctx context.Context) ([]CronTask, error) {
 
 // UpdateByCronTaskId 根据业务ID更新
 func (m *CronTaskModel) UpdateByCronTaskId(ctx context.Context, cronTaskId string, update bson.M) error {
-	// 检查update中是否已包含update_time，避免容量浪费
 	setDoc := make(bson.M, len(update))
 	for k, v := range update {
 		setDoc[k] = v

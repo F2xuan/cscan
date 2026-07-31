@@ -31,6 +31,18 @@ type JSFinderResult struct {
 	Response         string             `bson:"response,omitempty" json:"response,omitempty"`
 	CreateTime       time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime       time.Time          `bson:"update_time" json:"updateTime"`
+
+	// 复验跟踪字段（T3.4 敏感信息持续复验）：reverify_status ∈ {resolved,verified,pending}；
+	// verify_pending 表示目标不可达（连不上），与已确认修复（resolved）区分，避免误判。
+	ReverifyStatus string    `bson:"reverify_status,omitempty" json:"reverifyStatus,omitempty"`
+	LastVerifiedAt time.Time `bson:"last_verified_at,omitempty" json:"lastVerifiedAt,omitempty"`
+	VerifyPending  bool      `bson:"verify_pending,omitempty" json:"verifyPending,omitempty"`
+
+	// AI研判字段
+	AIStatus     string    `bson:"ai_status,omitempty" json:"aiStatus,omitempty"`     // pending/completed，空值等价于pending
+	AIResult     string    `bson:"ai_result,omitempty" json:"aiResult,omitempty"`     // risk/no_risk
+	AIAnalyzedAt time.Time `bson:"ai_analyzed_at,omitempty" json:"aiAnalyzedAt,omitempty"`
+	AIReason     string    `bson:"ai_reason,omitempty" json:"aiReason,omitempty"` // AI判断理由
 }
 
 // JSFinderResultModel JSFinder 结果模型
@@ -44,7 +56,7 @@ func NewJSFinderResultModel(db *mongo.Database, workspaceId string) *JSFinderRes
 	return &JSFinderResultModel{coll: coll}
 }
 
-// InsertMany 批量插入
+// InsertMany 批量插入（保留以兼容旧调用方，新代码建议使用 UpsertMany）
 func (m *JSFinderResultModel) InsertMany(ctx context.Context, results []*JSFinderResult) error {
 	if len(results) == 0 {
 		return nil
@@ -64,6 +76,92 @@ func (m *JSFinderResultModel) InsertMany(ctx context.Context, results []*JSFinde
 	opts := options.InsertMany().SetOrdered(false)
 	_, err := m.coll.InsertMany(ctx, docs, opts)
 	return err
+}
+
+// UpsertMany 批量 upsert：按唯一键（main_task_id, authority, url, vul_name, result）匹配，
+// 已存在则仅刷新 update_time 并更新可变字段（保留 AI 研判结果等人工标注字段），
+// 不存在则插入新记录。防止循环扫描导致重复脏数据。
+func (m *JSFinderResultModel) UpsertMany(ctx context.Context, results []*JSFinderResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	now := time.Now()
+
+	// 为避免单次批量过大，每 200 条分批执行
+	const batchSize = 200
+	for start := 0; start < len(results); start += batchSize {
+		end := start + batchSize
+		if end > len(results) {
+			end = len(results)
+		}
+		batch := results[start:end]
+
+		var models []mongo.WriteModel
+		for _, r := range batch {
+			if r.CreateTime.IsZero() {
+				r.CreateTime = now
+			}
+			// 唯一键过滤条件
+			filter := bson.M{
+				"main_task_id": r.MainTaskId,
+				"authority":    r.Authority,
+				"url":          r.URL,
+				"vul_name":     r.VulName,
+				"result":       r.Result,
+			}
+
+			// $setOnInsert：仅插入时设置的不可变字段
+			setOnInsert := bson.M{
+				"_id":               primitive.NewObjectID(),
+				"workspace_id":      r.WorkspaceId,
+				"create_time":       r.CreateTime,
+				"host":              r.Host,
+				"port":              r.Port,
+				"severity":          r.Severity,
+				"tags":              r.Tags,
+				"matcher_name":      r.MatcherName,
+				"extracted_results": r.ExtractedResults,
+				"curl_command":      r.CurlCommand,
+				"request":           r.Request,
+				"response":          r.Response,
+			}
+
+			// $set：每次都更新的可变字段（update_time 始终刷新，
+			// 其他扫描相关字段用新值覆盖，但 AI 研判字段不触碰，保护人工标注结果）
+			set := bson.M{
+				"update_time": now,
+				// 这些字段在重新扫描时可能变化，覆盖更新
+				"host":              r.Host,
+				"port":              r.Port,
+				"severity":          r.Severity,
+				"tags":              r.Tags,
+				"matcher_name":      r.MatcherName,
+				"extracted_results": r.ExtractedResults,
+				"curl_command":      r.CurlCommand,
+				"request":           r.Request,
+				"response":          r.Response,
+				"task_name":         r.TaskName,
+			}
+
+			update := bson.M{
+				"$setOnInsert": setOnInsert,
+				"$set":         set,
+			}
+
+			model := mongo.NewUpdateOneModel().
+				SetFilter(filter).
+				SetUpdate(update).
+				SetUpsert(true)
+			models = append(models, model)
+		}
+
+		opts := options.BulkWrite().SetOrdered(false)
+		if _, err := m.coll.BulkWrite(ctx, models, opts); err != nil {
+			// Ordered=false 时部分失败不影响其他条目，记录日志但不中断
+			return err
+		}
+	}
+	return nil
 }
 
 // EnsureIndexes 确保索引存在
@@ -101,6 +199,8 @@ func (m *JSFinderResultModel) EnsureIndexes(ctx context.Context) error {
 		{Keys: bson.D{{Key: "url", Value: 1}}},
 		// create_time 降序索引：JSFinder 列表按 create_time:-1 排序分页，避免 in-memory sort
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
+		// AI研判状态索引，优化待研判数据查询
+		{Keys: bson.D{{Key: "ai_status", Value: 1}}},
 		// 唯一索引含 result 字段，允许同类型同来源的不同发现共存
 		{
 			Keys: bson.D{
@@ -162,4 +262,98 @@ func (m *JSFinderResultModel) DeleteMany(ctx context.Context, filter bson.M) (in
 		return 0, err
 	}
 	return res.DeletedCount, nil
+}
+
+// FindSensitiveForReverify 取待复验的敏感信息泄露发现（标签含 info-leak / sensitive / high-risk）。
+// 普通 url/absurl 信息类发现（severity=info，无上述标签）不纳入，避免噪声。limit<=0 表示不限制。
+func (m *JSFinderResultModel) FindSensitiveForReverify(ctx context.Context, limit int) ([]*JSFinderResult, error) {
+	filter := bson.M{"tags": bson.M{"$in": []string{"info-leak", "sensitive", "high-risk"}}}
+	opts := options.Find()
+	if limit > 0 {
+		opts.SetLimit(int64(limit))
+	}
+	return m.Find(ctx, filter, opts)
+}
+
+// MarkReverify 批量回写复验结果（T3.4）：reverify_status / last_verified_at / verify_pending。
+func (m *JSFinderResultModel) MarkReverify(ctx context.Context, ids []string, status string, verifiedAt time.Time, pending bool) error {
+	oids := toObjectIDs(ids)
+	if len(oids) == 0 {
+		return nil
+	}
+	_, err := m.coll.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": oids}}, bson.M{"$set": bson.M{
+		"reverify_status":  status,
+		"last_verified_at": verifiedAt,
+		"verify_pending":   pending,
+	}})
+	return err
+}
+
+// UpdateAIResult 回写单条AI研判结果
+func (m *JSFinderResultModel) UpdateAIResult(ctx context.Context, id string, status, result, reason string, analyzedAt time.Time) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": bson.M{
+		"ai_status":      status,
+		"ai_result":      result,
+		"ai_reason":      reason,
+		"ai_analyzed_at": analyzedAt,
+		"update_time":    analyzedAt,
+	}})
+	return err
+}
+
+// FindPendingForAnalysis 拉取待研判数据（ai_status != "completed"）
+// limit <= 0 表示不限制
+func (m *JSFinderResultModel) FindPendingForAnalysis(ctx context.Context, limit int64) ([]*JSFinderResult, error) {
+	filter := bson.M{"ai_status": bson.M{"$ne": "completed"}}
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}})
+	if limit > 0 {
+		opts.SetLimit(limit)
+	}
+	return m.Find(ctx, filter, opts)
+}
+
+// FindPendingByFilter 按自定义过滤条件拉取待研判数据（自动加上ai_status != completed）
+func (m *JSFinderResultModel) FindPendingByFilter(ctx context.Context, filter bson.M, limit int64) ([]*JSFinderResult, error) {
+	// 强制加上未研判条件
+	filter["ai_status"] = bson.M{"$ne": "completed"}
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}})
+	if limit > 0 {
+		opts.SetLimit(limit)
+	}
+	return m.Find(ctx, filter, opts)
+}
+
+// FindPendingByIds 按ID列表拉取待研判数据（自动过滤已完成的）
+func (m *JSFinderResultModel) FindPendingByIds(ctx context.Context, ids []string) ([]*JSFinderResult, error) {
+	oids := make([]primitive.ObjectID, 0, len(ids))
+	for _, id := range ids {
+		oid, err := primitive.ObjectIDFromHex(id)
+		if err == nil {
+			oids = append(oids, oid)
+		}
+	}
+	if len(oids) == 0 {
+		return nil, nil
+	}
+	filter := bson.M{
+		"_id":       bson.M{"$in": oids},
+		"ai_status": bson.M{"$ne": "completed"},
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}})
+	return m.Find(ctx, filter, opts)
+}
+
+// CountPending 统计待研判数量
+func (m *JSFinderResultModel) CountPending(ctx context.Context) (int64, error) {
+	return m.coll.CountDocuments(ctx, bson.M{"ai_status": bson.M{"$ne": "completed"}})
+}
+
+// CountPendingByFilter 按自定义过滤条件统计待研判数量
+func (m *JSFinderResultModel) CountPendingByFilter(ctx context.Context, filter bson.M) (int64, error) {
+	filter["ai_status"] = bson.M{"$ne": "completed"}
+	return m.coll.CountDocuments(ctx, filter)
 }

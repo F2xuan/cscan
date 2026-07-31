@@ -2,11 +2,36 @@ package model
 
 import (
 	"context"
+	"net"
 	"strings"
 	"time"
 
 	"cscan/pkg/utils"
 )
+
+// normalizeHost 清理 host 字段：去除URL前缀、路径、端口，只保留纯IP或域名
+func normalizeHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	// 去除 http:// 或 https:// 前缀
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
+	// 去除路径部分（/xxx）
+	if idx := strings.Index(host, "/"); idx >= 0 {
+		host = host[:idx]
+	}
+	// 分离端口：如果 host 是 host:port 格式，取 host 部分
+	// 注意 net.SplitHostPort 可以处理 IP:port 和 domain:port
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	// 去除可能残留的方括号（IPv6 场景，但一般不涉及）
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	return strings.TrimSpace(host)
+}
 
 // ResolveAssetTarget 将一条 asset 的 (host, domain) 归并到顶层资产 (type, value)。
 // 规则与 tools/migrate_asset_target_meta.go 的 resolveTarget 保持一致：
@@ -16,7 +41,7 @@ import (
 //
 // 无法解析时返回空串。
 func ResolveAssetTarget(host, domain string) (AssetTargetType, string) {
-	host = strings.TrimSpace(host)
+	host = normalizeHost(host)
 	domain = strings.TrimSpace(domain)
 	if host == "" {
 		return "", ""

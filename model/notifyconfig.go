@@ -32,6 +32,9 @@ type HighRiskFilter struct {
 	HighRiskPorts         []int    `bson:"high_risk_ports" json:"highRiskPorts"`                  // 高危端口列表
 	HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"` // 高危POC严重级别: critical, high
 	NewAssetNotify        bool     `bson:"new_asset_notify" json:"newAssetNotify"`                // 新资产发现时通知
+	// T1.4: 明细开关（指针，nil 视为默认开，兼容旧配置缺字段）
+	NewRiskNotify *bool `bson:"new_risk_notify,omitempty" json:"newRiskNotify,omitempty"` // 新风险明细是否通知（默认开）
+	FixedNotify   *bool `bson:"fixed_notify,omitempty" json:"fixedNotify,omitempty"`      // 已修复漏洞是否通知（默认开）
 }
 
 // NotifyConfigModel 通知配置模型

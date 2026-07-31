@@ -32,6 +32,7 @@ type User struct {
 	CreateTime         time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime         time.Time          `bson:"update_time" json:"updateTime"`
 	MustChangePassword bool               `bson:"must_change_password,omitempty" json:"mustChangePassword"`
+	OnboardingDone     bool               `bson:"onboarding_done,omitempty" json:"onboardingDone"` // 首次引导是否已完成（T4.2）
 }
 
 const AdminUsername = "admin"
@@ -175,6 +176,20 @@ func (m *UserModel) UpdateAvatar(ctx context.Context, id string, avatar string) 
 	update := bson.M{
 		"avatar":      avatar,
 		"update_time": time.Now(),
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	return err
+}
+
+// SetOnboardingDone 标记用户首次引导已完成（T4.2），仅置位不覆盖其它字段
+func (m *UserModel) SetOnboardingDone(ctx context.Context, id string) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	update := bson.M{
+		"onboarding_done": true,
+		"update_time":     time.Now(),
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
 	return err

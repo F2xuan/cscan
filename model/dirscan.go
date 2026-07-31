@@ -119,7 +119,7 @@ func (m *DirScanDictModel) FindByIds(ctx context.Context, ids []string) ([]DirSc
 		return nil, nil
 	}
 
-	cursor, err := m.coll.Find(ctx, bson.M{"_id": bson.M{"$in": oids}})
+	cursor, err := m.coll.Find(ctx, bson.M{"_id": bson.M{"$in": oids}, "enabled": true})
 	if err != nil {
 		return nil, err
 	}

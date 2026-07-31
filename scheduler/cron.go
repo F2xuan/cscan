@@ -19,19 +19,31 @@ var cronParser = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom
 type CronTask struct {
 	Id           string       `json:"id"`
 	Name         string       `json:"name"`
+	TaskType     string       `json:"taskType"`     // scan / space_engine
 	ScheduleType string       `json:"scheduleType"` // cron: Cron表达式, once: 指定时间执行一次
 	CronSpec     string       `json:"cronSpec"`     // Cron表达式 (scheduleType=cron时使用)
 	ScheduleTime string       `json:"scheduleTime"` // 指定执行时间 (scheduleType=once时使用)
 	WorkspaceId  string       `json:"workspaceId"`
-	MainTaskId   string       `json:"mainTaskId"` // 关联的任务ID
-	TaskName     string       `json:"taskName"`   // 关联的任务名称
-	Target       string       `json:"target"`     // 扫描目标（从任务复制）
-	Config       string       `json:"config"`     // 任务配置（从任务复制）
-	Status       string       `json:"status"`     // enable/disable
+	Status       string       `json:"status"` // enable/disable
 	LastRunTime  string       `json:"lastRunTime"`
 	NextRunTime  string       `json:"nextRunTime"`
 	EntryId      cron.EntryID `json:"-"`
 	timer        *time.Timer  `json:"-"`
+
+	// ===== scan 类型字段 =====
+	TargetMode          string   `json:"targetMode,omitempty"`
+	Target              string   `json:"target,omitempty"`
+	AssetIds            []string `json:"assetIds,omitempty"`
+	OrgId               string   `json:"orgId,omitempty"`
+	EnableSubdomainPull bool     `json:"enableSubdomainPull,omitempty"`
+	ConfigSource        string   `json:"configSource,omitempty"`
+	TemplateId          string   `json:"templateId,omitempty"`
+	Config              string   `json:"config,omitempty"`
+
+	// ===== space_engine 类型字段 =====
+	Platform   string `json:"platform,omitempty"`
+	Query      string `json:"query,omitempty"`
+	MaxResults int    `json:"maxResults,omitempty"`
 }
 
 // CronTaskSource 定时任务数据源接口（用于从MongoDB加载）
@@ -45,17 +57,61 @@ type CronTaskSource interface {
 type CronTaskData struct {
 	CronTaskId   string
 	Name         string
+	TaskType     string
 	ScheduleType string
 	CronSpec     string
 	ScheduleTime string
 	WorkspaceId  string
-	MainTaskId   string
-	TaskName     string
-	Target       string
-	Config       string
 	Status       string
 	LastRunTime  string
 	NextRunTime  string
+
+	// scan
+	TargetMode          string
+	Target              string
+	AssetIds            []string
+	OrgId               string
+	EnableSubdomainPull bool
+	ConfigSource        string
+	TemplateId          string
+	Config              string
+
+	// space_engine
+	Platform   string
+	Query      string
+	MaxResults int
+}
+
+// newCronTaskFromData 将 CronTaskData 转换为内存中的 CronTask
+func newCronTaskFromData(td CronTaskData) *CronTask {
+	taskType := td.TaskType
+	// 向后兼容：旧数据没有 taskType 字段，默认为 scan 类型
+	if taskType == "" {
+		taskType = "scan"
+	}
+	return &CronTask{
+		Id:                  td.CronTaskId,
+		Name:                td.Name,
+		TaskType:            taskType,
+		ScheduleType:        td.ScheduleType,
+		CronSpec:            td.CronSpec,
+		ScheduleTime:        td.ScheduleTime,
+		WorkspaceId:         td.WorkspaceId,
+		Status:              td.Status,
+		LastRunTime:         td.LastRunTime,
+		NextRunTime:         td.NextRunTime,
+		TargetMode:          td.TargetMode,
+		Target:              td.Target,
+		AssetIds:            td.AssetIds,
+		OrgId:               td.OrgId,
+		EnableSubdomainPull: td.EnableSubdomainPull,
+		ConfigSource:        td.ConfigSource,
+		TemplateId:          td.TemplateId,
+		Config:              td.Config,
+		Platform:            td.Platform,
+		Query:               td.Query,
+		MaxResults:          td.MaxResults,
+	}
 }
 
 // CronManager 定时任务管理器
@@ -91,21 +147,7 @@ func (m *CronManager) LoadTasks(ctx context.Context) error {
 
 			m.mu.Lock()
 			for _, td := range taskDataList {
-				task := &CronTask{
-					Id:           td.CronTaskId,
-					Name:         td.Name,
-					ScheduleType: td.ScheduleType,
-					CronSpec:     td.CronSpec,
-					ScheduleTime: td.ScheduleTime,
-					WorkspaceId:  td.WorkspaceId,
-					MainTaskId:   td.MainTaskId,
-					TaskName:     td.TaskName,
-					Target:       td.Target,
-					Config:       td.Config,
-					Status:       td.Status,
-					LastRunTime:  td.LastRunTime,
-					NextRunTime:  td.NextRunTime,
-				}
+				task := newCronTaskFromData(td)
 				if task.Status == "enable" {
 					m.startTask(task)
 				}
@@ -115,13 +157,7 @@ func (m *CronManager) LoadTasks(ctx context.Context) error {
 
 			// 同步到Redis缓存（无锁IO）
 			for _, td := range taskDataList {
-				task := &CronTask{
-					Id: td.CronTaskId, Name: td.Name, ScheduleType: td.ScheduleType,
-					CronSpec: td.CronSpec, ScheduleTime: td.ScheduleTime,
-					WorkspaceId: td.WorkspaceId, MainTaskId: td.MainTaskId,
-					TaskName: td.TaskName, Target: td.Target, Config: td.Config,
-					Status: td.Status, LastRunTime: td.LastRunTime, NextRunTime: td.NextRunTime,
-				}
+				task := newCronTaskFromData(td)
 				data, marshalErr := json.Marshal(task)
 				if marshalErr != nil {
 					logx.Errorf("[CronManager] Failed to marshal task for redis sync: cronTaskId=%s, err=%v", task.Id, marshalErr)
@@ -150,6 +186,10 @@ func (m *CronManager) LoadTasks(ctx context.Context) error {
 			continue
 		}
 		task.Id = id
+		// 向后兼容：旧数据没有 taskType 字段，默认为 scan
+		if task.TaskType == "" {
+			task.TaskType = "scan"
+		}
 		if task.Status == "enable" {
 			m.startTask(&task)
 		}
@@ -362,6 +402,28 @@ func (m *CronManager) startTask(task *CronTask) {
 	}
 }
 
+// applyLatestFields 用从Redis/MongoDB读取到的最新字段覆盖内存任务（保留运行时字段 EntryId/timer）
+func applyLatestFields(currentTask, latest *CronTask) {
+	currentTask.Name = latest.Name
+	currentTask.TaskType = latest.TaskType
+	currentTask.ScheduleType = latest.ScheduleType
+	currentTask.CronSpec = latest.CronSpec
+	currentTask.ScheduleTime = latest.ScheduleTime
+	currentTask.WorkspaceId = latest.WorkspaceId
+	currentTask.Status = latest.Status
+	currentTask.TargetMode = latest.TargetMode
+	currentTask.Target = latest.Target
+	currentTask.AssetIds = latest.AssetIds
+	currentTask.OrgId = latest.OrgId
+	currentTask.EnableSubdomainPull = latest.EnableSubdomainPull
+	currentTask.ConfigSource = latest.ConfigSource
+	currentTask.TemplateId = latest.TemplateId
+	currentTask.Config = latest.Config
+	currentTask.Platform = latest.Platform
+	currentTask.Query = latest.Query
+	currentTask.MaxResults = latest.MaxResults
+}
+
 // executeTask 执行定时任务
 func (m *CronManager) executeTask(task *CronTask) {
 	ctx := context.Background()
@@ -372,24 +434,14 @@ func (m *CronManager) executeTask(task *CronTask) {
 	m.mu.Unlock()
 
 	// === 阶段2: 无锁状态下做IO操作（读取最新配置） ===
-	var latestTarget, latestConfig, latestName, latestWorkspaceId, latestMainTaskId, latestTaskName string
-	var latestScheduleType, latestCronSpec, latestScheduleTime string
+	latestTask := &CronTask{Id: taskId}
 	configLoaded := false
 
 	// 从Redis重新读取最新配置
 	latestData, err := m.rdb.HGet(ctx, m.cronKey, taskId).Result()
 	if err == nil {
-		var latestTask CronTask
-		if json.Unmarshal([]byte(latestData), &latestTask) == nil {
-			latestTarget = latestTask.Target
-			latestConfig = latestTask.Config
-			latestName = latestTask.Name
-			latestWorkspaceId = latestTask.WorkspaceId
-			latestMainTaskId = latestTask.MainTaskId
-			latestTaskName = latestTask.TaskName
-			latestScheduleType = latestTask.ScheduleType
-			latestCronSpec = latestTask.CronSpec
-			latestScheduleTime = latestTask.ScheduleTime
+		if json.Unmarshal([]byte(latestData), latestTask) == nil {
+			latestTask.Id = taskId
 			configLoaded = true
 		}
 	} else {
@@ -398,25 +450,10 @@ func (m *CronManager) executeTask(task *CronTask) {
 			logx.Infof("[CronManager] Redis miss for task %s, falling back to MongoDB", taskId)
 			td, mongoErr := m.taskSrc.FindCronTaskByCronTaskId(ctx, taskId)
 			if mongoErr == nil && td != nil {
-				latestTarget = td.Target
-				latestConfig = td.Config
-				latestName = td.Name
-				latestWorkspaceId = td.WorkspaceId
-				latestMainTaskId = td.MainTaskId
-				latestTaskName = td.TaskName
-				latestScheduleType = td.ScheduleType
-				latestCronSpec = td.CronSpec
-				latestScheduleTime = td.ScheduleTime
+				latestTask = newCronTaskFromData(*td)
 				configLoaded = true
 				// 回写Redis缓存（无锁IO），包含完整字段
-				cacheTask := &CronTask{
-					Id: taskId, Name: latestName, ScheduleType: latestScheduleType,
-					CronSpec: latestCronSpec, ScheduleTime: latestScheduleTime,
-					WorkspaceId: latestWorkspaceId, MainTaskId: latestMainTaskId,
-					TaskName: latestTaskName, Target: latestTarget, Config: latestConfig,
-					Status: td.Status, LastRunTime: td.LastRunTime, NextRunTime: td.NextRunTime,
-				}
-				if data, marshalErr := json.Marshal(cacheTask); marshalErr != nil {
+				if data, marshalErr := json.Marshal(latestTask); marshalErr != nil {
 					logx.Errorf("[CronManager] Failed to marshal task for redis writeback: %v", marshalErr)
 				} else {
 					m.rdb.HSet(ctx, m.cronKey, taskId, data)
@@ -438,15 +475,7 @@ func (m *CronManager) executeTask(task *CronTask) {
 
 	// 用最新配置覆盖，保留内存中的调度状态字段
 	if configLoaded {
-		currentTask.Target = latestTarget
-		currentTask.Config = latestConfig
-		currentTask.Name = latestName
-		currentTask.WorkspaceId = latestWorkspaceId
-		currentTask.MainTaskId = latestMainTaskId
-		currentTask.TaskName = latestTaskName
-		currentTask.ScheduleType = latestScheduleType
-		currentTask.CronSpec = latestCronSpec
-		currentTask.ScheduleTime = latestScheduleTime
+		applyLatestFields(currentTask, latestTask)
 	}
 
 	// 更新最后执行时间及状态
@@ -455,8 +484,6 @@ func (m *CronManager) executeTask(task *CronTask) {
 	// 计算下次执行时间
 	switch currentTask.ScheduleType {
 	case "cron":
-		// 修复 C-08：原忽略 Parse 错误，spec 非法时 schedule 为 nil，
-		// schedule.Next() 触发 nil pointer panic 导致 executeTask 崩溃
 		schedule, err := cronParser.Parse(currentTask.CronSpec)
 		if err != nil || schedule == nil {
 			logx.Errorf("[CronManager] Invalid cron spec for task %s: spec=%q, err=%v",
@@ -471,21 +498,8 @@ func (m *CronManager) executeTask(task *CronTask) {
 		currentTask.NextRunTime = ""
 	}
 
-	// 提取需要的数据用于后续IO
-	execData := struct {
-		cronTaskId, workspaceId, mainTaskId, taskName, target, config string
-		lastRunTime, nextRunTime, status                              string
-	}{
-		cronTaskId:  currentTask.Id,
-		workspaceId: currentTask.WorkspaceId,
-		mainTaskId:  currentTask.MainTaskId,
-		taskName:    currentTask.Name,
-		target:      currentTask.Target,
-		config:      currentTask.Config,
-		lastRunTime: currentTask.LastRunTime,
-		nextRunTime: currentTask.NextRunTime,
-		status:      currentTask.Status,
-	}
+	// 提取需要的数据用于后续IO（深拷贝必要字段，避免锁外访问）
+	execTask := *currentTask
 
 	// 序列化当前任务状态（锁内完成，保证一致性）
 	taskData, marshalErr := json.Marshal(currentTask)
@@ -505,21 +519,41 @@ func (m *CronManager) executeTask(task *CronTask) {
 
 	// 同步更新MongoDB中的运行时间信息
 	if m.taskSrc != nil {
-		if err := m.taskSrc.UpdateCronTaskRunInfo(ctx, taskId, execData.lastRunTime, execData.nextRunTime, execData.status); err != nil {
+		if err := m.taskSrc.UpdateCronTaskRunInfo(ctx, taskId, execTask.LastRunTime, execTask.NextRunTime, execTask.Status); err != nil {
 			logx.Errorf("[CronManager] Failed to update run info in MongoDB: cronTaskId=%s, err=%v", taskId, err)
 		}
 	}
 
-	// 发布消息通知 API 服务创建新任务
-	cronExecData, _ := json.Marshal(map[string]interface{}{
-		"cronTaskId":  execData.cronTaskId,
-		"workspaceId": execData.workspaceId,
-		"mainTaskId":  execData.mainTaskId,
-		"taskName":    execData.taskName,
-		"target":      execData.target,
-		"config":      execData.config,
-	})
-	m.rdb.Publish(ctx, "cscan:cron:execute", string(cronExecData))
+	// 根据 taskType 发布不同的消息
+	switch execTask.TaskType {
+	case "space_engine":
+		// 发布空间引擎执行消息
+		spaceExecData, _ := json.Marshal(map[string]interface{}{
+			"cronTaskId":  execTask.Id,
+			"workspaceId": execTask.WorkspaceId,
+			"taskName":    execTask.Name,
+			"platform":    execTask.Platform,
+			"query":       execTask.Query,
+			"maxResults":  execTask.MaxResults,
+		})
+		m.rdb.Publish(ctx, "cscan:cron:execute_space", string(spaceExecData))
+	default:
+		// 默认 scan 类型：发布扫描执行消息
+		cronExecData, _ := json.Marshal(map[string]interface{}{
+			"cronTaskId":          execTask.Id,
+			"workspaceId":         execTask.WorkspaceId,
+			"taskName":            execTask.Name,
+			"targetMode":          execTask.TargetMode,
+			"target":              execTask.Target,
+			"assetIds":            execTask.AssetIds,
+			"config":              execTask.Config,
+			"enableSubdomainPull": execTask.EnableSubdomainPull,
+			"configSource":        execTask.ConfigSource,
+			"templateId":          execTask.TemplateId,
+			"orgId":               execTask.OrgId,
+		})
+		m.rdb.Publish(ctx, "cscan:cron:execute_scan", string(cronExecData))
+	}
 }
 
 // ReloadTask 重新加载单个任务
@@ -543,21 +577,7 @@ func (m *CronManager) ReloadTask(ctx context.Context, taskId string) error {
 	if m.taskSrc != nil {
 		td, err := m.taskSrc.FindCronTaskByCronTaskId(ctx, taskId)
 		if err == nil && td != nil {
-			task = &CronTask{
-				Id:           td.CronTaskId,
-				Name:         td.Name,
-				ScheduleType: td.ScheduleType,
-				CronSpec:     td.CronSpec,
-				ScheduleTime: td.ScheduleTime,
-				WorkspaceId:  td.WorkspaceId,
-				MainTaskId:   td.MainTaskId,
-				TaskName:     td.TaskName,
-				Target:       td.Target,
-				Config:       td.Config,
-				Status:       td.Status,
-				LastRunTime:  td.LastRunTime,
-				NextRunTime:  td.NextRunTime,
-			}
+			task = newCronTaskFromData(*td)
 		} else if err != nil {
 			logx.Errorf("[CronManager] Failed to load task from MongoDB: cronTaskId=%s, err=%v", taskId, err)
 		}
@@ -603,7 +623,7 @@ func (m *CronManager) ReloadTask(ctx context.Context, taskId string) error {
 // RunTaskNow 立即执行任务
 func (m *CronManager) RunTaskNow(ctx context.Context, taskId string) error {
 	// 阶段1: 无锁状态下从Redis获取最新任务配置（IO操作）
-	var latestTask CronTask
+	var latestTask *CronTask
 	latestData, err := m.rdb.HGet(ctx, m.cronKey, taskId).Result()
 	if err != nil {
 		// Redis未命中，从MongoDB回退读取
@@ -613,20 +633,17 @@ func (m *CronManager) RunTaskNow(ctx context.Context, taskId string) error {
 			if mongoErr != nil || td == nil {
 				return fmt.Errorf("task not found: %s", taskId)
 			}
-			latestTask = CronTask{
-				Id: td.CronTaskId, Name: td.Name, ScheduleType: td.ScheduleType,
-				CronSpec: td.CronSpec, ScheduleTime: td.ScheduleTime,
-				WorkspaceId: td.WorkspaceId, MainTaskId: td.MainTaskId,
-				TaskName: td.TaskName, Target: td.Target, Config: td.Config,
-				Status: td.Status, LastRunTime: td.LastRunTime, NextRunTime: td.NextRunTime,
-			}
+			latestTask = newCronTaskFromData(*td)
 		} else {
 			return fmt.Errorf("task not found: %s", taskId)
 		}
 	} else {
-		if err := json.Unmarshal([]byte(latestData), &latestTask); err != nil {
+		var t CronTask
+		if err := json.Unmarshal([]byte(latestData), &t); err != nil {
 			return err
 		}
+		t.Id = taskId
+		latestTask = &t
 	}
 
 	// 阶段2: 加锁更新内存中的任务对象
@@ -639,18 +656,7 @@ func (m *CronManager) RunTaskNow(ctx context.Context, taskId string) error {
 	}
 
 	// 用最新配置覆盖，保留运行时字段（EntryId, timer）
-	task.Target = latestTask.Target
-	task.Config = latestTask.Config
-	task.Name = latestTask.Name
-	task.WorkspaceId = latestTask.WorkspaceId
-	task.MainTaskId = latestTask.MainTaskId
-	task.TaskName = latestTask.TaskName
-	task.ScheduleType = latestTask.ScheduleType
-	task.CronSpec = latestTask.CronSpec
-	task.ScheduleTime = latestTask.ScheduleTime
-	task.Status = latestTask.Status
-	task.LastRunTime = latestTask.LastRunTime
-	task.NextRunTime = latestTask.NextRunTime
+	applyLatestFields(task, latestTask)
 	m.mu.Unlock()
 
 	// 阶段3: 无锁状态下执行任务

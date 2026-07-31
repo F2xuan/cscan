@@ -545,6 +545,8 @@ func (s *Scheduler) publishDeadLetterAlert(ctx context.Context, member string) {
 //
 // 当 enablePriorityBucket=true 时，公共队列走 5 级分桶路径
 // 当 enablePriorityBucket=false 时，保持原 cscan:task:queue 单 ZSet 行为
+//
+// 推送成功后通过 Pub/Sub 通知空闲 Worker，实现长轮询唤醒（减少空轮询）
 func (s *Scheduler) PushTask(ctx context.Context, task *TaskInfo) error {
 	startTime := time.Now()
 	defer func() {
@@ -560,6 +562,9 @@ func (s *Scheduler) PushTask(ctx context.Context, task *TaskInfo) error {
 	// 使用统一的优先级分数计算
 	score := s.calculatePriorityScore(task.Priority, now)
 
+	var err error
+	notifyWorkers := false
+
 	// 如果指定了 Workers，推送到每个 Worker 的专属队列（不受分桶影响）
 	// 专属队列任务量小，分桶收益有限，保留原行为
 	if len(task.Workers) > 0 {
@@ -574,24 +579,43 @@ func (s *Scheduler) PushTask(ctx context.Context, task *TaskInfo) error {
 				Member: string(data),
 			})
 		}
-		_, err := pipe.Exec(ctx)
-		return err
+		_, err = pipe.Exec(ctx)
+		notifyWorkers = err == nil
+	} else if s.enablePriorityBucket.Load() {
+		// 公共队列：分桶路径
+		err = s.pushToPriorityBucket(ctx, task, score)
+		notifyWorkers = err == nil
+	} else {
+		// 默认路径：单 ZSet（保持向后兼容）
+		var data []byte
+		data, err = json.Marshal(task)
+		if err != nil {
+			return fmt.Errorf("marshal task: %w", err)
+		}
+		err = s.rdb.ZAdd(ctx, s.queueKey, redis.Z{
+			Score:  score,
+			Member: string(data),
+		}).Err()
+		notifyWorkers = err == nil
 	}
 
-	// 公共队列：根据分桶开关选择路径
-	if s.enablePriorityBucket.Load() {
-		return s.pushToPriorityBucket(ctx, task, score)
+	// 推送成功后通知等待中的 Worker（Pub/Sub 长轮询唤醒）
+	if notifyWorkers {
+		s.notifyTaskAvailable(ctx)
 	}
 
-	// 默认路径：单 ZSet（保持向后兼容）
-	data, err := json.Marshal(task)
-	if err != nil {
-		return fmt.Errorf("marshal task: %w", err)
+	return err
+}
+
+// notifyTaskAvailable 通过 Pub/Sub 通知空闲 Worker 有新任务可用
+// 非阻塞：PUBLISH 失败仅记录 Debug 日志，不影响任务入队
+func (s *Scheduler) notifyTaskAvailable(ctx context.Context) {
+	// PUBLISH 到公共通道 + 一个通用唤醒信号（N个Subscriber中只需要一个被唤醒）
+	// 使用 "1" 作为消息体，内容无意义仅作为唤醒信号
+	if err := s.rdb.Publish(ctx, "cscan:task:available", "1").Err(); err != nil {
+		// Pub/Sub 失败不影响主流程，仅 Debug 级别记录
+		logx.Debugf("[Scheduler] publish task available notification failed: %v", err)
 	}
-	return s.rdb.ZAdd(ctx, s.queueKey, redis.Z{
-		Score:  score,
-		Member: string(data),
-	}).Err()
 }
 
 func (s *Scheduler) PushTaskBatch(ctx context.Context, tasks []*TaskInfo) error {
@@ -660,6 +684,9 @@ func (s *Scheduler) PushTaskBatch(ctx context.Context, tasks []*TaskInfo) error 
 	}
 
 	_, err := pipe.Exec(ctx)
+	if err == nil {
+		s.notifyTaskAvailable(ctx)
+	}
 	return err
 }
 
@@ -1053,6 +1080,7 @@ type DirScanConfig struct {
 	Threads        int      `json:"threads"`        // 并发线程数
 	Timeout        int      `json:"timeout"`        // 单个请求超时(秒)
 	Extensions     []string `json:"extensions"`     // 文件扩展名
+	StatusCodes    []int    `json:"statusCodes"`    // 有效HTTP状态码列表（空则使用默认：200,204,301,302,307,401,403,405,500）
 	FollowRedirect bool     `json:"followRedirect"` // 是否跟随重定向
 	ForceScan      bool     `json:"forceScan"`      // 强制扫描：无资产时直接使用目标
 	// ffuf 高级配置
@@ -1371,14 +1399,15 @@ func (s *Scheduler) PublishCancelSignal(ctx context.Context, taskId, action stri
 	}
 
 	// 同时设置Key（用于轮询检查）和发布消息（用于实时通知）
-	// Key 与 Pub/Sub 频道统一使用 cscan:task:ctrl 命名，与 API 端 wshandler.go 订阅频道一致
+	// Key 用 cscan:task:ctrl:{taskId}；Pub/Sub 频道发布到 cscan:task:ctrl:{taskId}，
+	// worker 与 wshandler.go 均通过 PSubscribe "cscan:task:ctrl:*" 接收，按频道名解析 taskId
 	key := s.GetCancelSignalKey(taskId)
 	if err := s.rdb.Set(ctx, key, data, 5*time.Minute).Err(); err != nil {
 		return err
 	}
 
-	// 发布到控制信号频道（wshandler.go 通过 PSubscribe "cscan:task:ctrl:*" 接收）
-	return s.rdb.Publish(ctx, "cscan:task:ctrl", data).Err()
+	// 发布到带 taskId 的控制信号频道，确保 PSubscribe("cscan:task:ctrl:*") 能匹配
+	return s.rdb.Publish(ctx, "cscan:task:ctrl:"+taskId, data).Err()
 }
 
 // SubscribeCancelSignals 订阅取消信号
@@ -1400,7 +1429,7 @@ func (s *Scheduler) SubscribeCancelSignals(ctx context.Context) <-chan *CancelSi
 				return
 			}
 
-			pubsub := s.rdb.Subscribe(ctx, "cscan:task:ctrl")
+			pubsub := s.rdb.PSubscribe(ctx, "cscan:task:ctrl:*")
 			// sync.Once 保证 pubsub.Close() 只被调用一次,避免:
 			//   - msg==nil 分支与 ctx.Done() 分支并发 Close
 			//   - 我们主动 Close 与 go-redis 内部读循环退出时二次 Close
@@ -1419,7 +1448,7 @@ func (s *Scheduler) SubscribeCancelSignals(ctx context.Context) <-chan *CancelSi
 			}
 			// 订阅成功，重置退避
 			backoff = time.Second
-			logx.Infof("[Scheduler] Subscribed to cscan:task:ctrl")
+			logx.Infof("[Scheduler] Subscribed to cscan:task:ctrl:* (pattern)")
 
 		consumeLoop:
 			for {

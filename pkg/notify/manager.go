@@ -38,6 +38,9 @@ type HighRiskFilter struct {
 	HighRiskPorts         []int    `json:"highRiskPorts"`         // 高危端口列表
 	HighRiskPocSeverities []string `json:"highRiskPocSeverities"` // 高危POC严重级别
 	NewAssetNotify        bool     `json:"newAssetNotify"`        // 新资产发现时通知
+	// T1.4: 明细开关（指针类型，nil 视为默认开，兼容旧配置缺字段）
+	NewRiskNotify *bool `json:"newRiskNotify,omitempty"` // 新风险明细是否通知（默认开）
+	FixedNotify   *bool `json:"fixedNotify,omitempty"`   // 已修复漏洞是否通知（默认开）
 }
 
 func (f *HighRiskFilter) HasConditions() bool {
@@ -45,6 +48,16 @@ func (f *HighRiskFilter) HasConditions() bool {
 		len(f.HighRiskFingerprints) > 0 ||
 		len(f.HighRiskPorts) > 0 ||
 		len(f.HighRiskPocSeverities) > 0
+}
+
+// NewRiskNotifyEnabled 新风险明细是否启用（nil 视为默认开，兼容旧配置缺字段）
+func (f *HighRiskFilter) NewRiskNotifyEnabled() bool {
+	return f == nil || f.NewRiskNotify == nil || *f.NewRiskNotify
+}
+
+// FixedNotifyEnabled 已修复漏洞通知是否启用（nil 视为默认开，兼容旧配置缺字段）
+func (f *HighRiskFilter) FixedNotifyEnabled() bool {
+	return f == nil || f.FixedNotify == nil || *f.FixedNotify
 }
 
 // LoadConfigs 从配置列表加载提供者
@@ -93,6 +106,17 @@ func fixMessageTemplate(template string) string {
 // Send 发送通知
 func (m *NotifyManager) Send(ctx context.Context, result *NotifyResult) error {
 	return m.notifier.Send(ctx, result)
+}
+
+// ChannelNames 返回已加载的提供者名称列表（用于通知记录的渠道字段，T4.4）
+func (m *NotifyManager) ChannelNames() []string {
+	m.notifier.mu.RLock()
+	defer m.notifier.mu.RUnlock()
+	names := make([]string, 0, len(m.notifier.providers))
+	for _, p := range m.notifier.providers {
+		names = append(names, p.Name())
+	}
+	return names
 }
 
 // providerFactory 通知提供者工厂函数类型
@@ -271,6 +295,15 @@ func TestProvider(providerType, configJSON, messageTemplate string) error {
 				"high":     2,
 			},
 			NewAssetCount: 5,
+			NewAssetList: []AssetSummary{
+				{Authority: "asset1.example.com", FirstSeenTime: "2026-07-28 10:00:00"},
+				{Authority: "192.168.1.10:8080", FirstSeenTime: "2026-07-28 10:00:01"},
+			},
+			NewRisks: []RiskSummary{
+				{Kind: "vuln", Severity: "high", Name: "测试高危漏洞A", Target: "192.168.1.10:80", FirstSeenTime: "2026-07-28 10:00:02"},
+				{Kind: "vuln", Severity: "critical", Name: "测试严重漏洞B", Target: "192.168.1.10:443", FirstSeenTime: "2026-07-28 10:00:03"},
+			},
+			FixedVulCount: 3,
 		},
 	}
 

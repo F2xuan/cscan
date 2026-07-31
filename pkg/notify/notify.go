@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,28 @@ type HighRiskInfo struct {
 	HighRiskVulCount      int            `json:"highRiskVulCount"`      // 高危漏洞数量
 	HighRiskVulSeverities map[string]int `json:"highRiskVulSeverities"` // 按严重级别统计: critical->5, high->10
 	NewAssetCount         int            `json:"newAssetCount"`         // 新发现资产数量
+	// T1.4: 新增/新风险明细（仅追加，不改已有字段名，避免破坏外部 Webhook 消费方）
+	NewAssetList      []AssetSummary `json:"newAssetList,omitempty"`      // 新增资产明细（上限 20 条）
+	NewAssetTruncated bool           `json:"newAssetTruncated,omitempty"` // 新增资产是否超出上限被截断
+	NewRisks          []RiskSummary  `json:"newRisks,omitempty"`          // 新风险明细（vuln/weakpass/cert）
+	FixedVulCount     int            `json:"fixedVulCount"`               // 已修复漏洞数量
+}
+
+// AssetSummary 新增资产摘要（T1.4）
+type AssetSummary struct {
+	Authority     string `json:"authority"`              // 资产 authority（域名或 IP）
+	Category      string `json:"category,omitempty"`     // subdomain / ip / port / site ...
+	Source        string `json:"source,omitempty"`       // 发现来源
+	FirstSeenTime string `json:"firstSeenTime,omitempty"` // 首次发现时间（已格式化）
+}
+
+// RiskSummary 新风险摘要（T1.4）
+type RiskSummary struct {
+	Kind          string `json:"kind"`                    // vuln / weakpass / cert
+	Severity      string `json:"severity,omitempty"`      // critical / high / medium / low / info
+	Name          string `json:"name,omitempty"`          // 风险名称（如漏洞名）
+	Target        string `json:"target,omitempty"`        // 目标（host:port:pocfile 等）
+	FirstSeenTime string `json:"firstSeenTime,omitempty"` // 首次发现时间（已格式化）
 }
 
 // Provider 通知提供者接口
@@ -151,14 +174,35 @@ func FormatMessage(result *NotifyResult, template string) string {
 	return replacer.Replace(template)
 }
 
+// MaxDetailItems 明细列表单条通知展示上限（超过则截断并显式标注，禁止静默丢弃）
+const MaxDetailItems = 20
+
+// severityRank 严重级别排序权重：critical > high > medium > low > info > unknown
+func severityRank(sev string) int {
+	switch strings.ToLower(sev) {
+	case "critical":
+		return 5
+	case "high":
+		return 4
+	case "medium":
+		return 3
+	case "low":
+		return 2
+	case "info":
+		return 1
+	default:
+		return 0
+	}
+}
+
 // buildHighRiskDetails 构建高危详情字符串
+// T1.4：新增资产/新风险明细按严重度排序、上限截断并显式标注"仅显示前 N 条"；空值省略区块。
 func buildHighRiskDetails(info *HighRiskInfo) string {
 	if info == nil {
 		return ""
 	}
 
-	// 预分配切片，避免频繁append
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 8)
 	hasContent := false
 
 	// 高危指纹
@@ -187,9 +231,78 @@ func buildHighRiskDetails(info *HighRiskInfo) string {
 		hasContent = true
 	}
 
-	// 新发现资产
+	// 新发现资产（总数）
 	if info.NewAssetCount > 0 {
 		parts = append(parts, fmt.Sprintf("\n🆕 新发现资产: %d 个", info.NewAssetCount))
+		hasContent = true
+	}
+
+	// 新增资产明细（T1.4）
+	if len(info.NewAssetList) > 0 {
+		truncated := info.NewAssetTruncated
+		list := info.NewAssetList
+		if len(list) > MaxDetailItems {
+			list = list[:MaxDetailItems]
+			truncated = true
+		}
+		var b strings.Builder
+		b.WriteString("\n🆕 新增资产明细:")
+		for i, a := range list {
+			cat := a.Category
+			if cat == "" {
+				cat = "资产"
+			}
+			line := fmt.Sprintf("\n  %d. %s", i+1, a.Authority)
+			if a.Category != "" && a.Category != "资产" {
+				line += fmt.Sprintf(" [%s]", a.Category)
+			}
+			if a.FirstSeenTime != "" {
+				line += fmt.Sprintf(" (首次: %s)", a.FirstSeenTime)
+			}
+			b.WriteString(line)
+		}
+		if truncated {
+			b.WriteString(fmt.Sprintf("\n  ...仅显示前 %d 条，更多见报告", MaxDetailItems))
+		}
+		parts = append(parts, b.String())
+		hasContent = true
+	}
+
+	// 新风险明细（T1.4）：按严重度降序排序，超限截断并标注
+	if len(info.NewRisks) > 0 {
+		sorted := make([]RiskSummary, len(info.NewRisks))
+		copy(sorted, info.NewRisks)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			return severityRank(sorted[i].Severity) > severityRank(sorted[j].Severity)
+		})
+		show := sorted
+		riskTruncated := false
+		if len(show) > MaxDetailItems {
+			show = show[:MaxDetailItems]
+			riskTruncated = true
+		}
+		var b strings.Builder
+		b.WriteString("\n⚠️ 新风险明细:")
+		for i, r := range show {
+			line := fmt.Sprintf("\n  %d. [%s] %s", i+1, r.Kind, r.Name)
+			if r.Target != "" {
+				line += fmt.Sprintf(" @ %s", r.Target)
+			}
+			if r.Severity != "" {
+				line += fmt.Sprintf(" (%s)", r.Severity)
+			}
+			b.WriteString(line)
+		}
+		if riskTruncated {
+			b.WriteString(fmt.Sprintf("\n  ...仅显示前 %d 条，更多见报告", MaxDetailItems))
+		}
+		parts = append(parts, b.String())
+		hasContent = true
+	}
+
+	// 已修复漏洞（T1.4）
+	if info.FixedVulCount > 0 {
+		parts = append(parts, fmt.Sprintf("\n🟢 已修复漏洞: %d 个", info.FixedVulCount))
 		hasContent = true
 	}
 

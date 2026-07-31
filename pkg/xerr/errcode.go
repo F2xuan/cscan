@@ -27,6 +27,7 @@ const (
 	VulNotFound         = 10401
 	FingerprintNotFound = 10501
 	PocNotFound         = 10601
+	CertNotFound        = 10701
 )
 
 var codeMsg = map[int]string{
@@ -53,6 +54,7 @@ var codeMsg = map[int]string{
 	VulNotFound:         "漏洞不存在",
 	FingerprintNotFound: "指纹不存在",
 	PocNotFound:         "POC不存在",
+	CertNotFound:        "证书不存在",
 }
 
 // GetMsg 获取错误信息

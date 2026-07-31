@@ -97,8 +97,9 @@ func SendNotificationAsync(_ context.Context, configs []ConfigItem, result *Noti
 			return
 		}
 
-		if err := manager.Send(notifyCtx, result); err != nil {
-			logx.Errorf("Send notification failed: %v", err)
+		sendErr := manager.Send(notifyCtx, result)
+		if sendErr != nil {
+			logx.Errorf("Send notification failed: %v", sendErr)
 		} else {
 			logx.Infof("Task notification sent: taskId=%s, status=%s", result.TaskId, result.Status)
 		}
@@ -145,21 +146,6 @@ func translateSeverityToEnglish(level string) string {
 		return mapped
 	}
 	return level // 如果不是中文，直接返回原值
-}
-
-// translateSeveritiesToEnglish 将中文严重级别列表转换为去重的英文列表
-// Deprecated: 使用 map[string]struct{} 在 shouldNotifyByHighRisk 中直接去重，性能更好
-func translateSeveritiesToEnglish(levels []string) []string {
-	seen := make(map[string]struct{}, len(levels))
-	result := make([]string, 0, len(levels))
-	for _, level := range levels {
-		translated := translateSeverityToEnglish(level)
-		if _, exists := seen[translated]; !exists {
-			seen[translated] = struct{}{}
-			result = append(result, translated)
-		}
-	}
-	return result
 }
 
 // shouldNotifyByHighRisk 检查是否应该根据高危配置发送通知

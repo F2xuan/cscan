@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -192,14 +193,7 @@ func (p *FeishuProvider) Send(ctx context.Context, result *NotifyResult) error {
 		return fmt.Errorf("feishu webhook url is empty")
 	}
 
-	content := FormatMessage(result, p.config.MessageTemplate)
-
-	payload := map[string]interface{}{
-		"msg_type": "text",
-		"content": map[string]string{
-			"text": content,
-		},
-	}
+	payload := p.buildCard(result)
 
 	// 如果配置了签名密钥
 	if p.config.Secret != "" {
@@ -210,6 +204,45 @@ func (p *FeishuProvider) Send(ctx context.Context, result *NotifyResult) error {
 	}
 
 	return postJSON(ctx, p.config.WebhookURL, payload)
+}
+
+// buildCard 构造飞书交互式卡片（T4.5：标题色随严重度、概览 + 最紧急项 + 跳转按钮）
+func (p *FeishuProvider) buildCard(result *NotifyResult) map[string]interface{} {
+	elements := []map[string]interface{}{
+		{
+			"tag": "div",
+			"text": map[string]interface{}{
+				"tag":     "lark_md",
+				"content": cardBodyFor(result, p.config.MessageTemplate),
+			},
+		},
+	}
+	if jump := primaryJumpURL(result); jump != "" {
+		elements = append(elements, map[string]interface{}{
+			"tag": "action",
+			"actions": []map[string]interface{}{
+				{
+					"tag":  "button",
+					"text": map[string]interface{}{"tag": "plain_text", "content": "查看详情"},
+					"type": "primary",
+					"url":  jump,
+				},
+			},
+		})
+	}
+	return map[string]interface{}{
+		"msg_type": "interactive",
+		"card": map[string]interface{}{
+			"header": map[string]interface{}{
+				"title": map[string]interface{}{
+					"tag":     "plain_text",
+					"content": cardTitle(result),
+				},
+				"template": cardHeaderColor(result),
+			},
+			"elements": elements,
+		},
+	}
 }
 
 func (p *FeishuProvider) genFeishuSign(timestamp int64) string {
@@ -245,14 +278,7 @@ func (p *DingTalkProvider) Send(ctx context.Context, result *NotifyResult) error
 		return fmt.Errorf("dingtalk webhook url is empty")
 	}
 
-	content := FormatMessage(result, p.config.MessageTemplate)
-
-	payload := map[string]interface{}{
-		"msgtype": "text",
-		"text": map[string]string{
-			"content": content,
-		},
-	}
+	payload := p.buildActionCard(result)
 
 	webhookURL := p.config.WebhookURL
 	// 如果配置了签名密钥
@@ -263,6 +289,26 @@ func (p *DingTalkProvider) Send(ctx context.Context, result *NotifyResult) error
 	}
 
 	return postJSON(ctx, webhookURL, payload)
+}
+
+// buildActionCard 构造钉钉 ActionCard（T4.5：标题 + 概览 + 最紧急项 + 跳转按钮）
+func (p *DingTalkProvider) buildActionCard(result *NotifyResult) map[string]interface{} {
+	actionCard := map[string]interface{}{
+		"title":          cardTitle(result),
+		"text":           cardBodyFor(result, p.config.MessageTemplate),
+		"btnOrientation": "0",
+	}
+	if jump := primaryJumpURL(result); jump != "" {
+		actionCard["singleTitle"] = "查看详情"
+		actionCard["singleURL"] = jump
+	} else if result.ReportURL != "" {
+		actionCard["singleTitle"] = "查看报告"
+		actionCard["singleURL"] = result.ReportURL
+	}
+	return map[string]interface{}{
+		"msgtype":    "actionCard",
+		"actionCard": actionCard,
+	}
 }
 
 func (p *DingTalkProvider) genDingTalkSign(timestamp int64) string {
@@ -297,16 +343,25 @@ func (p *WeComProvider) Send(ctx context.Context, result *NotifyResult) error {
 		return fmt.Errorf("wecom webhook url is empty")
 	}
 
-	content := FormatMessage(result, p.config.MessageTemplate)
+	payload := p.buildMarkdown(result)
 
-	payload := map[string]interface{}{
-		"msgtype": "text",
-		"text": map[string]string{
+	return postJSON(ctx, p.config.WebhookURL, payload)
+}
+
+// buildMarkdown 构造企业微信 markdown 消息（T4.5：标题 + 概览 + 最紧急项 + 跳转链接）
+func (p *WeComProvider) buildMarkdown(result *NotifyResult) map[string]interface{} {
+	content := fmt.Sprintf("# %s\n\n%s", cardTitle(result), cardBodyFor(result, p.config.MessageTemplate))
+	if jump := primaryJumpURL(result); jump != "" {
+		content += fmt.Sprintf("\n[查看详情](%s)\n", jump)
+	} else if result.ReportURL != "" {
+		content += fmt.Sprintf("\n[查看报告](%s)\n", result.ReportURL)
+	}
+	return map[string]interface{}{
+		"msgtype": "markdown",
+		"markdown": map[string]interface{}{
 			"content": content,
 		},
 	}
-
-	return postJSON(ctx, p.config.WebhookURL, payload)
 }
 
 // ============== Slack Provider ==============
@@ -609,6 +664,211 @@ func (p *WebhookProvider) Send(ctx context.Context, result *NotifyResult) error 
 	}
 
 	return nil
+}
+
+// ============== 卡片构造（T4.5：飞书/钉钉/企微移动端卡片） ==============
+
+// cardTitle 卡片标题：含状态 emoji 与最高严重度标签
+func cardTitle(result *NotifyResult) string {
+	emoji := "✅"
+	if result.Status == "FAILURE" {
+		emoji = "❌"
+	}
+	name := result.TaskName
+	if name == "" {
+		name = result.TaskId
+	}
+	if sev := topRiskSeverity(result.HighRiskInfo); sev != "" {
+		return fmt.Sprintf("%s [%s] %s", emoji, riskSeverityLabel(sev), name)
+	}
+	return fmt.Sprintf("%s %s", emoji, name)
+}
+
+// cardHeaderColor 飞书 interactive 卡片 header 配色，随最高严重度变化
+func cardHeaderColor(result *NotifyResult) string {
+	if result.Status == "FAILURE" {
+		return "red"
+	}
+	switch topRiskSeverity(result.HighRiskInfo) {
+	case "critical":
+		return "red"
+	case "high":
+		return "orange"
+	case "medium":
+		return "blue"
+	case "low", "info":
+		return "grey"
+	default:
+		return "blue"
+	}
+}
+
+// topRiskSeverity 返回最高严重度（无明细时退看 HighRiskVulSeverities）
+func topRiskSeverity(info *HighRiskInfo) string {
+	if info == nil {
+		return ""
+	}
+	best := ""
+	bestRank := 0
+	consider := func(sev string) {
+		if r := severityRank(sev); r > bestRank {
+			bestRank = r
+			best = sev
+		}
+	}
+	for _, r := range info.NewRisks {
+		consider(r.Severity)
+	}
+	if best == "" {
+		for s := range info.HighRiskVulSeverities {
+			consider(s)
+		}
+	}
+	return best
+}
+
+// topRiskKind 返回最高严重度风险的 kind（用于决定跳转页面）
+func topRiskKind(info *HighRiskInfo) string {
+	if info == nil || len(info.NewRisks) == 0 {
+		return ""
+	}
+	top := info.NewRisks[0]
+	bestRank := severityRank(top.Severity)
+	for _, r := range info.NewRisks[1:] {
+		if rank := severityRank(r.Severity); rank > bestRank {
+			bestRank = rank
+			top = r
+		}
+	}
+	return top.Kind
+}
+
+// topNRisks 按严重度降序取前 n 条
+func topNRisks(risks []RiskSummary, n int) []RiskSummary {
+	if len(risks) == 0 {
+		return nil
+	}
+	sorted := make([]RiskSummary, len(risks))
+	copy(sorted, risks)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return severityRank(sorted[i].Severity) > severityRank(sorted[j].Severity)
+	})
+	if len(sorted) > n {
+		sorted = sorted[:n]
+	}
+	return sorted
+}
+
+// riskKindLabel 风险类型中文标签
+func riskKindLabel(kind string) string {
+	switch kind {
+	case "vuln":
+		return "漏洞"
+	case "weakpass":
+		return "弱口令"
+	case "cert":
+		return "证书"
+	case "asset":
+		return "资产"
+	default:
+		return kind
+	}
+}
+
+// riskSeverityLabel 严重度中文标签
+func riskSeverityLabel(sev string) string {
+	switch sev {
+	case "critical":
+		return "严重"
+	case "high":
+		return "高危"
+	case "medium":
+		return "中危"
+	case "low":
+		return "低危"
+	case "info":
+		return "提示"
+	default:
+		return ""
+	}
+}
+
+// frontendBase 从报告 URL 推导前端根地址（scheme://host）
+func frontendBase(reportURL string) string {
+	if reportURL == "" {
+		return ""
+	}
+	u, err := url.Parse(reportURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// primaryJumpURL 主跳转链接：指向与最高严重度风险对应的详情页；无则回退报告页
+func primaryJumpURL(result *NotifyResult) string {
+	base := frontendBase(result.ReportURL)
+	if base == "" {
+		return result.ReportURL // 可能为空 → 上层不渲染按钮
+	}
+	switch topRiskKind(result.HighRiskInfo) {
+	case "cert":
+		return base + "/asset-management/risk/cert"
+	case "vuln", "weakpass":
+		return base + "/asset-management/risk/vuln"
+	case "asset":
+		return base + "/asset-management"
+	default:
+		if result.ReportURL != "" {
+			return result.ReportURL
+		}
+		return base + "/asset-management"
+	}
+}
+
+// buildCardBody 卡片正文（markdown）：概览 + 最紧急 1-3 项 + 报告链接
+func buildCardBody(result *NotifyResult) string {
+	var b strings.Builder
+	b.WriteString("**概览**\n")
+	b.WriteString(fmt.Sprintf("发现资产 %d · 发现漏洞 %d", result.AssetCount, result.VulCount))
+	if hi := result.HighRiskInfo; hi != nil {
+		if len(hi.NewRisks) > 0 {
+			b.WriteString(fmt.Sprintf(" · 新增风险 %d", len(hi.NewRisks)))
+		}
+		if hi.NewAssetCount > 0 {
+			b.WriteString(fmt.Sprintf(" · 新增资产 %d", hi.NewAssetCount))
+		}
+		if hi.FixedVulCount > 0 {
+			b.WriteString(fmt.Sprintf(" · 已修复 %d", hi.FixedVulCount))
+		}
+	}
+	b.WriteString("\n")
+	if hi := result.HighRiskInfo; hi != nil && len(hi.NewRisks) > 0 {
+		top := topNRisks(hi.NewRisks, 3)
+		b.WriteString("\n**最紧急项**\n")
+		for i, r := range top {
+			line := fmt.Sprintf("%d. [%s] %s", i+1, riskKindLabel(r.Kind), r.Name)
+			if r.Target != "" {
+				line += " @ " + r.Target
+			}
+			if r.Severity != "" {
+				line += " (" + r.Severity + ")"
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	if result.ReportURL != "" {
+		b.WriteString(fmt.Sprintf("\n[查看完整报告](%s)\n", result.ReportURL))
+	}
+	return b.String()
+}
+
+// cardBodyFor 有自定义模板时用模板，否则用统一卡片正文
+func cardBodyFor(result *NotifyResult, template string) string {
+	if template != "" {
+		return FormatMessage(result, template)
+	}
+	return buildCardBody(result)
 }
 
 // ============== Helper Functions ==============

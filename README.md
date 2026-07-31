@@ -9,7 +9,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25.7-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.5-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-4.0-green)](VERSION)
 
 [中文](README.md) · [English](README_EN.md)
 
@@ -96,19 +96,6 @@ cd web ; npm install ; npm run dev
 # 5. 启动 Worker
 go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 ```
-
----
-
-## Worker 部署
-
-```bash
-# Linux
-./cscan-worker -k <install_key> -s http://<api_host>:8888
-
-# Windows
-cscan-worker.exe -k <install_key> -s http://<api_host>:8888
-```
-
 ---
 
 ## License

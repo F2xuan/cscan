@@ -1,0 +1,2983 @@
+<template>
+  <div class="cron-task-create-page">
+    <!-- 页面头部 -->
+    <div class="page-header">
+      <el-button link @click="handleBack">
+        <el-icon><ArrowLeft /></el-icon>{{ $t('common.back') || '返回' }}
+      </el-button>
+      <h2 class="page-title">{{ isEdit ? ($t('cronTask.editCronTask') || '编辑定时扫描') : ($t('cronTask.newCronTask') || '新建定时扫描') }}</h2>
+    </div>
+
+    <el-card class="create-card">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="cron-task-form">
+        <!-- 基本信息 -->
+        <el-form-item :label="$t('cronTask.cronTaskName')" prop="name">
+          <el-input v-model="form.name" :placeholder="$t('cronTask.pleaseEnterName')" />
+        </el-form-item>
+        
+        <!-- 目标选择区域 -->
+        <el-form-item :label="'扫描目标'" required>
+          <el-radio-group v-model="form.targetMode" class="target-mode-switch">
+            <el-radio-button label="manual">手动输入</el-radio-button>
+            <el-radio-button label="asset">选择资产</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <!-- 手动输入模式 -->
+        <el-form-item v-if="form.targetMode === 'manual'" :label="'目标内容'" prop="target">
+          <el-input 
+            v-model="form.target" 
+            type="textarea" 
+            :rows="4" 
+            :placeholder="$t('cronTask.targetPlaceholder')"
+          />
+          <div class="form-hint">{{ $t('cronTask.targetHint') }}</div>
+        </el-form-item>
+
+        <!-- 选择资产模式 -->
+        <el-form-item v-if="form.targetMode === 'asset'" :label="'资产选择'">
+          <div class="asset-selector">
+            <!-- 组织筛选 + 全选按钮 -->
+            <div class="asset-selector-toolbar">
+              <el-select 
+                v-model="form.orgId" 
+                placeholder="全部组织" 
+                clearable 
+                filterable
+                style="width: 240px"
+                @change="loadAssetTargets"
+              >
+                <el-option 
+                  v-for="org in organizationList" 
+                  :key="org.id" 
+                  :label="org.name" 
+                  :value="org.id"
+                />
+              </el-select>
+              <el-input 
+                v-model="assetTargetFilter.keyword" 
+                placeholder="搜索 IP/域名/标签" 
+                clearable
+                style="width: 240px; margin-left: 10px"
+                @keyup.enter="loadAssetTargets"
+                @clear="loadAssetTargets"
+              >
+                <template #append>
+                  <el-button @click="loadAssetTargets">搜索</el-button>
+                </template>
+              </el-input>
+              <el-button type="primary" link style="margin-left: 10px" @click="selectAllAssets">全选</el-button>
+              <el-button type="warning" link @click="clearAssetSelection" v-if="form.assetIds.length > 0">清空选择</el-button>
+              <span class="selected-count-hint">已选 {{ form.assetIds.length }} 项</span>
+            </div>
+            <!-- 资产列表表格 -->
+            <el-table 
+              ref="assetTargetTableRef"
+              :data="assetTargetList" 
+              v-loading="assetTargetLoading" 
+              max-height="320"
+              border
+              class="asset-target-table"
+              @selection-change="handleAssetSelectionChange"
+              row-key="id"
+            >
+              <el-table-column type="selection" width="45" :reserve-selection="true" />
+              <el-table-column prop="type" label="类型" width="80">
+                <template #default="{ row }">
+                  <el-tag :type="row.type === 'domain' ? 'success' : 'primary'" size="small">
+                    {{ row.type === 'domain' ? '域名' : 'IP' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="value" label="值" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="labels" label="标签" min-width="160" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <el-tag v-for="(label, idx) in (row.labels || []).slice(0, 3)" :key="idx" size="small" type="info" class="asset-label-tag">
+                    {{ label }}
+                  </el-tag>
+                  <span v-if="row.labels && row.labels.length > 3" class="secondary-hint">+{{ row.labels.length - 3 }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="lastScanTime" label="最后扫描时间" width="170">
+                <template #default="{ row }">
+                  {{ formatAssetTimestamp(row.lastScanTime) }}
+                </template>
+              </el-table-column>
+            </el-table>
+            <!-- 分页 -->
+            <el-pagination
+              v-model:current-page="assetTargetPagination.page"
+              v-model:page-size="assetTargetPagination.pageSize"
+              :total="assetTargetPagination.total"
+              :page-sizes="[20, 50, 100]"
+              layout="total, sizes, prev, pager, next"
+              class="asset-pagination"
+              small
+              @size-change="loadAssetTargets"
+              @current-change="loadAssetTargets"
+            />
+          </div>
+        </el-form-item>
+
+        <!-- 同步拉取所有子域名 -->
+        <el-form-item v-if="form.targetMode === 'asset'" :label="'子域名同步'">
+          <el-checkbox v-model="form.enableSubdomainPull">同步拉取所有子域名</el-checkbox>
+          <div class="form-hint">启用后将在任务执行时自动同步并拉取该资产下的所有子域名作为扫描目标</div>
+        </el-form-item>
+
+        <el-form-item :label="$t('cronTask.scheduleType')" prop="scheduleType">
+          <el-radio-group v-model="form.scheduleType">
+            <el-radio label="cron">{{ $t('cronTask.cronExec') }}</el-radio>
+            <el-radio label="once">{{ $t('cronTask.onceExec') }}</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <!-- Cron表达式 -->
+        <el-form-item v-if="form.scheduleType === 'cron'" :label="$t('cronTask.cronExpression')" prop="cronSpec">
+          <el-input v-model="form.cronSpec" :placeholder="$t('cronTask.cronPlaceholder')">
+            <template #append>
+              <el-button @click="validateCron">{{ $t('cronTask.validate') }}</el-button>
+            </template>
+          </el-input>
+          <div class="cron-help">
+            <div class="cron-presets">
+              <span class="preset-label">{{ $t('cronTask.quickSelect') }}</span>
+              <el-tag 
+                v-for="preset in cronPresets" 
+                :key="preset.value" 
+                size="small" 
+                class="preset-tag"
+                @click="form.cronSpec = preset.value; validateCron()"
+              >
+                {{ preset.label }}
+              </el-tag>
+            </div>
+            <div v-if="cronValidation.valid" class="cron-next-times">
+              <div class="next-label">{{ $t('cronTask.next5Times') }}</div>
+              <div v-for="(time, index) in cronValidation.nextTimes" :key="index" class="next-time">
+                {{ index + 1 }}. {{ time }}
+              </div>
+            </div>
+            <div v-else-if="cronValidation.error" class="cron-error">
+              {{ cronValidation.error }}
+            </div>
+          </div>
+        </el-form-item>
+
+        <!-- 指定时间 -->
+        <el-form-item v-if="form.scheduleType === 'once'" :label="$t('cronTask.execTime')" prop="scheduleTime">
+          <el-date-picker
+            v-model="form.scheduleTimeDate"
+            type="datetime"
+            :placeholder="$t('common.pleaseSelect')"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            :disabled-date="disabledDate"
+            style="width: 100%"
+            @change="onScheduleTimeChange"
+          />
+          <div class="form-hint">{{ $t('cronTask.onceExecHint') }}</div>
+        </el-form-item>
+
+        <!-- 扫描配置来源 -->
+        <el-form-item :label="'扫描配置'" required>
+          <el-radio-group v-model="form.configSource" class="config-source-switch">
+            <el-radio-button label="template">扫描模板</el-radio-button>
+            <el-radio-button label="custom">自定义配置</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <!-- 扫描模板选择 -->
+        <el-form-item v-if="form.configSource === 'template'" :label="'选择模板'" prop="templateId">
+          <el-select 
+            v-model="form.templateId" 
+            placeholder="请选择扫描模板" 
+            style="width: 100%" 
+            filterable
+            @change="onTemplateSelect"
+          >
+            <el-option 
+              v-for="tpl in scanTemplateList" 
+              :key="tpl.id" 
+              :label="tpl.name" 
+              :value="tpl.id"
+            >
+              <div class="template-option">
+                <span class="template-name">{{ tpl.name }}</span>
+                <span v-if="tpl.category" class="template-category">{{ tpl.category }}</span>
+              </div>
+            </el-option>
+          </el-select>
+          <div class="form-hint" v-if="form.templateId">
+            已选择模板，执行时将使用该模板的扫描配置
+            <el-button type="primary" link size="small" @click="previewTemplateConfig" v-if="selectedTemplateConfig">查看配置</el-button>
+          </div>
+        </el-form-item>
+
+        <!-- 扫描配置折叠面板（自定义配置模式） -->
+        <el-collapse v-if="form.configSource === 'custom'" v-model="activeCollapse" class="config-collapse">
+          <!-- 子域名扫描 -->
+          <el-collapse-item name="domainscan">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.subdomainScan') }} <el-tag v-if="form.domainscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.domainscanEnable" />
+              <span class="form-hint">{{ $t('task.subdomainEnumHint') }}</span>
+            </el-form-item>
+            <template v-if="form.domainscanEnable">
+              <el-form-item :label="$t('task.scanTool')">
+                <el-checkbox v-model="form.domainscanSubfinder">Subfinder ({{ $t('task.passiveEnum') }})</el-checkbox>
+                <el-checkbox v-model="form.domainscanBruteforce" :disabled="!form.subdomainDictIds || !form.subdomainDictIds.length">KSubdomain ({{ $t('task.dictBrute') }})</el-checkbox>
+                <span class="form-hint">{{ $t('task.multiScanHint') }}</span>
+              </el-form-item>
+              
+              <!-- 左右分栏布局 -->
+              <el-row :gutter="24" class="scan-tools-layout">
+                <!-- 左侧：Subfinder 配置 -->
+                <el-col :span="12">
+                  <div class="scan-tool-section">
+                    <div class="scan-tool-header">
+                      <span class="scan-tool-title">{{ $t('task.subfinderPassiveEnum') }}</span>
+                      <el-tag :type="form.domainscanSubfinder ? 'success' : 'info'" size="small">
+                        {{ form.domainscanSubfinder ? $t('task.started') : $t('task.notStarted') }}
+                      </el-tag>
+                    </div>
+                    <template v-if="form.domainscanSubfinder">
+                      <el-form-item :label="$t('task.timeoutSeconds')">
+                        <el-input-number v-model="form.domainscanTimeout" :min="60" :max="3600" style="width:100%" />
+                      </el-form-item>
+                      <el-form-item :label="$t('task.maxEnumTime') + '(' + $t('task.minutes') + ')'">
+                        <el-input-number v-model="form.domainscanMaxEnumTime" :min="1" :max="60" style="width:100%" />
+                      </el-form-item>
+                      <el-form-item :label="$t('task.rateLimit')">
+                        <el-input-number v-model="form.domainscanRateLimit" :min="0" :max="1000" style="width:100%" />
+                        <span class="form-hint">0={{ $t('task.noLimit') }}</span>
+                      </el-form-item>
+                      <el-form-item :label="$t('task.scanOptions')">
+                        <el-checkbox v-model="form.domainscanRemoveWildcard">{{ $t('task.removeWildcardDomain') }}</el-checkbox>
+                      </el-form-item>
+                      <el-form-item :label="$t('task.dnsResolve')">
+                        <el-checkbox v-model="form.domainscanResolveDNS">{{ $t('task.resolveSubdomainDns') }}</el-checkbox>
+                        <span class="form-hint">{{ $t('task.concurrentByWorker') }}</span>
+                      </el-form-item>
+                    </template>
+                    <div v-else class="scan-tool-disabled-hint">
+                      <el-icon><InfoFilled /></el-icon>
+                      <span>{{ $t('task.enableSubfinderFirst') }}</span>
+                    </div>
+                  </div>
+                </el-col>
+                
+                <!-- 右侧：KSubdomain 配置 -->
+                <el-col :span="12">
+                  <div class="scan-tool-section">
+                    <div class="scan-tool-header">
+                      <span class="scan-tool-title">{{ $t('task.ksubdomainDictBrute') }}</span>
+                      <el-tag :type="form.domainscanBruteforce ? 'success' : 'info'" size="small">
+                        {{ form.domainscanBruteforce ? $t('task.started') : $t('task.notStarted') }}
+                      </el-tag>
+                    </div>
+                    <!-- 字典选择（始终显示，作为启用字典爆破的前提） -->
+                    <el-form-item :label="$t('task.bruteforceDict')">
+                      <div class="selected-dict-summary">
+                        <el-tag type="primary" size="small" v-if="form.subdomainDictIds && form.subdomainDictIds.length">
+                          {{ $t('task.selectedCount', { count: form.subdomainDictIds.length }) }}
+                        </el-tag>
+                        <span v-else class="warning-hint">
+                          {{ $t('task.selectDictFirst') }}
+                        </span>
+                        <el-button type="primary" link @click="showSubdomainDictSelectDialog">{{ $t('task.selectDict') }}</el-button>
+                      </div>
+                      <span class="form-hint">{{ $t('task.ksubdomainBruteHint') }}</span>
+                    </el-form-item>
+                    <template v-if="form.domainscanBruteforce">
+                      <el-form-item :label="$t('task.bruteforceTimeout') + ' (' + $t('task.minutes') + ')'">
+                        <el-input-number v-model="form.domainscanBruteforceTimeout" :min="1" :max="120" style="width:100%" />
+                        <span class="form-hint">{{ $t('task.ksubdomainTimeoutHint') }}</span>
+                      </el-form-item>
+                    </template>
+                    <template v-if="form.domainscanBruteforce">
+                      <el-form-item :label="$t('task.enhancedFeatures')">
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                          <div style="display: flex; align-items: center; gap: 8px;">
+                            <el-checkbox 
+                              v-model="form.domainscanRecursiveBrute" 
+                              :disabled="!form.recursiveDictIds || !form.recursiveDictIds.length"
+                            >{{ $t('task.recursiveBrute') }}</el-checkbox>
+                            <el-button type="primary" link size="small" @click="showRecursiveDictSelectDialog">{{ $t('task.selectRecursiveDict') }}</el-button>
+                            <el-tag type="primary" size="small" v-if="form.recursiveDictIds && form.recursiveDictIds.length">
+                              {{ $t('task.selectedCount', { count: form.recursiveDictIds.length }) }}
+                            </el-tag>
+                          </div>
+                          <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">
+                            {{ (!form.recursiveDictIds || !form.recursiveDictIds.length) ? $t('task.selectRecursiveDictFirst') : $t('task.recursiveBruteHint') }}
+                          </span>
+                          <el-checkbox v-model="form.domainscanWildcardDetect">{{ $t('task.wildcardDetect') }}</el-checkbox>
+                          <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">{{ $t('task.wildcardDetectHint') }}</span>
+                          
+                          
+                        </div>
+                      </el-form-item>
+                    </template>
+                    <div v-if="!form.domainscanBruteforce && form.subdomainDictIds && form.subdomainDictIds.length" class="scan-tool-disabled-hint">
+                      <el-icon><InfoFilled /></el-icon>
+                      <span>{{ $t('task.canEnableKSubdomain') }}</span>
+                    </div>
+                  </div>
+                </el-col>
+              </el-row>
+            </template>
+          </el-collapse-item>
+
+          <!-- 端口扫描 -->
+          <el-collapse-item name="portscan">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.portScan') }} <el-tag v-if="form.portscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.portscanEnable" />
+            </el-form-item>
+            <template v-if="form.portscanEnable">
+              <el-form-item :label="$t('task.scanTool')">
+                <el-radio-group v-model="form.portscanTool">
+                  <el-radio label="naabu">Naabu ({{ $t('task.recommended') }})</el-radio>
+                  <el-radio label="masscan">Masscan</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item :label="$t('task.portRange')">
+                <el-select v-model="form.ports" filterable allow-create default-first-option style="width: 100%">
+                  <el-option :label="$t('task.top100Ports')" value="top100" />
+                  <el-option :label="$t('task.top1000Ports')" value="top1000" />
+                  <el-option :label="'80,443,8080,8443 - ' + $t('task.webCommon')" value="80,443,8080,8443" />
+                  <el-option :label="'1-65535 - ' + $t('task.allPorts')" value="1-65535" />
+                </el-select>
+              </el-form-item>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.scanRate')">
+                    <el-input-number v-model="form.portscanRate" :min="100" :max="100000" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.packetsPerSecond') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.portThreshold')">
+                    <el-input-number v-model="form.portThreshold" :min="0" :max="65535" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.skipIfExceeded') }}</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20" v-if="form.portscanTool === 'naabu'">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.workers')">
+                    <el-input-number v-model="form.portscanWorkers" :min="10" :max="200" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.internalThreads') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.retries')">
+                    <el-input-number v-model="form.portscanRetries" :min="0" :max="5" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.retryCount') }}</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item v-if="form.portscanTool === 'naabu'" :label="$t('task.scanType')">
+                    <el-radio-group v-model="form.scanType">
+                      <el-radio label="c">CONNECT</el-radio>
+                      <el-radio label="s">SYN</el-radio>
+                    </el-radio-group>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.timeoutSeconds')">
+                    <el-input-number v-model="form.portscanTimeout" :min="5" :max="1200" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20" v-if="form.portscanTool === 'naabu'">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.warmUpTime')">
+                    <el-input-number v-model="form.portscanWarmUpTime" :min="0" :max="10" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.warmUpTimeHint') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.tcpVerify')">
+                    <el-switch v-model="form.portscanVerify" />
+                    <span class="form-hint">{{ $t('task.tcpVerifyHint') }}</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-form-item :label="$t('task.advancedOptions')">
+                <div style="display: block; width: 100%">
+                  <el-checkbox v-model="form.skipHostDiscovery">{{ $t('task.skipHostDiscovery') }} (-Pn)</el-checkbox>
+                  <span class="form-hint">{{ $t('task.skipHostDiscoveryHint') }}</span>
+                </div>
+                <div v-if="form.portscanTool === 'naabu'" style="display: block; width: 100%; margin-top: 8px">
+                  <el-checkbox v-model="form.excludeCDN">{{ $t('task.excludeCdnWaf') }} (-ec)</el-checkbox>
+                  <span class="form-hint">{{ $t('task.excludeCdnHint') }}</span>
+                </div>
+              </el-form-item>
+              <el-form-item :label="$t('task.excludeTargets')">
+                <el-input v-model="form.excludeHosts" placeholder="192.168.1.1,10.0.0.0/8" />
+                <span class="form-hint">{{ $t('task.excludeTargetsHint') }}</span>
+              </el-form-item>
+            </template>
+          </el-collapse-item>
+
+          <!-- 端口识别 -->
+          <el-collapse-item name="portidentify">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.portIdentify') }} <el-tag v-if="form.portidentifyEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.portidentifyEnable" />
+            </el-form-item>
+            <template v-if="form.portidentifyEnable">
+              <!-- 强制扫描：仅在端口扫描未启用时显示 -->
+              <el-form-item v-if="!form.portscanEnable" :label="$t('task.forceScan')">
+                <el-switch v-model="form.portidentifyForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.identifyTool')">
+                <el-radio-group v-model="form.portidentifyTool">
+                  <el-radio label="nmap">Nmap</el-radio>
+                  <el-radio label="fingerprintx">Fingerprintx</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item :label="$t('task.timeoutSeconds')">
+                <el-input-number v-model="form.portidentifyTimeout" :min="5" :max="300" />
+                <span class="form-hint">{{ $t('task.singleHostTimeout') }}</span>
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.concurrent')">
+                <el-input-number v-model="form.portidentifyConcurrency" :min="1" :max="100" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'nmap'" :label="$t('task.nmapParams')">
+                <el-input v-model="form.portidentifyArgs" placeholder="-sV --version-intensity 5" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.scanUDP')">
+                <el-switch v-model="form.portidentifyUDP" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.fastMode')">
+                <el-switch v-model="form.portidentifyFastMode" />
+              </el-form-item>
+            </template>
+          </el-collapse-item>
+
+          <!-- 指纹识别 -->
+          <el-collapse-item name="fingerprint">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.fingerprintScan') }} <el-tag v-if="form.fingerprintEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.fingerprintEnable" />
+            </el-form-item>
+            <template v-if="form.fingerprintEnable">
+              <!-- 强制扫描：仅在端口扫描和端口识别均未启用时显示 -->
+              <el-form-item v-if="!form.portscanEnable && !form.portidentifyEnable" :label="$t('task.forceScan')">
+                <el-switch v-model="form.fingerprintForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.probeTool')">
+                <el-radio-group v-model="form.fingerprintTool">
+                  <el-radio label="httpx">Httpx</el-radio>
+                  <el-radio label="builtin">{{ $t('task.builtinEngine') }}</el-radio>
+                </el-radio-group>
+                <span class="form-hint">{{ form.fingerprintTool === 'httpx' ? $t('task.httpxWappalyzer') : $t('task.sdkWappalyzer') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.additionalFeatures')">
+                <el-checkbox v-model="form.fingerprintIconHash">{{ $t('task.iconHash') }}</el-checkbox>
+                <el-checkbox v-model="form.fingerprintCustomEngine">{{ $t('task.customFingerprint') }}</el-checkbox>
+                <el-checkbox v-model="form.fingerprintScreenshot">{{ $t('task.screenshot') }}</el-checkbox>
+              </el-form-item>
+              <el-form-item :label="$t('task.filterMode')">
+                <el-radio-group v-model="form.fingerprintFilterMode">
+                  <el-radio label="http_mapping">{{ $t('task.httpMappingMode') }}</el-radio>
+                  <el-radio label="service_mapping">{{ $t('task.serviceMappingMode') }}</el-radio>
+                </el-radio-group>
+                <span class="form-hint">{{ form.fingerprintFilterMode === 'http_mapping' ? $t('task.httpMappingModeHint') : $t('task.serviceMappingModeHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.activeScan')">
+                <el-checkbox v-model="form.fingerprintActiveScan">{{ $t('task.enableActiveScan') }}</el-checkbox>
+                <span class="form-hint">{{ $t('task.activeScanHint') }}</span>
+              </el-form-item>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.timeoutSeconds')">
+                    <el-input-number v-model="form.fingerprintTimeout" :min="5" :max="120" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.concurrentByWorker') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12" v-if="form.fingerprintActiveScan">
+                  <el-form-item :label="$t('task.activeTimeoutSeconds')">
+                    <el-input-number v-model="form.fingerprintActiveTimeout" :min="5" :max="60" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.activeProbeTimeout') }}</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </template>
+          </el-collapse-item>
+
+          <!-- 弱口令扫描 -->
+          <el-collapse-item name="brutescan">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.weakpassScan') }} <el-tag v-if="form.brutescanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.brutescanEnable" />
+              <span class="form-hint">{{ $t('task.weakpassScanHint') }}</span>
+            </el-form-item>
+            <template v-if="form.brutescanEnable">
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.brutescanForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.targetService')">
+                <el-checkbox-group v-model="form.brutescanServices" class="service-checkbox-group">
+                  <el-row :gutter="16">
+                    <el-col :span="6" v-for="service in bruteServiceOptions" :key="service.value">
+                      <el-checkbox :label="service.value" :value="service.value">
+                        {{ service.label }}
+                      </el-checkbox>
+                    </el-col>
+                  </el-row>
+                </el-checkbox-group>
+                <span class="form-hint">{{ $t('task.weakpassServiceHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.scanStrategy')">
+                <el-checkbox v-model="form.brutescanStopOnFirst">{{ $t('task.stopOnFirstFound') }}</el-checkbox>
+              </el-form-item>
+            </template>
+          </el-collapse-item>
+
+          <!-- 目录扫描 -->
+          <el-collapse-item name="dirscan">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.dirScan') }} <el-tag v-if="form.dirscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.dirscanEnable" />
+              <span class="form-hint">{{ $t('task.dirScanHint') }}</span>
+            </el-form-item>
+            <template v-if="form.dirscanEnable">
+              <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.dirscanForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.scanDict')">
+                <div class="selected-dict-summary">
+                  <el-tag type="primary" size="small" v-if="form.dirscanDictIds.length">
+                    {{ $t('task.selectedCount', { count: form.dirscanDictIds.length }) }}
+                  </el-tag>
+                  <span v-if="!form.dirscanDictIds.length" class="secondary-hint">
+                    {{ $t('task.noDictSelected') }}
+                  </span>
+                  <el-button type="primary" link @click="showDictSelectDialog">{{ $t('task.selectDict') }}</el-button>
+                </div>
+              </el-form-item>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.concurrentThreads')">
+                    <el-input-number v-model="form.dirscanThreads" :min="1" :max="200" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.requestTimeoutSeconds')">
+                    <el-input-number v-model="form.dirscanTimeout" :min="1" :max="60" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-form-item :label="$t('task.followRedirect')">
+                <el-switch v-model="form.dirscanFollowRedirect" />
+              </el-form-item>
+              <!-- ffuf 高级配置 -->
+              <el-divider content-position="left">{{ $t('task.ffufAdvanced') }}</el-divider>
+              <el-form-item :label="$t('task.autoCalibration')">
+                <el-switch v-model="form.dirscanAutoCalibration" />
+                <span class="form-hint">{{ $t('task.autoCalibrationHint') }}</span>
+              </el-form-item>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.rateLimit')">
+                    <el-input-number v-model="form.dirscanRate" :min="0" :max="10000" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.rateLimitHint') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.recursion')">
+                    <el-switch v-model="form.dirscanRecursion" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20" v-if="form.dirscanRecursion">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.recursionDepth')">
+                    <el-input-number v-model="form.dirscanRecursionDepth" :min="1" :max="10" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.filterMode')">
+                    <el-select v-model="form.dirscanFilterMode" style="width:100%">
+                      <el-option label="OR" value="or" />
+                      <el-option label="AND" value="and" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <!-- 过滤条件组 -->
+              <div class="filter-group">
+                <div class="filter-group-title">{{ $t('task.filterConditions') }}</div>
+                <el-row :gutter="20">
+                  <el-col :span="6">
+                    <el-form-item :label="$t('task.filterSize')">
+                      <el-input v-model="form.dirscanFilterSize" :placeholder="$t('task.filterSizeHint')" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
+                    <el-form-item :label="$t('task.filterWords')">
+                      <el-input v-model="form.dirscanFilterWords" :placeholder="$t('task.filterWordsHint')" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
+                    <el-form-item :label="$t('task.filterLines')">
+                      <el-input v-model="form.dirscanFilterLines" :placeholder="$t('task.filterLinesHint')" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
+                    <el-form-item :label="$t('task.filterRegex')">
+                      <el-input v-model="form.dirscanFilterRegex" :placeholder="$t('task.filterRegexHint')" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </div>
+            </template>
+          </el-collapse-item>
+
+          <!-- JS扫描 -->
+          <el-collapse-item name="jsfinder">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.jsfinderScan') }} <el-tag v-if="form.jsfinderEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.jsfinderEnable" />
+              <span class="form-hint">{{ $t('task.jsfinderScanHint') }}</span>
+            </el-form-item>
+            <template v-if="form.jsfinderEnable">
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.concurrentThreads')">
+                    <el-input-number v-model="form.jsfinderThreads" :min="1" :max="100" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.requestTimeoutSeconds')">
+                    <el-input-number v-model="form.jsfinderTimeout" :min="1" :max="60" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-form-item :label="$t('task.enableSourcemap')">
+                <el-switch v-model="form.jsfinderEnableSourcemap" />
+                <span class="form-hint">{{ $t('task.enableSourcemapHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.enableUnauthCheck')">
+                <el-switch v-model="form.jsfinderEnableUnauthCheck" />
+                <span class="form-hint">{{ $t('task.enableUnauthCheckHint') }}</span>
+              </el-form-item>
+            </template>
+          </el-collapse-item>
+
+          <!-- 漏洞扫描 -->
+          <el-collapse-item name="pocscan">
+            <template #title>
+              <span class="collapse-title">{{ $t('task.vulScan') }} <el-tag v-if="form.pocscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+            </template>
+            <el-form-item :label="$t('task.enable')">
+              <el-switch v-model="form.pocscanEnable" />
+              <span class="form-hint">{{ $t('task.useNucleiEngine') }}</span>
+            </el-form-item>
+            <template v-if="form.pocscanEnable">
+              <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.pocscanForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.pocSource')">
+                <el-radio-group v-model="form.pocscanMode" @change="handlePocModeChange">
+                  <el-radio label="auto">{{ $t('task.autoMatch') }}</el-radio>
+                  <el-radio label="manual">{{ $t('task.manualSelect') }}</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              
+              <!-- 自动匹配模式 -->
+              <template v-if="form.pocscanMode === 'auto'">
+                <el-form-item :label="$t('task.autoScan')">
+                  <el-checkbox v-model="form.pocscanAutoScan" :disabled="form.pocscanCustomOnly">{{ $t('task.customTagMapping') }}</el-checkbox>
+                  <el-checkbox v-model="form.pocscanAutomaticScan" :disabled="form.pocscanCustomOnly || !form.fingerprintEnable">{{ $t('task.webFingerprintAutoMatch') }}</el-checkbox>
+                  <span v-if="!form.fingerprintEnable && !form.pocscanCustomOnly" class="form-hint warning-hint">{{ $t('task.needFingerprintScan') }}</span>
+                </el-form-item>
+                <el-form-item :label="$t('task.customPoc')">
+                  <el-checkbox v-model="form.pocscanCustomOnly">{{ $t('task.onlyUseCustomPoc') }}</el-checkbox>
+                </el-form-item>
+              </template>
+              
+              <!-- 手动选择模式 -->
+              <template v-if="form.pocscanMode === 'manual'">
+                <el-form-item :label="$t('task.selectedPoc')">
+                  <div class="selected-poc-summary">
+                    <el-tag type="primary" size="small" v-if="form.pocscanNucleiTemplateIds.length">
+                      {{ $t('task.defaultTemplate') }}: {{ form.pocscanNucleiTemplateIds.length }}
+                    </el-tag>
+                    <el-tag type="warning" size="small" v-if="form.pocscanCustomPocIds.length">
+                      {{ $t('task.customPoc') }}: {{ form.pocscanCustomPocIds.length }}
+                    </el-tag>
+                    <span v-if="!form.pocscanNucleiTemplateIds.length && !form.pocscanCustomPocIds.length" class="secondary-hint">
+                      {{ $t('task.noPocSelected') }}
+                    </span>
+                    <el-button type="primary" link @click="showPocSelectDialog">{{ $t('task.selectPoc') }}</el-button>
+                  </div>
+                </el-form-item>
+              </template>
+
+              <el-form-item v-if="form.pocscanMode !== 'manual'" :label="$t('task.severityLevel')">
+                <el-checkbox-group v-model="form.pocscanSeverity">
+                  <el-checkbox label="critical">Critical</el-checkbox>
+                  <el-checkbox label="high">High</el-checkbox>
+                  <el-checkbox label="medium">Medium</el-checkbox>
+                  <el-checkbox label="low">Low</el-checkbox>
+                  <el-checkbox label="info">Info</el-checkbox>
+                  <el-checkbox label="unknown">Unknown</el-checkbox>
+                </el-checkbox-group>
+              </el-form-item>
+              <el-form-item label="请求速率(Rate/s)">
+                <el-input-number v-model="form.pocscanRateLimit" :min="1" :max="2000" />
+              </el-form-item>
+              <el-form-item label="模板并发">
+                <el-input-number v-model="form.pocscanConcurrency" :min="1" :max="500" />
+              </el-form-item>
+              <el-form-item :label="$t('task.targetTimeout')">
+                <el-input-number v-model="form.pocscanTargetTimeout" :min="30" :max="600" />
+                <span class="form-hint">{{ $t('task.seconds') }}</span>
+              </el-form-item>
+              <el-form-item :label="$t('task.customHeaders')">
+                <el-radio-group v-model="form.pocscanHeaderMode" style="margin-bottom: 8px;">
+                  <el-radio label="none">{{ $t('task.noCustomHeader') }}</el-radio>
+                  <el-radio label="preset">{{ $t('task.presetUA') }}</el-radio>
+                  <el-radio label="custom">{{ $t('task.customInput') }}</el-radio>
+                </el-radio-group>
+                <template v-if="form.pocscanHeaderMode === 'preset'">
+                  <el-select v-model="form.pocscanPresetUA" :placeholder="$t('task.selectUA')" style="width: 100%;">
+                    <el-option-group :label="$t('task.uaDesktop')">
+                      <el-option label="Chrome (Windows)" value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" />
+                      <el-option label="Firefox (macOS)" value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0" />
+                      <el-option label="Edge (Windows)" value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0" />
+                    </el-option-group>
+                    <el-option-group :label="$t('task.uaMobile')">
+                      <el-option label="Safari (iPhone)" value="Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1" />
+                      <el-option label="Chrome (Android)" value="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36" />
+                    </el-option-group>
+                    <el-option-group :label="$t('task.uaSpider')">
+                      <el-option label="Baiduspider" value="Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)" />
+                      <el-option label="Googlebot" value="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" />
+                    </el-option-group>
+                    <el-option-group :label="$t('task.uaApp')">
+                      <el-option label="WeChat (Android)" value="Mozilla/5.0 (Linux; Android 13; ALN-AL00 Build/HUAWEIALN-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36 XWEB/1160065 MMWEBSDK/20231202 MicroMessenger/8.0.47.2560 WeChat/arm64 Weixin NetType/WIFI" />
+                    </el-option-group>
+                  </el-select>
+                </template>
+                <template v-if="form.pocscanHeaderMode === 'custom'">
+                  <el-input
+                    v-model="form.pocscanCustomHeadersText"
+                    type="textarea"
+                    :rows="4"
+                    :placeholder="$t('task.customHeadersPlaceholder')"
+                  />
+                </template>
+              </el-form-item>
+            </template>
+          </el-collapse-item>
+
+          <!-- 高级设置 -->
+        </el-collapse>
+
+        <!-- 操作按钮 -->
+        <div class="form-actions">
+          <el-button type="primary" :loading="submitting" @click="handleSubmit">{{ isEdit ? ($t('common.save') || '保存') : ($t('common.confirm') || '确定') }}</el-button>
+          <el-button @click="handleBack">{{ $t('common.cancel') || '取消' }}</el-button>
+        </div>
+      </el-form>
+    </el-card>
+
+    <!-- 目录扫描字典选择对话框 -->
+    <el-dialog v-model="dictSelectDialogVisible" :title="$t('task.selectDirScanDict')" width="800px" @open="handleDictDialogOpen">
+      <el-table 
+        ref="dictTableRef"
+        :data="dictList" 
+        v-loading="dictLoading" 
+        max-height="400"
+        @selection-change="handleDictSelectionChange"
+        row-key="id"
+      >
+        <el-table-column type="selection" width="45" :reserve-selection="true" />
+        <el-table-column prop="name" :label="$t('task.dictName')" min-width="150" />
+        <el-table-column prop="pathCount" :label="$t('task.pathCount')" width="100" />
+        <el-table-column prop="isBuiltin" :label="$t('common.type')" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') : $t('task.custom') }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="dictSelectDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmDictSelection">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 子域名字典选择对话框 -->
+    <el-dialog v-model="subdomainDictSelectDialogVisible" :title="$t('task.selectSubdomainDict')" width="800px" @open="handleSubdomainDictDialogOpen">
+      <el-table 
+        ref="subdomainDictTableRef"
+        :data="subdomainDictList" 
+        v-loading="subdomainDictLoading" 
+        max-height="400"
+        @selection-change="handleSubdomainDictSelectionChange"
+        row-key="id"
+      >
+        <el-table-column type="selection" width="45" :reserve-selection="true" />
+        <el-table-column prop="name" :label="$t('task.dictName')" min-width="150" />
+        <el-table-column prop="wordCount" :label="$t('task.wordCount')" width="100" />
+        <el-table-column prop="isBuiltin" :label="$t('common.type')" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') : $t('task.custom') }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="subdomainDictSelectDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmSubdomainDictSelection">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 递归爆破字典选择对话框 -->
+    <el-dialog v-model="recursiveDictSelectDialogVisible" :title="$t('task.selectRecursiveDict')" width="800px" @open="handleRecursiveDictDialogOpen">
+      <el-table 
+        ref="recursiveDictTableRef"
+        :data="recursiveDictList" 
+        v-loading="recursiveDictLoading" 
+        max-height="400"
+        @selection-change="handleRecursiveDictSelectionChange"
+        row-key="id"
+      >
+        <el-table-column type="selection" width="45" :reserve-selection="true" />
+        <el-table-column prop="name" :label="$t('task.dictName')" min-width="150" />
+        <el-table-column prop="wordCount" :label="$t('task.wordCount')" width="100" />
+        <el-table-column prop="isBuiltin" :label="$t('common.type')" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') : $t('task.custom') }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="recursiveDictSelectDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmRecursiveDictSelection">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- POC选择对话框 -->
+    <el-dialog v-model="pocSelectDialogVisible" :title="$t('task.selectPoc')" width="1260px" @open="handlePocDialogOpen">
+      <div class="poc-select-container">
+        <!-- 左侧：POC列表 -->
+        <div class="poc-select-left">
+          <el-tabs v-model="pocSelectTab">
+            <!-- 默认模板 -->
+            <el-tab-pane :label="$t('task.defaultTemplate')" name="nuclei">
+              <el-form :inline="true" class="poc-filter-form">
+                <el-form-item>
+                  <el-input v-model="nucleiTemplateFilter.keyword" :placeholder="$t('task.nameOrId')" clearable style="width: 150px" @keyup.enter="loadNucleiTemplatesForSelect" />
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="nucleiTemplateFilter.severity" :placeholder="$t('task.level')" clearable style="width: 100px" @change="loadNucleiTemplatesForSelect">
+                    <el-option label="Critical" value="critical" />
+                    <el-option label="High" value="high" />
+                    <el-option label="Medium" value="medium" />
+                    <el-option label="Low" value="low" />
+                    <el-option label="Info" value="info" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" size="small" @click="loadNucleiTemplatesForSelect">{{ $t('common.search') }}</el-button>
+                  <el-button type="success" size="small" @click="selectAllNucleiTemplates" :loading="selectAllNucleiLoading">{{ $t('task.selectAll') }}</el-button>
+                  <el-button type="warning" size="small" @click="deselectAllNucleiTemplates" v-if="selectedNucleiTemplateIds.length > 0">{{ $t('task.deselectAll') }}</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table 
+                ref="nucleiTableRef"
+                :data="nucleiTemplateList" 
+                v-loading="nucleiTemplateLoading" 
+                max-height="400"
+                @selection-change="handleNucleiSelectionChange"
+                row-key="id"
+              >
+                <el-table-column type="selection" width="45" :reserve-selection="true" />
+                <el-table-column prop="id" :label="$t('task.templateId')" width="180" show-overflow-tooltip />
+                <el-table-column prop="name" :label="$t('common.name')" min-width="150" show-overflow-tooltip />
+                <el-table-column prop="severity" :label="$t('task.level')" width="80">
+                  <template #default="{ row }">
+                    <el-tag :type="getSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column :label="$t('common.operation')" width="60" fixed="right">
+                  <template #default="{ row }">
+                    <el-button type="primary" link size="small" @click="viewPocContent(row, 'nuclei')">{{ $t('common.view') }}</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-pagination
+                v-model:current-page="nucleiTemplatePagination.page"
+                v-model:page-size="nucleiTemplatePagination.pageSize"
+                :total="nucleiTemplatePagination.total"
+                :page-sizes="[50, 100, 200]"
+                layout="total, sizes, prev, pager, next"
+                class="poc-pagination"
+                @size-change="loadNucleiTemplatesForSelect"
+                @current-change="loadNucleiTemplatesForSelect"
+              />
+            </el-tab-pane>
+
+            <!-- 自定义POC -->
+            <el-tab-pane :label="$t('task.customPoc')" name="custom">
+              <el-form :inline="true" class="poc-filter-form">
+                <el-form-item>
+                  <el-input v-model="customPocFilter.name" :placeholder="$t('common.name')" clearable style="width: 150px" @keyup.enter="loadCustomPocsForSelect" />
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="customPocFilter.severity" :placeholder="$t('task.level')" clearable style="width: 100px" @change="loadCustomPocsForSelect">
+                    <el-option label="Critical" value="critical" />
+                    <el-option label="High" value="high" />
+                    <el-option label="Medium" value="medium" />
+                    <el-option label="Low" value="low" />
+                    <el-option label="Info" value="info" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" size="small" @click="loadCustomPocsForSelect">{{ $t('common.search') }}</el-button>
+                  <el-button type="success" size="small" @click="selectAllCustomPocs" :loading="selectAllCustomLoading">{{ $t('task.selectAll') }}</el-button>
+                  <el-button type="warning" size="small" @click="deselectAllCustomPocs" v-if="selectedCustomPocIds.length > 0">{{ $t('task.deselectAll') }}</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table 
+                ref="customPocTableRef"
+                :data="customPocList" 
+                v-loading="customPocLoading" 
+                max-height="400"
+                @selection-change="handleCustomPocSelectionChange"
+                row-key="id"
+              >
+                <el-table-column type="selection" width="45" :reserve-selection="true" />
+                <el-table-column prop="name" :label="$t('common.name')" min-width="150" show-overflow-tooltip />
+                <el-table-column prop="templateId" :label="$t('task.templateId')" width="150" show-overflow-tooltip />
+                <el-table-column prop="severity" :label="$t('task.level')" width="80">
+                  <template #default="{ row }">
+                    <el-tag :type="getSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column :label="$t('common.operation')" width="60" fixed="right">
+                  <template #default="{ row }">
+                    <el-button type="primary" link size="small" @click="viewPocContent(row, 'custom')">{{ $t('common.view') }}</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-pagination
+                v-model:current-page="customPocPagination.page"
+                v-model:page-size="customPocPagination.pageSize"
+                :total="customPocPagination.total"
+                :page-sizes="[50, 100, 200]"
+                layout="total, sizes, prev, pager, next"
+                class="poc-pagination"
+                @size-change="loadCustomPocsForSelect"
+                @current-change="loadCustomPocsForSelect"
+              />
+            </el-tab-pane>
+          </el-tabs>
+        </div>
+
+        <!-- 右侧：已选择列表 -->
+        <div class="poc-select-right">
+          <div class="selected-header">
+            <span>{{ $t('task.selected') }} ({{ selectedNucleiTemplates.length + selectedCustomPocs.length }})</span>
+            <el-button type="danger" link size="small" @click="clearAllSelections" v-if="selectedNucleiTemplates.length + selectedCustomPocs.length > 0">
+              {{ $t('task.clearAll') }}
+            </el-button>
+          </div>
+          <div class="selected-search">
+            <el-input v-model="selectedPocSearchKeyword" :placeholder="$t('task.searchSelected')" clearable size="small" :prefix-icon="Search" />
+          </div>
+          <div class="selected-list">
+            <!-- 默认模板 -->
+            <div v-if="filteredSelectedNucleiTemplates.length > 0" class="selected-group">
+              <div class="group-header">
+                <span>{{ $t('task.defaultTemplate') }} ({{ filteredSelectedNucleiTemplates.length }}<template v-if="selectedPocSearchKeyword">/{{ selectedNucleiTemplates.length }}</template>)</span>
+                <el-button type="danger" link size="small" @click="clearNucleiSelections">{{ $t('task.clear') }}</el-button>
+              </div>
+              <div class="selected-items">
+                <div v-for="item in filteredSelectedNucleiTemplates" :key="item.id" class="selected-item">
+                  <span class="item-name" :title="item.name || item.id">{{ item.name || item.id }}</span>
+                  <el-icon class="item-remove" @click="removeNucleiTemplate(item.id)"><Close /></el-icon>
+                </div>
+              </div>
+            </div>
+            <!-- 自定义POC -->
+            <div v-if="filteredSelectedCustomPocs.length > 0" class="selected-group">
+              <div class="group-header">
+                <span>{{ $t('task.customPoc') }} ({{ filteredSelectedCustomPocs.length }}<template v-if="selectedPocSearchKeyword">/{{ selectedCustomPocs.length }}</template>)</span>
+                <el-button type="danger" link size="small" @click="clearCustomPocSelections">{{ $t('task.clear') }}</el-button>
+              </div>
+              <div class="selected-items">
+                <div v-for="item in filteredSelectedCustomPocs" :key="item.id" class="selected-item">
+                  <span class="item-name" :title="item.name">{{ item.name }}</span>
+                  <el-icon class="item-remove" @click="removeCustomPoc(item.id)"><Close /></el-icon>
+                </div>
+              </div>
+            </div>
+            <!-- 空状态 -->
+            <div v-if="filteredSelectedNucleiTemplates.length === 0 && filteredSelectedCustomPocs.length === 0" class="selected-empty">
+              <span>{{ selectedPocSearchKeyword ? $t('task.noMatchingResults') : $t('task.noPocSelected') }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="pocSelectDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmPocSelection">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 查看POC内容对话框 -->
+    <el-dialog v-model="pocContentDialogVisible" :title="pocContentTitle" width="800px">
+      <el-descriptions :column="2" border size="small" style="margin-bottom: 15px">
+        <el-descriptions-item :label="$t('task.templateId')">{{ currentViewPoc.id || currentViewPoc.templateId }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('common.name')">{{ currentViewPoc.name }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('task.severityLevel')">
+          <el-tag :type="getSeverityType(currentViewPoc.severity)" size="small">{{ currentViewPoc.severity }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('task.author')">{{ currentViewPoc.author || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <div class="poc-content-wrapper" v-loading="pocContentLoading">
+        <el-input
+          v-model="currentViewPoc.content"
+          type="textarea"
+          :rows="18"
+          readonly
+        />
+      </div>
+      <template #footer>
+        <el-button @click="pocContentDialogVisible = false">{{ $t('common.close') }}</el-button>
+        <el-button type="primary" @click="copyPocContent">{{ $t('task.copyContent') }}</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft, Close, Search, InfoFilled } from '@element-plus/icons-vue'
+import { 
+  getCronTaskList, 
+  getCronTaskDetail,
+  saveCronTask, 
+  validateCronSpec 
+} from '@/api/crontask'
+import { getScanTemplateList, getScanTemplateDetail } from '@/api/task'
+import { getNucleiTemplateList, getCustomPocList } from '@/api/poc'
+import { getDirScanDictEnabledList } from '@/api/dirscan'
+import { getSubdomainDictEnabledList } from '@/api/subdomain'
+import request from '@/api/request'
+
+const router = useRouter()
+const route = useRoute()
+const { t } = useI18n()
+const isEdit = ref(false)
+const submitting = ref(false)
+const formRef = ref(null)
+
+// 提取默认表单值，供 form 初始化和 resetForm 共用
+function getDefaultForm() {
+  return {
+    id: '',
+    name: '',
+    scheduleType: 'cron',
+    cronSpec: '0 0 2 * * *',
+    scheduleTime: '',
+    scheduleTimeDate: null,
+    // 目标来源：manual 手动输入 / asset 资产选择
+    targetMode: 'manual',
+    target: '',
+    orgId: '',
+    assetIds: [],
+    enableSubdomainPull: false,
+    // 扫描配置来源：template 扫描模板 / custom 自定义配置
+    configSource: 'custom',
+    templateId: '',
+    config: '',
+    // 子域名扫描
+    domainscanEnable: false,
+    domainscanSubfinder: true,
+    domainscanBruteforce: false,
+    domainscanBruteforceTimeout: 30,
+    domainscanTimeout: 300,
+    domainscanMaxEnumTime: 10,
+    domainscanThreads: 10,
+    domainscanRateLimit: 0,
+    domainscanRemoveWildcard: true,
+    domainscanResolveDNS: true,
+    domainscanConcurrent: 50,
+    subdomainDictIds: [],
+    subdomainDicts: [],
+    domainscanRecursiveBrute: false,
+    recursiveDictIds: [],
+    recursiveDicts: [],
+    domainscanWildcardDetect: true,
+    // 端口扫描
+    portscanEnable: true,
+    portscanTool: 'naabu',
+    portscanRate: 3000,
+    ports: 'top100',
+    portThreshold: 100,
+    scanType: 'c',
+    portscanTimeout: 60,
+    skipHostDiscovery: false,
+    excludeCDN: false,
+    excludeHosts: '',
+    portscanWorkers: 50,
+    portscanRetries: 2,
+    portscanWarmUpTime: 1,
+    portscanVerify: false,
+    // 端口识别
+    portidentifyEnable: false,
+    portidentifyTool: 'nmap',
+    portidentifyTimeout: 60,
+    portidentifyConcurrency: 10,
+    portidentifyArgs: '-sV -version-intensity 5',
+    portidentifyUDP: false,
+    portidentifyFastMode: false,
+    portidentifyForceScan: false,
+    // 指纹识别
+    fingerprintEnable: true,
+    fingerprintTool: 'httpx',
+    fingerprintIconHash: true,
+    fingerprintCustomEngine: false,
+    fingerprintScreenshot: false,
+    fingerprintActiveScan: false,
+    fingerprintActiveTimeout: 10,
+    fingerprintTimeout: 90,
+    fingerprintFilterMode: 'http_mapping',
+    fingerprintForceScan: false,
+    // 弱口令扫描
+    brutescanEnable: false,
+    brutescanServices: [],
+    brutescanThreads: 20,
+    brutescanTimeout: 5,
+    brutescanDelayMs: 100,
+    brutescanStopOnFirst: false,
+    brutescanForceScan: false,
+    // 漏洞扫描
+    pocscanEnable: false,
+    pocscanMode: 'auto',
+    pocscanAutoScan: true,
+    pocscanAutomaticScan: true,
+    pocscanCustomOnly: false,
+    pocscanSeverity: ['critical', 'high', 'medium'],
+    pocscanTargetTimeout: 600,
+    pocscanRateLimit: 800,
+    pocscanConcurrency: 80,
+    pocscanForceScan: false,
+    pocscanNucleiTemplateIds: [],
+    pocscanCustomPocIds: [],
+    pocscanHeaderMode: 'none',
+    pocscanPresetUA: '',
+    pocscanCustomHeadersText: '',
+    pocscanNucleiTemplates: [],
+    pocscanCustomPocs: [],
+    // 目录扫描
+    dirscanEnable: false,
+    dirscanDictIds: [],
+    dirscanDicts: [],
+    dirscanThreads: 50,
+    dirscanTimeout: 10,
+    dirscanFollowRedirect: false,
+    dirscanForceScan: false,
+    dirscanAutoCalibration: true,
+    dirscanFilterSize: '',
+    dirscanFilterWords: '',
+    dirscanFilterLines: '',
+    dirscanFilterRegex: '',
+    dirscanMatcherMode: 'or',
+    dirscanFilterMode: 'or',
+    dirscanRate: 0,
+    dirscanRecursion: false,
+    dirscanRecursionDepth: 2,
+    jsfinderEnable: false,
+    jsfinderThreads: 10,
+    jsfinderTimeout: 10,
+    jsfinderEnableSourcemap: true,
+    jsfinderEnableUnauthCheck: true
+  }
+}
+
+const form = reactive(getDefaultForm())
+
+// 扫描配置折叠面板
+const activeCollapse = ref(['portscan', 'fingerprint'])
+
+// 判断是否有前序扫描阶段启用（用于控制强制扫描开关的显隐）
+const hasPrePhaseEnabled = computed(() => {
+  return form.domainscanEnable || form.portscanEnable ||
+         form.portidentifyEnable || form.fingerprintEnable
+})
+
+// 目录扫描字典选择相关
+const dictSelectDialogVisible = ref(false)
+const dictList = ref([])
+const dictLoading = ref(false)
+const dictTableRef = ref()
+const selectedDictRows = ref([])
+
+// 子域名字典选择相关
+const subdomainDictSelectDialogVisible = ref(false)
+const subdomainDictList = ref([])
+const subdomainDictLoading = ref(false)
+const subdomainDictTableRef = ref()
+const selectedSubdomainDictRows = ref([])
+
+// 递归爆破字典选择相关
+const recursiveDictSelectDialogVisible = ref(false)
+const recursiveDictList = ref([])
+const recursiveDictLoading = ref(false)
+const recursiveDictTableRef = ref()
+const selectedRecursiveDictRows = ref([])
+
+// POC选择相关
+const pocSelectDialogVisible = ref(false)
+const pocSelectTab = ref('nuclei')
+const nucleiTemplateList = ref([])
+const customPocList = ref([])
+const nucleiTemplateLoading = ref(false)
+const customPocLoading = ref(false)
+const selectAllNucleiLoading = ref(false)
+const selectAllCustomLoading = ref(false)
+const nucleiTableRef = ref()
+const customPocTableRef = ref()
+const selectedNucleiTemplateIds = ref([])
+const selectedCustomPocIds = ref([])
+const selectedNucleiTemplates = ref([])
+const selectedCustomPocs = ref([])
+const selectedPocSearchKeyword = ref('')
+// 防护标志：数据加载或批量选择期间，跳过 selection-change 事件处理
+const isLoadingData = ref(false)
+const isSelectingAll = ref(false)
+const nucleiTemplateFilter = reactive({ keyword: '', severity: '', category: '', tag: '' })
+const customPocFilter = reactive({ name: '', severity: '', tag: '' })
+const nucleiTemplatePagination = reactive({ page: 1, pageSize: 50, total: 0 })
+const customPocPagination = reactive({ page: 1, pageSize: 50, total: 0 })
+
+// 弱口令扫描服务选项
+const bruteServiceOptions = [
+  { label: 'SSH', value: 'ssh' },
+  { label: 'MySQL', value: 'mysql' },
+  { label: 'Redis', value: 'redis' },
+  { label: 'MongoDB', value: 'mongodb' },
+  { label: 'PostgreSQL', value: 'postgresql' },
+  { label: 'MSSQL', value: 'mssql' },
+  { label: 'FTP', value: 'ftp' },
+  { label: 'Oracle', value: 'oracle' },
+  { label: 'SMB', value: 'smb' },
+  { label: 'MQTT', value: 'mqtt' },
+]
+
+// 查看POC内容相关
+const pocContentDialogVisible = ref(false)
+const pocContentLoading = ref(false)
+const pocContentTitle = ref('')
+const currentViewPoc = ref({})
+
+// 过滤后的已选择列表
+const filteredSelectedNucleiTemplates = computed(() => {
+  if (!selectedPocSearchKeyword.value) return selectedNucleiTemplates.value
+  const keyword = selectedPocSearchKeyword.value.toLowerCase()
+  return selectedNucleiTemplates.value.filter(t => 
+    (t.name && t.name.toLowerCase().includes(keyword)) || 
+    (t.id && t.id.toLowerCase().includes(keyword))
+  )
+})
+
+const filteredSelectedCustomPocs = computed(() => {
+  if (!selectedPocSearchKeyword.value) return selectedCustomPocs.value
+  const keyword = selectedPocSearchKeyword.value.toLowerCase()
+  return selectedCustomPocs.value.filter(p => 
+    (p.name && p.name.toLowerCase().includes(keyword)) || 
+    (p.templateId && p.templateId.toLowerCase().includes(keyword)) ||
+    (p.id && p.id.toLowerCase().includes(keyword))
+  )
+})
+
+const rules = {
+  name: [{ required: true, message: t('cronTask.pleaseEnterName'), trigger: 'blur' }],
+  scheduleType: [{ required: true, message: t('common.pleaseSelect'), trigger: 'change' }],
+  templateId: [{
+    required: true,
+    validator: (rule, value, callback) => {
+      if (form.configSource === 'template' && !value) {
+        callback(new Error('请选择扫描模板'))
+      } else {
+        callback()
+      }
+    },
+    trigger: 'change'
+  }],
+  target: [{
+    required: true,
+    validator: (rule, value, callback) => {
+      if (form.targetMode === 'manual' && !value) {
+        callback(new Error(t('cronTask.targetPlaceholder')))
+      } else if (form.targetMode === 'asset' && (!form.assetIds || form.assetIds.length === 0)) {
+        callback(new Error('请至少选择一个资产'))
+      } else {
+        callback()
+      }
+    },
+    trigger: 'blur'
+  }],
+  cronSpec: [{ 
+    required: true, 
+    validator: (rule, value, callback) => {
+      if (form.scheduleType === 'cron' && !value) {
+        callback(new Error(t('cronTask.cronValidateError')))
+      } else {
+        callback()
+      }
+    },
+    trigger: 'blur' 
+  }],
+  scheduleTime: [{
+    required: true,
+    validator: (rule, value, callback) => {
+      if (form.scheduleType === 'once' && !form.scheduleTimeDate) {
+        callback(new Error(t('common.pleaseSelect')))
+      } else {
+        callback()
+      }
+    },
+    trigger: 'change'
+  }]
+}
+
+const cronPresets = computed(() => [
+  { label: t('cronTask.everyHour'), value: '0 0 * * * *' },
+  { label: t('cronTask.everyDay2am'), value: '0 0 2 * * *' },
+  { label: t('cronTask.everyMonday'), value: '0 0 3 * * 1' },
+  { label: t('cronTask.every6hours'), value: '0 0 */6 * * *' }
+])
+
+const cronValidation = reactive({
+  valid: false,
+  nextTimes: [],
+  error: ''
+})
+
+// ===== 资产选择相关 =====
+const organizationList = ref([])
+const assetTargetList = ref([])
+const assetTargetLoading = ref(false)
+const assetTargetTableRef = ref()
+const assetTargetFilter = reactive({ keyword: '' })
+const assetTargetPagination = reactive({ page: 1, pageSize: 20, total: 0 })
+// 选中资产对象（用于回显显示）
+const selectedAssetRows = ref([])
+
+// 扫描模板相关
+const scanTemplateList = ref([])
+const scanTemplateLoading = ref(false)
+const selectedTemplateConfig = ref(null)
+
+// Mock: 获取资产目标列表（后续替换为 /asset-target-meta/list 接口）
+async function fetchAssetTargetList(params) {
+  // TODO: 替换为真实接口 /asset-target-meta/list
+  // 临时 mock：先调用现有 getAssetTargetList 兜底
+  try {
+    const res = await request({
+      url: '/asset/target/list',
+      method: 'post',
+      data: params
+    })
+    return res
+  } catch (e) {
+    return { code: -1, list: [], total: 0 }
+  }
+}
+
+// 格式化资产时间戳（毫秒时间戳 → YYYY-MM-DD HH:mm）
+function formatAssetTimestamp(ms) {
+  if (!ms) return '-'
+  const d = new Date(ms)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// 将后端资产数据映射为前端表格行格式
+function mapAssetItem(item) {
+  return {
+    ...item,
+    type: item.targetType || item.type,
+    value: item.targetValue || item.value,
+  }
+}
+
+// 防护标志：数据加载或批量选择期间，跳过 selection-change 事件处理
+const isLoadingAssetData = ref(false)
+const isSelectingAllAssets = ref(false)
+
+// 加载组织列表
+async function loadOrganizations() {
+  try {
+    const res = await request.post('/organization/list', { page: 1, pageSize: 100 })
+    if (res.code === 0) {
+      organizationList.value = res.list || []
+    }
+  } catch (e) {
+    console.error('loadOrganizationsFailed:', e)
+  }
+}
+
+// 加载资产目标列表
+async function loadAssetTargets() {
+  assetTargetLoading.value = true
+  isLoadingAssetData.value = true
+  try {
+    const params = {
+      page: assetTargetPagination.page,
+      pageSize: assetTargetPagination.pageSize,
+      query: assetTargetFilter.keyword || undefined
+    }
+    const res = await fetchAssetTargetList(params)
+    if (res.code === 0) {
+      // 将后端返回的 targetType/targetValue 映射为前端表格使用的 type/value 字段
+      const rawList = res.list || res.data?.list || []
+      assetTargetList.value = rawList.map(mapAssetItem)
+      assetTargetPagination.total = res.total || res.data?.total || 0
+      await nextTick()
+      restoreAssetTableSelection()
+    }
+  } catch (e) {
+    console.error('loadAssetTargetsFailed:', e)
+  } finally {
+    assetTargetLoading.value = false
+    setTimeout(() => { isLoadingAssetData.value = false }, 100)
+  }
+}
+
+// 恢复资产表格选中状态
+function restoreAssetTableSelection() {
+  if (!assetTargetTableRef.value) return
+  const selectedIds = new Set(form.assetIds)
+  assetTargetList.value.forEach(row => {
+    if (selectedIds.has(row.id)) {
+      assetTargetTableRef.value.toggleRowSelection(row, true)
+    }
+  })
+}
+
+// 资产表格多选变化
+function handleAssetSelectionChange(selection) {
+  if (isSelectingAllAssets.value || isLoadingAssetData.value) return
+
+  const currentPageIds = new Set(assetTargetList.value.map(a => a.id))
+  const currentPageSelected = selection.filter(a => currentPageIds.has(a.id))
+  const currentPageSelectedIds = new Set(currentPageSelected.map(a => a.id))
+
+  // 保留其他页选中项
+  const otherPageItems = selectedAssetRows.value.filter(a => !currentPageIds.has(a.id))
+  const otherPageIds = form.assetIds.filter(id => !currentPageIds.has(id))
+
+  selectedAssetRows.value = [...otherPageItems, ...currentPageSelected]
+  form.assetIds = [...otherPageIds, ...Array.from(currentPageSelectedIds)]
+}
+
+// 全选资产（当前筛选条件下的全部资产）
+async function selectAllAssets() {
+  isSelectingAllAssets.value = true
+  try {
+    const filterArgs = {
+      query: assetTargetFilter.keyword || undefined
+    }
+    const firstRes = await fetchAssetTargetList({ page: 1, pageSize: 1, ...filterArgs })
+    if (firstRes.code !== 0) return
+    const total = firstRes.total || firstRes.data?.total || 0
+    if (total === 0) {
+      ElMessage.warning('没有可选择的资产')
+      return
+    }
+    const pageSize = 5000
+    const totalPages = Math.ceil(total / pageSize)
+    const allRows = []
+    for (let p = 1; p <= totalPages; p++) {
+      const res = await fetchAssetTargetList({ page: p, pageSize, ...filterArgs })
+      if (res.code === 0) {
+        allRows.push(...(res.list || res.data?.list || []))
+      }
+    }
+    // 合并去重
+    const existingIds = new Set(form.assetIds)
+    allRows.forEach(row => {
+      const mapped = mapAssetItem(row)
+      if (!existingIds.has(mapped.id)) {
+        form.assetIds.push(mapped.id)
+        selectedAssetRows.value.push(mapped)
+      }
+    })
+    await nextTick()
+    if (assetTargetTableRef.value) {
+      assetTargetList.value.forEach(row => assetTargetTableRef.value.toggleRowSelection(row, true))
+    }
+    ElMessage.success(`已选择 ${allRows.length} 个资产`)
+  } catch (e) {
+    console.error('selectAllAssetsFailed:', e)
+    ElMessage.error('全选失败')
+  } finally {
+    isSelectingAllAssets.value = false
+  }
+}
+
+// 清空资产选择
+function clearAssetSelection() {
+  form.assetIds = []
+  selectedAssetRows.value = []
+  if (assetTargetTableRef.value) assetTargetTableRef.value.clearSelection()
+}
+
+// 加载扫描模板列表
+async function loadScanTemplates() {
+  scanTemplateLoading.value = true
+  try {
+    const res = await getScanTemplateList({ page: 1, pageSize: 200 })
+    if (res.code === 0) {
+      scanTemplateList.value = res.list || res.data?.list || []
+    }
+  } catch (e) {
+    console.error('loadScanTemplatesFailed:', e)
+  } finally {
+    scanTemplateLoading.value = false
+  }
+}
+
+// 选择扫描模板时加载其配置预览
+async function onTemplateSelect(templateId) {
+  if (!templateId) {
+    selectedTemplateConfig.value = null
+    return
+  }
+  try {
+    const res = await getScanTemplateDetail({ id: templateId })
+    if (res.code === 0) {
+      selectedTemplateConfig.value = res.data || res
+    }
+  } catch (e) {
+    console.error('loadTemplateDetailFailed:', e)
+  }
+}
+
+// 查看模板配置（简单弹窗显示 JSON）
+function previewTemplateConfig() {
+  if (!selectedTemplateConfig.value) return
+  try {
+    const cfg = typeof selectedTemplateConfig.value.config === 'string'
+      ? JSON.parse(selectedTemplateConfig.value.config)
+      : selectedTemplateConfig.value.config
+    ElMessageBox.alert(
+      `<pre style="max-height:400px;overflow:auto;font-size:12px;white-space:pre-wrap;">${JSON.stringify(cfg, null, 2)}</pre>`,
+      '模板配置预览',
+      { dangerouslyUseHTMLString: true, confirmButtonText: '关闭' }
+    )
+  } catch (e) {
+    ElMessage.warning('配置解析失败')
+  }
+}
+
+// 验证Cron表达式
+async function validateCron() {
+  if (!form.cronSpec) {
+    cronValidation.valid = false
+    cronValidation.error = t('cronTask.cronValidateError')
+    cronValidation.nextTimes = []
+    return
+  }
+
+  try {
+    const res = await validateCronSpec({ cronSpec: form.cronSpec })
+    if (res.code === 0 && res.data) {
+      cronValidation.valid = res.data.valid
+      if (res.data.valid) {
+        cronValidation.error = ''
+        cronValidation.nextTimes = res.data.nextTimes || []
+      } else {
+        cronValidation.error = res.data.message || t('cronTask.cronValidateError')
+        cronValidation.nextTimes = []
+      }
+    } else {
+      cronValidation.valid = false
+      cronValidation.error = res.msg || t('cronTask.cronValidateError')
+      cronValidation.nextTimes = []
+    }
+  } catch (error) {
+    cronValidation.valid = false
+    cronValidation.error = t('cronTask.validateRequestError')
+    cronValidation.nextTimes = []
+  }
+}
+
+// 构建自定义HTTP头部
+function buildCustomHeaders() {
+  const headers = []
+  if (form.pocscanHeaderMode === 'preset' && form.pocscanPresetUA) {
+    headers.push('User-Agent: ' + form.pocscanPresetUA)
+  } else if (form.pocscanHeaderMode === 'custom' && form.pocscanCustomHeadersText) {
+    const lines = form.pocscanCustomHeadersText.split('\n')
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed && trimmed.includes(':')) {
+        headers.push(trimmed)
+      }
+    }
+  }
+  return headers
+}
+
+// 解析自定义HTTP头部（回显用）
+function parseCustomHeaders(headers) {
+  if (!headers || headers.length === 0) {
+    return { pocscanHeaderMode: 'none', pocscanPresetUA: '', pocscanCustomHeadersText: '' }
+  }
+  if (headers.length === 1 && headers[0].toLowerCase().startsWith('user-agent:')) {
+    const ua = headers[0].substring(headers[0].indexOf(':') + 1).trim()
+    return { pocscanHeaderMode: 'preset', pocscanPresetUA: ua, pocscanCustomHeadersText: '' }
+  }
+  return { pocscanHeaderMode: 'custom', pocscanPresetUA: '', pocscanCustomHeadersText: headers.join('\n') }
+}
+
+// 将扁平表单字段构建为嵌套配置结构
+function buildConfig() {
+  const config = {
+    domainscan: {
+      enable: form.domainscanEnable,
+      subfinder: form.domainscanSubfinder,
+      timeout: form.domainscanTimeout,
+      maxEnumerationTime: form.domainscanMaxEnumTime,
+      threads: form.domainscanThreads,
+      rateLimit: form.domainscanRateLimit,
+      removeWildcard: form.domainscanRemoveWildcard,
+      resolveDNS: form.domainscanResolveDNS,
+      concurrent: form.domainscanConcurrent,
+      subdomainDictIds: form.domainscanBruteforce ? (form.subdomainDictIds || []) : [],
+      bruteforceTimeout: form.domainscanBruteforce ? (form.domainscanBruteforceTimeout || 30) : 30,
+      recursiveBrute: form.domainscanBruteforce ? form.domainscanRecursiveBrute : false,
+      recursiveDictIds: (form.domainscanBruteforce && form.domainscanRecursiveBrute) ? (form.recursiveDictIds || []) : [],
+      wildcardDetect: form.domainscanBruteforce ? form.domainscanWildcardDetect : false,
+    },
+    portscan: {
+      enable: form.portscanEnable,
+      tool: form.portscanTool,
+      rate: form.portscanRate,
+      ports: form.ports,
+      portThreshold: form.portThreshold,
+      scanType: form.scanType,
+      timeout: form.portscanTimeout,
+      skipHostDiscovery: form.skipHostDiscovery,
+      excludeCDN: form.excludeCDN,
+      excludeHosts: form.excludeHosts,
+      workers: form.portscanWorkers,
+      retries: form.portscanRetries,
+      warmUpTime: form.portscanWarmUpTime,
+      verify: form.portscanVerify
+    },
+    portidentify: {
+      enable: form.portidentifyEnable,
+      tool: form.portidentifyTool,
+      timeout: form.portidentifyTimeout,
+      concurrency: form.portidentifyConcurrency,
+      args: form.portidentifyArgs,
+      udp: form.portidentifyUDP,
+      fastMode: form.portidentifyFastMode,
+      forceScan: form.portidentifyForceScan && !form.portscanEnable
+    },
+    fingerprint: {
+      enable: form.fingerprintEnable,
+      tool: form.fingerprintTool,
+      iconHash: form.fingerprintIconHash,
+      customEngine: form.fingerprintCustomEngine,
+      screenshot: form.fingerprintScreenshot,
+      activeScan: form.fingerprintActiveScan,
+      activeTimeout: form.fingerprintActiveTimeout,
+      targetTimeout: form.fingerprintTimeout,
+      filterMode: form.fingerprintFilterMode,
+      forceScan: form.fingerprintForceScan && !form.portscanEnable && !form.portidentifyEnable
+    },
+    brutescan: {
+      enable: form.brutescanEnable,
+      services: form.brutescanServices,
+      threads: form.brutescanThreads,
+      timeout: form.brutescanTimeout,
+      delayMs: form.brutescanDelayMs,
+      stopOnFirst: form.brutescanStopOnFirst,
+      forceScan: form.brutescanForceScan && !hasPrePhaseEnabled.value
+    },
+    pocscan: {
+      enable: form.pocscanEnable,
+      mode: form.pocscanMode,
+      useNuclei: true,
+      forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value,
+      autoScan: form.pocscanAutoScan,
+      automaticScan: form.pocscanAutomaticScan,
+      customPocOnly: form.pocscanCustomOnly,
+      severity: form.pocscanSeverity.join(','),
+      targetTimeout: form.pocscanTargetTimeout,
+      rateLimit: form.pocscanRateLimit,
+      concurrency: form.pocscanConcurrency,
+      nucleiTemplateIds: form.pocscanNucleiTemplateIds || [],
+      customPocIds: form.pocscanCustomPocIds || [],
+      customHeaders: buildCustomHeaders()
+    },
+    dirscan: {
+      enable: form.dirscanEnable,
+      dictIds: form.dirscanDictIds || [],
+      threads: form.dirscanThreads,
+      timeout: form.dirscanTimeout,
+      followRedirect: form.dirscanFollowRedirect,
+      forceScan: form.dirscanForceScan && !hasPrePhaseEnabled.value,
+      autoCalibration: form.dirscanAutoCalibration,
+      filterSize: form.dirscanFilterSize,
+      filterWords: form.dirscanFilterWords,
+      filterLines: form.dirscanFilterLines,
+      filterRegex: form.dirscanFilterRegex,
+      matcherMode: form.dirscanMatcherMode,
+      filterMode: form.dirscanFilterMode,
+      rate: form.dirscanRate,
+      recursion: form.dirscanRecursion,
+      recursionDepth: form.dirscanRecursionDepth
+    },
+    jsfinder: {
+      enable: form.jsfinderEnable,
+      threads: form.jsfinderThreads,
+      timeout: form.jsfinderTimeout,
+      enableSourcemap: form.jsfinderEnableSourcemap ? undefined : false,
+      enableUnauthCheck: form.jsfinderEnableUnauthCheck ? undefined : false
+    }
+  }
+
+  // 根据POC模式设置不同的配置
+  if (form.pocscanMode === 'manual') {
+    config.pocscan.nucleiTemplateIds = form.pocscanNucleiTemplateIds || []
+    config.pocscan.customPocIds = form.pocscanCustomPocIds || []
+    config.pocscan.autoScan = false
+    config.pocscan.automaticScan = false
+    config.pocscan.customPocOnly = false
+  } else {
+    if (form.pocscanCustomOnly) {
+      config.pocscan.autoScan = false
+      config.pocscan.automaticScan = false
+      config.pocscan.customPocOnly = true
+    } else {
+      config.pocscan.autoScan = form.pocscanAutoScan
+      config.pocscan.automaticScan = form.pocscanAutomaticScan
+      config.pocscan.customPocOnly = false
+    }
+  }
+
+  return config
+}
+
+// 将嵌套配置结构映射回扁平表单字段（编辑回显用）
+function applyConfig(config) {
+  if (config.domainscan) {
+    form.domainscanEnable = config.domainscan.enable ?? false
+    form.domainscanSubfinder = config.domainscan.subfinder ?? true
+    form.domainscanBruteforce = !!(config.domainscan.subdomainDictIds && config.domainscan.subdomainDictIds.length)
+    form.domainscanBruteforceTimeout = config.domainscan.bruteforceTimeout ?? 30
+    form.domainscanTimeout = config.domainscan.timeout ?? 300
+    form.domainscanMaxEnumTime = config.domainscan.maxEnumerationTime ?? 10
+    form.domainscanThreads = config.domainscan.threads ?? 10
+    form.domainscanRateLimit = config.domainscan.rateLimit ?? 0
+    form.domainscanRemoveWildcard = config.domainscan.removeWildcard ?? true
+    form.domainscanResolveDNS = config.domainscan.resolveDNS ?? true
+    form.domainscanConcurrent = config.domainscan.concurrent ?? 50
+    form.subdomainDictIds = config.domainscan.subdomainDictIds || []
+    form.domainscanRecursiveBrute = config.domainscan.recursiveBrute ?? false
+    form.recursiveDictIds = config.domainscan.recursiveDictIds || []
+    form.domainscanWildcardDetect = config.domainscan.wildcardDetect ?? true
+  }
+  if (config.portscan) {
+    form.portscanEnable = config.portscan.enable ?? true
+    form.portscanTool = config.portscan.tool ?? 'naabu'
+    form.portscanRate = config.portscan.rate ?? 3000
+    form.ports = config.portscan.ports ?? 'top100'
+    form.portThreshold = config.portscan.portThreshold ?? 100
+    form.scanType = config.portscan.scanType ?? 'c'
+    form.portscanTimeout = config.portscan.timeout ?? 60
+    form.skipHostDiscovery = config.portscan.skipHostDiscovery ?? false
+    form.excludeCDN = config.portscan.excludeCDN ?? false
+    form.excludeHosts = config.portscan.excludeHosts ?? ''
+    form.portscanWorkers = config.portscan.workers ?? 50
+    form.portscanRetries = config.portscan.retries ?? 2
+    form.portscanWarmUpTime = config.portscan.warmUpTime ?? 1
+    form.portscanVerify = config.portscan.verify ?? false
+  }
+  if (config.portidentify) {
+    form.portidentifyEnable = config.portidentify.enable ?? false
+    form.portidentifyTool = config.portidentify.tool ?? 'nmap'
+    form.portidentifyTimeout = config.portidentify.timeout ?? 60
+    form.portidentifyConcurrency = config.portidentify.concurrency ?? 10
+    form.portidentifyArgs = config.portidentify.args ?? ''
+    form.portidentifyUDP = config.portidentify.udp ?? false
+    form.portidentifyFastMode = config.portidentify.fastMode ?? false
+    form.portidentifyForceScan = config.portidentify.forceScan ?? false
+  }
+  if (config.fingerprint) {
+    form.fingerprintEnable = config.fingerprint.enable ?? true
+    form.fingerprintTool = config.fingerprint.tool ?? 'httpx'
+    form.fingerprintIconHash = config.fingerprint.iconHash ?? true
+    form.fingerprintCustomEngine = config.fingerprint.customEngine ?? false
+    form.fingerprintScreenshot = config.fingerprint.screenshot ?? false
+    form.fingerprintActiveScan = config.fingerprint.activeScan ?? false
+    form.fingerprintActiveTimeout = config.fingerprint.activeTimeout ?? 10
+    form.fingerprintTimeout = config.fingerprint.targetTimeout ?? 90
+    form.fingerprintFilterMode = config.fingerprint.filterMode ?? 'http_mapping'
+    form.fingerprintForceScan = config.fingerprint.forceScan ?? false
+  }
+  if (config.brutescan) {
+    form.brutescanEnable = config.brutescan.enable ?? false
+    form.brutescanServices = config.brutescan.services || []
+    form.brutescanThreads = config.brutescan.threads || 20
+    form.brutescanTimeout = config.brutescan.timeout || 5
+    form.brutescanDelayMs = config.brutescan.delayMs || 100
+    form.brutescanStopOnFirst = config.brutescan.stopOnFirst ?? false
+    form.brutescanForceScan = config.brutescan.forceScan ?? false
+  }
+  if (config.pocscan) {
+    form.pocscanEnable = config.pocscan.enable ?? false
+    form.pocscanMode = config.pocscan.mode ?? 'auto'
+    form.pocscanAutoScan = config.pocscan.autoScan ?? true
+    form.pocscanAutomaticScan = config.pocscan.automaticScan ?? true
+    form.pocscanCustomOnly = config.pocscan.customPocOnly ?? false
+    form.pocscanSeverity = typeof config.pocscan.severity === 'string'
+      ? config.pocscan.severity.split(',').filter(Boolean) : (config.pocscan.severity || ['critical', 'high', 'medium'])
+    form.pocscanTargetTimeout = config.pocscan.targetTimeout ?? 600
+    form.pocscanRateLimit = config.pocscan.rateLimit ?? 800
+    form.pocscanConcurrency = config.pocscan.concurrency ?? 80
+    form.pocscanNucleiTemplateIds = config.pocscan.nucleiTemplateIds || []
+    form.pocscanCustomPocIds = config.pocscan.customPocIds || []
+    form.pocscanForceScan = config.pocscan.forceScan ?? false
+    const headerResult = parseCustomHeaders(config.pocscan.customHeaders)
+    form.pocscanHeaderMode = headerResult.pocscanHeaderMode
+    form.pocscanPresetUA = headerResult.pocscanPresetUA
+    form.pocscanCustomHeadersText = headerResult.pocscanCustomHeadersText
+  }
+  if (config.dirscan) {
+    form.dirscanEnable = config.dirscan.enable ?? false
+    form.dirscanDictIds = config.dirscan.dictIds || []
+    form.dirscanThreads = config.dirscan.threads ?? 50
+    form.dirscanTimeout = config.dirscan.timeout ?? 10
+    form.dirscanFollowRedirect = config.dirscan.followRedirect ?? false
+    form.dirscanForceScan = config.dirscan.forceScan ?? false
+    form.dirscanAutoCalibration = config.dirscan.autoCalibration ?? true
+    form.dirscanFilterSize = config.dirscan.filterSize ?? ''
+    form.dirscanFilterWords = config.dirscan.filterWords ?? ''
+    form.dirscanFilterLines = config.dirscan.filterLines ?? ''
+    form.dirscanFilterRegex = config.dirscan.filterRegex ?? ''
+    form.dirscanMatcherMode = config.dirscan.matcherMode ?? 'or'
+    form.dirscanFilterMode = config.dirscan.filterMode ?? 'or'
+    form.dirscanRate = config.dirscan.rate ?? 0
+    form.dirscanRecursion = config.dirscan.recursion ?? false
+    form.dirscanRecursionDepth = config.dirscan.recursionDepth ?? 2
+  }
+  if (config.jsfinder) {
+    form.jsfinderEnable = config.jsfinder.enable ?? false
+    form.jsfinderThreads = config.jsfinder.threads ?? 10
+    form.jsfinderTimeout = config.jsfinder.timeout ?? 10
+    form.jsfinderEnableSourcemap = config.jsfinder.enableSourcemap ?? true
+    form.jsfinderEnableUnauthCheck = config.jsfinder.enableUnauthCheck ?? true
+  }
+}
+
+// 提交表单
+async function handleSubmit() {
+  if (!formRef.value) return
+
+  await formRef.value.validate(async (valid) => {
+    if (valid) {
+      submitting.value = true
+      try {
+        // 构建提交数据
+        const submitData = {
+          id: form.id,
+          name: form.name,
+          taskType: 'scan',
+          scheduleType: form.scheduleType,
+          cronSpec: form.cronSpec,
+          scheduleTime: form.scheduleTime,
+          targetMode: form.targetMode,
+          target: form.targetMode === 'manual' ? form.target : '',
+          assetIds: form.targetMode === 'asset' ? form.assetIds : [],
+          orgId: form.targetMode === 'asset' ? form.orgId : '',
+          enableSubdomainPull: form.targetMode === 'asset' ? form.enableSubdomainPull : false,
+          configSource: form.configSource,
+          templateId: form.configSource === 'template' ? form.templateId : '',
+          workspaceId: ''
+        }
+        // 自定义配置模式下序列化扫描配置
+        if (form.configSource === 'custom') {
+          const config = buildConfig()
+          submitData.config = JSON.stringify(config)
+        } else {
+          submitData.config = ''
+        }
+
+        const res = await saveCronTask(submitData)
+        if (res.code === 0) {
+          ElMessage.success(isEdit.value ? t('cronTask.updateSuccess') : t('cronTask.createSuccess'))
+          router.push('/cron-task')
+        } else {
+          ElMessage.error(res.msg || (isEdit.value ? t('common.updateFailed') : t('common.createFailed')))
+        }
+      } catch (error) {
+        console.error('saveCronTaskFailed:', error)
+        ElMessage.error(isEdit.value ? t('common.updateFailed') : t('common.createFailed'))
+      } finally {
+        submitting.value = false
+      }
+    }
+  })
+}
+
+// (Removed duplicate POC selection states)
+
+async function handleDictDialogOpen() {
+  dictLoading.value = true
+  try {
+    const res = await getDirScanDictEnabledList()
+    if (res.code === 0) {
+      dictList.value = res.data || []
+      nextTick(() => {
+        if (dictTableRef.value && form.dirscanDictIds) {
+          dictList.value.forEach(row => {
+            if (form.dirscanDictIds.includes(row.id)) {
+              dictTableRef.value.toggleRowSelection(row, true)
+            }
+          })
+        }
+      })
+    }
+  } catch (e) {} finally { dictLoading.value = false }
+  dictSelectDialogVisible.value = true
+}
+
+async function handleSubdomainDictDialogOpen() {
+  subdomainDictLoading.value = true
+  try {
+    const res = await getSubdomainDictEnabledList()
+    if (res.code === 0) {
+      subdomainDictList.value = res.data || []
+      nextTick(() => {
+        if (subdomainDictTableRef.value && form.subdomainDictIds) {
+          subdomainDictList.value.forEach(row => {
+            if (form.subdomainDictIds.includes(row.id)) {
+              subdomainDictTableRef.value.toggleRowSelection(row, true)
+            }
+          })
+        }
+      })
+    }
+  } catch (e) {} finally { subdomainDictLoading.value = false }
+  subdomainDictSelectDialogVisible.value = true
+}
+
+async function handleRecursiveDictDialogOpen() {
+  recursiveDictLoading.value = true
+  try {
+    const res = await getSubdomainDictEnabledList()
+    if (res.code === 0) {
+      recursiveDictList.value = res.data || []
+      nextTick(() => {
+        if (recursiveDictTableRef.value && form.recursiveDictIds) {
+          recursiveDictList.value.forEach(row => {
+            if (form.recursiveDictIds.includes(row.id)) {
+              recursiveDictTableRef.value.toggleRowSelection(row, true)
+            }
+          })
+        }
+      })
+    }
+  } catch (e) {} finally { recursiveDictLoading.value = false }
+  recursiveDictSelectDialogVisible.value = true
+}
+
+async function loadNucleiTemplatesForSelect() {
+  nucleiTemplateLoading.value = true
+  isLoadingData.value = true
+  try {
+    const res = await getNucleiTemplateList({
+      page: nucleiTemplatePagination.page, pageSize: nucleiTemplatePagination.pageSize,
+      keyword: nucleiTemplateFilter.keyword, severity: nucleiTemplateFilter.severity,
+      category: nucleiTemplateFilter.category, tag: nucleiTemplateFilter.tag
+    })
+    if (res.code === 0) {
+      nucleiTemplateList.value = res.list || []
+      nucleiTemplatePagination.total = res.total || 0
+      await nextTick()
+      restoreNucleiTableSelection()
+    }
+  } finally {
+    nucleiTemplateLoading.value = false
+    // 延迟重置，避免 toggleRowSelection 触发的 selection-change 覆盖跨页选择
+    setTimeout(() => { isLoadingData.value = false }, 100)
+  }
+}
+
+// 恢复当前页 Nuclei 表格的选中状态（不影响其他页）
+function restoreNucleiTableSelection() {
+  if (!nucleiTableRef.value) return
+  const selectedIds = new Set(selectedNucleiTemplateIds.value)
+  nucleiTemplateList.value.forEach(row => {
+    if (selectedIds.has(row.id)) {
+      nucleiTableRef.value.toggleRowSelection(row, true)
+    }
+  })
+}
+
+async function loadCustomPocsForSelect() {
+  customPocLoading.value = true
+  isLoadingData.value = true
+  try {
+    const res = await getCustomPocList({
+      page: customPocPagination.page, pageSize: customPocPagination.pageSize,
+      name: customPocFilter.name, severity: customPocFilter.severity, tag: customPocFilter.tag
+    })
+    if (res.code === 0) {
+      customPocList.value = res.list || []
+      customPocPagination.total = res.total || 0
+      await nextTick()
+      restoreCustomPocTableSelection()
+    }
+  } finally {
+    customPocLoading.value = false
+    setTimeout(() => { isLoadingData.value = false }, 100)
+  }
+}
+
+// 恢复当前页自定义 POC 表格的选中状态
+function restoreCustomPocTableSelection() {
+  if (!customPocTableRef.value) return
+  const selectedIds = new Set(selectedCustomPocIds.value)
+  customPocList.value.forEach(row => {
+    if (selectedIds.has(row.id)) {
+      customPocTableRef.value.toggleRowSelection(row, true)
+    }
+  })
+}
+
+async function handlePocDialogOpen() {
+  // 并行加载两个 Tab 的首页数据（restore 在各自 load 内完成）
+  await Promise.all([loadNucleiTemplatesForSelect(), loadCustomPocsForSelect()])
+}
+
+function handleDictSelectionChange(val) { selectedDictRows.value = val }
+function handleSubdomainDictSelectionChange(val) { selectedSubdomainDictRows.value = val }
+function handleRecursiveDictSelectionChange(val) { selectedRecursiveDictRows.value = val }
+
+function handleNucleiSelectionChange(selection) {
+  // 数据加载或"选择全部"期间跳过，避免覆盖跨页选择
+  if (isSelectingAll.value || isLoadingData.value) return
+
+  const currentPageIds = new Set(nucleiTemplateList.value.map(t => t.id))
+  const currentPageSelectedIds = new Set(selection.map(t => t.id))
+  const currentPageSelectedItems = selection.filter(t => currentPageIds.has(t.id))
+
+  // 保留其他页的 ID
+  const newSelectedIds = selectedNucleiTemplateIds.value.filter(id => !currentPageIds.has(id))
+  currentPageSelectedIds.forEach(id => newSelectedIds.push(id))
+  selectedNucleiTemplateIds.value = newSelectedIds
+
+  // 保留其他页的对象
+  const otherPageItems = selectedNucleiTemplates.value.filter(t => !currentPageIds.has(t.id))
+  selectedNucleiTemplates.value = [...otherPageItems, ...currentPageSelectedItems]
+}
+
+function handleCustomPocSelectionChange(selection) {
+  if (isSelectingAll.value || isLoadingData.value) return
+
+  const currentPageIds = new Set(customPocList.value.map(p => p.id))
+  const currentPageSelectedIds = new Set(selection.map(p => p.id))
+  const currentPageSelectedItems = selection.filter(p => currentPageIds.has(p.id))
+
+  const newSelectedIds = selectedCustomPocIds.value.filter(id => !currentPageIds.has(id))
+  currentPageSelectedIds.forEach(id => newSelectedIds.push(id))
+  selectedCustomPocIds.value = newSelectedIds
+
+  const otherPageItems = selectedCustomPocs.value.filter(p => !currentPageIds.has(p.id))
+  selectedCustomPocs.value = [...otherPageItems, ...currentPageSelectedItems]
+}
+
+async function selectAllNucleiTemplates() {
+  selectAllNucleiLoading.value = true
+  isSelectingAll.value = true
+  try {
+    const filterArgs = {
+      keyword: nucleiTemplateFilter.keyword, severity: nucleiTemplateFilter.severity,
+      category: nucleiTemplateFilter.category, tag: nucleiTemplateFilter.tag
+    }
+    // 先拿 total
+    const firstRes = await getNucleiTemplateList({ page: 1, pageSize: 1, ...filterArgs })
+    if (firstRes.code !== 0) return
+    const total = firstRes.total || 0
+    if (total === 0) {
+      ElMessage.warning(t('task.noMatchingTemplate'))
+      return
+    }
+    // 分页拉全量（避免单次 pageSize 截断）
+    const pageSize = 5000
+    const totalPages = Math.ceil(total / pageSize)
+    const allRows = []
+    for (let page = 1; page <= totalPages; page++) {
+      const res = await getNucleiTemplateList({ page, pageSize, ...filterArgs })
+      if (res.code === 0 && res.list) allRows.push(...res.list)
+    }
+    // 合并去重
+    const existingIds = new Set(selectedNucleiTemplateIds.value)
+    allRows.forEach(row => {
+      if (!existingIds.has(row.id)) {
+        selectedNucleiTemplateIds.value.push(row.id)
+        selectedNucleiTemplates.value.push(row)
+      }
+    })
+    await nextTick()
+    if (nucleiTableRef.value) {
+      nucleiTemplateList.value.forEach(row => {
+        nucleiTableRef.value.toggleRowSelection(row, true)
+      })
+    }
+    ElMessage.success(`${t('task.selected')}: ${allRows.length}`)
+  } catch (e) {
+    console.error('selectAllNucleiTemplatesFailed', e)
+    ElMessage.error(t('task.selectAllFailed') || 'Select all failed')
+  } finally {
+    selectAllNucleiLoading.value = false
+    isSelectingAll.value = false
+  }
+}
+
+function deselectAllNucleiTemplates() {
+  selectedNucleiTemplates.value = []
+  selectedNucleiTemplateIds.value = []
+  if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
+}
+
+async function selectAllCustomPocs() {
+  selectAllCustomLoading.value = true
+  isSelectingAll.value = true
+  try {
+    const filterArgs = {
+      name: customPocFilter.name, severity: customPocFilter.severity, tag: customPocFilter.tag
+    }
+    const firstRes = await getCustomPocList({ page: 1, pageSize: 1, ...filterArgs })
+    if (firstRes.code !== 0) return
+    const total = firstRes.total || 0
+    if (total === 0) {
+      ElMessage.warning(t('task.noMatchingPoc'))
+      return
+    }
+    const pageSize = 5000
+    const totalPages = Math.ceil(total / pageSize)
+    const allRows = []
+    for (let page = 1; page <= totalPages; page++) {
+      const res = await getCustomPocList({ page, pageSize, ...filterArgs })
+      if (res.code === 0 && res.list) allRows.push(...res.list)
+    }
+    const existingIds = new Set(selectedCustomPocIds.value)
+    allRows.forEach(row => {
+      if (!existingIds.has(row.id)) {
+        selectedCustomPocIds.value.push(row.id)
+        selectedCustomPocs.value.push(row)
+      }
+    })
+    await nextTick()
+    if (customPocTableRef.value) {
+      customPocList.value.forEach(row => {
+        customPocTableRef.value.toggleRowSelection(row, true)
+      })
+    }
+    ElMessage.success(`${t('task.selected')}: ${allRows.length}`)
+  } catch (e) {
+    console.error('selectAllCustomPocsFailed', e)
+    ElMessage.error(t('task.selectAllFailed') || 'Select all failed')
+  } finally {
+    selectAllCustomLoading.value = false
+    isSelectingAll.value = false
+  }
+}
+
+function deselectAllCustomPocs() {
+  selectedCustomPocs.value = []
+  selectedCustomPocIds.value = []
+  if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+}
+
+function clearAllSelections() {
+  selectedNucleiTemplates.value = []
+  selectedNucleiTemplateIds.value = []
+  selectedCustomPocs.value = []
+  selectedCustomPocIds.value = []
+  if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
+  if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+}
+
+function clearNucleiSelections() {
+  selectedNucleiTemplates.value = []
+  selectedNucleiTemplateIds.value = []
+  if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
+}
+
+function clearCustomPocSelections() {
+  selectedCustomPocs.value = []
+  selectedCustomPocIds.value = []
+  if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+}
+
+function getSeverityType(severity) {
+  const map = { critical: 'danger', high: 'warning', medium: 'primary', low: 'info', info: 'info', unknown: 'info' }
+  return map[severity?.toLowerCase()] || 'info'
+}
+
+function disabledDate(time) { return time.getTime() < Date.now() - 86400000 }
+function onScheduleTimeChange(val) { form.scheduleTime = val }
+function handlePocModeChange(val) {
+  if (val !== 'manual') {
+    form.pocscanNucleiTemplateIds = []
+    form.pocscanCustomPocIds = []
+    selectedNucleiTemplates.value = []
+    selectedCustomPocs.value = []
+    selectedNucleiTemplateIds.value = []
+    selectedCustomPocIds.value = []
+  }
+}
+
+watch(() => pocSelectTab.value, (newVal) => {
+  if (newVal === 'nuclei' && nucleiTemplateList.value.length === 0) {
+    loadNucleiTemplatesForSelect()
+  } else if (newVal === 'custom' && customPocList.value.length === 0) {
+    loadCustomPocsForSelect()
+  }
+})
+
+// 切换到"选择资产"模式时自动加载资产列表
+watch(() => form.targetMode, (newMode) => {
+  if (newMode === 'asset' && assetTargetList.value.length === 0) {
+    assetTargetPagination.page = 1
+    loadAssetTargets()
+  }
+})
+
+function fillFormFromRow(row) {
+  isEdit.value = true
+  // 重置Cron验证状态
+  cronValidation.valid = false
+  cronValidation.nextTimes = []
+  cronValidation.error = ''
+  // 重置资产选择状态
+  selectedAssetRows.value = []
+  assetTargetPagination.page = 1
+  assetTargetFilter.keyword = ''
+  selectedTemplateConfig.value = null
+  // 重置 POC 选择状态
+  selectedNucleiTemplates.value = []
+  selectedCustomPocs.value = []
+  selectedNucleiTemplateIds.value = []
+  selectedCustomPocIds.value = []
+  Object.assign(form, getDefaultForm())
+  // 回填字段
+  form.id = row.id
+  form.name = row.name
+  form.scheduleType = row.scheduleType
+  form.cronSpec = row.cronSpec
+  form.scheduleTime = row.scheduleTime
+  form.scheduleTimeDate = row.scheduleTime || null
+  // 目标模式回填（兼容旧数据：有 assetIds 走资产模式，否则手动输入）
+  if (row.targetMode === 'asset' || (row.assetIds && row.assetIds.length)) {
+    form.targetMode = 'asset'
+    form.target = ''
+    form.orgId = row.orgId || ''
+    form.assetIds = row.assetIds || []
+    form.enableSubdomainPull = !!row.enableSubdomainPull
+    // 加载资产列表并恢复选中
+    loadAssetTargets()
+  } else {
+    form.targetMode = 'manual'
+    form.target = row.target || ''
+    form.orgId = ''
+    form.assetIds = []
+    form.enableSubdomainPull = false
+  }
+  // 扫描配置来源回填（兼容旧数据：有 templateId 走模板，否则自定义）
+  if (row.configSource === 'template' || row.templateId) {
+    form.configSource = 'template'
+    form.templateId = row.templateId || ''
+    if (form.templateId) onTemplateSelect(form.templateId)
+  } else {
+    form.configSource = 'custom'
+    form.templateId = ''
+  }
+  form.config = row.config
+  // 使用 applyConfig 正确将嵌套配置映射到扁平表单字段
+  if (row.config) {
+    try {
+      const configObj = typeof row.config === 'string' ? JSON.parse(row.config) : row.config
+      applyConfig(configObj)
+    } catch (e) {
+      console.error('parseConfigFailed', e)
+    }
+  }
+  // 编辑回显：根据已保存的ID加载POC/字典名称
+  loadEditSelectionNames()
+}
+
+// 分页拉取直到命中所有 ID 或遍历完总数；用于编辑回显 POC 名称（避免 pageSize 截断）
+async function fetchMatchingByIds(apiFn, idSet, matcher) {
+  const pageSize = 5000
+  const firstRes = await apiFn({ page: 1, pageSize })
+  if (firstRes.code !== 0 || !firstRes.list) return []
+  const matched = firstRes.list.filter(matcher)
+  const total = firstRes.total || firstRes.list.length
+  const totalPages = Math.ceil(total / pageSize)
+  for (let page = 2; page <= totalPages; page++) {
+    if (matched.length >= idSet.size) break
+    const res = await apiFn({ page, pageSize })
+    if (res.code === 0 && res.list) matched.push(...res.list.filter(matcher))
+  }
+  return matched
+}
+
+// 编辑回显时，根据已保存的ID批量加载POC模板名称和字典名称
+async function loadEditSelectionNames() {
+  // 恢复 POC 模板名称
+  if (form.pocscanNucleiTemplateIds.length > 0) {
+    try {
+      const idSet = new Set(form.pocscanNucleiTemplateIds)
+      const matched = await fetchMatchingByIds(getNucleiTemplateList, idSet, t => idSet.has(t.id))
+      selectedNucleiTemplates.value = matched
+      selectedNucleiTemplateIds.value = matched.map(t => t.id)
+      form.pocscanNucleiTemplates = matched
+    } catch (e) {
+      console.error('loadNucleiTemplateNamesFailed', e)
+    }
+  } else {
+    selectedNucleiTemplates.value = []
+    selectedNucleiTemplateIds.value = []
+    form.pocscanNucleiTemplates = []
+  }
+  if (form.pocscanCustomPocIds.length > 0) {
+    try {
+      const idSet = new Set(form.pocscanCustomPocIds)
+      const matched = await fetchMatchingByIds(getCustomPocList, idSet, p => idSet.has(p.id))
+      selectedCustomPocs.value = matched
+      selectedCustomPocIds.value = matched.map(p => p.id)
+      form.pocscanCustomPocs = matched
+    } catch (e) {
+      console.error('loadCustomPocNamesFailed', e)
+    }
+  } else {
+    selectedCustomPocs.value = []
+    selectedCustomPocIds.value = []
+    form.pocscanCustomPocs = []
+  }
+  // 恢复目录扫描字典名称
+  if (form.dirscanDictIds.length > 0) {
+    try {
+      const res = await getDirScanDictEnabledList()
+      if (res.code === 0 && res.data) {
+        form.dirscanDicts = res.data.filter(d => form.dirscanDictIds.includes(d.id))
+      }
+    } catch (e) {
+      console.error('loadDirScanDictNamesFailed', e)
+    }
+  }
+  // 恢复子域名字典名称
+  if (form.subdomainDictIds.length > 0) {
+    try {
+      const res = await getSubdomainDictEnabledList()
+      if (res.code === 0 && res.data) {
+        form.subdomainDicts = res.data.filter(d => form.subdomainDictIds.includes(d.id))
+      }
+    } catch (e) {
+      console.error('loadSubdomainDictNamesFailed', e)
+    }
+  }
+  // 恢复递归字典名称
+  if (form.recursiveDictIds.length > 0) {
+    try {
+      const res = await getSubdomainDictEnabledList()
+      if (res.code === 0 && res.data) {
+        form.recursiveDicts = res.data.filter(d => form.recursiveDictIds.includes(d.id))
+      }
+    } catch (e) {
+      console.error('loadRecursiveDictNamesFailed', e)
+    }
+  }
+}
+
+function showDictSelectDialog() {
+  dictSelectDialogVisible.value = true
+}
+
+function showSubdomainDictSelectDialog() {
+  subdomainDictSelectDialogVisible.value = true
+}
+
+function showRecursiveDictSelectDialog() {
+  recursiveDictSelectDialogVisible.value = true
+}
+
+function showPocSelectDialog() {
+  // 从 form 恢复已选 ID 和对象（编辑回显后打开对话框时必需）
+  selectedNucleiTemplateIds.value = [...(form.pocscanNucleiTemplateIds || [])]
+  selectedCustomPocIds.value = [...(form.pocscanCustomPocIds || [])]
+  selectedNucleiTemplates.value = [...(form.pocscanNucleiTemplates || [])]
+  selectedCustomPocs.value = [...(form.pocscanCustomPocs || [])]
+  selectedPocSearchKeyword.value = ''
+  pocSelectDialogVisible.value = true
+}
+
+
+
+function confirmDictSelection() {
+  if (!form.dirscanDicts) form.dirscanDicts = []
+  form.dirscanDicts = [...selectedDictRows.value]
+  form.dirscanDictIds = selectedDictRows.value.map(item => item.id)
+  dictSelectDialogVisible.value = false
+}
+
+function confirmSubdomainDictSelection() {
+  if (!form.subdomainDicts) form.subdomainDicts = []
+  form.subdomainDicts = [...selectedSubdomainDictRows.value]
+  form.subdomainDictIds = selectedSubdomainDictRows.value.map(item => item.id)
+  subdomainDictSelectDialogVisible.value = false
+}
+
+function confirmRecursiveDictSelection() {
+  if (!form.recursiveDicts) form.recursiveDicts = []
+  form.recursiveDicts = [...selectedRecursiveDictRows.value]
+  form.recursiveDictIds = selectedRecursiveDictRows.value.map(item => item.id)
+  recursiveDictSelectDialogVisible.value = false
+}
+
+function confirmPocSelection() {
+  form.pocscanNucleiTemplateIds = [...selectedNucleiTemplateIds.value]
+  form.pocscanCustomPocIds = [...selectedCustomPocIds.value]
+  // 保存对象信息用于下次打开对话框时显示
+  form.pocscanNucleiTemplates = [...selectedNucleiTemplates.value]
+  form.pocscanCustomPocs = [...selectedCustomPocs.value]
+  pocSelectDialogVisible.value = false
+}
+
+function removeNucleiTemplate(id) {
+  selectedNucleiTemplateIds.value = selectedNucleiTemplateIds.value.filter(i => i !== id)
+  selectedNucleiTemplates.value = selectedNucleiTemplates.value.filter(item => item.id !== id)
+  // 同步表格选中状态
+  if (nucleiTableRef.value) {
+    const row = nucleiTemplateList.value.find(t => t.id === id)
+    if (row) nucleiTableRef.value.toggleRowSelection(row, false)
+  }
+}
+
+function removeCustomPoc(id) {
+  selectedCustomPocIds.value = selectedCustomPocIds.value.filter(i => i !== id)
+  selectedCustomPocs.value = selectedCustomPocs.value.filter(item => item.id !== id)
+  if (customPocTableRef.value) {
+    const row = customPocList.value.find(p => p.id === id)
+    if (row) customPocTableRef.value.toggleRowSelection(row, false)
+  }
+}
+
+function viewPocContent(row, type) {
+  currentViewPoc.value = { name: row.name, content: row.content || "Content preview not loaded." }
+  pocContentDialogVisible.value = true
+}
+
+function copyPocContent() { 
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(currentViewPoc.value.content)
+  }
+}
+
+// 截取目标显示（保留供内部使用）
+function truncateTarget(target, maxLen = 40) {
+  if (!target) return ''
+  const firstLine = target.split('\n')[0]
+  if (firstLine.length > maxLen) {
+    return firstLine.substring(0, maxLen) + '...'
+  }
+  return firstLine
+}
+
+// 返回列表
+function handleBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/cron-task')
+  }
+}
+
+// 重置新建表单
+function resetForm() {
+  isEdit.value = false
+  Object.assign(form, getDefaultForm())
+  selectedNucleiTemplates.value = []
+  selectedCustomPocs.value = []
+  selectedNucleiTemplateIds.value = []
+  selectedCustomPocIds.value = []
+  selectedAssetRows.value = []
+  selectedTemplateConfig.value = null
+  assetTargetPagination.page = 1
+  assetTargetFilter.keyword = ''
+  cronValidation.valid = false
+  cronValidation.nextTimes = []
+  cronValidation.error = ''
+}
+
+// 加载编辑详情
+async function loadDetail(id) {
+  try {
+    // 优先使用详情接口
+    let row = null
+    try {
+      const detailRes = await getCronTaskDetail({ id })
+      if (detailRes.code === 0 && detailRes.data) {
+        row = detailRes.data
+      }
+    } catch (e) {
+      console.warn('getCronTaskDetail failed, fallback to list:', e)
+    }
+    // 兜底：从列表接口中按 ID 过滤
+    if (!row) {
+      const listRes = await getCronTaskList({ page: 1, pageSize: 100, keyword: '', taskType: 'scan' })
+      if (listRes.code === 0) {
+        const list = listRes.data?.list || listRes.list || []
+        row = list.find(item => String(item.id) === String(id))
+      }
+    }
+    if (row) {
+      fillFormFromRow(row)
+    } else {
+      ElMessage.error('未找到该定时任务')
+      router.push('/cron-task')
+    }
+  } catch (e) {
+    console.error('loadCronTaskDetailFailed:', e)
+    ElMessage.error('加载任务详情失败')
+  }
+}
+
+onMounted(async () => {
+  await loadOrganizations()
+  await loadScanTemplates()
+  // 编辑模式：根据路由参数加载数据
+  if (route.params.id) {
+    await loadDetail(route.params.id)
+  } else {
+    resetForm()
+  }
+})
+</script>
+
+<style scoped>
+.cron-task-create-page {
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.create-card {
+  margin-bottom: 20px;
+}
+
+.cron-task-form {
+  padding: 20px 40px;
+}
+
+.form-actions {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.cron-code {
+  background: var(--el-fill-color-light);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.schedule-time {
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  margin-left: 6px;
+}
+
+.text-muted {
+  color: var(--el-text-color-placeholder);
+}
+
+.cron-help {
+  margin-top: 10px;
+}
+
+.cron-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.preset-label {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.preset-tag {
+  cursor: pointer;
+}
+
+.preset-tag:hover {
+  background: var(--el-color-primary-light-7);
+}
+
+.cron-next-times {
+  background: var(--el-fill-color-lighter);
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.next-label {
+  color: var(--el-text-color-secondary);
+  margin-bottom: 5px;
+}
+
+.next-time {
+  color: var(--el-text-color-regular);
+  line-height: 1.8;
+}
+
+.cron-error {
+  color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.form-hint {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+/* 扫描配置折叠面板样式 */
+.config-collapse {
+  margin: 20px 0;
+  width: 100%;
+}
+
+.config-collapse :deep(.el-collapse-item__header) {
+  background: var(--el-fill-color-light);
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  height: 44px;
+  line-height: 44px;
+}
+
+.config-collapse :deep(.el-collapse-item__header):hover {
+  background: var(--el-fill-color);
+}
+
+.config-collapse :deep(.el-collapse-item__wrap) {
+  border: none;
+}
+
+.config-collapse :deep(.el-collapse-item__content) {
+  padding: 20px 16px;
+}
+
+.collapse-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scan-tools-layout {
+  margin-top: 10px;
+}
+
+.scan-tool-section {
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 16px;
+  min-height: 280px;
+}
+
+.scan-tool-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.scan-tool-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+
+.scan-tool-disabled-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--el-text-color-placeholder);
+  padding: 20px;
+  justify-content: center;
+}
+
+.selected-dict-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.selected-poc-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.warning-hint {
+  color: var(--el-color-warning);
+  font-size: 12px;
+}
+
+.secondary-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+/* POC选择对话框样式 */
+.poc-select-container {
+  display: flex;
+  gap: 20px;
+  height: 520px;
+}
+
+.poc-select-left {
+  flex: 1;
+  overflow: auto;
+  min-width: 0;
+}
+
+.poc-select-right {
+  width: 340px;
+  flex-shrink: 0;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--el-fill-color-blank);
+}
+
+.selected-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--el-border-color-light);
+  font-weight: 500;
+}
+
+.selected-search {
+  padding: 10px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.selected-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.selected-group {
+  margin-bottom: 15px;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.selected-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.selected-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--el-fill-color-light);
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.selected-item:hover {
+  background: var(--el-fill-color);
+}
+
+.item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-remove {
+  cursor: pointer;
+  color: var(--el-text-color-placeholder);
+  flex-shrink: 0;
+}
+
+.item-remove:hover {
+  color: var(--el-color-danger);
+}
+
+.selected-empty {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100px;
+  color: var(--el-text-color-placeholder);
+}
+
+.poc-filter-form {
+  margin-bottom: 10px;
+}
+
+.poc-pagination {
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+.poc-content-wrapper {
+  min-height: 300px;
+}
+
+/* ===== 目标模式切换 ===== */
+.target-mode-switch,
+.config-source-switch {
+  width: 100%;
+}
+
+/* ===== 资产选择器 ===== */
+.asset-selector {
+  width: 100%;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--el-fill-color-blank);
+}
+
+.asset-selector-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.selected-count-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.asset-target-table {
+  width: 100%;
+}
+
+.asset-label-tag {
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+
+.asset-pagination {
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+/* ===== 扫描模板选项 ===== */
+.template-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.template-option .template-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-option .template-category {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
+  margin-left: 10px;
+  flex-shrink: 0;
+}
+</style>

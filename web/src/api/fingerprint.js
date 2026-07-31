@@ -55,6 +55,21 @@ export function batchValidateFingerprints(data) {
   return request.post('/fingerprint/batchValidate', data)
 }
 
+// 查询批量验证进度（轻量，不含结果详情）
+export function getFingerprintBatchProgress(data) {
+  return request.post('/fingerprint/batchProgress', data)
+}
+
+// 获取批量验证结果详情
+export function getFingerprintBatchResult(data) {
+  return request.post('/fingerprint/batchResult', data)
+}
+
+// 停止批量验证
+export function stopFingerprintBatchValidate(data) {
+  return request.post('/fingerprint/batchStop', data)
+}
+
 // 匹配现有资产
 export function matchFingerprintAssets(data) {
   return request.post('/fingerprint/matchAssets', data)

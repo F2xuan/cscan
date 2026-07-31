@@ -256,7 +256,7 @@ export const ASSET_EXPORT_COLUMNS = {
     { key: 'status', label: '状态码' },
     { key: 'size', label: '大小' },
     { key: 'title', label: '标题' },
-    { key: 'createTime', label: '发现时间' }
+    { key: 'createTime', label: '创建时间' }
   ]
 }
 

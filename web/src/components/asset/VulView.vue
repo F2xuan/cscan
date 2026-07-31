@@ -1,5 +1,19 @@
-<template>
+﻿<template>
   <div class="vul-view">
+    <!-- T4.3 快速筛选 -->
+    <div class="vul-filter-tabs">
+      <el-radio-group v-model="activeFilter" size="default" @change="onFilterChange">
+        <el-radio-button value="all">{{ t('vul.filterAll') }}</el-radio-button>
+        <el-radio-button value="new">{{ t('vul.filterNew') }}</el-radio-button>
+        <el-radio-button value="critical">{{ t('vul.critical') }}</el-radio-button>
+        <el-radio-button value="high">{{ t('vul.high') }}</el-radio-button>
+        <el-radio-button value="medium">{{ t('vul.medium') }}</el-radio-button>
+        <el-radio-button value="open">{{ t('vul.statusOpen') }}</el-radio-button>
+        <el-radio-button value="fixed">{{ t('vul.filterFixed') }}</el-radio-button>
+        <el-radio-button value="ignored">{{ t('vul.statusIgnored') }}</el-radio-button>
+      </el-radio-group>
+    </div>
+
     <ProTable
       ref="proTableRef"
       api="/vul/list"
@@ -9,7 +23,7 @@
       :columns="vulColumns"
       :searchItems="vulSearchItems"
       :statLabels="statLabels"
-      :extraParams="extraParams"
+      :extraParams="mergedExtraParams"
       selection
       :searchPlaceholder="$t('vul.targetPlaceholder')"
       :searchKeys="['authority', 'url', 'pocFile', 'vulName']"
@@ -37,9 +51,43 @@
         <el-button type="danger" plain @click="handleClear">{{ $t('vul.clearData') }}</el-button>
       </template>
 
+      <!-- 漏洞名称（含新发现标记） -->
+      <template #vulName="{ row }">
+        <div class="vul-name-cell">
+          <el-tag v-if="isNewlyFound(row)" type="danger" size="small" effect="dark" round class="new-vul-tag">
+            {{ t('vul.filterNew') }}
+          </el-tag>
+          <span class="vul-name-text">{{ row.vulName }}</span>
+        </div>
+      </template>
+
       <!-- 严重程度 -->
       <template #severity="{ row }">
         <el-tag :type="getSeverityType(row.severity)" size="small">{{ getSeverityLabel(row.severity) }}</el-tag>
+      </template>
+
+      <!-- 生命周期状态（T1.3） -->
+      <template #status="{ row }">
+        <el-tag :type="getStatusType(row.status)" size="small">{{ getStatusLabel(row.status) }}</el-tag>
+      </template>
+
+      <!-- 复验待确认标记（T3.3）：目标不可达时置位 -->
+      <template #verifyPending="{ row }">
+        <el-tag v-if="row.verifyPending" type="warning" size="small">{{ t('vul.pending') }}</el-tag>
+        <span v-else style="color: var(--el-text-color-secondary)">-</span>
+      </template>
+
+      <!-- 复验状态（单条复验闭环） -->
+      <template #reverifyStatus="{ row }">
+        <el-tag v-if="reverifyingMap[row.id]" type="warning" size="small" effect="light">
+          <el-icon class="is-loading" style="margin-right:4px"><Loading /></el-icon>{{ t('vul.reverifyReverifying') }}
+        </el-tag>
+        <template v-else-if="row.reverifyStatus === 'done'">
+          <el-tag :type="getReverifyConclusionType(row.reverifyConclusion)" size="small">
+            {{ getReverifyConclusionLabel(row.reverifyConclusion) }}
+          </el-tag>
+        </template>
+        <span v-else style="color: var(--el-text-color-secondary)">-</span>
       </template>
 
       <!-- POC标签 -->
@@ -50,10 +98,31 @@
         </template>
       </template>
 
-      <!-- 操作 -->
+      <!-- 操作：核心按钮 + 更多下拉 -->
       <template #operation="{ row }">
-        <el-button type="primary" link size="small" @click="showDetail(row)">{{ $t('common.detail') }}</el-button>
-        <el-button type="danger" link size="small" @click="handleDelete(row)">{{ $t('common.delete') }}</el-button>
+        <div class="operation-cell">
+          <el-button type="primary" link size="small" @click="showDetail(row)">{{ $t('common.detail') }}</el-button>
+          <el-button type="success" link size="small" @click="handleMarkFixed(row)" v-if="row.status !== 'fixed'">{{ $t('vul.markFixed') }}</el-button>
+          <el-button type="info" link size="small" @click="handleReopen(row)" v-if="row.status === 'fixed' || row.status === 'ignored'">{{ $t('vul.reopen') }}</el-button>
+          <el-dropdown trigger="click" @command="(cmd) => handleOperation(cmd, row)">
+            <el-button link size="small" type="primary">
+              {{ $t('common.more') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="row.status !== 'ignored'" command="markIgnored">
+                  <el-icon><CircleClose /></el-icon>{{ $t('vul.markIgnored') }}
+                </el-dropdown-item>
+                <el-dropdown-item command="reverify">
+                  <el-icon><RefreshRight /></el-icon>{{ $t('vul.reverify') }}
+                </el-dropdown-item>
+                <el-dropdown-item command="delete" divided>
+                  <span class="dropdown-danger"><el-icon><Delete /></el-icon>{{ $t('common.delete') }}</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </template>
     </ProTable>
 
@@ -70,9 +139,26 @@
         <el-descriptions-item :label="$t('vul.tags')" :span="2" v-if="currentVul.tags && currentVul.tags.length">
           <el-tag v-for="tag in currentVul.tags" :key="tag" size="small" class="tag-item">{{ tag }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('vul.source')">{{ currentVul.source }}</el-descriptions-item>
         <el-descriptions-item :label="$t('vul.discoveryTime')">{{ currentVul.createTime }}</el-descriptions-item>
         <el-descriptions-item :label="$t('common.updateTime')">{{ currentVul.updateTime }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('vul.status')">
+          <el-tag :type="getStatusType(currentVul.status)" size="small">{{ getStatusLabel(currentVul.status) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('vul.fixedAt')" v-if="currentVul.fixedAt">{{ currentVul.fixedAt }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('vul.fixConfirmSource')" v-if="currentVul.fixConfirmSource">{{ currentVul.fixConfirmSource }}</el-descriptions-item>
+        <!-- 复验信息（单条复验闭环） -->
+        <el-descriptions-item :label="$t('vul.reverifyStatus')">
+          <el-tag v-if="reverifyingMap[currentVul.id]" type="warning" size="small" effect="light">
+            <el-icon class="is-loading" style="margin-right:4px"><Loading /></el-icon>{{ $t('vul.reverifyReverifying') }}
+          </el-tag>
+          <el-tag v-else-if="currentVul.reverifyStatus === 'done'" :type="getReverifyConclusionType(currentVul.reverifyConclusion)" size="small">
+            {{ getReverifyConclusionLabel(currentVul.reverifyConclusion) }}
+          </el-tag>
+          <span v-else style="color: var(--el-text-color-secondary)">-</span>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('vul.reverifyAt')" v-if="currentVul.reverifyAt">{{ currentVul.reverifyAt }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('vul.reverifyBy')" v-if="currentVul.reverifyBy">{{ currentVul.reverifyBy }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('vul.reverifyMessage')" :span="2" v-if="currentVul.reverifyMessage">{{ currentVul.reverifyMessage }}</el-descriptions-item>
         <el-descriptions-item :label="$t('vul.verifyResult')" :span="2">
           <pre class="result-pre">{{ currentVul.result }}</pre>
         </el-descriptions-item>
@@ -123,11 +209,14 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, reactive, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown, Loading, CircleClose, RefreshRight, Delete } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { updateVulStatus } from '@/api/asset'
+import { reverifyVul } from '@/api/vul'
+import { getWorkerList } from '@/api/task'
 import ProTable from '@/components/common/ProTable.vue'
 
 const { t } = useI18n()
@@ -146,6 +235,58 @@ const proTableRef = ref(null)
 const detailVisible = ref(false)
 const currentVul = ref({})
 
+// 单条复验：记录正在复验中的漏洞 id（用于列表与详情的状态展示）
+const reverifyingMap = reactive({})
+const reverifyTimers = {}
+
+// T4.3: 快速筛选状态
+const activeFilter = ref('all')
+// 新发现窗口（天），与 dashboard/changes 默认窗口一致
+const NEW_WINDOW_DAYS = 7
+
+// T4.3: 筛选 tab → 下发参数（与工作台风险变化卡片口径一致）
+const filterParams = computed(() => {
+  switch (activeFilter.value) {
+    case 'new':
+      return { isNew: true }
+    case 'critical':
+      return { severity: 'critical' }
+    case 'high':
+      return { severity: 'high' }
+    case 'medium':
+      return { severity: 'medium' }
+    case 'open':
+      return { status: 'open' }
+    case 'fixed':
+      return { status: 'fixed' }
+    case 'ignored':
+      return { status: 'ignored' }
+    default:
+      return {}
+  }
+})
+
+// T4.3: 合并父级固定过滤 + 快速筛选 + 默认严重度排序（不破坏敏感信息页既有过滤）
+const mergedExtraParams = computed(() => ({
+  ...props.extraParams,
+  ...filterParams.value,
+  sort: 'severity'
+}))
+
+function onFilterChange() {
+  // extraParams 变化会触发 ProTable 重新拉取
+  proTableRef.value?.loadData()
+}
+
+// T4.3: 判断某行是否为"新发现"（first_seen_time 在窗口内，与 riskNewInWindow 口径一致）
+function isNewlyFound(row) {
+  if (!row || !row.firstSeenTime) return false
+  const t = new Date(String(row.firstSeenTime).replace(' ', 'T'))
+  if (isNaN(t.getTime())) return false
+  const cutoff = Date.now() - NEW_WINDOW_DAYS * 24 * 3600 * 1000
+  return t.getTime() >= cutoff
+}
+
 const selectedRows = computed(() => proTableRef.value?.selectedRows || [])
 
 const statLabels = computed(() => ({
@@ -154,20 +295,23 @@ const statLabels = computed(() => ({
   high: t('vul.high'),
   medium: t('vul.medium'),
   low: t('vul.low'),
-  info: t('vul.info')
+  info: t('vul.info'),
+  open: t('vul.statusOpen'),
+  fixed: t('vul.statusFixed'),
+  ignored: t('vul.statusIgnored')
 }))
 
 const vulColumns = computed(() => [
-  { label: t('vul.vulName'), prop: 'vulName', minWidth: 200, showOverflowTooltip: true },
-  { label: t('vul.severity'), prop: 'severity', slot: 'severity', width: 100 },
+  { label: t('vul.vulName'), prop: 'vulName', slot: 'vulName', minWidth: 220, showOverflowTooltip: false },
+  { label: t('vul.severity'), prop: 'severity', slot: 'severity', width: 90 },
+  { label: t('vul.status'), prop: 'status', slot: 'status', width: 90 },
   { label: t('vul.target'), prop: 'authority', minWidth: 150 },
-  { label: 'URL', prop: 'url', minWidth: 250, showOverflowTooltip: true },
-  { label: 'POC', prop: 'pocFile', minWidth: 200, showOverflowTooltip: true },
-  { label: t('vul.tags'), prop: 'tags', slot: 'tags', minWidth: 150 },
-  { label: t('vul.source'), prop: 'source', width: 100 },
-  { label: t('vul.discoveryTime'), prop: 'createTime', width: 160 },
-  { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
-  { label: t('common.operation'), slot: 'operation', width: 120, fixed: 'right' }
+  { label: 'URL', prop: 'url', minWidth: 250, showOverflowTooltip: false },
+  { label: t('vul.discoveryTime'), prop: 'createTime', width: 160, showOverflowTooltip: false },
+  { label: t('vul.lastVerifiedAt'), prop: 'lastVerifiedAt', width: 160, showOverflowTooltip: false },
+  { label: t('vul.reverifyStatus'), prop: 'reverifyStatus', slot: 'reverifyStatus', width: 120 },
+  { label: t('common.updateTime'), prop: 'updateTime', width: 160, showOverflowTooltip: false },
+  { label: t('common.operation'), slot: 'operation', width: 170, fixed: 'right' }
 ])
 
 const vulSearchItems = computed(() => [
@@ -186,12 +330,13 @@ const vulSearchItems = computed(() => [
     ]
   },
   {
-    label: t('vul.source'),
-    prop: 'source',
+    label: t('vul.status'),
+    prop: 'status',
     type: 'select',
     options: [
-      { label: 'Nuclei', value: 'nuclei' },
-      { label: 'JSFinder', value: 'jsfinder' }
+      { label: t('vul.statusOpen'), value: 'open' },
+      { label: t('vul.statusFixed'), value: 'fixed' },
+      { label: t('vul.statusIgnored'), value: 'ignored' }
     ]
   }
 ])
@@ -211,6 +356,21 @@ function getSeverityLabel(severity) {
     unknown: t('vul.unknown')
   }
   return map[severity] || severity
+}
+
+// T1.3：生命周期状态展示
+function getStatusType(status) {
+  const map = { open: 'danger', fixed: 'success', ignored: 'info' }
+  return map[status] || 'danger' // 缺失 status 视为 open
+}
+
+function getStatusLabel(status) {
+  const map = {
+    open: t('vul.statusOpen'),
+    fixed: t('vul.statusFixed'),
+    ignored: t('vul.statusIgnored')
+  }
+  return map[status] || t('vul.statusOpen') // 缺失 status 视为 open
 }
 
 async function showDetail(row) {
@@ -234,6 +394,142 @@ async function handleDelete(row) {
     // cancelled
   }
 }
+
+// T1.3：漏洞生命周期状态变更（open / fixed / ignored）
+async function handleMarkFixed(row) {
+  await changeVulStatus([row.id], 'fixed')
+}
+
+async function handleMarkIgnored(row) {
+  await changeVulStatus([row.id], 'ignored')
+}
+
+async function handleReopen(row) {
+  await changeVulStatus([row.id], 'open')
+}
+
+function handleOperation(cmd, row) {
+  const actions = {
+    markIgnored: handleMarkIgnored,
+    reverify: handleReverify,
+    delete: handleDelete
+  }
+  actions[cmd]?.(row)
+}
+
+async function changeVulStatus(ids, status) {
+  try {
+    const res = await updateVulStatus({ ids, status })
+    if (res.code === 0) {
+      ElMessage.success(t('vul.statusUpdated', { count: res.updated }))
+      proTableRef.value?.loadData()
+      emit('data-changed')
+    } else {
+      ElMessage.error(res.msg || t('vul.statusUpdateFailed'))
+    }
+  } catch (e) {
+    ElMessage.error(t('vul.statusUpdateFailed'))
+  }
+}
+
+// 单条漏洞复验：下发复验任务到 worker，并轮询结果形成闭环
+async function handleReverify(row) {
+  try {
+    await ElMessageBox.confirm(t('vul.confirmReverify'), t('vul.reverify'), { type: 'warning' })
+  } catch (e) {
+    return // 用户取消
+  }
+
+  // 检查是否有在线 Worker
+  try {
+    const workerRes = await getWorkerList()
+    const workerData = workerRes.data || workerRes
+    const onlineWorkers = (workerData.list || []).filter(w => w.status === 'running')
+    if (onlineWorkers.length === 0) {
+      ElMessage.warning(t('vul.noWorkerOnline'))
+      return
+    }
+  } catch (e) {
+    ElMessage.warning(t('vul.noWorkerOnline'))
+    return
+  }
+
+  try {
+    const res = await reverifyVul({ ids: [row.id] })
+    if (res.code !== 0) {
+      ElMessage.error(res.msg || t('vul.reverifyFail'))
+      return
+    }
+    ElMessage.success(t('vul.reverifyStarted'))
+    startReverifyPoll(row)
+  } catch (e) {
+    ElMessage.error(t('vul.reverifyFail'))
+  }
+}
+
+// 启动复验结果轮询：每 3 秒查询一次漏洞详情，直到复验完成
+function startReverifyPoll(row) {
+  const id = row.id
+  reverifyingMap[id] = true
+  const poll = async () => {
+    try {
+      const res = await request.post('/vul/detail', { id })
+      const data = res.code === 0 && res.data ? res.data : null
+      if (data && data.reverifyStatus === 'done') {
+        // 复验完成，合并最新数据并刷新列表
+        if (detailVisible.value && currentVul.value.id === id) {
+          Object.assign(currentVul.value, data)
+        }
+        ElMessage.success(t('vul.reverifyDone', {
+          conclusion: getReverifyConclusionLabel(data.reverifyConclusion)
+        }))
+        stopReverifyPoll(id)
+        proTableRef.value?.loadData()
+        emit('data-changed')
+      } else {
+        // 仍在进行中，继续轮询
+        reverifyTimers[id] = setTimeout(poll, 3000)
+      }
+    } catch (e) {
+      // 查询失败时停止轮询，避免死循环
+      stopReverifyPoll(id)
+    }
+  }
+  reverifyTimers[id] = setTimeout(poll, 3000)
+}
+
+function stopReverifyPoll(id) {
+  if (reverifyTimers[id]) {
+    clearTimeout(reverifyTimers[id])
+    delete reverifyTimers[id]
+  }
+  delete reverifyingMap[id]
+}
+
+function getReverifyConclusionType(conclusion) {
+  const map = {
+    fixed: 'success',
+    still_vuln: 'danger',
+    unreachable: 'warning',
+    reachable_untested: 'info'
+  }
+  return map[conclusion] || 'info'
+}
+
+function getReverifyConclusionLabel(conclusion) {
+  const map = {
+    fixed: t('vul.reverifyConclusionFixed'),
+    still_vuln: t('vul.reverifyConclusionStillVuln'),
+    unreachable: t('vul.reverifyConclusionUnreachable'),
+    reachable_untested: t('vul.reverifyConclusionUntested')
+  }
+  return map[conclusion] || t('vul.reverifyIdle')
+}
+
+onBeforeUnmount(() => {
+  // 组件卸载时清理复验轮询定时器
+  Object.values(reverifyTimers).forEach((timer) => clearTimeout(timer))
+})
 
 async function handleClear() {
   try {
@@ -279,7 +575,7 @@ async function handleExport(command) {
 
     if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
-    const headers = ['VulName', 'Severity', 'Target', 'URL', 'POC', 'Tags', 'Source', 'Result', 'CreateTime', 'UpdateTime']
+    const headers = ['VulName', 'Severity', 'Target', 'URL', 'POC', 'Tags', 'Status', 'Result', 'CreateTime', 'UpdateTime']
     const csvRows = [headers.join(',')]
     for (const row of data) {
       csvRows.push([
@@ -289,7 +585,7 @@ async function handleExport(command) {
         escapeCsvField(row.url || ''),
         escapeCsvField(row.pocFile || ''),
         escapeCsvField((row.tags || []).join(';')),
-        escapeCsvField(row.source || ''),
+        escapeCsvField(row.status || ''),
         escapeCsvField(row.result || ''),
         escapeCsvField(row.createTime || ''),
         escapeCsvField(row.updateTime || '')
@@ -487,6 +783,35 @@ defineExpose({ refresh })
 .vul-view {
   height: 100%;
 
+  .vul-filter-tabs {
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .vul-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .vul-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .new-vul-tag {
+    flex-shrink: 0;
+    font-weight: 600;
+    padding: 0 8px;
+    height: 20px;
+    line-height: 18px;
+  }
+
   .result-pre {
     margin: 0;
     white-space: pre-wrap;
@@ -505,6 +830,29 @@ defineExpose({ refresh })
   .tag-item {
     margin-right: 4px;
     margin-bottom: 2px;
+  }
+
+  .operation-cell {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  // 鼠标悬停右侧固定操作栏时，将其层级提升到 table tooltip 之上，
+  // 确保能优先捕获鼠标事件并隐藏 tooltip，保护操作按钮不被遮挡。
+  // Element Plus 2.4 用 sticky 列（el-table-fixed-column--right），旧版用 .el-table__fixed-right。
+  :deep(.el-table-fixed-column--right), :deep(.el-table__fixed-right) {
+    &:hover {
+      z-index: 9999 !important;
+    }
+  }
+
+  .dropdown-danger {
+    color: var(--el-color-danger);
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .highlight-mark {

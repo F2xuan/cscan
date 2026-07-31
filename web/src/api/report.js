@@ -18,3 +18,21 @@ export function exportReport(data) {
     responseType: 'blob'
   })
 }
+
+// T5.1 周期报告（日报/周报/月报）
+export function getPeriodicReport(data) {
+  return request({
+    url: '/report/periodic/generate',
+    method: 'post',
+    data
+  })
+}
+
+export function exportPeriodicReport(data) {
+  return request({
+    url: '/report/periodic/export',
+    method: 'post',
+    data,
+    responseType: 'blob'
+  })
+}

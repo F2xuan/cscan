@@ -21,6 +21,9 @@
         <el-icon><Refresh /></el-icon>
         {{ t('asset.screenshotsTab.refresh') }}
       </el-button>
+      <div class="toolbar-right">
+        <el-button type="danger" plain @click="handleClear">{{ t('asset.clearData') }}</el-button>
+      </div>
     </div>
 
     <!-- 高级过滤器 -->
@@ -177,7 +180,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { debounce } from 'lodash-es'
 import {
   Search,
@@ -186,7 +189,7 @@ import {
   Picture,
   Monitor
 } from '@element-plus/icons-vue'
-import { getScreenshots, getAssetFilterOptions } from '@/api/asset'
+import { getScreenshots, getAssetFilterOptions, clearScreenshots } from '@/api/asset'
 import { formatScreenshotUrl, handleScreenshotError } from '@/utils/screenshot'
 import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
 
@@ -329,6 +332,27 @@ const resetFilters = () => {
   loadData()
 }
 
+async function handleClear() {
+  try {
+    await ElMessageBox.confirm(
+      t('asset.confirmClearAll'),
+      t('common.warning'),
+      { type: 'error', confirmButtonText: t('asset.confirmClearBtn'), cancelButtonText: t('common.cancel') }
+    )
+    const res = await clearScreenshots()
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('asset.clearSuccess'))
+      resetFilters()
+    } else {
+      ElMessage.error(res.msg || t('asset.clearFailed'))
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('asset.clearFailed'))
+    }
+  }
+}
+
 const viewDetails = (item) => {
   selectedItem.value = item
   showDetailsDialog.value = true
@@ -370,10 +394,18 @@ onMounted(() => {
     display: flex;
     gap: 12px;
     margin-bottom: 16px;
+    align-items: center;
 
     .search-input {
       flex: 1;
       max-width: 400px;
+    }
+
+    .toolbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
     }
   }
 

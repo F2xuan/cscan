@@ -67,3 +67,12 @@ export function setUserTokenStatus(data) {
 export function getUserTokenScopes() {
   return request.post('/user/token/scopes')
 }
+
+// ==================== 引导式首次体验 (T4.2) ====================
+export function getOnboardingStatus() {
+  return request.post('/user/onboarding/status')
+}
+
+export function completeOnboarding() {
+  return request.post('/user/onboarding/complete')
+}

@@ -8,6 +8,7 @@
       rowKey="id"
       :columns="jsfinderColumns"
       :searchItems="jsfinderSearchItems"
+      :extra-params="props.extraParams"
       
       
       selection
@@ -17,6 +18,40 @@
     >
       <!-- 自定义导出 -->
       <template #toolbar-left>
+        <!-- 批量AI研判按钮（仅JS模式显示） -->
+        <div v-if="props.mode === 'js'" style="display: flex; align-items: center; margin-right: 8px;">
+          <el-button
+            type="primary"
+            :loading="batchAnalyzing && !batchTaskId"
+            :disabled="batchAnalyzing"
+            @click="handleBatchAnalyze"
+          >
+            {{ batchAnalyzing ? $t('jsfinder.aiAnalyzing') : $t('jsfinder.batchAIAnalyze') }}
+          </el-button>
+          <!-- 进度条 -->
+          <el-progress
+            v-if="batchAnalyzing && batchTaskId"
+            :percentage="batchProgressPercent"
+            :stroke-width="18"
+            style="width: 200px; margin-left: 8px;"
+            :text-inside="true"
+            :status="batchProgressStatus"
+          />
+          <span v-if="batchAnalyzing && batchTaskId" style="margin-left: 8px; font-size: 13px; color: var(--el-text-color-regular);">
+            {{ batchCompleted }}/{{ batchTotal }}
+          </span>
+          <!-- 停止按钮 -->
+          <el-button
+            v-if="batchAnalyzing && batchTaskId && batchStatus === 'running'"
+            type="danger"
+            size="small"
+            plain
+            style="margin-left: 8px;"
+            @click="handleStopBatch"
+          >
+            {{ $t('jsfinder.stopBatchAnalyze') }}
+          </el-button>
+        </div>
         <el-dropdown @command="handleExport">
           <el-button type="success" size="default">
             {{ $t('common.export') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -42,6 +77,14 @@
         <el-tag :type="getSeverityType(row.severity)" size="small">{{ getSeverityLabel(row.severity) }}</el-tag>
       </template>
 
+      <!-- AI研判状态 -->
+      <template #aiStatus="{ row }">
+        <el-tag v-if="row.aiStatus === 'completed'" :type="row.aiResult === 'risk' ? 'danger' : 'success'" size="small">
+          {{ row.aiResult === 'risk' ? $t('jsfinder.aiResultRisk') : $t('jsfinder.aiResultNoRisk') }}
+        </el-tag>
+        <el-tag v-else type="info" size="small">{{ $t('jsfinder.aiNotAnalyzed') }}</el-tag>
+      </template>
+
       <!-- 风险标签 -->
       <template #tags="{ row }">
         <template v-if="row.tags && row.tags.length">
@@ -61,25 +104,18 @@
         <span class="matcher-text">{{ row.matcherName || '-' }}</span>
       </template>
 
-      <!-- 匹配内容 -->
-      <template #extractedResults="{ row }">
-        <template v-if="row.extractedResults && row.extractedResults.length">
-          <el-tag
-            v-for="(result, idx) in row.extractedResults.slice(0, 3)"
-            :key="idx"
-            size="small"
-            type="warning"
-            class="result-tag"
-          >{{ truncateText(result, 40) }}</el-tag>
-          <el-tag v-if="row.extractedResults.length > 3" size="small" type="info">+{{ row.extractedResults.length - 3 }}</el-tag>
-        </template>
-        <span v-else class="text-muted">-</span>
-      </template>
-
       <!-- 操作 -->
       <template #operation="{ row }">
         <el-button type="primary" link size="small" @click="showDetail(row)">{{ $t('common.detail') }}</el-button>
-        
+        <!-- 单条AI研判按钮（仅JS模式且未完成研判时显示） -->
+        <el-button
+          v-if="props.mode === 'js' && row.aiStatus !== 'completed'"
+          type="success"
+          link
+          size="small"
+          :loading="analyzingId === row.id"
+          @click="handleSingleAnalyze(row)"
+        >{{ $t('jsfinder.aiAnalyze') }}</el-button>
       </template>
     </ProTable>
 
@@ -100,6 +136,17 @@
         <el-descriptions-item :label="$t('jsfinder.verifyResult')" :span="2">
           <pre class="result-pre">{{ currentVul.result }}</pre>
         </el-descriptions-item>
+        <el-descriptions-item :label="$t('jsfinder.aiResult')" v-if="currentVul.aiStatus === 'completed'" :span="2">
+          <el-tag :type="currentVul.aiResult === 'risk' ? 'danger' : 'success'" size="small">
+            {{ currentVul.aiResult === 'risk' ? $t('jsfinder.aiResultRisk') : $t('jsfinder.aiResultNoRisk') }}
+          </el-tag>
+          <span v-if="currentVul.aiReason" style="margin-left: 12px; color: var(--el-text-color-regular);">
+            {{ currentVul.aiReason }}
+          </span>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('jsfinder.aiAnalyzedAt')" v-if="currentVul.aiStatus === 'completed'">
+          {{ currentVul.aiAnalyzedAt }}
+        </el-descriptions-item>
       </el-descriptions>
 
       <!-- 匹配规则与风险内容 -->
@@ -119,16 +166,10 @@
           </el-descriptions-item>
           <el-descriptions-item :label="$t('jsfinder.extractedResults')" v-if="currentVul.extractedResults && currentVul.extractedResults.length">
             <div class="extracted-results">
-              <!-- 如果有上下文片段（extractedResults[1]），只高亮片段中的关键词 -->
-              <template v-if="currentVul.extractedResults.length > 1">
-                <div class="extracted-item" v-html="highlightKeyword(currentVul.extractedResults[1], currentVul.extractedResults[0])"></div>
-              </template>
-              <!-- 如果只有关键词，直接显示并高亮 -->
-              <template v-else>
-                <div class="extracted-item">
-                  <mark class="highlight-inline">{{ currentVul.extractedResults[0] }}</mark>
-                </div>
-              </template>
+              <div v-for="(item, idx) in currentVul.extractedResults" :key="idx" class="extracted-item">
+                <el-tag size="small" type="info" style="margin-right: 8px;">#{{ idx + 1 }}</el-tag>
+                <code class="extracted-content">{{ item }}</code>
+              </div>
             </div>
           </el-descriptions-item>
         </el-descriptions>
@@ -164,22 +205,104 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import request from '@/api/request'
-import { getJSFinderDetail } from '@/api/jsfinder'
+import { getJSFinderDetail, analyzeJSByAI, batchAnalyzeJSByAI, getBatchAnalyzeProgress, stopBatchAnalyze } from '@/api/jsfinder'
 import ProTable from '@/components/common/ProTable.vue'
+
+// localStorage key for batch task persistence
+const BATCH_TASK_STORAGE_KEY = 'cscan_jsfinder_batch_task'
 
 const { t } = useI18n()
 const emit = defineEmits(['data-changed'])
+const props = defineProps({
+  extraParams: {
+    type: Object,
+    default: () => ({})
+  },
+  // 组件模式: 'js'(JS菜单,默认) 或 'sensitive'(敏感信息页面)
+  mode: {
+    type: String,
+    default: 'js'
+  }
+})
 
 const proTableRef = ref(null)
 const detailVisible = ref(false)
 const currentVul = ref({})
 
 const selectedRows = computed(() => proTableRef.value?.selectedRows || [])
+
+// AI研判相关状态
+const analyzingId = ref('')
+const batchAnalyzing = ref(false)
+const batchTaskId = ref('')
+const batchTotal = ref(0)
+const batchCompleted = ref(0)
+const batchStatus = ref('')
+let batchTimer = null
+
+// 进度百分比
+const batchProgressPercent = computed(() => {
+  if (batchTotal.value === 0) return 0
+  return Math.min(100, Math.round((batchCompleted.value / batchTotal.value) * 100))
+})
+
+// 进度条状态颜色
+const batchProgressStatus = computed(() => {
+  if (batchStatus.value === 'completed') return 'success'
+  if (batchStatus.value === 'failed') return 'exception'
+  return ''
+})
+
+// localStorage持久化辅助函数
+function saveBatchTaskToStorage() {
+  if (batchTaskId.value && batchStatus.value === 'running') {
+    const data = {
+      taskId: batchTaskId.value,
+      total: batchTotal.value,
+      completed: batchCompleted.value,
+      savedAt: Date.now()
+    }
+    localStorage.setItem(BATCH_TASK_STORAGE_KEY, JSON.stringify(data))
+  } else {
+    localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+  }
+}
+
+function loadBatchTaskFromStorage() {
+  try {
+    const raw = localStorage.getItem(BATCH_TASK_STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    // 超过2小时的任务视为过期（避免显示很久以前的失败任务）
+    if (data.savedAt && Date.now() - data.savedAt > 2 * 60 * 60 * 1000) {
+      localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+      return null
+    }
+    return data
+  } catch {
+    return null
+  }
+}
+
+// 挂载时恢复未完成的批量任务
+onMounted(() => {
+  if (props.mode !== 'js') return
+  const saved = loadBatchTaskFromStorage()
+  if (saved && saved.taskId) {
+    batchTaskId.value = saved.taskId
+    batchTotal.value = saved.total || 0
+    batchCompleted.value = saved.completed || 0
+    batchStatus.value = 'running'
+    batchAnalyzing.value = true
+    // 立即查询一次当前进度，然后开始轮询
+    startBatchPolling()
+  }
+})
 
 const statLabels = computed(() => ({
   total: t('jsfinder.total'),
@@ -190,47 +313,71 @@ const statLabels = computed(() => ({
   info: t('jsfinder.info')
 }))
 
-const jsfinderColumns = computed(() => [
-  { label: t('jsfinder.vulName'), prop: 'vulName', minWidth: 200, showOverflowTooltip: true },
-  { label: t('jsfinder.severity'), prop: 'severity', slot: 'severity', width: 100 },
-  { label: t('jsfinder.target'), prop: 'authority', minWidth: 150 },
-  { label: 'URL', prop: 'url', minWidth: 250, showOverflowTooltip: true },
-  { label: t('jsfinder.matcherName'), prop: 'matcherName', slot: 'matcherName', minWidth: 180, showOverflowTooltip: true },
-  { label: t('jsfinder.extractedResults'), prop: 'extractedResults', slot: 'extractedResults', minWidth: 200 },
-  { label: t('jsfinder.tags'), prop: 'tags', slot: 'tags', minWidth: 150 },
-  { label: t('jsfinder.discoveryTime'), prop: 'createTime', width: 160 },
-  { label: t('common.operation'), slot: 'operation', width: 120, fixed: 'right' }
-])
+const jsfinderColumns = computed(() => {
+  const cols = [
+    { label: t('jsfinder.vulName'), prop: 'vulName', minWidth: 200, showOverflowTooltip: true },
+    { label: t('jsfinder.severity'), prop: 'severity', slot: 'severity', width: 100 },
+  ]
+  // JS模式显示AI研判状态列
+  if (props.mode === 'js') {
+    cols.push({ label: t('jsfinder.aiStatus'), prop: 'aiStatus', slot: 'aiStatus', width: 110 })
+  }
+  cols.push(
+    { label: t('jsfinder.target'), prop: 'authority', minWidth: 150 },
+    { label: 'URL', prop: 'url', minWidth: 250, showOverflowTooltip: true },
+    { label: t('jsfinder.matcherName'), prop: 'matcherName', slot: 'matcherName', minWidth: 180, showOverflowTooltip: true },
+    { label: t('jsfinder.tags'), prop: 'tags', slot: 'tags', minWidth: 150 },
+    { label: t('jsfinder.discoveryTime'), prop: 'createTime', width: 160 },
+    { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
+    { label: t('common.operation'), slot: 'operation', width: props.mode === 'js' ? 180 : 120, fixed: 'right' }
+  )
+  return cols
+})
 
-const jsfinderSearchItems = computed(() => [
-  { label: t('jsfinder.target'), prop: 'authority', type: 'input', placeholder: t('jsfinder.targetPlaceholder') },
-  {
-    label: t('jsfinder.severity'),
-    prop: 'severity',
-    type: 'select',
-    options: [
-      { label: t('jsfinder.critical'), value: 'critical' },
-      { label: t('jsfinder.high'), value: 'high' },
-      { label: t('jsfinder.medium'), value: 'medium' },
-      { label: t('jsfinder.low'), value: 'low' },
-      { label: t('jsfinder.info'), value: 'info' },
-      { label: t('jsfinder.unknown'), value: 'unknown' }
-    ]
-  },
-  {
-    label: t('jsfinder.riskTag'),
-    prop: 'tags',
-    type: 'select',
-    options: [
-      { label: t('jsfinder.tagHighRisk'), value: 'high-risk' },
-      { label: t('jsfinder.tagRisk'), value: 'risk' },
-      { label: t('jsfinder.tagSensitive'), value: 'sensitive' },
-      { label: t('jsfinder.tagInfoLeak'), value: 'info-leak' },
-      { label: t('jsfinder.tagUnauth'), value: 'unauth' },
-      { label: t('jsfinder.tagJsFile'), value: 'js-file' }
-    ]
-  },
-  {
+const jsfinderSearchItems = computed(() => {
+  const items = [
+    { label: t('jsfinder.target'), prop: 'authority', type: 'input', placeholder: t('jsfinder.targetPlaceholder') },
+    {
+      label: t('jsfinder.severity'),
+      prop: 'severity',
+      type: 'select',
+      options: [
+        { label: t('jsfinder.critical'), value: 'critical' },
+        { label: t('jsfinder.high'), value: 'high' },
+        { label: t('jsfinder.medium'), value: 'medium' },
+        { label: t('jsfinder.low'), value: 'low' },
+        { label: t('jsfinder.info'), value: 'info' },
+        { label: t('jsfinder.unknown'), value: 'unknown' }
+      ]
+    },
+  ]
+  // JS模式保留标签过滤，敏感信息模式移除（由后端固定过滤aiResult=risk）
+  if (props.mode === 'js') {
+    // AI研判状态筛选
+    items.push({
+      label: t('jsfinder.aiStatus'),
+      prop: 'aiStatus',
+      type: 'select',
+      options: [
+        { label: t('jsfinder.aiNotAnalyzed'), value: 'pending' },
+        { label: t('jsfinder.aiCompleted'), value: 'completed' }
+      ]
+    })
+    items.push({
+      label: t('jsfinder.riskTag'),
+      prop: 'tags',
+      type: 'select',
+      options: [
+        { label: t('jsfinder.tagHighRisk'), value: 'high-risk' },
+        { label: t('jsfinder.tagRisk'), value: 'risk' },
+        { label: t('jsfinder.tagSensitive'), value: 'sensitive' },
+        { label: t('jsfinder.tagInfoLeak'), value: 'info-leak' },
+        { label: t('jsfinder.tagUnauth'), value: 'unauth' },
+        { label: t('jsfinder.tagJsFile'), value: 'js-file' }
+      ]
+    })
+  }
+  items.push({
     label: t('jsfinder.matcherName'),
     prop: 'matcherName',
     type: 'select',
@@ -247,8 +394,9 @@ const jsfinderSearchItems = computed(() => [
       { label: t('jsfinder.matcherUnauth'), value: 'JS API Unauth Check' },
       { label: t('jsfinder.matcherSensitive'), value: 'JS Sensitive Keyword Detection' }
     ]
-  }
-])
+  })
+  return items
+})
 
 function getSeverityType(severity) {
   const map = { critical: 'danger', high: 'danger', medium: 'warning', low: 'info', info: 'info', unknown: 'info' }
@@ -573,6 +721,180 @@ function refresh() {
   proTableRef.value?.loadData()
 }
 
+// ==================== AI研判相关逻辑 ====================
+
+// 单条研判
+async function handleSingleAnalyze(row) {
+  analyzingId.value = row.id
+  try {
+    const res = await analyzeJSByAI({ id: row.id, workspaceId: row.workspaceId || '' })
+    if (res.code === 0 && res.data) {
+      // 回填到当前行
+      row.aiStatus = res.data.aiStatus
+      row.aiResult = res.data.aiResult
+      row.aiReason = res.data.aiReason
+      row.aiAnalyzedAt = res.data.aiAnalyzedAt
+      ElMessage.success(
+        res.data.aiResult === 'risk'
+          ? t('jsfinder.aiAnalyzedRisk')
+          : t('jsfinder.aiAnalyzedNoRisk')
+      )
+    } else {
+      ElMessage.error(res.msg || t('jsfinder.aiAnalyzeFailed'))
+    }
+  } catch (e) {
+    console.error('AI研判失败:', e)
+    ElMessage.error(t('jsfinder.aiAnalyzeFailed'))
+  } finally {
+    analyzingId.value = ''
+  }
+}
+
+// 批量研判
+async function handleBatchAnalyze() {
+  // 确定批量研判的范围和确认文案
+  let confirmMsg = t('jsfinder.batchAIAnalyzeConfirm')
+  const params = { workspaceId: props.extraParams?.workspaceId || '' }
+
+  const selected = selectedRows.value
+  if (selected.length > 0) {
+    // 模式1：有选中数据，研判选中的数据
+    params.ids = selected.map(row => row.id)
+    confirmMsg = t('jsfinder.batchAnalyzeSelectedConfirm', { count: selected.length })
+  } else {
+    // 模式2/3：获取当前筛选条件
+    const currentSearch = proTableRef.value?.searchForm || {}
+    const hasFilter = currentSearch.authority || currentSearch.severity || currentSearch.tags || currentSearch.matcherName || currentSearch.aiStatus
+    if (hasFilter) {
+      // 模式2：有筛选条件，研判符合条件的未研判数据
+      if (currentSearch.authority) params.query = currentSearch.authority
+      if (currentSearch.severity) params.severity = currentSearch.severity
+      if (currentSearch.tags) params.tags = currentSearch.tags
+      if (currentSearch.matcherName) params.matcherName = currentSearch.matcherName
+      if (currentSearch.aiStatus) params.aiStatus = currentSearch.aiStatus
+      confirmMsg = t('jsfinder.batchAnalyzeFilteredConfirm')
+    }
+    // 模式3：无选中无筛选，研判所有未研判数据，使用默认文案
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      confirmMsg,
+      t('common.warning'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
+    )
+  } catch {
+    return
+  }
+
+  batchAnalyzing.value = true
+  batchTotal.value = 0
+  batchCompleted.value = 0
+  batchStatus.value = 'running'
+  try {
+    const res = await batchAnalyzeJSByAI(params)
+    if (res.code === 0) {
+      if (res.total === 0) {
+        ElMessage.info(t('jsfinder.noPendingData'))
+        batchAnalyzing.value = false
+        batchStatus.value = ''
+        return
+      }
+      batchTaskId.value = res.taskId
+      batchTotal.value = res.total
+      // 持久化任务状态
+      saveBatchTaskToStorage()
+      ElMessage.success(t('jsfinder.batchTaskStarted', { total: res.total }))
+      // 开始轮询进度
+      startBatchPolling()
+    } else {
+      ElMessage.error(res.msg || t('jsfinder.batchStartFailed'))
+      batchAnalyzing.value = false
+      batchStatus.value = ''
+    }
+  } catch (e) {
+    console.error('启动批量研判失败:', e)
+    ElMessage.error(t('jsfinder.batchStartFailed'))
+    batchAnalyzing.value = false
+    batchStatus.value = ''
+  }
+}
+
+// 轮询批量研判进度（每2秒查询一次）
+function startBatchPolling() {
+  if (batchTimer) clearInterval(batchTimer)
+  batchTimer = setInterval(async () => {
+    try {
+      const res = await getBatchAnalyzeProgress({ taskId: batchTaskId.value })
+      if (res.code === 0) {
+        batchCompleted.value = res.completed
+        batchTotal.value = res.total
+        batchStatus.value = res.status
+        // 进度变化时更新localStorage
+        saveBatchTaskToStorage()
+        if (res.status === 'completed') {
+          clearInterval(batchTimer)
+          batchTimer = null
+          batchAnalyzing.value = false
+          // 任务完成，清除持久化
+          localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+          ElMessage.success(t('jsfinder.batchAnalyzeDone', { completed: res.completed, total: res.total }))
+          proTableRef.value?.loadData()
+          emit('data-changed')
+        } else if (res.status === 'failed') {
+          clearInterval(batchTimer)
+          batchTimer = null
+          batchAnalyzing.value = false
+          // 任务失败，清除持久化
+          localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+          ElMessage.error(t('jsfinder.batchAnalyzeFailed'))
+        } else if (res.status === 'stopped') {
+          clearInterval(batchTimer)
+          batchTimer = null
+          batchAnalyzing.value = false
+          // 任务已停止，清除持久化
+          localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+          ElMessage.warning(t('jsfinder.batchAnalyzeStopped', { completed: res.completed, total: res.total }))
+          proTableRef.value?.loadData()
+          emit('data-changed')
+        }
+        // running/stopping状态继续轮询
+      }
+    } catch (e) {
+      // 忽略单次轮询错误
+    }
+  }, 2000)
+}
+
+// 停止批量研判
+async function handleStopBatch() {
+  try {
+    await ElMessageBox.confirm(
+      t('jsfinder.confirmStopBatch'),
+      t('jsfinder.stopBatchAnalyze'),
+      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  try {
+    const res = await stopBatchAnalyze({ taskId: batchTaskId.value })
+    if (res.code === 0) {
+      ElMessage.info(t('jsfinder.stopSignalSent'))
+    } else {
+      ElMessage.error(res.msg || t('jsfinder.stopFailed'))
+    }
+  } catch (e) {
+    ElMessage.error(t('jsfinder.stopFailed'))
+  }
+}
+
+// 组件卸载时清理定时器
+onUnmounted(() => {
+  if (batchTimer) clearInterval(batchTimer)
+})
+
 defineExpose({ refresh })
 </script>
 
@@ -631,8 +953,21 @@ defineExpose({ refresh })
     gap: 6px;
   }
 
+  .extracted-results {
+    max-height: 300px;
+    overflow-y: auto;
+  }
   .extracted-item {
-    display: inline-block;
+    display: block;
+    margin-bottom: 6px;
+    word-break: break-all;
+    line-height: 1.6;
+  }
+  .extracted-content {
+    background: var(--el-fill-color-light);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
   }
 
   .highlight-mark {

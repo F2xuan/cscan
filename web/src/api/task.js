@@ -10,6 +10,11 @@ export function createTask(data) {
   return request.post('/task/create', data)
 }
 
+// 一键扫描（T4.1）：仅传目标 + 模式，后端智能选扫描阶段
+export function quickCreateTask(data) {
+  return request.post('/task/quickCreate', data)
+}
+
 export function deleteTask(data) {
   return request.post('/task/delete', data)
 }

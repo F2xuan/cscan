@@ -63,72 +63,873 @@
   --chart-5: 27 87% 67%;
 }
 
-/* 暗色主题 - 纯黑色 */
+/* 暗色主题 - Vercel-style refined dark */
 html.dark {
-  --background: 0 0% 0%;
+  --background: 0 0% 3.9%;
   --foreground: 0 0% 98%;
-  --card: 0 0% 0%;
+  --card: 0 0% 9%;
   --card-foreground: 0 0% 98%;
-  --popover: 0 0% 0%;
+  --popover: 0 0% 15%;
   --popover-foreground: 0 0% 98%;
   --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 0 0% 0%;
-  --secondary: 0 0% 10%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 15%;
   --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 10%;
-  --muted-foreground: 0 0% 65%;
-  --accent: 0 0% 10%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 63%;
+  --accent: 0 0% 15%;
   --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
+  --destructive: 0 62.8% 50%;
   --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 15%;
-  --input: 0 0% 10%;
-  --ring: 224.3 76.3% 94.1%;
+  --border: 0 0% 16%;
+  --input: 0 0% 20%;
+  --ring: 217.2 91.2% 59.8%;
   
   /* 侧边栏 */
-  --sidebar: 0 0% 0%;
-  --sidebar-foreground: 0 0% 95%;
-  --sidebar-primary: 224.3 76.3% 94.1%;
-  --sidebar-primary-foreground: 0 0% 0%;
+  --sidebar: 0 0% 5.5%;
+  --sidebar-foreground: 0 0% 93%;
+  --sidebar-primary: 217.2 91.2% 59.8%;
+  --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 0 0% 12%;
-  --sidebar-accent-foreground: 0 0% 95%;
-  --sidebar-border: 0 0% 15%;
+  --sidebar-accent-foreground: 0 0% 93%;
+  --sidebar-border: 0 0% 14%;
   --sidebar-ring: 217.2 91.2% 59.8%;
   
   /* 图表颜色 */
-  --chart-1: 220 70% 50%;
+  --chart-1: 217 91% 60%;
   --chart-2: 160 60% 45%;
   --chart-3: 30 80% 55%;
   --chart-4: 280 65% 60%;
   --chart-5: 340 75% 55%;
   
   /* 状态颜色变量 - 暗色模式 */
-  --status-success: #67c23a;
-  --status-warning: #e6a23c;
-  --status-danger: #f56c6c;
-  --status-info: #909399;
-  --status-primary: #409eff;
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-danger: #f87171;
+  --status-info: #9ca3af;
+  --status-primary: #60a5fa;
   
   /* 代码编辑器/终端背景 - 暗色模式 */
-  --code-bg: #1e1e1e;
-  --code-text: #d4d4d4;
-  --code-border: #3c3c3c;
+  --code-bg: #1a1a1a;
+  --code-text: #e5e5e5;
+  --code-border: #333333;
   
   /* 辅助文本颜色 - 暗色模式 */
-  --text-muted: #a3a6ad;
+  --text-muted: #a1a1a1;
 }
 
-/* ============================================ */
-/* Pure White 主题 - 纯白色 */
-/* ============================================ */
-html.light.theme-pure-white,
-html.theme-pure-white:not(.dark) {
+/* ═══════════════════════════════════════════════════════════════
+   款式系统 — 10 个设计系统（变量驱动）
+   策略：
+     A) html.style-*  → 定义款式级 CSS 变量 + 覆盖 Element Plus 组件
+     B) .element.style-* → 覆盖 Vue scoped 组件（绕过 [data-v-xxx] 特异性）
+   每个款式定义自己的颜色令牌（light/dark）、圆角、字体、阴影、交互效果
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── 1. 款式令牌定义 ────────────────────────────────────── */
+
+/* vercel — Light */
+html.style-vercel.light,
+html.style-vercel:not(.dark) {
   --background: 0 0% 100%;
-  --foreground: 240 10% 10%;
+  --foreground: 0 0% 4%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 10%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 10%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 0 0% 4%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 52%;
+  --accent: 0 0% 96%;
+  --accent-foreground: 0 0% 4%;
+  --destructive: 358 75% 59%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 91%;
+  --input: 0 0% 91%;
+  --ring: 217 91% 60%;
+  --sidebar: 0 0% 98%;
+  --sidebar-foreground: 0 0% 24%;
+  --sidebar-primary: 217 91% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 94%;
+  --sidebar-accent-foreground: 0 0% 4%;
+  --sidebar-border: 0 0% 91%;
+  --code-bg: 0 0% 96%;
+  --code-text: 0 0% 4%;
+  --code-border: 0 0% 91%;
+  --el-color-primary: #3b82f6;
+  --el-color-primary-light-3: #3b82f6;
+  --el-color-primary-light-5: #3b82f6;
+  --el-color-primary-light-7: #3b82f6;
+  --el-color-primary-light-8: #3b82f6;
+  --el-color-primary-light-9: #3b82f6;
+  --el-color-primary-dark-2: #3b82f6;
+  --radius: 6px;
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 4px;
+  --style-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 6px;
+  --style-radius-card: 6px;
+  --style-radius-dialog: 12px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 8px;
+  --style-radius-tag: 4px;
+  --style-radius-msg: 8px;
+  --style-radius-checkbox: 3px;
+  --style-radius-avatar: 6px;
+  --style-radius-alert: 8px;
+  --style-radius-progress: 4px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 4px;
+  --style-radius-tabs: 4px;
+  --style-radius-stat: 8px;
+  --style-radius-bubble: 6px;
+  --style-radius-menu: 6px;
+  --style-radius-logo: 6px;
+  --style-radius-login: 8px;
+  --style-radius-scrollbar: 4px;
+  --style-shadow-card: none;
+  --style-shadow-card-hover: none;
+  --style-shadow-dialog: 0 0 0 1px #e8e8e8, 0 8px 40px rgba(0,0,0,0.12);
+  --style-shadow-popover: 0 0 0 1px #e8e8e8, 0 4px 24px rgba(0,0,0,0.1);
+  --style-shadow-stat: none;
+  --style-shadow-stat-hover: none;
+  --style-shadow-login: 0 8px 32px rgba(0,0,0,0.1);
+  --style-card-hover-transform: none;
+  --style-btn-hover-filter: none;
+  --style-btn-active-transform: none;
+  --style-table-hover-bg: transparent;
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 4px;
+  --style-dialog-blur: 12px;
+}
+
+/* vercel — Dark */
+html.style-vercel.dark {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 7%;
+  --popover: 0 0% 10%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 10%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 63%;
+  --accent: 0 0% 10%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 358 100% 69%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 16%;
+  --input: 0 0% 16%;
+  --ring: 217 91% 60%;
+  --sidebar: 0 0% 7%;
+  --sidebar-foreground: 0 0% 63%;
+  --sidebar-primary: 217 91% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 10%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-border: 0 0% 10%;
+  --code-bg: 0 0% 4%;
+  --code-text: 0 0% 98%;
+  --code-border: 0 0% 16%;
+  --el-color-primary: #3b82f6;
+  --el-color-primary-light-3: #3b82f6;
+  --el-color-primary-light-5: #3b82f6;
+  --el-color-primary-light-7: #3b82f6;
+  --el-color-primary-light-8: #3b82f6;
+  --el-color-primary-light-9: #3b82f6;
+  --el-color-primary-dark-2: #3b82f6;
+  --radius: 6px;
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 4px;
+  --style-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 6px;
+  --style-radius-card: 6px;
+  --style-radius-dialog: 12px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 8px;
+  --style-radius-tag: 4px;
+  --style-radius-msg: 8px;
+  --style-radius-checkbox: 3px;
+  --style-radius-avatar: 6px;
+  --style-radius-alert: 8px;
+  --style-radius-progress: 4px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 4px;
+  --style-radius-tabs: 4px;
+  --style-radius-stat: 8px;
+  --style-radius-bubble: 6px;
+  --style-radius-menu: 6px;
+  --style-radius-logo: 6px;
+  --style-radius-login: 8px;
+  --style-radius-scrollbar: 4px;
+  --style-shadow-card: none;
+  --style-shadow-card-hover: none;
+  --style-shadow-dialog: 0 0 0 1px #282828, 0 8px 40px rgba(0,0,0,0.4);
+  --style-shadow-popover: 0 0 0 1px #282828, 0 4px 24px rgba(0,0,0,0.5);
+  --style-shadow-stat: none;
+  --style-shadow-stat-hover: none;
+  --style-shadow-login: 0 8px 32px rgba(0,0,0,0.4);
+  --style-card-hover-transform: none;
+  --style-btn-hover-filter: none;
+  --style-btn-active-transform: none;
+  --style-table-hover-bg: transparent;
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 4px;
+  --style-dialog-blur: 12px;
+}
+
+/* apple — Light */
+html.style-apple.light,
+html.style-apple:not(.dark) {
+  --background: 0 0% 100%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --primary: 211 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 24% 96%;
+  --secondary-foreground: 240 3% 12%;
+  --muted: 240 24% 96%;
+  --muted-foreground: 240 2% 57%;
+  --accent: 240 24% 96%;
+  --accent-foreground: 240 3% 12%;
+  --destructive: 3 100% 59%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 11% 91%;
+  --input: 240 11% 91%;
+  --ring: 211 100% 50%;
+  --sidebar: 240 11% 96%;
+  --sidebar-foreground: 240 2% 23%;
+  --sidebar-primary: 211 100% 50%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 11% 91%;
+  --sidebar-accent-foreground: 240 3% 12%;
+  --sidebar-border: 240 11% 91%;
+  --code-bg: 240 11% 96%;
+  --code-text: 240 3% 12%;
+  --code-border: 240 11% 91%;
+  --el-color-primary: #007aff;
+  --el-color-primary-light-3: #007aff;
+  --el-color-primary-light-5: #007aff;
+  --el-color-primary-light-7: #007aff;
+  --el-color-primary-light-8: #007aff;
+  --el-color-primary-light-9: #007aff;
+  --el-color-primary-dark-2: #007aff;
+  --radius: 16px;
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 10px;
+  --el-border-radius-round: 999px;
+  --style-font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 10px;
+  --style-radius-card: 16px;
+  --style-radius-dialog: 20px;
+  --style-radius-drawer: 20px;
+  --style-radius-popover: 16px;
+  --style-radius-tag: 999px;
+  --style-radius-msg: 12px;
+  --style-radius-checkbox: 6px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 12px;
+  --style-radius-progress: 10px;
+  --style-radius-tooltip: 12px;
+  --style-radius-pager: 10px;
+  --style-radius-tabs: 10px;
+  --style-radius-stat: 16px;
+  --style-radius-bubble: 14px;
+  --style-radius-menu: 12px;
+  --style-radius-logo: 12px;
+  --style-radius-login: 20px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 3px -1px rgba(0,0,0,0.05);
+  --style-shadow-card-hover: 0 8px 24px -8px rgba(0,0,0,0.08), 0 4px 8px -4px rgba(0,0,0,0.05);
+  --style-shadow-dialog: 0 16px 40px -10px rgba(0,0,0,0.10), 0 8px 16px -8px rgba(0,0,0,0.06);
+  --style-shadow-popover: 0 4px 8px -2px rgba(0,0,0,0.06), 0 2px 4px -2px rgba(0,0,0,0.05);
+  --style-shadow-stat: 0 1px 3px rgba(0,0,0,0.04);
+  --style-shadow-stat-hover: 0 4px 12px rgba(0,0,0,0.06);
+  --style-shadow-login: 0 16px 40px -10px rgba(0,0,0,0.10), 0 8px 16px -8px rgba(0,0,0,0.06);
+  --style-card-hover-transform: translateY(-2px);
+  --style-btn-hover-filter: brightness(0.96);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(0,0,0,0.02);
+  --style-scrollbar-width: 8px;
+  --style-overlay-blur: 8px;
+  --style-dialog-blur: 16px;
+}
+
+/* apple — Dark */
+html.style-apple.dark {
+  --background: 0 0% 0%;
+  --foreground: 240 11% 96%;
+  --card: 240 3% 11%;
+  --popover: 240 2% 18%;
+  --primary: 213 100% 59%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 3% 11%;
+  --secondary-foreground: 240 11% 96%;
+  --muted: 240 3% 11%;
+  --muted-foreground: 240 2% 57%;
+  --accent: 240 3% 11%;
+  --accent-foreground: 240 11% 96%;
+  --destructive: 3 100% 61%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 2% 23%;
+  --input: 240 2% 23%;
+  --ring: 213 100% 59%;
+  --sidebar: 240 3% 11%;
+  --sidebar-foreground: 240 3% 69%;
+  --sidebar-primary: 213 100% 59%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 2% 18%;
+  --sidebar-accent-foreground: 240 11% 96%;
+  --sidebar-border: 240 2% 23%;
+  --code-bg: 240 3% 11%;
+  --code-text: 240 11% 96%;
+  --code-border: 240 2% 23%;
+  --el-color-primary: #2e8dff;
+  --el-color-primary-light-3: #2e8dff;
+  --el-color-primary-light-5: #2e8dff;
+  --el-color-primary-light-7: #2e8dff;
+  --el-color-primary-light-8: #2e8dff;
+  --el-color-primary-light-9: #2e8dff;
+  --el-color-primary-dark-2: #2e8dff;
+  --radius: 16px;
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 10px;
+  --el-border-radius-round: 999px;
+  --style-font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 10px;
+  --style-radius-card: 16px;
+  --style-radius-dialog: 20px;
+  --style-radius-drawer: 20px;
+  --style-radius-popover: 16px;
+  --style-radius-tag: 999px;
+  --style-radius-msg: 12px;
+  --style-radius-checkbox: 6px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 12px;
+  --style-radius-progress: 10px;
+  --style-radius-tooltip: 12px;
+  --style-radius-pager: 10px;
+  --style-radius-tabs: 10px;
+  --style-radius-stat: 16px;
+  --style-radius-bubble: 14px;
+  --style-radius-menu: 12px;
+  --style-radius-logo: 12px;
+  --style-radius-login: 20px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 1px 2px 0 rgba(0,0,0,0.36), 0 1px 3px -1px rgba(0,0,0,0.36);
+  --style-shadow-card-hover: 0 8px 24px -8px rgba(0,0,0,0.50), 0 4px 8px -4px rgba(0,0,0,0.40);
+  --style-shadow-dialog: 0 16px 40px -10px rgba(0,0,0,0.55), 0 8px 16px -8px rgba(0,0,0,0.44);
+  --style-shadow-popover: 0 4px 8px -2px rgba(0,0,0,0.44), 0 2px 4px -2px rgba(0,0,0,0.36);
+  --style-shadow-stat: 0 1px 3px rgba(0,0,0,0.3);
+  --style-shadow-stat-hover: 0 4px 12px rgba(0,0,0,0.4);
+  --style-shadow-login: 0 16px 40px -10px rgba(0,0,0,0.55), 0 8px 16px -8px rgba(0,0,0,0.44);
+  --style-card-hover-transform: translateY(-2px);
+  --style-btn-hover-filter: brightness(0.96);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(255,255,255,0.04);
+  --style-scrollbar-width: 8px;
+  --style-overlay-blur: 8px;
+  --style-dialog-blur: 16px;
+}
+
+/* 21th — Light */
+html.style-21th.light,
+html.style-21th:not(.dark) {
+  --background: 180 4% 78%;
+  --foreground: 0 0% 7%;
+  --card: 180 3% 85%;
+  --popover: 180 3% 85%;
+  --primary: 0 0% 7%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 195 3% 75%;
+  --secondary-foreground: 0 0% 7%;
+  --muted: 195 3% 75%;
+  --muted-foreground: 198 5% 38%;
+  --accent: 195 3% 75%;
+  --accent-foreground: 0 0% 7%;
+  --destructive: 0 67% 52%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 180 3% 70%;
+  --input: 180 3% 70%;
+  --ring: 225 100% 50%;
+  --sidebar: 180 3% 75%;
+  --sidebar-foreground: 206 5% 25%;
+  --sidebar-primary: 0 0% 7%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 180 3% 70%;
+  --sidebar-accent-foreground: 0 0% 7%;
+  --sidebar-border: 180 3% 70%;
+  --code-bg: 180 3% 75%;
+  --code-text: 0 0% 7%;
+  --code-border: 180 3% 70%;
+  --el-color-primary: #111111;
+  --el-color-primary-light-3: #111111;
+  --el-color-primary-light-5: #111111;
+  --el-color-primary-light-7: #111111;
+  --el-color-primary-light-8: #111111;
+  --el-color-primary-light-9: #111111;
+  --el-color-primary-dark-2: #111111;
+  --radius: 0px;
+  --el-border-radius-base: 0px;
+  --el-border-radius-small: 0px;
+  --el-border-radius-round: 0px;
+  --style-font-sans: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --style-font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --style-tracking: -0.05em;
+  --style-radius-btn: 0px;
+  --style-radius-card: 0px;
+  --style-radius-dialog: 0px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 0px;
+  --style-radius-tag: 0px;
+  --style-radius-msg: 0px;
+  --style-radius-checkbox: 0px;
+  --style-radius-avatar: 0px;
+  --style-radius-alert: 0px;
+  --style-radius-progress: 0px;
+  --style-radius-tooltip: 0px;
+  --style-radius-pager: 0px;
+  --style-radius-tabs: 0px;
+  --style-radius-stat: 0px;
+  --style-radius-bubble: 0px;
+  --style-radius-menu: 0px;
+  --style-radius-logo: 0px;
+  --style-radius-login: 0px;
+  --style-radius-scrollbar: 0px;
+  --style-shadow-card: 2px 2px 0px 0px #000000;
+  --style-shadow-card-hover: 3px 3px 0px 0px #000000;
+  --style-shadow-dialog: 4px 4px 0px 0px #000000;
+  --style-shadow-popover: 2px 2px 0px 0px #000000;
+  --style-shadow-stat: 2px 2px 0px 0px #000000;
+  --style-shadow-stat-hover: 3px 3px 0px 0px #000000;
+  --style-shadow-login: 4px 4px 0px 0px #000000;
+  --style-card-hover-transform: translate(-1px,-1px);
+  --style-btn-hover-filter: none;
+  --style-btn-active-transform: translate(1px,1px);
+  --style-table-hover-bg: rgba(0,0,0,0.06);
+  --style-scrollbar-width: 4px;
+  --style-overlay-blur: 0px;
+  --style-dialog-blur: 0px;
+}
+
+/* 21th — Dark */
+html.style-21th.dark {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 100%;
+  --card: 0 0% 10%;
+  --popover: 0 0% 13%;
+  --primary: 0 0% 100%;
+  --primary-foreground: 0 0% 4%;
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 0 0% 12%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 16%;
+  --input: 0 0% 16%;
+  --ring: 225 100% 50%;
+  --sidebar: 0 0% 8%;
+  --sidebar-foreground: 0 0% 60%;
+  --sidebar-primary: 0 0% 100%;
+  --sidebar-primary-foreground: 0 0% 4%;
+  --sidebar-accent: 0 0% 12%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 0 0% 16%;
+  --code-bg: 0 0% 10%;
+  --code-text: 0 0% 100%;
+  --code-border: 0 0% 16%;
+  --el-color-primary: #ffffff;
+  --el-color-primary-light-3: #ffffff;
+  --el-color-primary-light-5: #ffffff;
+  --el-color-primary-light-7: #ffffff;
+  --el-color-primary-light-8: #ffffff;
+  --el-color-primary-light-9: #ffffff;
+  --el-color-primary-dark-2: #ffffff;
+  --radius: 0px;
+  --el-border-radius-base: 0px;
+  --el-border-radius-small: 0px;
+  --el-border-radius-round: 0px;
+  --style-font-sans: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --style-font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --style-tracking: -0.05em;
+  --style-radius-btn: 0px;
+  --style-radius-card: 0px;
+  --style-radius-dialog: 0px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 0px;
+  --style-radius-tag: 0px;
+  --style-radius-msg: 0px;
+  --style-radius-checkbox: 0px;
+  --style-radius-avatar: 0px;
+  --style-radius-alert: 0px;
+  --style-radius-progress: 0px;
+  --style-radius-tooltip: 0px;
+  --style-radius-pager: 0px;
+  --style-radius-tabs: 0px;
+  --style-radius-stat: 0px;
+  --style-radius-bubble: 0px;
+  --style-radius-menu: 0px;
+  --style-radius-logo: 0px;
+  --style-radius-login: 0px;
+  --style-radius-scrollbar: 0px;
+  --style-shadow-card: 2px 2px 0px 0px #000000;
+  --style-shadow-card-hover: 3px 3px 0px 0px #000000;
+  --style-shadow-dialog: 4px 4px 0px 0px #000000;
+  --style-shadow-popover: 2px 2px 0px 0px #000000;
+  --style-shadow-stat: 2px 2px 0px 0px #000000;
+  --style-shadow-stat-hover: 3px 3px 0px 0px #000000;
+  --style-shadow-login: 4px 4px 0px 0px #000000;
+  --style-card-hover-transform: translate(-1px,-1px);
+  --style-btn-hover-filter: none;
+  --style-btn-active-transform: translate(1px,1px);
+  --style-table-hover-bg: rgba(255,255,255,0.06);
+  --style-scrollbar-width: 4px;
+  --style-overlay-blur: 0px;
+  --style-dialog-blur: 0px;
+}
+
+/* claude — Light */
+html.style-claude.light,
+html.style-claude:not(.dark) {
+  --background: 48 33% 97%;
+  --foreground: 48 20% 20%;
+  --card: 50 23% 95%;
+  --popover: 50 23% 95%;
+  --primary: 15 56% 52%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 49 27% 92%;
+  --secondary-foreground: 48 20% 20%;
+  --muted: 49 27% 92%;
+  --muted-foreground: 41 8% 51%;
+  --accent: 49 27% 92%;
+  --accent-foreground: 48 20% 20%;
+  --destructive: 15 56% 52%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 45 21% 89%;
+  --input: 45 21% 89%;
+  --ring: 15 56% 52%;
+  --sidebar: 50 23% 95%;
+  --sidebar-foreground: 44 11% 38%;
+  --sidebar-primary: 15 56% 52%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 49 27% 92%;
+  --sidebar-accent-foreground: 48 20% 20%;
+  --sidebar-border: 45 21% 89%;
+  --code-bg: 49 27% 92%;
+  --code-text: 48 20% 20%;
+  --code-border: 45 21% 89%;
+  --el-color-primary: #c96442;
+  --el-color-primary-light-3: #c96442;
+  --el-color-primary-light-5: #c96442;
+  --el-color-primary-light-7: #c96442;
+  --el-color-primary-light-8: #c96442;
+  --el-color-primary-light-9: #c96442;
+  --el-color-primary-dark-2: #c96442;
+  --radius: 12px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 999px;
+  --style-font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 12px;
+  --style-radius-dialog: 16px;
+  --style-radius-drawer: 16px;
+  --style-radius-popover: 12px;
+  --style-radius-tag: 999px;
+  --style-radius-msg: 12px;
+  --style-radius-checkbox: 4px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 12px;
+  --style-radius-progress: 8px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 8px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 12px;
+  --style-radius-bubble: 10px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 10px;
+  --style-radius-login: 16px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 1px 3px rgba(61,57,41,0.06);
+  --style-shadow-card-hover: 0 4px 12px rgba(61,57,41,0.08);
+  --style-shadow-dialog: 0 12px 32px -8px rgba(61,57,41,0.12), 0 4px 8px -4px rgba(61,57,41,0.06);
+  --style-shadow-popover: 0 2px 8px -1px rgba(61,57,41,0.08);
+  --style-shadow-stat: 0 1px 3px rgba(61,57,41,0.04);
+  --style-shadow-stat-hover: 0 4px 10px rgba(61,57,41,0.06);
+  --style-shadow-login: 0 12px 32px -8px rgba(61,57,41,0.12), 0 4px 8px -4px rgba(61,57,41,0.06);
+  --style-card-hover-transform: translateY(-1px);
+  --style-btn-hover-filter: brightness(0.97);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(61,57,41,0.03);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 10px;
+}
+
+/* claude — Dark */
+html.style-claude.dark {
+  --background: 60 3% 15%;
+  --foreground: 60 7% 94%;
+  --card: 60 1% 17%;
+  --popover: 60 2% 21%;
+  --primary: 15 63% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 2% 20%;
+  --secondary-foreground: 60 7% 94%;
+  --muted: 60 2% 20%;
+  --muted-foreground: 38 7% 57%;
+  --accent: 60 2% 20%;
+  --accent-foreground: 60 7% 94%;
+  --destructive: 15 63% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 60 3% 23%;
+  --input: 60 3% 23%;
+  --ring: 15 63% 60%;
+  --sidebar: 60 1% 17%;
+  --sidebar-foreground: 38 7% 57%;
+  --sidebar-primary: 15 63% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 60 2% 20%;
+  --sidebar-accent-foreground: 60 7% 94%;
+  --sidebar-border: 60 3% 23%;
+  --code-bg: 60 2% 20%;
+  --code-text: 60 7% 94%;
+  --code-border: 60 3% 23%;
+  --el-color-primary: #d97757;
+  --el-color-primary-light-3: #d97757;
+  --el-color-primary-light-5: #d97757;
+  --el-color-primary-light-7: #d97757;
+  --el-color-primary-light-8: #d97757;
+  --el-color-primary-light-9: #d97757;
+  --el-color-primary-dark-2: #d97757;
+  --radius: 12px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 999px;
+  --style-font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 12px;
+  --style-radius-dialog: 16px;
+  --style-radius-drawer: 16px;
+  --style-radius-popover: 12px;
+  --style-radius-tag: 999px;
+  --style-radius-msg: 12px;
+  --style-radius-checkbox: 4px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 12px;
+  --style-radius-progress: 8px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 8px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 12px;
+  --style-radius-bubble: 10px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 10px;
+  --style-radius-login: 16px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 1px 3px rgba(0,0,0,0.3);
+  --style-shadow-card-hover: 0 4px 12px rgba(0,0,0,0.4);
+  --style-shadow-dialog: 0 12px 32px -8px rgba(0,0,0,0.5), 0 4px 8px -4px rgba(0,0,0,0.3);
+  --style-shadow-popover: 0 2px 8px -1px rgba(0,0,0,0.4);
+  --style-shadow-stat: 0 1px 3px rgba(0,0,0,0.2);
+  --style-shadow-stat-hover: 0 4px 10px rgba(0,0,0,0.3);
+  --style-shadow-login: 0 12px 32px -8px rgba(0,0,0,0.5), 0 4px 8px -4px rgba(0,0,0,0.3);
+  --style-card-hover-transform: translateY(-1px);
+  --style-btn-hover-filter: brightness(0.97);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(255,255,255,0.04);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 10px;
+}
+
+/* google — Light */
+html.style-google.light,
+html.style-google:not(.dark) {
+  --background: 0 0% 100%;
+  --foreground: 214 20% 7%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --primary: 217 89% 61%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 9% 98%;
+  --secondary-foreground: 214 20% 7%;
+  --muted: 240 9% 98%;
+  --muted-foreground: 213 5% 39%;
+  --accent: 216 19% 95%;
+  --accent-foreground: 214 20% 7%;
+  --destructive: 5 81% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 92%;
+  --input: 0 0% 92%;
+  --ring: 217 89% 61%;
+  --sidebar: 216 100% 97%;
+  --sidebar-foreground: 206 6% 25%;
+  --sidebar-primary: 217 89% 61%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 218 92% 95%;
+  --sidebar-accent-foreground: 214 20% 7%;
+  --sidebar-border: 0 0% 92%;
+  --code-bg: 240 9% 98%;
+  --code-text: 214 20% 7%;
+  --code-border: 0 0% 92%;
+  --el-color-primary: #4285f4;
+  --el-color-primary-light-3: #4285f4;
+  --el-color-primary-light-5: #4285f4;
+  --el-color-primary-light-7: #4285f4;
+  --el-color-primary-light-8: #4285f4;
+  --el-color-primary-light-9: #4285f4;
+  --el-color-primary-dark-2: #4285f4;
+  --radius: 8px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 4px;
+  --style-font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 8px;
+  --style-radius-dialog: 12px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 8px;
+  --style-radius-tag: 4px;
+  --style-radius-msg: 8px;
+  --style-radius-checkbox: 2px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 8px;
+  --style-radius-progress: 4px;
+  --style-radius-tooltip: 6px;
+  --style-radius-pager: 6px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 8px;
+  --style-radius-bubble: 8px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 8px;
+  --style-radius-login: 12px;
+  --style-radius-scrollbar: 4px;
+  --style-shadow-card: none;
+  --style-shadow-card-hover: 0 1px 3px rgba(0,0,0,0.08);
+  --style-shadow-dialog: 0 4px 24px rgba(0,0,0,0.1);
+  --style-shadow-popover: 0 2px 8px rgba(0,0,0,0.08);
+  --style-shadow-stat: none;
+  --style-shadow-stat-hover: 0 1px 3px rgba(0,0,0,0.06);
+  --style-shadow-login: 0 4px 24px rgba(0,0,0,0.1);
+  --style-card-hover-transform: none;
+  --style-btn-hover-filter: brightness(0.95);
+  --style-btn-active-transform: scale(0.97);
+  --style-table-hover-bg: rgba(0,0,0,0.03);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 4px;
+  --style-dialog-blur: 8px;
+}
+
+/* google — Dark */
+html.style-google.dark {
+  --background: 0 0% 9%;
+  --foreground: 216 19% 95%;
+  --card: 60 2% 11%;
+  --popover: 60 1% 17%;
+  --primary: 350 97% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 2% 11%;
+  --secondary-foreground: 216 19% 95%;
+  --muted: 60 2% 11%;
+  --muted-foreground: 210 6% 63%;
+  --accent: 60 2% 11%;
+  --accent-foreground: 216 19% 95%;
+  --destructive: 5 81% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 16%;
+  --input: 0 0% 16%;
+  --ring: 350 97% 58%;
+  --sidebar: 0 0% 9%;
+  --sidebar-foreground: 210 6% 63%;
+  --sidebar-primary: 350 97% 58%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 60 1% 17%;
+  --sidebar-accent-foreground: 216 19% 95%;
+  --sidebar-border: 0 0% 16%;
+  --code-bg: 60 2% 11%;
+  --code-text: 216 19% 95%;
+  --code-border: 0 0% 16%;
+  --el-color-primary: #fc2c50;
+  --el-color-primary-light-3: #fc2c50;
+  --el-color-primary-light-5: #fc2c50;
+  --el-color-primary-light-7: #fc2c50;
+  --el-color-primary-light-8: #fc2c50;
+  --el-color-primary-light-9: #fc2c50;
+  --el-color-primary-dark-2: #fc2c50;
+  --radius: 8px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 4px;
+  --style-font-sans: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 8px;
+  --style-radius-dialog: 12px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 8px;
+  --style-radius-tag: 4px;
+  --style-radius-msg: 8px;
+  --style-radius-checkbox: 2px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 8px;
+  --style-radius-progress: 4px;
+  --style-radius-tooltip: 6px;
+  --style-radius-pager: 6px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 8px;
+  --style-radius-bubble: 8px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 8px;
+  --style-radius-login: 12px;
+  --style-radius-scrollbar: 4px;
+  --style-shadow-card: none;
+  --style-shadow-card-hover: 0 1px 3px rgba(0,0,0,0.4);
+  --style-shadow-dialog: 0 4px 24px rgba(0,0,0,0.5);
+  --style-shadow-popover: 0 2px 8px rgba(0,0,0,0.4);
+  --style-shadow-stat: none;
+  --style-shadow-stat-hover: 0 1px 3px rgba(0,0,0,0.3);
+  --style-shadow-login: 0 4px 24px rgba(0,0,0,0.5);
+  --style-card-hover-transform: none;
+  --style-btn-hover-filter: brightness(0.95);
+  --style-btn-active-transform: scale(0.97);
+  --style-table-hover-bg: rgba(255,255,255,0.04);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 4px;
+  --style-dialog-blur: 8px;
+}
+
+/* minimal — Light */
+html.style-minimal.light,
+html.style-minimal:not(.dark) {
+  --background: 0 0% 100%;
+  --foreground: 240 6% 10%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
   --primary: 240 6% 10%;
   --primary-foreground: 0 0% 100%;
   --secondary: 240 5% 96%;
@@ -137,999 +938,1413 @@ html.theme-pure-white:not(.dark) {
   --muted-foreground: 240 4% 46%;
   --accent: 240 5% 96%;
   --accent-foreground: 240 6% 10%;
-  --destructive: 0 84.2% 60.2%;
+  --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --border: 240 6% 90%;
   --input: 240 6% 90%;
   --ring: 240 6% 10%;
-  
-  /* 侧边栏 */
-  --sidebar: 0 0% 100%;
-  --sidebar-foreground: 240 6% 20%;
+  --sidebar: 240 5% 96%;
+  --sidebar-foreground: 240 5% 34%;
   --sidebar-primary: 240 6% 10%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 240 5% 96%;
-  --sidebar-accent-foreground: 240 6% 15%;
+  --sidebar-accent: 240 6% 90%;
+  --sidebar-accent-foreground: 240 6% 10%;
   --sidebar-border: 240 6% 90%;
-  --sidebar-ring: 240 6% 10%;
-}
-
-html.dark.theme-pure-white {
-  --background: 0 0% 0%;
-  --foreground: 0 0% 98%;
-  --card: 0 0% 0%;
-  --card-foreground: 0 0% 98%;
-  --popover: 0 0% 0%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 0 0% 0%;
-  --secondary: 0 0% 10%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 10%;
-  --muted-foreground: 0 0% 65%;
-  --accent: 0 0% 12%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 15%;
-  --input: 0 0% 10%;
-  --ring: 0 0% 98%;
-  
-  /* 侧边栏 */
-  --sidebar: 0 0% 0%;
-  --sidebar-foreground: 0 0% 95%;
-  --sidebar-primary: 0 0% 98%;
-  --sidebar-primary-foreground: 0 0% 0%;
-  --sidebar-accent: 0 0% 12%;
-  --sidebar-accent-foreground: 0 0% 95%;
-  --sidebar-border: 0 0% 15%;
-  --sidebar-ring: 0 0% 98%;
-}
-
-/* Vercel 主题 - 亮色模式 */
-html.light.theme-vercel,
-html.theme-vercel:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 0 0% 3.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 0 0% 3.9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 3.9%;
-  --primary: 0 0% 9%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 0 0% 96.1%;
-  --secondary-foreground: 0 0% 9%;
-  --muted: 0 0% 96.1%;
-  --muted-foreground: 0 0% 45.1%;
-  --accent: 0 0% 96.1%;
-  --accent-foreground: 0 0% 9%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 89.8%;
-  --input: 0 0% 89.8%;
-  --ring: 0 0% 3.9%;
-}
-
-/* Vercel 主题 - 暗色模式 */
-html.dark.theme-vercel {
-  --background: 0 0% 3.9%;
-  --foreground: 0 0% 98%;
-  --card: 0 0% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --popover: 0 0% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 0 0% 9%;
-  --secondary: 0 0% 14.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 14.9%;
-  --muted-foreground: 0 0% 63.9%;
-  --accent: 0 0% 14.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 14.9%;
-  --input: 0 0% 14.9%;
-  --ring: 0 0% 83.1%;
-}
-
-/* Cosmic Night 主题 - 仅暗色模式 */
-html.dark.theme-cosmic-night {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 263 70% 50%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 263 70% 50%;
-}
-
-/* Quantum Rose 主题 - 亮色模式 */
-html.light.theme-quantum-rose,
-html.theme-quantum-rose:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  --primary: 346 77% 49.8%;
-  --primary-foreground: 355.7 100% 97.3%;
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 346 77% 49.8%;
-}
-
-/* Quantum Rose 主题 - 暗色模式 */
-html.dark.theme-quantum-rose {
-  --background: 346 30% 6%;
-  --foreground: 346 20% 95%;
-  --card: 346 30% 6%;
-  --card-foreground: 346 20% 95%;
-  --popover: 346 30% 6%;
-  --popover-foreground: 346 20% 95%;
-  --primary: 346 77% 55%;
-  --primary-foreground: 346 50% 5%;
-  --secondary: 346 20% 15%;
-  --secondary-foreground: 346 20% 95%;
-  --muted: 346 20% 15%;
-  --muted-foreground: 346 15% 60%;
-  --accent: 346 20% 18%;
-  --accent-foreground: 346 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 346 20% 18%;
-  --input: 346 20% 18%;
-  --ring: 346 77% 55%;
-}
-
-/* Clean Slate 主题 - 亮色模式 */
-html.light.theme-clean-slate,
-html.theme-clean-slate:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222.2 84% 4.9%;
-  --primary: 210 40% 20%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 210 40% 96%;
-  --secondary-foreground: 222.2 84% 4.9%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215.4 16.3% 46.9%;
-  --accent: 210 40% 96%;
-  --accent-foreground: 222.2 84% 4.9%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 210 40% 20%;
-}
-
-/* Clean Slate 主题 - 暗色模式 */
-html.dark.theme-clean-slate {
-  --background: 210 30% 6%;
-  --foreground: 210 20% 95%;
-  --card: 210 30% 6%;
-  --card-foreground: 210 20% 95%;
-  --popover: 210 30% 6%;
-  --popover-foreground: 210 20% 95%;
-  --primary: 210 40% 50%;
-  --primary-foreground: 210 50% 5%;
-  --secondary: 210 20% 15%;
-  --secondary-foreground: 210 20% 95%;
-  --muted: 210 20% 15%;
-  --muted-foreground: 210 15% 60%;
-  --accent: 210 20% 18%;
-  --accent-foreground: 210 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 210 20% 18%;
-  --input: 210 20% 18%;
-  --ring: 210 40% 50%;
-}
-
-/* ============================================ */
-/* 自定义绿色主题 - Forest Green (#009100) */
-/* ============================================ */
-html.light.theme-forest-green,
-html.theme-forest-green:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 120 30% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 120 30% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 120 30% 10%;
-  --primary: 120 100% 28.4%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 120 20% 95%;
-  --secondary-foreground: 120 30% 10%;
-  --muted: 120 20% 95%;
-  --muted-foreground: 120 10% 45%;
-  --accent: 120 30% 92%;
-  --accent-foreground: 120 30% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 120 15% 88%;
-  --input: 120 15% 88%;
-  --ring: 120 100% 28.4%;
-  
-  /* 侧边栏 */
-  --sidebar: 120 25% 97%;
-  --sidebar-foreground: 120 30% 20%;
-  --sidebar-primary: 120 100% 28.4%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 120 30% 92%;
-  --sidebar-accent-foreground: 120 30% 15%;
-  --sidebar-border: 120 15% 88%;
-  --sidebar-ring: 120 100% 28.4%;
-}
-
-html.dark.theme-forest-green {
-  --background: 120 20% 6%;
-  --foreground: 120 10% 95%;
-  --card: 120 20% 6%;
-  --card-foreground: 120 10% 95%;
-  --popover: 120 20% 6%;
-  --popover-foreground: 120 10% 95%;
-  --primary: 120 80% 45%;
-  --primary-foreground: 120 30% 5%;
-  --secondary: 120 15% 15%;
-  --secondary-foreground: 120 10% 95%;
-  --muted: 120 15% 15%;
-  --muted-foreground: 120 10% 60%;
-  --accent: 120 15% 18%;
-  --accent-foreground: 120 10% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 120 15% 18%;
-  --input: 120 15% 18%;
-  --ring: 120 80% 45%;
-  
-  /* 侧边栏 */
-  --sidebar: 120 20% 8%;
-  --sidebar-foreground: 120 10% 90%;
-  --sidebar-primary: 120 80% 45%;
-  --sidebar-primary-foreground: 120 30% 5%;
-  --sidebar-accent: 120 15% 15%;
-  --sidebar-accent-foreground: 120 10% 95%;
-  --sidebar-border: 120 15% 15%;
-  --sidebar-ring: 120 80% 45%;
-}
-
-/* ============================================ */
-/* Ocean Blue 主题 - 海洋蓝 */
-/* ============================================ */
-html.light.theme-ocean-blue,
-html.theme-ocean-blue:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 210 50% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 210 50% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 210 50% 10%;
-  --primary: 199 89% 48%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 199 30% 95%;
-  --secondary-foreground: 210 50% 10%;
-  --muted: 199 30% 95%;
-  --muted-foreground: 199 15% 45%;
-  --accent: 199 40% 92%;
-  --accent-foreground: 210 50% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 199 20% 88%;
-  --input: 199 20% 88%;
-  --ring: 199 89% 48%;
-  
-  /* 侧边栏 */
-  --sidebar: 199 35% 97%;
-  --sidebar-foreground: 210 50% 20%;
-  --sidebar-primary: 199 89% 48%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 199 40% 92%;
-  --sidebar-accent-foreground: 210 50% 15%;
-  --sidebar-border: 199 20% 88%;
-  --sidebar-ring: 199 89% 48%;
-}
-
-html.dark.theme-ocean-blue {
-  --background: 210 40% 6%;
-  --foreground: 199 20% 95%;
-  --card: 210 40% 6%;
-  --card-foreground: 199 20% 95%;
-  --popover: 210 40% 6%;
-  --popover-foreground: 199 20% 95%;
-  --primary: 199 89% 55%;
-  --primary-foreground: 210 50% 5%;
-  --secondary: 210 30% 15%;
-  --secondary-foreground: 199 20% 95%;
-  --muted: 210 30% 15%;
-  --muted-foreground: 199 15% 60%;
-  --accent: 210 30% 18%;
-  --accent-foreground: 199 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 210 30% 18%;
-  --input: 210 30% 18%;
-  --ring: 199 89% 55%;
-  
-  /* 侧边栏 */
-  --sidebar: 210 40% 8%;
-  --sidebar-foreground: 199 20% 90%;
-  --sidebar-primary: 199 89% 55%;
-  --sidebar-primary-foreground: 210 50% 5%;
-  --sidebar-accent: 210 30% 15%;
-  --sidebar-accent-foreground: 199 20% 95%;
-  --sidebar-border: 210 30% 15%;
-  --sidebar-ring: 199 89% 55%;
-}
-
-/* ============================================ */
-/* Sunset Orange 主题 - 日落橙 */
-/* ============================================ */
-html.light.theme-sunset-orange,
-html.theme-sunset-orange:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 20 50% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 20 50% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 20 50% 10%;
-  --primary: 24 95% 53%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 24 30% 95%;
-  --secondary-foreground: 20 50% 10%;
-  --muted: 24 30% 95%;
-  --muted-foreground: 24 15% 45%;
-  --accent: 24 40% 92%;
-  --accent-foreground: 20 50% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 24 20% 88%;
-  --input: 24 20% 88%;
-  --ring: 24 95% 53%;
-  
-  /* 侧边栏 */
-  --sidebar: 24 35% 97%;
-  --sidebar-foreground: 20 50% 20%;
-  --sidebar-primary: 24 95% 53%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 24 40% 92%;
-  --sidebar-accent-foreground: 20 50% 15%;
-  --sidebar-border: 24 20% 88%;
-  --sidebar-ring: 24 95% 53%;
-}
-
-html.dark.theme-sunset-orange {
-  --background: 20 40% 6%;
-  --foreground: 24 20% 95%;
-  --card: 20 40% 6%;
-  --card-foreground: 24 20% 95%;
-  --popover: 20 40% 6%;
-  --popover-foreground: 24 20% 95%;
-  --primary: 24 95% 58%;
-  --primary-foreground: 20 50% 5%;
-  --secondary: 20 30% 15%;
-  --secondary-foreground: 24 20% 95%;
-  --muted: 20 30% 15%;
-  --muted-foreground: 24 15% 60%;
-  --accent: 20 30% 18%;
-  --accent-foreground: 24 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 20 30% 18%;
-  --input: 20 30% 18%;
-  --ring: 24 95% 58%;
-  
-  /* 侧边栏 */
-  --sidebar: 20 40% 8%;
-  --sidebar-foreground: 24 20% 90%;
-  --sidebar-primary: 24 95% 58%;
-  --sidebar-primary-foreground: 20 50% 5%;
-  --sidebar-accent: 20 30% 15%;
-  --sidebar-accent-foreground: 24 20% 95%;
-  --sidebar-border: 20 30% 15%;
-  --sidebar-ring: 24 95% 58%;
-}
-
-/* ============================================ */
-/* Royal Purple 主题 - 皇家紫 */
-/* ============================================ */
-html.light.theme-royal-purple,
-html.theme-royal-purple:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 270 50% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 270 50% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 270 50% 10%;
-  --primary: 271 81% 56%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 270 30% 95%;
-  --secondary-foreground: 270 50% 10%;
-  --muted: 270 30% 95%;
-  --muted-foreground: 270 15% 45%;
-  --accent: 270 40% 92%;
-  --accent-foreground: 270 50% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 270 20% 88%;
-  --input: 270 20% 88%;
-  --ring: 271 81% 56%;
-  
-  /* 侧边栏 */
-  --sidebar: 270 35% 97%;
-  --sidebar-foreground: 270 50% 20%;
-  --sidebar-primary: 271 81% 56%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 270 40% 92%;
-  --sidebar-accent-foreground: 270 50% 15%;
-  --sidebar-border: 270 20% 88%;
-  --sidebar-ring: 271 81% 56%;
-}
-
-html.dark.theme-royal-purple {
-  --background: 270 40% 6%;
-  --foreground: 270 20% 95%;
-  --card: 270 40% 6%;
-  --card-foreground: 270 20% 95%;
-  --popover: 270 40% 6%;
-  --popover-foreground: 270 20% 95%;
-  --primary: 271 81% 65%;
-  --primary-foreground: 270 50% 5%;
-  --secondary: 270 30% 15%;
-  --secondary-foreground: 270 20% 95%;
-  --muted: 270 30% 15%;
-  --muted-foreground: 270 15% 60%;
-  --accent: 270 30% 18%;
-  --accent-foreground: 270 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 270 30% 18%;
-  --input: 270 30% 18%;
-  --ring: 271 81% 65%;
-  
-  /* 侧边栏 */
-  --sidebar: 270 40% 8%;
-  --sidebar-foreground: 270 20% 90%;
-  --sidebar-primary: 271 81% 65%;
-  --sidebar-primary-foreground: 270 50% 5%;
-  --sidebar-accent: 270 30% 15%;
-  --sidebar-accent-foreground: 270 20% 95%;
-  --sidebar-border: 270 30% 15%;
-  --sidebar-ring: 271 81% 65%;
-}
-
-/* ============================================ */
-/* Cherry Blossom 主题 - 樱花粉 */
-/* ============================================ */
-html.light.theme-cherry-blossom,
-html.theme-cherry-blossom:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 340 50% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 340 50% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 340 50% 10%;
-  --primary: 340 82% 52%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 340 30% 95%;
-  --secondary-foreground: 340 50% 10%;
-  --muted: 340 30% 95%;
-  --muted-foreground: 340 15% 45%;
-  --accent: 340 40% 92%;
-  --accent-foreground: 340 50% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 340 20% 88%;
-  --input: 340 20% 88%;
-  --ring: 340 82% 52%;
-  
-  /* 侧边栏 */
-  --sidebar: 340 35% 97%;
-  --sidebar-foreground: 340 50% 20%;
-  --sidebar-primary: 340 82% 52%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 340 40% 92%;
-  --sidebar-accent-foreground: 340 50% 15%;
-  --sidebar-border: 340 20% 88%;
-  --sidebar-ring: 340 82% 52%;
-}
-
-html.dark.theme-cherry-blossom {
-  --background: 340 40% 6%;
-  --foreground: 340 20% 95%;
-  --card: 340 40% 6%;
-  --card-foreground: 340 20% 95%;
-  --popover: 340 40% 6%;
-  --popover-foreground: 340 20% 95%;
-  --primary: 340 82% 60%;
-  --primary-foreground: 340 50% 5%;
-  --secondary: 340 30% 15%;
-  --secondary-foreground: 340 20% 95%;
-  --muted: 340 30% 15%;
-  --muted-foreground: 340 15% 60%;
-  --accent: 340 30% 18%;
-  --accent-foreground: 340 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 340 30% 18%;
-  --input: 340 30% 18%;
-  --ring: 340 82% 60%;
-  
-  /* 侧边栏 */
-  --sidebar: 340 40% 8%;
-  --sidebar-foreground: 340 20% 90%;
-  --sidebar-primary: 340 82% 60%;
-  --sidebar-primary-foreground: 340 50% 5%;
-  --sidebar-accent: 340 30% 15%;
-  --sidebar-accent-foreground: 340 20% 95%;
-  --sidebar-border: 340 30% 15%;
-  --sidebar-ring: 340 82% 60%;
-}
-
-/* ============================================ */
-/* Midnight Teal 主题 - 午夜青 */
-/* ============================================ */
-html.light.theme-midnight-teal,
-html.theme-midnight-teal:not(.dark) {
-  --background: 0 0% 100%;
-  --foreground: 175 50% 10%;
-  --card: 0 0% 100%;
-  --card-foreground: 175 50% 10%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 175 50% 10%;
-  --primary: 175 84% 32%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 175 30% 95%;
-  --secondary-foreground: 175 50% 10%;
-  --muted: 175 30% 95%;
-  --muted-foreground: 175 15% 45%;
-  --accent: 175 40% 92%;
-  --accent-foreground: 175 50% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 175 20% 88%;
-  --input: 175 20% 88%;
-  --ring: 175 84% 32%;
-  
-  /* 侧边栏 */
-  --sidebar: 175 35% 97%;
-  --sidebar-foreground: 175 50% 20%;
-  --sidebar-primary: 175 84% 32%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 175 40% 92%;
-  --sidebar-accent-foreground: 175 50% 15%;
-  --sidebar-border: 175 20% 88%;
-  --sidebar-ring: 175 84% 32%;
-}
-
-html.dark.theme-midnight-teal {
-  --background: 175 40% 6%;
-  --foreground: 175 20% 95%;
-  --card: 175 40% 6%;
-  --card-foreground: 175 20% 95%;
-  --popover: 175 40% 6%;
-  --popover-foreground: 175 20% 95%;
-  --primary: 175 84% 45%;
-  --primary-foreground: 175 50% 5%;
-  --secondary: 175 30% 15%;
-  --secondary-foreground: 175 20% 95%;
-  --muted: 175 30% 15%;
-  --muted-foreground: 175 15% 60%;
-  --accent: 175 30% 18%;
-  --accent-foreground: 175 20% 95%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 175 30% 18%;
-  --input: 175 30% 18%;
-  --ring: 175 84% 45%;
-  
-  /* 侧边栏 */
-  --sidebar: 175 40% 8%;
-  --sidebar-foreground: 175 20% 90%;
-  --sidebar-primary: 175 84% 45%;
-  --sidebar-primary-foreground: 175 50% 5%;
-  --sidebar-accent: 175 30% 15%;
-  --sidebar-accent-foreground: 175 20% 95%;
-  --sidebar-border: 175 30% 15%;
-  --sidebar-ring: 175 84% 45%;
-}
-
-/* ============================================ */
-/* Element Plus 官方暗黑模式补充样式 */
-/* ============================================ */
-
-/* 暗黑模式下 Element Plus 组件变量覆盖 - 纯黑色 */
-html.dark {
-  /* 使用纯黑色 */
-  --el-bg-color: #000000;
-  --el-bg-color-page: #000000;
-  --el-bg-color-overlay: #000000;
-  --el-text-color-primary: #fafafa;
-  --el-text-color-regular: #a1a1a1;
-  --el-text-color-secondary: rgba(161, 161, 161, 0.8);
-  --el-text-color-placeholder: rgba(161, 161, 161, 0.6);
-  --el-border-color: #262626;
-  --el-border-color-light: rgba(38, 38, 38, 0.8);
-  --el-border-color-lighter: rgba(38, 38, 38, 0.6);
-  --el-border-color-extra-light: rgba(38, 38, 38, 0.4);
-  --el-fill-color: #1a1a1a;
-  --el-fill-color-light: rgba(26, 26, 26, 0.8);
-  --el-fill-color-lighter: rgba(26, 26, 26, 0.6);
-  --el-fill-color-extra-light: rgba(26, 26, 26, 0.4);
-  --el-fill-color-blank: #000000;
-  --el-fill-color-darker: #0a0a0a;
-  --el-mask-color: rgba(0, 0, 0, 0.9);
-  --el-mask-color-extra-light: rgba(0, 0, 0, 0.5);
-}
-
-/* 暗黑模式下的卡片样式 - 纯黑色 */
-html.dark .el-card {
-  --el-card-bg-color: #000000;
-  background-color: #000000;
-  border-color: #262626;
-}
-
-/* 暗黑模式下的输入框样式 - 纯黑色 */
-html.dark .el-input__wrapper,
-html.dark .el-textarea__inner {
-  background-color: #1a1a1a;
-  box-shadow: 0 0 0 1px #262626 inset;
-}
-
-html.dark .el-input__wrapper:hover,
-html.dark .el-textarea__inner:hover {
-  box-shadow: 0 0 0 1px #3b82f6 inset;
-}
-
-/* 暗黑模式下的选择器样式 - 纯黑色 */
-html.dark .el-select__wrapper {
-  background-color: #1a1a1a;
-  box-shadow: 0 0 0 1px #262626 inset;
-}
-
-/* 暗黑模式下的下拉菜单样式 - 纯黑色 */
-html.dark .el-select-dropdown,
-html.dark .el-dropdown-menu {
-  background-color: #000000;
-  border-color: #262626;
-}
-
-html.dark .el-select-dropdown__item.hover,
-html.dark .el-select-dropdown__item:hover,
-html.dark .el-dropdown-menu__item:hover {
-  background-color: #1a1a1a;
-}
-
-/* 暗黑模式下的对话框样式 - 纯黑色 */
-html.dark .el-dialog {
-  --el-dialog-bg-color: #000000;
-  background-color: #000000;
-}
-
-html.dark .el-dialog__header {
-  border-bottom: 1px solid #262626;
-}
-
-html.dark .el-dialog__footer {
-  border-top: 1px solid #262626;
-}
-
-/* 暗黑模式下的标签页样式 */
-html.dark .el-tabs__header {
-  border-bottom-color: hsl(var(--border));
-}
-
-html.dark .el-tabs__item {
-  color: hsl(var(--muted-foreground));
-}
-
-html.dark .el-tabs__item.is-active {
-  color: hsl(var(--primary));
-}
-
-html.dark .el-tabs--border-card {
-  background-color: hsl(var(--card));
-  border-color: hsl(var(--border));
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   款式系统 — Vercel / Apple
-   双层策略：
-     A) html.style-*  → 覆盖 Element Plus 组件（无 scoped 冲突）
-     B) .element.style-* → 覆盖 Vue scoped 组件（绕过 [data-v-xxx] 特异性）
-   ═══════════════════════════════════════════════════════════════ */
-
-/* ─── 1. 全局令牌 ────────────────────────────────────────── */
-html.style-vercel {
-  --radius: 0.5rem;
-  --el-border-radius-base: 6px;
-  --el-border-radius-small: 4px;
-  --el-border-radius-round: 6px;
-  --el-box-shadow: none;
-  --el-box-shadow-light: none;
-  --el-box-shadow-lighter: none;
-  --el-font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-}
-html.style-apple {
-  --radius: 1.2rem;
-  --el-border-radius-base: 12px;
+  --code-bg: 240 5% 96%;
+  --code-text: 240 6% 10%;
+  --code-border: 240 6% 90%;
+  --el-color-primary: #18181b;
+  --el-color-primary-light-3: #18181b;
+  --el-color-primary-light-5: #18181b;
+  --el-color-primary-light-7: #18181b;
+  --el-color-primary-light-8: #18181b;
+  --el-color-primary-light-9: #18181b;
+  --el-color-primary-dark-2: #18181b;
+  --radius: 12px;
+  --el-border-radius-base: 8px;
   --el-border-radius-small: 8px;
+  --el-border-radius-round: 6px;
+  --style-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 12px;
+  --style-radius-dialog: 16px;
+  --style-radius-drawer: 12px;
+  --style-radius-popover: 10px;
+  --style-radius-tag: 6px;
+  --style-radius-msg: 10px;
+  --style-radius-checkbox: 3px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 10px;
+  --style-radius-progress: 6px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 6px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 12px;
+  --style-radius-bubble: 10px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 10px;
+  --style-radius-login: 16px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 1px 2px 0 rgba(0,0,0,0.04);
+  --style-shadow-card-hover: 0 4px 12px -2px rgba(0,0,0,0.06);
+  --style-shadow-dialog: 0 8px 32px -4px rgba(0,0,0,0.08);
+  --style-shadow-popover: 0 2px 8px -1px rgba(0,0,0,0.05);
+  --style-shadow-stat: 0 1px 2px 0 rgba(0,0,0,0.03);
+  --style-shadow-stat-hover: 0 4px 10px -2px rgba(0,0,0,0.05);
+  --style-shadow-login: 0 8px 32px -4px rgba(0,0,0,0.08);
+  --style-card-hover-transform: translateY(-1px);
+  --style-btn-hover-filter: brightness(0.96);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(0,0,0,0.02);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 10px;
+}
+
+/* minimal — Dark */
+html.style-minimal.dark {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 9%;
+  --popover: 0 0% 12%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 0 0% 4%;
+  --secondary: 240 6% 10%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 6% 10%;
+  --muted-foreground: 240 5% 65%;
+  --accent: 240 6% 10%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 4% 16%;
+  --input: 240 4% 16%;
+  --ring: 0 0% 98%;
+  --sidebar: 0 0% 9%;
+  --sidebar-foreground: 240 5% 65%;
+  --sidebar-primary: 0 0% 98%;
+  --sidebar-primary-foreground: 0 0% 4%;
+  --sidebar-accent: 240 4% 16%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-border: 240 4% 16%;
+  --code-bg: 240 6% 10%;
+  --code-text: 0 0% 98%;
+  --code-border: 240 4% 16%;
+  --el-color-primary: #fafafa;
+  --el-color-primary-light-3: #fafafa;
+  --el-color-primary-light-5: #fafafa;
+  --el-color-primary-light-7: #fafafa;
+  --el-color-primary-light-8: #fafafa;
+  --el-color-primary-light-9: #fafafa;
+  --el-color-primary-dark-2: #fafafa;
+  --radius: 12px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 6px;
+  --style-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 12px;
+  --style-radius-dialog: 16px;
+  --style-radius-drawer: 12px;
+  --style-radius-popover: 10px;
+  --style-radius-tag: 6px;
+  --style-radius-msg: 10px;
+  --style-radius-checkbox: 3px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 10px;
+  --style-radius-progress: 6px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 6px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 12px;
+  --style-radius-bubble: 10px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 10px;
+  --style-radius-login: 16px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 1px 2px 0 rgba(0,0,0,0.3);
+  --style-shadow-card-hover: 0 4px 12px -2px rgba(0,0,0,0.4);
+  --style-shadow-dialog: 0 8px 32px -4px rgba(0,0,0,0.5);
+  --style-shadow-popover: 0 2px 8px -1px rgba(0,0,0,0.3);
+  --style-shadow-stat: 0 1px 2px 0 rgba(0,0,0,0.2);
+  --style-shadow-stat-hover: 0 4px 10px -2px rgba(0,0,0,0.3);
+  --style-shadow-login: 0 8px 32px -4px rgba(0,0,0,0.5);
+  --style-card-hover-transform: translateY(-1px);
+  --style-btn-hover-filter: brightness(0.96);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(255,255,255,0.04);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 10px;
+}
+
+/* motionfit — Light */
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) {
+  --background: 0 0% 16%;
+  --foreground: 214 32% 91%;
+  --card: 0 0% 1%;
+  --popover: 0 0% 10%;
+  --primary: 15 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 214 32% 91%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 240 5% 65%;
+  --accent: 0 0% 12%;
+  --accent-foreground: 214 32% 91%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 5% 26%;
+  --input: 240 5% 26%;
+  --ring: 15 100% 50%;
+  --sidebar: 0 0% 9%;
+  --sidebar-foreground: 240 5% 65%;
+  --sidebar-primary: 15 100% 50%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 4% 16%;
+  --sidebar-accent-foreground: 214 32% 91%;
+  --sidebar-border: 240 4% 16%;
+  --code-bg: 0 0% 10%;
+  --code-text: 214 32% 91%;
+  --code-border: 240 4% 16%;
+  --el-color-primary: #ff4000;
+  --el-color-primary-light-3: #ff4000;
+  --el-color-primary-light-5: #ff4000;
+  --el-color-primary-light-7: #ff4000;
+  --el-color-primary-light-8: #ff4000;
+  --el-color-primary-light-9: #ff4000;
+  --el-color-primary-dark-2: #ff4000;
+  --radius: 0px;
+  --el-border-radius-base: 0px;
+  --el-border-radius-small: 0px;
+  --el-border-radius-round: 0px;
+  --style-font-sans: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
+  --style-font-mono: 'Roboto Mono', ui-monospace, monospace;
+  --style-tracking: -0.02em;
+  --style-radius-btn: 0px;
+  --style-radius-card: 0px;
+  --style-radius-dialog: 0px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 0px;
+  --style-radius-tag: 0px;
+  --style-radius-msg: 0px;
+  --style-radius-checkbox: 0px;
+  --style-radius-avatar: 0px;
+  --style-radius-alert: 0px;
+  --style-radius-progress: 0px;
+  --style-radius-tooltip: 0px;
+  --style-radius-pager: 0px;
+  --style-radius-tabs: 0px;
+  --style-radius-stat: 0px;
+  --style-radius-bubble: 0px;
+  --style-radius-menu: 0px;
+  --style-radius-logo: 0px;
+  --style-radius-login: 0px;
+  --style-radius-scrollbar: 0px;
+  --style-shadow-card: 2px 2px 0.5px 0px rgba(0,0,0,0.5);
+  --style-shadow-card-hover: 3px 3px 0.5px 0px rgba(0,0,0,0.6);
+  --style-shadow-dialog: 4px 4px 0.5px 0px rgba(0,0,0,0.5);
+  --style-shadow-popover: 2px 2px 0.5px 0px rgba(0,0,0,0.5);
+  --style-shadow-stat: 2px 2px 0.5px 0px rgba(0,0,0,0.4);
+  --style-shadow-stat-hover: 3px 3px 0.5px 0px rgba(0,0,0,0.5);
+  --style-shadow-login: 4px 4px 0.5px 0px rgba(0,0,0,0.5);
+  --style-card-hover-transform: translate(-1px,-1px);
+  --style-btn-hover-filter: brightness(1.1);
+  --style-btn-active-transform: translate(1px,1px);
+  --style-table-hover-bg: rgba(255,64,0,0.08);
+  --style-scrollbar-width: 4px;
+  --style-overlay-blur: 2px;
+  --style-dialog-blur: 4px;
+}
+
+/* motionfit — Dark */
+html.style-motionfit.dark {
+  --background: 0 0% 4%;
+  --foreground: 214 32% 91%;
+  --card: 0 0% 9%;
+  --popover: 0 0% 12%;
+  --primary: 151 100% 50%;
+  --primary-foreground: 0 0% 4%;
+  --secondary: 240 6% 10%;
+  --secondary-foreground: 214 32% 91%;
+  --muted: 240 6% 10%;
+  --muted-foreground: 240 5% 65%;
+  --accent: 240 6% 10%;
+  --accent-foreground: 214 32% 91%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 4% 16%;
+  --input: 240 4% 16%;
+  --ring: 151 100% 50%;
+  --sidebar: 0 0% 4%;
+  --sidebar-foreground: 240 5% 65%;
+  --sidebar-primary: 151 100% 50%;
+  --sidebar-primary-foreground: 0 0% 4%;
+  --sidebar-accent: 240 6% 10%;
+  --sidebar-accent-foreground: 214 32% 91%;
+  --sidebar-border: 240 4% 16%;
+  --code-bg: 0 0% 9%;
+  --code-text: 214 32% 91%;
+  --code-border: 240 4% 16%;
+  --el-color-primary: #00ff85;
+  --el-color-primary-light-3: #00ff85;
+  --el-color-primary-light-5: #00ff85;
+  --el-color-primary-light-7: #00ff85;
+  --el-color-primary-light-8: #00ff85;
+  --el-color-primary-light-9: #00ff85;
+  --el-color-primary-dark-2: #00ff85;
+  --radius: 0px;
+  --el-border-radius-base: 0px;
+  --el-border-radius-small: 0px;
+  --el-border-radius-round: 0px;
+  --style-font-sans: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
+  --style-font-mono: 'Roboto Mono', ui-monospace, monospace;
+  --style-tracking: -0.02em;
+  --style-radius-btn: 0px;
+  --style-radius-card: 0px;
+  --style-radius-dialog: 0px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 0px;
+  --style-radius-tag: 0px;
+  --style-radius-msg: 0px;
+  --style-radius-checkbox: 0px;
+  --style-radius-avatar: 0px;
+  --style-radius-alert: 0px;
+  --style-radius-progress: 0px;
+  --style-radius-tooltip: 0px;
+  --style-radius-pager: 0px;
+  --style-radius-tabs: 0px;
+  --style-radius-stat: 0px;
+  --style-radius-bubble: 0px;
+  --style-radius-menu: 0px;
+  --style-radius-logo: 0px;
+  --style-radius-login: 0px;
+  --style-radius-scrollbar: 0px;
+  --style-shadow-card: 2px 2px 0.5px 0px rgba(0,0,0,0.8);
+  --style-shadow-card-hover: 3px 3px 0.5px 0px rgba(0,0,0,0.9);
+  --style-shadow-dialog: 4px 4px 0.5px 0px rgba(0,0,0,0.8);
+  --style-shadow-popover: 2px 2px 0.5px 0px rgba(0,0,0,0.8);
+  --style-shadow-stat: 2px 2px 0.5px 0px rgba(0,0,0,0.6);
+  --style-shadow-stat-hover: 3px 3px 0.5px 0px rgba(0,0,0,0.7);
+  --style-shadow-login: 4px 4px 0.5px 0px rgba(0,0,0,0.8);
+  --style-card-hover-transform: translate(-1px,-1px);
+  --style-btn-hover-filter: brightness(1.1);
+  --style-btn-active-transform: translate(1px,1px);
+  --style-table-hover-bg: rgba(0,255,133,0.08);
+  --style-scrollbar-width: 4px;
+  --style-overlay-blur: 2px;
+  --style-dialog-blur: 4px;
+}
+
+/* nerv — Light */
+html.style-nerv.light,
+html.style-nerv:not(.dark) {
+  --background: 222 21% 12%;
+  --foreground: 0 0% 90%;
+  --card: 193 9% 20%;
+  --popover: 210 11% 25%;
+  --primary: 358 81% 56%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 216 18% 16%;
+  --secondary-foreground: 0 0% 90%;
+  --muted: 216 18% 16%;
+  --muted-foreground: 210 14% 56%;
+  --accent: 216 18% 16%;
+  --accent-foreground: 0 0% 90%;
+  --destructive: 358 81% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 210 11% 25%;
+  --input: 210 11% 25%;
+  --ring: 358 81% 56%;
+  --sidebar: 216 18% 16%;
+  --sidebar-foreground: 210 14% 56%;
+  --sidebar-primary: 358 81% 56%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 193 9% 20%;
+  --sidebar-accent-foreground: 0 0% 90%;
+  --sidebar-border: 210 11% 25%;
+  --code-bg: 216 18% 16%;
+  --code-text: 0 0% 90%;
+  --code-border: 210 11% 25%;
+  --el-color-primary: #ea343a;
+  --el-color-primary-light-3: #ea343a;
+  --el-color-primary-light-5: #ea343a;
+  --el-color-primary-light-7: #ea343a;
+  --el-color-primary-light-8: #ea343a;
+  --el-color-primary-light-9: #ea343a;
+  --el-color-primary-dark-2: #ea343a;
+  --radius: 18px;
+  --el-border-radius-base: 14px;
+  --el-border-radius-small: 14px;
   --el-border-radius-round: 999px;
-  --el-font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Roboto Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 14px;
+  --style-radius-card: 18px;
+  --style-radius-dialog: 24px;
+  --style-radius-drawer: 24px;
+  --style-radius-popover: 18px;
+  --style-radius-tag: 999px;
+  --style-radius-msg: 16px;
+  --style-radius-checkbox: 6px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 16px;
+  --style-radius-progress: 999px;
+  --style-radius-tooltip: 14px;
+  --style-radius-pager: 12px;
+  --style-radius-tabs: 14px;
+  --style-radius-stat: 18px;
+  --style-radius-bubble: 16px;
+  --style-radius-menu: 14px;
+  --style-radius-logo: 14px;
+  --style-radius-login: 24px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 2px 6px rgba(0,0,0,0.15);
+  --style-shadow-card-hover: 0 4px 12px rgba(234,52,58,0.15);
+  --style-shadow-dialog: 0 8px 32px rgba(234,52,58,0.12), 0 2px 8px rgba(0,0,0,0.2);
+  --style-shadow-popover: 0 2px 8px rgba(0,0,0,0.2);
+  --style-shadow-stat: 0 2px 6px rgba(0,0,0,0.12);
+  --style-shadow-stat-hover: 0 4px 10px rgba(234,52,58,0.12);
+  --style-shadow-login: 0 8px 32px rgba(234,52,58,0.12), 0 2px 8px rgba(0,0,0,0.2);
+  --style-card-hover-transform: translateY(-2px);
+  --style-btn-hover-filter: brightness(1.05);
+  --style-btn-active-transform: scale(0.97);
+  --style-table-hover-bg: rgba(234,52,58,0.06);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 12px;
 }
-html.style-apple.light,
-html.style-apple:not(.dark) {
-  --el-box-shadow: 0 2px 4px -1px rgba(0,0,0,0.06), 0 1px 2px -1px rgba(0,0,0,0.05);
-  --el-box-shadow-light: 0 4px 8px -2px rgba(0,0,0,0.06), 0 2px 4px -2px rgba(0,0,0,0.05);
-  --el-box-shadow-lighter: 0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 3px -1px rgba(0,0,0,0.05);
-  --el-box-shadow-dark: 0 8px 24px -8px rgba(0,0,0,0.08), 0 4px 8px -4px rgba(0,0,0,0.05);
+
+/* nerv — Dark */
+html.style-nerv.dark {
+  --background: 240 3% 6%;
+  --foreground: 213 100% 98%;
+  --card: 240 3% 7%;
+  --popover: 240 9% 11%;
+  --primary: 330 100% 80%;
+  --primary-foreground: 240 3% 6%;
+  --secondary: 240 6% 9%;
+  --secondary-foreground: 213 100% 98%;
+  --muted: 240 6% 9%;
+  --muted-foreground: 214 6% 51%;
+  --accent: 240 6% 9%;
+  --accent-foreground: 213 100% 98%;
+  --destructive: 0 100% 71%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 9% 11%;
+  --input: 240 9% 11%;
+  --ring: 330 100% 80%;
+  --sidebar: 0 0% 10%;
+  --sidebar-foreground: 214 6% 51%;
+  --sidebar-primary: 330 100% 80%;
+  --sidebar-primary-foreground: 240 3% 6%;
+  --sidebar-accent: 240 6% 9%;
+  --sidebar-accent-foreground: 213 100% 98%;
+  --sidebar-border: 240 9% 11%;
+  --code-bg: 240 6% 9%;
+  --code-text: 213 100% 98%;
+  --code-border: 240 9% 11%;
+  --el-color-primary: #ff99cc;
+  --el-color-primary-light-3: #ff99cc;
+  --el-color-primary-light-5: #ff99cc;
+  --el-color-primary-light-7: #ff99cc;
+  --el-color-primary-light-8: #ff99cc;
+  --el-color-primary-light-9: #ff99cc;
+  --el-color-primary-dark-2: #ff99cc;
+  --radius: 18px;
+  --el-border-radius-base: 14px;
+  --el-border-radius-small: 14px;
+  --el-border-radius-round: 999px;
+  --style-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'Roboto Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 14px;
+  --style-radius-card: 18px;
+  --style-radius-dialog: 24px;
+  --style-radius-drawer: 24px;
+  --style-radius-popover: 18px;
+  --style-radius-tag: 999px;
+  --style-radius-msg: 16px;
+  --style-radius-checkbox: 6px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 16px;
+  --style-radius-progress: 999px;
+  --style-radius-tooltip: 14px;
+  --style-radius-pager: 12px;
+  --style-radius-tabs: 14px;
+  --style-radius-stat: 18px;
+  --style-radius-bubble: 16px;
+  --style-radius-menu: 14px;
+  --style-radius-logo: 14px;
+  --style-radius-login: 24px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 2px 6px rgba(0,0,0,0.4);
+  --style-shadow-card-hover: 0 4px 12px rgba(255,153,204,0.12);
+  --style-shadow-dialog: 0 8px 32px rgba(255,153,204,0.10), 0 2px 8px rgba(0,0,0,0.5);
+  --style-shadow-popover: 0 2px 8px rgba(0,0,0,0.5);
+  --style-shadow-stat: 0 2px 6px rgba(0,0,0,0.3);
+  --style-shadow-stat-hover: 0 4px 10px rgba(255,153,204,0.10);
+  --style-shadow-login: 0 8px 32px rgba(255,153,204,0.10), 0 2px 8px rgba(0,0,0,0.5);
+  --style-card-hover-transform: translateY(-2px);
+  --style-btn-hover-filter: brightness(1.05);
+  --style-btn-active-transform: scale(0.97);
+  --style-table-hover-bg: rgba(255,153,204,0.06);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 12px;
 }
-html.style-apple.dark {
-  --el-box-shadow: 0 2px 4px -1px rgba(0,0,0,0.40), 0 1px 2px -1px rgba(0,0,0,0.36);
-  --el-box-shadow-light: 0 4px 8px -2px rgba(0,0,0,0.44), 0 2px 4px -2px rgba(0,0,0,0.36);
-  --el-box-shadow-lighter: 0 1px 2px 0 rgba(0,0,0,0.36), 0 1px 3px -1px rgba(0,0,0,0.36);
-  --el-box-shadow-dark: 0 8px 24px -8px rgba(0,0,0,0.50), 0 4px 8px -4px rgba(0,0,0,0.40);
+
+/* tiktok — Light */
+html.style-tiktok.light,
+html.style-tiktok:not(.dark) {
+  --background: 0 0% 100%;
+  --foreground: 231 23% 11%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --primary: 348 99% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 4% 95%;
+  --secondary-foreground: 231 23% 11%;
+  --muted: 240 4% 95%;
+  --muted-foreground: 231 3% 55%;
+  --accent: 240 4% 95%;
+  --accent-foreground: 231 23% 11%;
+  --destructive: 348 99% 58%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 5% 91%;
+  --input: 240 5% 91%;
+  --ring: 348 99% 58%;
+  --sidebar: 240 8% 97%;
+  --sidebar-foreground: 232 4% 44%;
+  --sidebar-primary: 348 99% 58%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 4% 95%;
+  --sidebar-accent-foreground: 231 23% 11%;
+  --sidebar-border: 240 5% 91%;
+  --code-bg: 240 4% 95%;
+  --code-text: 231 23% 11%;
+  --code-border: 240 5% 91%;
+  --el-color-primary: #fe2c55;
+  --el-color-primary-light-3: #fe2c55;
+  --el-color-primary-light-5: #fe2c55;
+  --el-color-primary-light-7: #fe2c55;
+  --el-color-primary-light-8: #fe2c55;
+  --el-color-primary-light-9: #fe2c55;
+  --el-color-primary-dark-2: #fe2c55;
+  --radius: 12px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 6px;
+  --style-font-sans: 'Inter', 'TikTok Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: -0.01em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 12px;
+  --style-radius-dialog: 16px;
+  --style-radius-drawer: 16px;
+  --style-radius-popover: 10px;
+  --style-radius-tag: 6px;
+  --style-radius-msg: 10px;
+  --style-radius-checkbox: 4px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 10px;
+  --style-radius-progress: 6px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 8px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 12px;
+  --style-radius-bubble: 10px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 10px;
+  --style-radius-login: 16px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 2px 8px rgba(0,0,0,0.06);
+  --style-shadow-card-hover: 0 8px 24px -4px rgba(254,44,85,0.12), 0 4px 8px -2px rgba(0,0,0,0.06);
+  --style-shadow-dialog: 0 16px 48px -8px rgba(254,44,85,0.10), 0 8px 16px -4px rgba(0,0,0,0.06);
+  --style-shadow-popover: 0 4px 16px -2px rgba(0,0,0,0.08);
+  --style-shadow-stat: 0 2px 8px rgba(0,0,0,0.04);
+  --style-shadow-stat-hover: 0 4px 16px -2px rgba(254,44,85,0.10);
+  --style-shadow-login: 0 16px 48px -8px rgba(254,44,85,0.10), 0 8px 16px -4px rgba(0,0,0,0.06);
+  --style-card-hover-transform: translateY(-2px);
+  --style-btn-hover-filter: brightness(0.95);
+  --style-btn-active-transform: scale(0.97);
+  --style-table-hover-bg: rgba(254,44,85,0.04);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 12px;
+}
+
+/* tiktok — Dark */
+html.style-tiktok.dark {
+  --background: 240 19% 5%;
+  --foreground: 240 11% 96%;
+  --card: 231 23% 11%;
+  --popover: 240 14% 14%;
+  --primary: 348 99% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 14% 14%;
+  --secondary-foreground: 240 11% 96%;
+  --muted: 240 14% 14%;
+  --muted-foreground: 231 3% 55%;
+  --accent: 240 14% 14%;
+  --accent-foreground: 240 11% 96%;
+  --destructive: 348 99% 58%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 13% 17%;
+  --input: 240 13% 17%;
+  --ring: 348 99% 58%;
+  --sidebar: 240 12% 8%;
+  --sidebar-foreground: 231 3% 55%;
+  --sidebar-primary: 348 99% 58%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 14% 14%;
+  --sidebar-accent-foreground: 240 11% 96%;
+  --sidebar-border: 240 13% 17%;
+  --code-bg: 231 23% 11%;
+  --code-text: 240 11% 96%;
+  --code-border: 240 13% 17%;
+  --el-color-primary: #fe2c55;
+  --el-color-primary-light-3: #fe2c55;
+  --el-color-primary-light-5: #fe2c55;
+  --el-color-primary-light-7: #fe2c55;
+  --el-color-primary-light-8: #fe2c55;
+  --el-color-primary-light-9: #fe2c55;
+  --el-color-primary-dark-2: #fe2c55;
+  --radius: 12px;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 6px;
+  --style-font-sans: 'Inter', 'TikTok Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: -0.01em;
+  --style-radius-btn: 8px;
+  --style-radius-card: 12px;
+  --style-radius-dialog: 16px;
+  --style-radius-drawer: 16px;
+  --style-radius-popover: 10px;
+  --style-radius-tag: 6px;
+  --style-radius-msg: 10px;
+  --style-radius-checkbox: 4px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 10px;
+  --style-radius-progress: 6px;
+  --style-radius-tooltip: 8px;
+  --style-radius-pager: 8px;
+  --style-radius-tabs: 8px;
+  --style-radius-stat: 12px;
+  --style-radius-bubble: 10px;
+  --style-radius-menu: 8px;
+  --style-radius-logo: 10px;
+  --style-radius-login: 16px;
+  --style-radius-scrollbar: 999px;
+  --style-shadow-card: 0 2px 8px rgba(0,0,0,0.4);
+  --style-shadow-card-hover: 0 8px 24px -4px rgba(254,44,85,0.15), 0 4px 8px -2px rgba(0,0,0,0.3);
+  --style-shadow-dialog: 0 16px 48px -8px rgba(254,44,85,0.15), 0 8px 16px -4px rgba(0,0,0,0.3);
+  --style-shadow-popover: 0 4px 16px -2px rgba(0,0,0,0.4);
+  --style-shadow-stat: 0 2px 8px rgba(0,0,0,0.2);
+  --style-shadow-stat-hover: 0 4px 16px -2px rgba(254,44,85,0.10);
+  --style-shadow-login: 0 16px 48px -8px rgba(254,44,85,0.15), 0 8px 16px -4px rgba(0,0,0,0.3);
+  --style-card-hover-transform: translateY(-2px);
+  --style-btn-hover-filter: brightness(0.95);
+  --style-btn-active-transform: scale(0.97);
+  --style-table-hover-bg: rgba(254,44,85,0.06);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 6px;
+  --style-dialog-blur: 12px;
+}
+
+/* yuanli — Light */
+html.style-yuanli.light,
+html.style-yuanli:not(.dark) {
+  --background: 0 0% 100%;
+  --foreground: 210 8% 5%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --primary: 220 100% 54%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 33% 96%;
+  --secondary-foreground: 210 8% 5%;
+  --muted: 220 33% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 226 100% 97%;
+  --accent-foreground: 210 8% 5%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 220 100% 54%;
+  --sidebar: 225 40% 98%;
+  --sidebar-foreground: 215 14% 34%;
+  --sidebar-primary: 220 100% 54%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 226 100% 97%;
+  --sidebar-accent-foreground: 210 8% 5%;
+  --sidebar-border: 220 13% 91%;
+  --code-bg: 220 33% 96%;
+  --code-text: 210 8% 5%;
+  --code-border: 220 13% 91%;
+  --el-color-primary: #1664ff;
+  --el-color-primary-light-3: #1664ff;
+  --el-color-primary-light-5: #1664ff;
+  --el-color-primary-light-7: #1664ff;
+  --el-color-primary-light-8: #1664ff;
+  --el-color-primary-light-9: #1664ff;
+  --el-color-primary-dark-2: #1664ff;
+  --radius: 8px;
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 4px;
+  --style-font-sans: 'PingFang SC', 'Microsoft YaHei', 'Roboto', 'Helvetica Neue', sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 6px;
+  --style-radius-card: 8px;
+  --style-radius-dialog: 12px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 8px;
+  --style-radius-tag: 4px;
+  --style-radius-msg: 8px;
+  --style-radius-checkbox: 3px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 8px;
+  --style-radius-progress: 4px;
+  --style-radius-tooltip: 6px;
+  --style-radius-pager: 4px;
+  --style-radius-tabs: 6px;
+  --style-radius-stat: 8px;
+  --style-radius-bubble: 6px;
+  --style-radius-menu: 6px;
+  --style-radius-logo: 8px;
+  --style-radius-login: 12px;
+  --style-radius-scrollbar: 4px;
+  --style-shadow-card: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
+  --style-shadow-card-hover: 0 4px 12px rgba(22,100,255,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --style-shadow-dialog: 0 12px 40px -8px rgba(22,100,255,0.10), 0 4px 12px -4px rgba(0,0,0,0.06);
+  --style-shadow-popover: 0 2px 12px -1px rgba(0,0,0,0.06);
+  --style-shadow-stat: 0 1px 3px rgba(0,0,0,0.04);
+  --style-shadow-stat-hover: 0 4px 10px rgba(22,100,255,0.06);
+  --style-shadow-login: 0 12px 40px -8px rgba(22,100,255,0.10), 0 4px 12px -4px rgba(0,0,0,0.06);
+  --style-card-hover-transform: translateY(-1px);
+  --style-btn-hover-filter: brightness(0.96);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(22,100,255,0.03);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 4px;
+  --style-dialog-blur: 8px;
+}
+
+/* yuanli — Dark */
+html.style-yuanli.dark {
+  --background: 210 8% 5%;
+  --foreground: 220 13% 91%;
+  --card: 220 12% 10%;
+  --popover: 220 13% 14%;
+  --primary: 220 100% 61%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 15% 12%;
+  --secondary-foreground: 220 13% 91%;
+  --muted: 220 15% 12%;
+  --muted-foreground: 221 9% 58%;
+  --accent: 220 15% 12%;
+  --accent-foreground: 220 13% 91%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 218 13% 17%;
+  --input: 218 13% 17%;
+  --ring: 220 100% 61%;
+  --sidebar: 220 14% 8%;
+  --sidebar-foreground: 221 9% 58%;
+  --sidebar-primary: 220 100% 61%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 220 15% 12%;
+  --sidebar-accent-foreground: 220 13% 91%;
+  --sidebar-border: 218 13% 17%;
+  --code-bg: 220 12% 10%;
+  --code-text: 220 13% 91%;
+  --code-border: 218 13% 17%;
+  --el-color-primary: #387bff;
+  --el-color-primary-light-3: #387bff;
+  --el-color-primary-light-5: #387bff;
+  --el-color-primary-light-7: #387bff;
+  --el-color-primary-light-8: #387bff;
+  --el-color-primary-light-9: #387bff;
+  --el-color-primary-dark-2: #387bff;
+  --radius: 8px;
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 4px;
+  --style-font-sans: 'PingFang SC', 'Microsoft YaHei', 'Roboto', 'Helvetica Neue', sans-serif;
+  --style-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --style-tracking: 0em;
+  --style-radius-btn: 6px;
+  --style-radius-card: 8px;
+  --style-radius-dialog: 12px;
+  --style-radius-drawer: 0px;
+  --style-radius-popover: 8px;
+  --style-radius-tag: 4px;
+  --style-radius-msg: 8px;
+  --style-radius-checkbox: 3px;
+  --style-radius-avatar: 50%;
+  --style-radius-alert: 8px;
+  --style-radius-progress: 4px;
+  --style-radius-tooltip: 6px;
+  --style-radius-pager: 4px;
+  --style-radius-tabs: 6px;
+  --style-radius-stat: 8px;
+  --style-radius-bubble: 6px;
+  --style-radius-menu: 6px;
+  --style-radius-logo: 8px;
+  --style-radius-login: 12px;
+  --style-radius-scrollbar: 4px;
+  --style-shadow-card: 0 1px 3px rgba(0,0,0,0.3);
+  --style-shadow-card-hover: 0 4px 12px rgba(56,123,255,0.10), 0 2px 4px rgba(0,0,0,0.2);
+  --style-shadow-dialog: 0 12px 40px -8px rgba(56,123,255,0.12), 0 4px 12px -4px rgba(0,0,0,0.3);
+  --style-shadow-popover: 0 2px 12px -1px rgba(0,0,0,0.3);
+  --style-shadow-stat: 0 1px 3px rgba(0,0,0,0.2);
+  --style-shadow-stat-hover: 0 4px 10px rgba(56,123,255,0.08);
+  --style-shadow-login: 0 12px 40px -8px rgba(56,123,255,0.12), 0 4px 12px -4px rgba(0,0,0,0.3);
+  --style-card-hover-transform: translateY(-1px);
+  --style-btn-hover-filter: brightness(0.96);
+  --style-btn-active-transform: scale(0.98);
+  --style-table-hover-bg: rgba(56,123,255,0.06);
+  --style-scrollbar-width: 6px;
+  --style-overlay-blur: 4px;
+  --style-dialog-blur: 8px;
 }
 
 /* ─── 2. 字体 ────────────────────────────────────────────── */
-html.style-vercel body {
-  font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+html[class*='style-'] body {
+  font-family: var(--style-font-sans) !important;
+  letter-spacing: var(--style-tracking);
 }
-html.style-vercel code, html.style-vercel pre, html.style-vercel .el-input__inner {
-  font-family: 'Geist Mono', ui-monospace, monospace !important;
-}
-html.style-apple body {
-  font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif !important;
-}
-html.style-apple code, html.style-apple pre, html.style-apple .el-input__inner {
-  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+html[class*='style-'] code, html[class*='style-'] pre, html[class*='style-'] .el-input__inner {
+  font-family: var(--style-font-mono) !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   3. Element Plus 组件（html.style-* 层）
+   3. Element Plus 组件（html[class*='style-'] 层，变量驱动）
    ═══════════════════════════════════════════════════════════════ */
 
 /* 3.1 卡片 */
-html.style-vercel .el-card { border-radius: 6px !important; box-shadow: none !important; transition: border-color 0.16s ease !important; }
-html.style-vercel .el-card:hover { box-shadow: none !important; transform: none !important; border-color: var(--el-border-color-darker, #c0c4cc) !important; }
-html.style-apple.light .el-card, html.style-apple:not(.dark) .el-card { border-radius: 16px !important; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05), 0 1px 3px -1px rgba(0,0,0,0.05) !important; transition: transform 0.18s ease, box-shadow 0.18s ease !important; }
-html.style-apple.light .el-card:hover, html.style-apple:not(.dark) .el-card:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 24px -8px rgba(0,0,0,0.08), 0 4px 8px -4px rgba(0,0,0,0.05) !important; }
-html.style-apple.dark .el-card { border-radius: 16px !important; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.36), 0 1px 3px -1px rgba(0,0,0,0.36) !important; transition: transform 0.18s ease, box-shadow 0.18s ease !important; }
-html.style-apple.dark .el-card:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 24px -8px rgba(0,0,0,0.50), 0 4px 8px -4px rgba(0,0,0,0.40) !important; }
+html[class*='style-'] .el-card {
+  border-radius: var(--style-radius-card) !important;
+  box-shadow: var(--style-shadow-card) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.16s ease !important;
+}
+html[class*='style-'] .el-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-card-hover) !important;
+}
 
 /* 3.2 按钮 */
-html.style-vercel .el-button { border-radius: 6px !important; box-shadow: none !important; }
-html.style-vercel .el-button.is-round { border-radius: 6px !important; }
-html.style-vercel .el-button:hover { filter: none !important; }
-html.style-apple .el-button { border-radius: 10px !important; }
-html.style-apple .el-button--large { border-radius: 14px !important; }
-html.style-apple .el-button.is-round { border-radius: 999px !important; }
-html.style-apple .el-button:hover { filter: brightness(0.96) !important; }
-html.style-apple .el-button:active { transform: scale(0.98) !important; }
+html[class*='style-'] .el-button {
+  border-radius: var(--style-radius-btn) !important;
+}
+html[class*='style-'] .el-button--large {
+  border-radius: var(--style-radius-btn) !important;
+}
+html[class*='style-'] .el-button.is-round {
+  border-radius: var(--style-radius-tag) !important;
+}
+html[class*='style-'] .el-button:hover {
+  filter: var(--style-btn-hover-filter) !important;
+}
+html[class*='style-'] .el-button:active {
+  transform: var(--style-btn-active-transform) !important;
+}
 
 /* 3.3 对话框 */
-html.style-vercel .el-dialog { border-radius: 12px !important; box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0,0,0,0.12) !important; }
-html.style-vercel .el-dialog__header { border-bottom: 1px solid var(--border) !important; }
-html.style-apple.light .el-dialog, html.style-apple:not(.dark) .el-dialog { border-radius: 20px !important; box-shadow: 0 16px 40px -10px rgba(0,0,0,0.10), 0 8px 16px -8px rgba(0,0,0,0.06) !important; }
-html.style-apple.dark .el-dialog { border-radius: 20px !important; box-shadow: 0 16px 40px -10px rgba(0,0,0,0.55), 0 8px 16px -8px rgba(0,0,0,0.44) !important; }
-html.style-vercel.dark .el-dialog { box-shadow: 0 0 0 1px #282828, 0 8px 40px rgba(0,0,0,0.4) !important; }
+html[class*='style-'] .el-dialog {
+  border-radius: var(--style-radius-dialog) !important;
+  box-shadow: var(--style-shadow-dialog) !important;
+}
 
 /* 3.4 抽屉 */
-html.style-vercel .el-drawer { border-radius: 0 !important; }
-html.style-apple .el-drawer { border-radius: 20px 0 0 20px !important; }
+html[class*='style-'] .el-drawer {
+  border-radius: var(--style-radius-drawer) 0 0 var(--style-radius-drawer) !important;
+}
 
 /* 3.5 弹出框 / 下拉 */
-html.style-vercel .el-popper, html.style-vercel .el-popover, html.style-vercel .el-dropdown-menu, html.style-vercel .el-select-dropdown { border-radius: 8px !important; box-shadow: 0 0 0 1px var(--border), 0 4px 24px rgba(0,0,0,0.1) !important; }
-html.style-apple.light .el-popper, html.style-apple.light .el-popover, html.style-apple.light .el-dropdown-menu, html.style-apple.light .el-select-dropdown, html.style-apple:not(.dark) .el-popper, html.style-apple:not(.dark) .el-popover, html.style-apple:not(.dark) .el-dropdown-menu, html.style-apple:not(.dark) .el-select-dropdown { border-radius: 16px !important; box-shadow: 0 4px 8px -2px rgba(0,0,0,0.06), 0 2px 4px -2px rgba(0,0,0,0.05) !important; }
-html.style-apple.dark .el-popper, html.style-apple.dark .el-popover, html.style-apple.dark .el-dropdown-menu, html.style-apple.dark .el-select-dropdown { border-radius: 16px !important; box-shadow: 0 4px 8px -2px rgba(0,0,0,0.44), 0 2px 4px -2px rgba(0,0,0,0.36) !important; }
+html[class*='style-'] .el-popper,
+html[class*='style-'] .el-popover,
+html[class*='style-'] .el-dropdown-menu,
+html[class*='style-'] .el-select-dropdown {
+  border-radius: var(--style-radius-popover) !important;
+  box-shadow: var(--style-shadow-popover) !important;
+}
+
+/* 3.5.1 下拉组件紧凑化：消除下拉菜单 / 选择框内部不必要的留白 */
+html[class*='style-'] .el-select-dropdown__item {
+  height: 32px;
+  line-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+html[class*='style-'] .el-select-dropdown__list {
+  padding: 4px 0;
+}
+html[class*='style-'] .el-dropdown-menu__item {
+  padding: 7px 14px;
+  line-height: 1.4;
+  font-size: 13px;
+}
+html[class*='style-'] .el-dropdown-menu {
+  padding: 4px;
+}
+html[class*='style-'] .el-select__wrapper {
+  min-height: 32px;
+  padding: 0 10px;
+}
 
 /* 3.6 输入框 */
-html.style-vercel .el-input__wrapper, html.style-vercel .el-select__wrapper, html.style-vercel .el-textarea__inner { border-radius: 6px !important; }
-html.style-apple .el-input__wrapper, html.style-apple .el-select__wrapper, html.style-apple .el-textarea__inner { border-radius: 10px !important; }
+html[class*='style-'] .el-input__wrapper,
+html[class*='style-'] .el-select__wrapper,
+html[class*='style-'] .el-textarea__inner {
+  border-radius: var(--style-radius-btn) !important;
+}
 
 /* 3.7 消息框 / 通知 */
-html.style-vercel .el-message-box { border-radius: 12px !important; }
-html.style-vercel .el-notification { border-radius: 8px !important; }
-html.style-vercel .el-message { border-radius: 8px !important; }
-html.style-apple .el-message-box { border-radius: 20px !important; }
-html.style-apple .el-notification { border-radius: 16px !important; }
-html.style-apple .el-message { border-radius: 12px !important; }
+html[class*='style-'] .el-message-box {
+  border-radius: var(--style-radius-dialog) !important;
+}
+html[class*='style-'] .el-notification {
+  border-radius: var(--style-radius-msg) !important;
+}
+html[class*='style-'] .el-message {
+  border-radius: var(--style-radius-msg) !important;
+}
 
 /* 3.8 标签 */
-html.style-vercel .el-tag { border-radius: 4px !important; }
-html.style-apple .el-tag { border-radius: 999px !important; }
+html[class*='style-'] .el-tag {
+  border-radius: var(--style-radius-tag) !important;
+}
 
 /* 3.9 表格行 hover */
-html.style-vercel .el-table__row:hover > td { background-color: transparent !important; }
-html.style-apple:not(.dark) .el-table__row:hover > td { background-color: rgba(0,0,0,0.02) !important; }
-html.style-apple.dark .el-table__row:hover > td { background-color: rgba(255,255,255,0.04) !important; }
+html[class*='style-'] .el-table__row:hover > td {
+  background-color: var(--style-table-hover-bg) !important;
+}
 
 /* 3.10 标签页 */
-html.style-vercel .el-tabs__item { border-radius: 4px 4px 0 0 !important; }
-html.style-apple .el-tabs__item { border-radius: 10px 10px 0 0 !important; }
+html[class*='style-'] .el-tabs__item {
+  border-radius: var(--style-radius-tabs) var(--style-radius-tabs) 0 0 !important;
+}
 
 /* 3.11 分页 */
-html.style-vercel .el-pager li { border-radius: 4px !important; }
-html.style-apple .el-pager li { border-radius: 10px !important; }
+html[class*='style-'] .el-pager li {
+  border-radius: var(--style-radius-pager) !important;
+}
 
 /* 3.12 复选框 / 开关 / 徽章 / 头像 / 警告 / 进度 / 提示 */
-html.style-vercel .el-checkbox__inner { border-radius: 3px !important; }
-html.style-apple .el-checkbox__inner { border-radius: 6px !important; }
-html.style-apple .el-switch__core { border-radius: 999px !important; }
-html.style-apple .el-badge__content { border-radius: 999px !important; }
-html.style-vercel .el-avatar { border-radius: 6px !important; }
-html.style-apple .el-avatar { border-radius: 50% !important; }
-html.style-vercel .el-alert { border-radius: 8px !important; }
-html.style-apple .el-alert { border-radius: 12px !important; }
-html.style-vercel .el-progress-bar__outer { border-radius: 4px !important; }
-html.style-apple .el-progress-bar__outer { border-radius: 10px !important; }
-html.style-vercel .el-tooltip__popper { border-radius: 8px !important; }
-html.style-apple .el-tooltip__popper { border-radius: 12px !important; }
+html[class*='style-'] .el-checkbox__inner {
+  border-radius: var(--style-radius-checkbox) !important;
+}
+html[class*='style-'] .el-switch__core {
+  border-radius: var(--style-radius-tag) !important;
+}
+html[class*='style-'] .el-badge__content {
+  border-radius: var(--style-radius-tag) !important;
+}
+html[class*='style-'] .el-avatar {
+  border-radius: var(--style-radius-avatar) !important;
+}
+html[class*='style-'] .el-alert {
+  border-radius: var(--style-radius-alert) !important;
+}
+html[class*='style-'] .el-progress-bar__outer {
+  border-radius: var(--style-radius-progress) !important;
+}
+html[class*='style-'] .el-tooltip__popper {
+  border-radius: var(--style-radius-tooltip) !important;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    4. 侧边栏 — 组件级 class 绕过 scoped
    ═══════════════════════════════════════════════════════════════ */
 
-/* Vercel: 有阴影、菜单项 8px、活跃项有发光 */
-.aside.style-vercel {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-}
+/* vercel 侧边栏 */
 .aside.style-vercel .el-menu-item {
-  border-radius: 8px !important;
+  border-radius: var(--style-radius-menu) !important;
 }
 .aside.style-vercel .el-sub-menu__title {
-  border-radius: 8px !important;
+  border-radius: var(--style-radius-menu) !important;
 }
 .aside.style-vercel .el-menu-item.is-active {
-  box-shadow: 0 2px 8px var(--el-color-primary-light-5) !important;
-}
-.aside.style-vercel .logo img {
-  border-radius: 6px !important;
-}
-
-/* Apple: 无阴影、菜单项 12px、活跃项无发光、logo 大圆角 */
-.aside.style-apple {
   box-shadow: none !important;
 }
+.aside.style-vercel .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-vercel .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-vercel .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* apple 侧边栏 */
 .aside.style-apple .el-menu-item {
-  border-radius: 12px !important;
+  border-radius: var(--style-radius-menu) !important;
 }
 .aside.style-apple .el-sub-menu__title {
-  border-radius: 12px !important;
+  border-radius: var(--style-radius-menu) !important;
 }
 .aside.style-apple .el-menu-item.is-active {
   box-shadow: none !important;
 }
 .aside.style-apple .logo img {
-  border-radius: 12px !important;
+  border-radius: var(--style-radius-logo) !important;
 }
-/* Apple 侧边栏滚动条 */
-.aside.style-apple .menu-wrapper::-webkit-scrollbar { width: 6px; }
-.aside.style-apple .menu-wrapper::-webkit-scrollbar-thumb { border-radius: 999px; }
+.aside.style-apple .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-apple .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* 21th 侧边栏 */
+.aside.style-21th .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-21th .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-21th .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-21th .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-21th .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-21th .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* claude 侧边栏 */
+.aside.style-claude .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-claude .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-claude .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-claude .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-claude .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-claude .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* google 侧边栏 */
+.aside.style-google .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-google .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-google .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-google .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-google .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-google .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* minimal 侧边栏 */
+.aside.style-minimal .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-minimal .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-minimal .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-minimal .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-minimal .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-minimal .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* motionfit 侧边栏 */
+.aside.style-motionfit .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-motionfit .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-motionfit .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-motionfit .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-motionfit .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-motionfit .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* nerv 侧边栏 */
+.aside.style-nerv .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-nerv .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-nerv .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-nerv .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-nerv .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-nerv .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* tiktok 侧边栏 */
+.aside.style-tiktok .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-tiktok .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-tiktok .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-tiktok .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-tiktok .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-tiktok .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
+/* yuanli 侧边栏 */
+.aside.style-yuanli .el-menu-item {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-yuanli .el-sub-menu__title {
+  border-radius: var(--style-radius-menu) !important;
+}
+.aside.style-yuanli .el-menu-item.is-active {
+  box-shadow: none !important;
+}
+.aside.style-yuanli .logo img {
+  border-radius: var(--style-radius-logo) !important;
+}
+.aside.style-yuanli .menu-wrapper::-webkit-scrollbar { width: var(--style-scrollbar-width); }
+.aside.style-yuanli .menu-wrapper::-webkit-scrollbar-thumb { border-radius: var(--style-radius-scrollbar); }
+
 
 /* ═══════════════════════════════════════════════════════════════
    5. 顶栏 — 组件级 class 绕过 scoped
    ═══════════════════════════════════════════════════════════════ */
 
-/* Vercel: 有阴影 */
+/* vercel 顶栏 */
 .header.style-vercel {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
 }
 
-/* Apple: 无阴影、仅底边框 */
+/* apple 顶栏 */
 .header.style-apple {
   box-shadow: none !important;
   border-bottom: 1px solid hsl(var(--border)) !important;
 }
 
+/* 21th 顶栏 */
+.header.style-21th {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* claude 顶栏 */
+.header.style-claude {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* google 顶栏 */
+.header.style-google {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* minimal 顶栏 */
+.header.style-minimal {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* motionfit 顶栏 */
+.header.style-motionfit {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* nerv 顶栏 */
+.header.style-nerv {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* tiktok 顶栏 */
+.header.style-tiktok {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+/* yuanli 顶栏 */
+.header.style-yuanli {
+  box-shadow: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+
+
 /* ═══════════════════════════════════════════════════════════════
    6. Dashboard — 组件级 class 绕过 scoped
    ═══════════════════════════════════════════════════════════════ */
 
-/* Vercel stat-card: 小圆角、无阴影、无 hover 浮起、无光晕 */
-.dashboard-modern.style-vercel .stat-card {
-  border-radius: 8px !important;
-  box-shadow: none !important;
+/* vercel Dashboard */
+.dashboard-pd.style-vercel .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
 }
-.dashboard-modern.style-vercel .stat-card:hover {
-  transform: none !important;
-  box-shadow: none !important;
-  border-color: hsl(var(--border)) !important;
+.dashboard-pd.style-vercel .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
 }
-.dashboard-modern.style-vercel .stat-card .card-glow {
-  display: none !important;
+.dashboard-pd.style-vercel .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
 }
-
-/* Vercel chart-card: 小圆角、无阴影 */
-.dashboard-modern.style-vercel .chart-card {
-  border-radius: 8px !important;
-  box-shadow: none !important;
+.dashboard-pd.style-vercel .bubble {
+  border-radius: var(--style-radius-bubble) !important;
 }
 
-/* Vercel bubble: 小圆角 */
-.dashboard-modern.style-vercel .bubble {
-  border-radius: 8px !important;
+/* apple Dashboard */
+.dashboard-pd.style-apple .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-apple .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-apple .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-apple .bubble {
+  border-radius: var(--style-radius-bubble) !important;
 }
 
-/* Apple stat-card: 大圆角、阴影、hover 浮起、光晕保留 */
-.dashboard-modern.style-apple .stat-card {
-  border-radius: 20px !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+/* 21th Dashboard */
+.dashboard-pd.style-21th .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
 }
-.dashboard-modern.style-apple .stat-card:hover {
-  transform: translateY(-4px) !important;
-  box-shadow: 0 12px 24px rgba(0,0,0,0.08) !important;
+.dashboard-pd.style-21th .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-21th .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-21th .bubble {
+  border-radius: var(--style-radius-bubble) !important;
 }
 
-/* Apple chart-card: 大圆角、阴影 */
-.dashboard-modern.style-apple .chart-card {
-  border-radius: 20px !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+/* claude Dashboard */
+.dashboard-pd.style-claude .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-claude .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-claude .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-claude .bubble {
+  border-radius: var(--style-radius-bubble) !important;
 }
 
-/* Apple bubble: 大圆角 */
-.dashboard-modern.style-apple .bubble {
-  border-radius: 20px !important;
+/* google Dashboard */
+.dashboard-pd.style-google .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
 }
+.dashboard-pd.style-google .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-google .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-google .bubble {
+  border-radius: var(--style-radius-bubble) !important;
+}
+
+/* minimal Dashboard */
+.dashboard-pd.style-minimal .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-minimal .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-minimal .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-minimal .bubble {
+  border-radius: var(--style-radius-bubble) !important;
+}
+
+/* motionfit Dashboard */
+.dashboard-pd.style-motionfit .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-motionfit .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-motionfit .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-motionfit .bubble {
+  border-radius: var(--style-radius-bubble) !important;
+}
+
+/* nerv Dashboard */
+.dashboard-pd.style-nerv .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-nerv .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-nerv .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-nerv .bubble {
+  border-radius: var(--style-radius-bubble) !important;
+}
+
+/* tiktok Dashboard */
+.dashboard-pd.style-tiktok .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-tiktok .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-tiktok .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-tiktok .bubble {
+  border-radius: var(--style-radius-bubble) !important;
+}
+
+/* yuanli Dashboard */
+.dashboard-pd.style-yuanli .stat-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+}
+.dashboard-pd.style-yuanli .stat-card:hover {
+  transform: var(--style-card-hover-transform) !important;
+  box-shadow: var(--style-shadow-stat-hover) !important;
+}
+.dashboard-pd.style-yuanli .chart-card {
+  border-radius: var(--style-radius-stat) !important;
+  box-shadow: var(--style-shadow-stat) !important;
+}
+.dashboard-pd.style-yuanli .bubble {
+  border-radius: var(--style-radius-bubble) !important;
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
    7. 滚动条
    ═══════════════════════════════════════════════════════════════ */
 
-html.style-vercel ::-webkit-scrollbar { width: 6px; height: 6px; }
-html.style-vercel ::-webkit-scrollbar-thumb { border-radius: 4px; }
-html.style-apple ::-webkit-scrollbar { width: 8px; height: 8px; }
-html.style-apple ::-webkit-scrollbar-thumb { border-radius: 999px; }
+html[class*='style-'] ::-webkit-scrollbar {
+  width: var(--style-scrollbar-width) !important;
+  height: var(--style-scrollbar-width) !important;
+}
+html[class*='style-'] ::-webkit-scrollbar-thumb {
+  border-radius: var(--style-radius-scrollbar) !important;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    8. 遮罩层 / 毛玻璃
    ═══════════════════════════════════════════════════════════════ */
 
-html.style-vercel .el-overlay { backdrop-filter: blur(4px) !important; }
-html.style-vercel .el-drawer, html.style-vercel .el-dialog { backdrop-filter: blur(12px) !important; }
-html.style-apple .el-overlay { backdrop-filter: blur(8px) !important; }
-html.style-apple .el-drawer, html.style-apple .el-dialog { backdrop-filter: blur(16px) !important; }
+html[class*='style-'] .el-overlay {
+  backdrop-filter: blur(var(--style-overlay-blur)) !important;
+}
+html[class*='style-'] .el-drawer,
+html[class*='style-'] .el-dialog {
+  backdrop-filter: blur(var(--style-dialog-blur)) !important;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    9. 登录页 — 组件级 class 绕过 scoped
    ═══════════════════════════════════════════════════════════════ */
 
 .login-box.style-vercel {
-  border-radius: 8px !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
 }
-html:not(.dark) .login-box.style-apple, .login-box.style-apple {
-  border-radius: 20px !important;
+.login-box.style-apple {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
 }
-html:not(.dark) .login-box.style-apple {
-  box-shadow: 0 16px 40px -10px rgba(0,0,0,0.10), 0 8px 16px -8px rgba(0,0,0,0.06) !important;
+.login-box.style-21th {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
 }
-html.dark .login-box.style-apple {
-  box-shadow: 0 16px 40px -10px rgba(0,0,0,0.55), 0 8px 16px -8px rgba(0,0,0,0.44) !important;
+.login-box.style-claude {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
+}
+.login-box.style-google {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
+}
+.login-box.style-minimal {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
+}
+.login-box.style-motionfit {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
+}
+.login-box.style-nerv {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
+}
+.login-box.style-tiktok {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
+}
+.login-box.style-yuanli {
+  border-radius: var(--style-radius-login) !important;
+  box-shadow: var(--style-shadow-login) !important;
 }
 
 /* ============================================ */
@@ -1474,30 +2689,26 @@ html.dark .el-empty__description {
 }
 
 /* ============================================ */
-/* 现代毛玻璃效果 (Glassmorphism) */
+/* 遮罩层与弹出层 */
 /* ============================================ */
 .el-overlay {
   background-color: rgba(0, 0, 0, 0.4) !important;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  transition: backdrop-filter 0.3s ease;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
 
 html.dark .el-overlay {
-  background-color: rgba(0, 0, 0, 0.65) !important;
+  background-color: rgba(0, 0, 0, 0.6) !important;
 }
 
 .el-drawer, .el-dialog {
-  background: rgba(255, 255, 255, 0.95) !important;
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border));
 }
 
 html.dark .el-drawer, html.dark .el-dialog {
-  background: rgba(0, 0, 0, 0.75) !important;
-  backdrop-filter: blur(16px) !important;
-  -webkit-backdrop-filter: blur(16px) !important;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171717 !important;
+  border: 1px solid #282828;
 }
 
 /* 暗黑模式下的加载样式 */
@@ -1524,27 +2735,27 @@ html, body {
   transition: background 0.3s, color 0.3s;
 }
 
-/* 暗黑模式下强制设置背景色 - 纯黑色 */
+/* 暗黑模式下设置背景色 - refined dark */
 html.dark, html.dark body {
-  background: #000000 !important;
+  background: #0a0a0a !important;
   color: #fafafa !important;
 }
 
-/* 暗黑模式下主内容区域背景 - 纯黑色 */
+/* 暗黑模式下主内容区域背景 */
 html.dark .main,
 html.dark .el-main {
-  background: #000000 !important;
-  background-color: #000000 !important;
+  background: #0a0a0a !important;
+  background-color: #0a0a0a !important;
 }
 
-/* 暗黑模式下整体布局背景 - 纯黑色 */
+/* 暗黑模式下整体布局背景 */
 html.dark .layout-container {
-  background: #000000 !important;
+  background: #0a0a0a !important;
 }
 
-/* 暗黑模式下工作台页面背景 - 纯黑色 */
+/* 暗黑模式下工作台页面背景 */
 html.dark .workspace {
-  background: #000000 !important;
+  background: #0a0a0a !important;
 }
 
 #app {
@@ -1565,11 +2776,11 @@ html.dark .workspace {
 }
 
 .el-card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+  border-color: hsl(var(--muted-foreground) / 0.3);
 }
 
 html.dark .el-card:hover {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  border-color: hsl(var(--muted-foreground) / 0.25);
 }
 
 /* 按钮微交互 */
@@ -1600,14 +2811,14 @@ html.dark .el-card:hover {
 }
 
 /* ============================================ */
-/* 暗黑模式下的表格优化（解决滚动区域背景问题）- 纯黑色 */
+/* 暗黑模式下的表格优化（解决滚动区域背景问题）- refined dark */
 /* ============================================ */
 html.dark .el-table {
-  --el-table-bg-color: #000000;
-  --el-table-tr-bg-color: #000000;
+  --el-table-bg-color: #0a0a0a;
+  --el-table-tr-bg-color: #0a0a0a;
   --el-table-row-hover-bg-color: #1a1a1a;
-  --el-table-header-bg-color: #0a0a0a;
-  background-color: #000000 !important;
+  --el-table-header-bg-color: #111111;
+  background-color: #0a0a0a !important;
 }
 
 html.dark .el-table .el-table__inner-wrapper,
@@ -1615,21 +2826,21 @@ html.dark .el-table .el-table__body-wrapper,
 html.dark .el-table .el-scrollbar,
 html.dark .el-table .el-scrollbar__wrap,
 html.dark .el-table .el-scrollbar__view {
-  background-color: #000000 !important;
+  background-color: #0a0a0a !important;
 }
 
 html.dark .el-table .el-table__empty-block {
-  background-color: #000000 !important;
+  background-color: #0a0a0a !important;
 }
 
 html.dark .el-table th.el-table__cell {
-  background-color: #0a0a0a !important;
+  background-color: #111111 !important;
   color: #a1a1a1 !important;
 }
 
 /* 斑马纹 */
 html.dark .el-table .el-table__row--striped td.el-table__cell {
-  background-color: #0a0a0a !important;
+  background-color: #111111 !important;
 }
 
 /* ============================================ */
@@ -1644,10 +2855,10 @@ html.dark .el-table .el-table__row--striped td.el-table__cell {
   color: #1f2937;
 }
 
-/* 暗黑模式下强制卡片背景色 - 纯黑色 */
+/* 暗黑模式下卡片背景色 - refined dark */
 html.dark .dark-card {
-  background: #000000 !important;
-  border-color: #262626 !important;
+  background: #171717 !important;
+  border-color: #282828 !important;
   color: #fafafa !important;
 }
 
@@ -1907,18 +3118,18 @@ html.dark .el-avatar {
   --el-avatar-text-color: hsl(var(--foreground));
 }
 
-/* 暗黑模式下的卡片阴影 */
+/* 暗黑模式下的卡片阴影 - subtle */
 html.dark .el-card {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: none;
 }
 
 html.dark .el-card:hover {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  box-shadow: none;
 }
 
-/* 暗黑模式下的填充色变量 - 纯黑色 */
+/* 暗黑模式下的填充色变量 - refined dark */
 html.dark {
-  --el-fill-color-darker: #0a0a0a;
+  --el-fill-color-darker: #111111;
 }
 
 /* 暗黑模式下的树形控件样式 */
@@ -2313,4 +3524,1918 @@ html.dark .logs-bg {
 .asset-all-view .filter-column .el-select .el-select__wrapper {
   height: 24px;
   min-height: 24px;
+}/* ═══════════════════════════════════════════════════════════════
+   对比度修复 — 确保所有款式在暗色模式下文字清晰可见
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── 1. 色调变体修复（生成正确的浅色/深色变体）────────── */
+
+html.style-vercel.light,
+html.style-vercel:not(.dark) {
+  --el-color-primary-light-3: #76a8f9;
+  --el-color-primary-light-5: #9dc0fa;
+  --el-color-primary-light-7: #c4dafc;
+  --el-color-primary-light-8: #d8e6fd;
+  --el-color-primary-light-9: #ebf2fe;
+  --el-color-primary-dark-2: #2f68c5;
 }
+
+html.style-vercel.dark {
+  --el-color-primary-light-3: #2e60b1;
+  --el-color-primary-light-5: #264a84;
+  --el-color-primary-light-7: #1e3356;
+  --el-color-primary-light-8: #19283f;
+  --el-color-primary-light-9: #151c28;
+  --el-color-primary-dark-2: #2f68c5;
+}
+
+html.style-apple.light,
+html.style-apple:not(.dark) {
+  --el-color-primary-light-3: #4da2ff;
+  --el-color-primary-light-5: #80bcff;
+  --el-color-primary-light-7: #b2d7ff;
+  --el-color-primary-light-8: #cce4ff;
+  --el-color-primary-light-9: #e6f2ff;
+  --el-color-primary-dark-2: #0062cc;
+}
+
+html.style-apple.dark {
+  --el-color-primary-light-3: #296bbc;
+  --el-color-primary-light-5: #25548e;
+  --el-color-primary-light-7: #213e62;
+  --el-color-primary-light-8: #20334b;
+  --el-color-primary-light-9: #1e2734;
+  --el-color-primary-dark-2: #2571cc;
+}
+
+html.style-21th.light,
+html.style-21th:not(.dark) {
+  --el-color-primary-light-3: #585858;
+  --el-color-primary-light-5: #888888;
+  --el-color-primary-light-7: #b8b8b8;
+  --el-color-primary-light-8: #cfcfcf;
+  --el-color-primary-light-9: #e7e7e7;
+  --el-color-primary-dark-2: #0e0e0e;
+}
+
+html.style-21th.dark {
+  --el-color-primary-light-3: #bababa;
+  --el-color-primary-light-5: #8c8c8c;
+  --el-color-primary-light-7: #5f5f5f;
+  --el-color-primary-light-8: #484848;
+  --el-color-primary-light-9: #313131;
+  --el-color-primary-dark-2: #cccccc;
+}
+
+html.style-claude.light,
+html.style-claude:not(.dark) {
+  --el-color-primary-light-3: #d9927b;
+  --el-color-primary-light-5: #e4b2a0;
+  --el-color-primary-light-7: #efd0c6;
+  --el-color-primary-light-8: #f4e0d9;
+  --el-color-primary-light-9: #faf0ec;
+  --el-color-primary-dark-2: #a15035;
+}
+
+html.style-claude.dark {
+  --el-color-primary-light-3: #a5604a;
+  --el-color-primary-light-5: #825241;
+  --el-color-primary-light-7: #604238;
+  --el-color-primary-light-8: #4f3b34;
+  --el-color-primary-light-9: #3d342f;
+  --el-color-primary-dark-2: #ae5f46;
+}
+
+html.style-google.light,
+html.style-google:not(.dark) {
+  --el-color-primary-light-3: #7baaf7;
+  --el-color-primary-light-5: #a0c2fa;
+  --el-color-primary-light-7: #c6dafc;
+  --el-color-primary-light-8: #d9e7fd;
+  --el-color-primary-light-9: #ecf3fe;
+  --el-color-primary-dark-2: #356ac3;
+}
+
+html.style-google.dark {
+  --el-color-primary-light-3: #b92840;
+  --el-color-primary-light-5: #8c2436;
+  --el-color-primary-light-7: #60222c;
+  --el-color-primary-light-8: #4a2026;
+  --el-color-primary-light-9: #331e21;
+  --el-color-primary-dark-2: #ca2340;
+}
+
+html.style-minimal.light,
+html.style-minimal:not(.dark) {
+  --el-color-primary-light-3: #5d5d5f;
+  --el-color-primary-light-5: #8c8c8d;
+  --el-color-primary-light-7: #bababb;
+  --el-color-primary-light-8: #d1d1d1;
+  --el-color-primary-light-9: #e8e8e8;
+  --el-color-primary-dark-2: #131316;
+}
+
+html.style-minimal.dark {
+  --el-color-primary-light-3: #b6b6b6;
+  --el-color-primary-light-5: #888888;
+  --el-color-primary-light-7: #5b5b5b;
+  --el-color-primary-light-8: #444444;
+  --el-color-primary-light-9: #2e2e2e;
+  --el-color-primary-dark-2: #c8c8c8;
+}
+
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) {
+  --el-color-primary-light-3: #ff794d;
+  --el-color-primary-light-5: #ffa080;
+  --el-color-primary-light-7: #ffc6b2;
+  --el-color-primary-light-8: #ffd9cc;
+  --el-color-primary-light-9: #ffece6;
+  --el-color-primary-dark-2: #cc3300;
+}
+
+html.style-motionfit.dark {
+  --el-color-primary-light-3: #07b964;
+  --el-color-primary-light-5: #0b8a4e;
+  --el-color-primary-light-7: #0f5c37;
+  --el-color-primary-light-8: #12452c;
+  --el-color-primary-light-9: #142d21;
+  --el-color-primary-dark-2: #00cc6a;
+}
+
+html.style-nerv.light,
+html.style-nerv:not(.dark) {
+  --el-color-primary-light-3: #f07175;
+  --el-color-primary-light-5: #f49a9c;
+  --el-color-primary-light-7: #f9c2c4;
+  --el-color-primary-light-8: #fbd6d8;
+  --el-color-primary-light-9: #fdebeb;
+  --el-color-primary-dark-2: #bb2a2e;
+}
+
+html.style-nerv.dark {
+  --el-color-primary-light-3: #b87094;
+  --el-color-primary-light-5: #88556f;
+  --el-color-primary-light-7: #583a4a;
+  --el-color-primary-light-8: #412c37;
+  --el-color-primary-light-9: #291f25;
+  --el-color-primary-dark-2: #cc7aa3;
+}
+
+html.style-tiktok.light,
+html.style-tiktok:not(.dark) {
+  --el-color-primary-light-3: #fe6b88;
+  --el-color-primary-light-5: #fe96aa;
+  --el-color-primary-light-7: #ffc0cc;
+  --el-color-primary-light-8: #ffd5dd;
+  --el-color-primary-light-9: #ffeaee;
+  --el-color-primary-dark-2: #cb2344;
+}
+
+html.style-tiktok.dark {
+  --el-color-primary-light-3: #b82646;
+  --el-color-primary-light-5: #8a223c;
+  --el-color-primary-light-7: #5c1e32;
+  --el-color-primary-light-8: #441c2d;
+  --el-color-primary-light-9: #2d1a28;
+  --el-color-primary-dark-2: #cb2344;
+}
+
+html.style-yuanli.light,
+html.style-yuanli:not(.dark) {
+  --el-color-primary-light-3: #5c92ff;
+  --el-color-primary-light-5: #8ab2ff;
+  --el-color-primary-light-7: #b9d0ff;
+  --el-color-primary-light-8: #d0e0ff;
+  --el-color-primary-light-9: #e8f0ff;
+  --el-color-primary-dark-2: #1250cc;
+}
+
+html.style-yuanli.dark {
+  --el-color-primary-light-3: #2e5dbb;
+  --el-color-primary-light-5: #274a8e;
+  --el-color-primary-light-7: #203660;
+  --el-color-primary-light-8: #1d2c49;
+  --el-color-primary-light-9: #192233;
+  --el-color-primary-dark-2: #2d62cc;
+}
+
+/* ─── 2. 按钮文字对比度修复（仅修复严重不足的款式）────── */
+
+/* 21th (dark): 按钮文字改为深色以确保可读性 */
+html.style-21th.dark .el-button--primary {
+  --el-button-text-color: #000000;
+  --el-button-hover-text-color: #000000;
+  --el-button-active-text-color: #000000;
+  --el-button-disabled-text-color: #000000;
+}
+
+/* minimal (dark): 按钮文字改为深色以确保可读性 */
+html.style-minimal.dark .el-button--primary {
+  --el-button-text-color: #000000;
+  --el-button-hover-text-color: #000000;
+  --el-button-active-text-color: #000000;
+  --el-button-disabled-text-color: #000000;
+}
+
+/* motionfit (dark): 按钮文字改为深色以确保可读性 */
+html.style-motionfit.dark .el-button--primary {
+  --el-button-text-color: #000000;
+  --el-button-hover-text-color: #000000;
+  --el-button-active-text-color: #000000;
+  --el-button-disabled-text-color: #000000;
+}
+
+/* nerv (dark): 按钮文字改为深色以确保可读性 */
+html.style-nerv.dark .el-button--primary {
+  --el-button-text-color: #000000;
+  --el-button-hover-text-color: #000000;
+  --el-button-active-text-color: #000000;
+  --el-button-disabled-text-color: #000000;
+}
+
+/* ─── 3. 暗色模式 Element Plus 组件通用修复 ────────────── */
+
+/* 表格 */
+html[class*='style-'].dark .el-table {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-table th.el-table__cell {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-table tr {
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-table td.el-table__cell {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-table--border .el-table__cell {
+  border-right-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-table--border::after {
+  background-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-table__empty-text {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell {
+  background-color: var(--el-color-primary-light-9) !important;
+}
+html[class*='style-'].dark .el-table--enable-row-transition .el-table__body td.el-table__cell {
+  transition: background-color 0.25s ease !important;
+}
+
+/* 输入框 */
+html[class*='style-'].dark .el-input__inner {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-input__inner::placeholder {
+  color: hsl(var(--muted-foreground) / 0.5) !important;
+}
+html[class*='style-'].dark .el-textarea__inner {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-textarea__inner::placeholder {
+  color: hsl(var(--muted-foreground) / 0.5) !important;
+}
+html[class*='style-'].dark .el-input__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html[class*='style-'].dark .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
+}
+html[class*='style-'].dark .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px hsl(var(--border) / 1.5) inset !important;
+}
+html[class*='style-'].dark .el-select__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html[class*='style-'].dark .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset !important;
+}
+
+/* 表单 */
+html[class*='style-'].dark .el-form-item__label {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-form-item__error {
+  color: hsl(var(--destructive)) !important;
+}
+
+/* 对话框 */
+html[class*='style-'].dark .el-dialog {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-dialog__title {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-dialog__body {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-dialog__header {
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-dialog__footer {
+  border-top: 1px solid hsl(var(--border)) !important;
+}
+
+/* 卡片 */
+html[class*='style-'].dark .el-card {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-card__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+
+/* 标签页 */
+html[class*='style-'].dark .el-tabs__item {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-tabs__item.is-active {
+  color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-tabs__item:hover {
+  color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-tabs__active-bar {
+  background-color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-tabs__header {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-tabs--card > .el-tabs__header {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-tabs--card > .el-tabs__header .el-tabs__nav {
+  border-color: hsl(var(--border)) !important;
+}
+
+/* 分页 */
+html[class*='style-'].dark .el-pagination {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-pagination button {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: transparent !important;
+}
+html[class*='style-'].dark .el-pagination button:disabled {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+  background-color: transparent !important;
+}
+html[class*='style-'].dark .el-pager li {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: transparent !important;
+}
+html[class*='style-'].dark .el-pager li:hover {
+  color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-pager li.is-active {
+  color: var(--el-color-primary) !important;
+  background-color: var(--el-color-primary-light-9) !important;
+}
+
+/* 下拉菜单 */
+html[class*='style-'].dark .el-dropdown-menu {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-dropdown-menu__item {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-dropdown-menu__item:not(.is-disabled):hover {
+  background-color: hsl(var(--accent)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-dropdown-menu__item.is-disabled {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+}
+html[class*='style-'].dark .el-select-dropdown__item {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-select-dropdown__item.hover,
+html[class*='style-'].dark .el-select-dropdown__item:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html[class*='style-'].dark .el-select-dropdown__item.is-disabled {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+}
+html[class*='style-'].dark .el-select-dropdown {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+/* 弹出框 */
+html[class*='style-'].dark .el-popover {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-popper {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+/* 消息框 */
+html[class*='style-'].dark .el-message-box {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-message-box__title {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-message-box__message {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-message-box__content {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* 通知 */
+html[class*='style-'].dark .el-notification {
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-notification__title {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-notification__content {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* 单选/复选 */
+html[class*='style-'].dark .el-radio__label {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-checkbox__label {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-radio__inner {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--input)) !important;
+}
+html[class*='style-'].dark .el-checkbox__inner {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--input)) !important;
+}
+html[class*='style-'].dark .el-radio__input.is-checked .el-radio__inner {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-checkbox__input.is-checked .el-checkbox__inner {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* 开关 */
+html[class*='style-'].dark .el-switch__label {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-switch__core {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--muted)) !important;
+}
+html[class*='style-'].dark .el-switch.is-checked .el-switch__core {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* 默认按钮 */
+html[class*='style-'].dark .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info).is-disabled {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+  background-color: hsl(var(--muted) / 0.5) !important;
+}
+
+/* 文字按钮 */
+html[class*='style-'].dark .el-button.is-text {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-button.is-text:hover {
+  color: var(--el-color-primary) !important;
+  background-color: transparent !important;
+}
+
+/* 描述列表 */
+html[class*='style-'].dark .el-descriptions__title {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-descriptions__label {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+}
+html[class*='style-'].dark .el-descriptions__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-descriptions__cell {
+  border-color: hsl(var(--border)) !important;
+}
+
+/* 折叠面板 */
+html[class*='style-'].dark .el-collapse-item__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-collapse-item__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-collapse-item__wrap {
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+
+/* 加载遮罩 */
+html[class*='style-'].dark .el-loading-mask {
+  background-color: hsl(var(--card) / 0.8) !important;
+}
+html[class*='style-'].dark .el-loading-spinner .path {
+  stroke: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-loading-text {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* 空状态 */
+html[class*='style-'].dark .el-empty__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* 树形控件 */
+html[class*='style-'].dark .el-tree {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-tree-node__content:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html[class*='style-'].dark .el-tree-node.is-current > .el-tree-node__content {
+  background-color: var(--el-color-primary-light-9) !important;
+}
+
+/* 日期选择器 */
+html[class*='style-'].dark .el-date-editor .el-input__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html[class*='style-'].dark .el-date-table th {
+  color: hsl(var(--muted-foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-date-table td .el-date-table-cell__text {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-date-table td.next-month .el-date-table-cell__text,
+html[class*='style-'].dark .el-date-table td.prev-month .el-date-table-cell__text {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+}
+html[class*='style-'].dark .el-picker-panel {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* 标签 */
+html[class*='style-'].dark .el-tag {
+  background-color: var(--el-color-primary-light-9) !important;
+  border-color: var(--el-color-primary-light-7) !important;
+  color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-tag--info {
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-tag--success {
+  background-color: hsl(141 53% 40% / 0.15) !important;
+  border-color: hsl(141 53% 40% / 0.3) !important;
+  color: hsl(141 53% 55%) !important;
+}
+html[class*='style-'].dark .el-tag--warning {
+  background-color: hsl(38 92% 50% / 0.15) !important;
+  border-color: hsl(38 92% 50% / 0.3) !important;
+  color: hsl(38 92% 60%) !important;
+}
+html[class*='style-'].dark .el-tag--danger {
+  background-color: hsl(0 63% 50% / 0.15) !important;
+  border-color: hsl(0 63% 50% / 0.3) !important;
+  color: hsl(0 63% 60%) !important;
+}
+
+/* 警告 */
+html[class*='style-'].dark .el-alert--info {
+  background-color: hsl(var(--muted)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-alert--info .el-alert__title {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-alert__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* 抽屉 */
+html[class*='style-'].dark .el-drawer {
+  background-color: hsl(var(--card)) !important;
+  border-left: 1px solid hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-drawer__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+  margin-bottom: 0 !important;
+  padding: 16px 20px !important;
+}
+html[class*='style-'].dark .el-drawer__body {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* 侧边栏菜单 */
+html[class*='style-'].dark .el-menu {
+  background-color: hsl(var(--sidebar)) !important;
+}
+html[class*='style-'].dark .el-menu-item,
+html[class*='style-'].dark .el-sub-menu__title {
+  color: hsl(var(--sidebar-foreground)) !important;
+}
+html[class*='style-'].dark .el-menu-item:hover,
+html[class*='style-'].dark .el-sub-menu__title:hover {
+  background-color: hsl(var(--sidebar-accent)) !important;
+  color: hsl(var(--sidebar-accent-foreground)) !important;
+}
+html[class*='style-'].dark .el-menu-item.is-active {
+  color: hsl(var(--sidebar-primary)) !important;
+  background-color: hsl(var(--sidebar-primary) / 0.15) !important;
+}
+html[class*='style-'].dark .el-sub-menu.is-active > .el-sub-menu__title {
+  color: hsl(var(--sidebar-primary)) !important;
+}
+
+/* 面包屑 */
+html[class*='style-'].dark .el-breadcrumb__item {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-breadcrumb__inner {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-breadcrumb__inner.is-link {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-breadcrumb__inner.is-link:hover {
+  color: var(--el-color-primary) !important;
+}
+
+/* 步骤条 */
+html[class*='style-'].dark .el-step__title {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-step__title.is-process {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-step__title.is-finish {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-step__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* 提示框 */
+html[class*='style-'].dark .el-tooltip__popper {
+  background-color: hsl(var(--popover)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+/* 图片占位 */
+html[class*='style-'].dark .el-image__placeholder {
+  background-color: hsl(var(--muted)) !important;
+}
+html[class*='style-'].dark .el-image__error {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* 统计组件 */
+html[class*='style-'].dark .el-statistic__head {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-statistic__number {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ─── 4. MotionFit / Nerv 亮色模式修复（深色背景款式）──── */
+
+/* motionfit 亮色模式：输入框、表单标签等 */
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-input__inner {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-input__inner::placeholder {
+  color: hsl(var(--muted-foreground) / 0.5) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-textarea__inner {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-input__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-form-item__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-form-item__error {
+  color: hsl(var(--destructive)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-radio__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-checkbox__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-radio__inner {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--input)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-checkbox__inner {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--input)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-table {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-table th.el-table__cell {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-table tr {
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-table td.el-table__cell {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-table--border .el-table__cell {
+  border-right-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-pagination {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-pagination button {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: transparent !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-pager li {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: transparent !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-pager li.is-active {
+  color: var(--el-color-primary) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-tabs__item {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-tabs__item.is-active {
+  color: var(--el-color-primary) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-tabs__header {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-dropdown-menu__item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-dropdown-menu__item:not(.is-disabled):hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select-dropdown__item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select-dropdown__item.hover,
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select-dropdown__item:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select-dropdown,
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-dropdown-menu,
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-popper {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-date-editor .el-input__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-picker-panel {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-date-table th {
+  color: hsl(var(--muted-foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-date-table td .el-date-table-cell__text {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-switch__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-descriptions__title {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-descriptions__label {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-descriptions__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-collapse-item__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-collapse-item__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-collapse-item__wrap {
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-tree {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-empty__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-statistic__head {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-statistic__number {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-breadcrumb__inner {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__title {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__title.is-process,
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__title.is-finish {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-card {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-card__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-dialog {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-dialog__title {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-dialog__body {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-drawer {
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-message-box {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-message-box__title {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-message-box__message {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* nerv 亮色模式：输入框、表单标签等 */
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-input__inner {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-input__inner::placeholder {
+  color: hsl(var(--muted-foreground) / 0.5) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-textarea__inner {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-input__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-form-item__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-form-item__error {
+  color: hsl(var(--destructive)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-radio__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-checkbox__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-radio__inner {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--input)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-checkbox__inner {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--input)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-table {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-table th.el-table__cell {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-table tr {
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-table td.el-table__cell {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-table--border .el-table__cell {
+  border-right-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-pagination {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-pagination button {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: transparent !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-pager li {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: transparent !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-pager li.is-active {
+  color: var(--el-color-primary) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-tabs__item {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-tabs__item.is-active {
+  color: var(--el-color-primary) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-tabs__header {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-dropdown-menu__item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-dropdown-menu__item:not(.is-disabled):hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select-dropdown__item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select-dropdown__item.hover,
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select-dropdown__item:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select-dropdown,
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-dropdown-menu,
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-popper {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-date-editor .el-input__wrapper {
+  background-color: hsl(var(--input) / 0.6) !important;
+  box-shadow: 0 0 0 1px hsl(var(--border)) inset !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-picker-panel {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-date-table th {
+  color: hsl(var(--muted-foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-date-table td .el-date-table-cell__text {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-switch__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-descriptions__title {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-descriptions__label {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-descriptions__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-collapse-item__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-collapse-item__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-collapse-item__wrap {
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-tree {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-empty__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-statistic__head {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-statistic__number {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-breadcrumb__inner {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__title {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__title.is-process,
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__title.is-finish {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-card {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-card__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-dialog {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-dialog__title {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-dialog__body {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-drawer {
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-message-box {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-message-box__title {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-message-box__message {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   补充对比度修复 — Radio/Select/Segmented 等遗漏组件
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── 1. Radio Button 单选按钮组 ────────────────────────── */
+
+/* 暗色模式 */
+html[class*='style-'].dark .el-radio-button__inner {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  box-shadow: none !important;
+}
+html[class*='style-'].dark .el-radio-button__inner:hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+html[class*='style-'].dark .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  color: var(--el-color-primary) !important;
+  background-color: var(--el-color-primary-light-9) !important;
+  border-color: var(--el-color-primary) !important;
+  box-shadow: none !important;
+}
+html[class*='style-'].dark .el-radio-button__original-radio:disabled + .el-radio-button__inner {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+  background-color: hsl(var(--muted) / 0.5) !important;
+}
+
+/* Radio 单选 */
+html[class*='style-'].dark .el-radio__input.is-checked .el-radio__inner::after {
+  background-color: hsl(var(--primary-foreground)) !important;
+}
+html[class*='style-'].dark .el-radio__input.is-checked .el-radio__inner {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* ─── 2. Select 选择器触发器文字 ────────────────────────── */
+
+html[class*='style-'].dark .el-select__placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-select__placeholder.is-transparent {
+  color: hsl(var(--muted-foreground) / 0.6) !important;
+}
+html[class*='style-'].dark .el-select__selected-item {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-select__caret {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-select__tags-text {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-tag.el-tag--info {
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ─── 3. Segmented 分段控制器 ──────────────────────────── */
+
+html[class*='style-'].dark .el-segmented {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-segmented__item-label {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-segmented__item.is-selected {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-segmented__item:not(.is-selected):hover {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ─── 4. Cascader 级联选择器 ──────────────────────────── */
+
+html[class*='style-'].dark .el-cascader__dropdown {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-cascader-panel {
+  background-color: hsl(var(--popover)) !important;
+}
+html[class*='style-'].dark .el-cascader-menu {
+  border-right-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-cascader-menu__item {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-cascader-menu__item:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html[class*='style-'].dark .el-cascader-menu__item.is-active {
+  color: var(--el-color-primary) !important;
+  background-color: var(--el-color-primary-light-9) !important;
+}
+html[class*='style-'].dark .el-cascader-menu__item.is-disabled {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+}
+
+/* ─── 5. Transfer 穿梭框 ──────────────────────────────── */
+
+html[class*='style-'].dark .el-transfer-panel {
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-transfer-panel__header {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-transfer-panel__body {
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-transfer-panel__footer {
+  border-top-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-transfer-item {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-transfer-item:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+html[class*='style-'].dark .el-transfer__button {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+/* ─── 6. Badge 徽标文字 ────────────────────────────────── */
+
+html[class*='style-'].dark .el-badge__content {
+  color: #ffffff !important;
+}
+
+/* ─── 7. Logo 图片背景透明化 ────────────────────────────── */
+
+html[class*='style-'].dark .aside .logo img {
+  background: transparent !important;
+  filter: brightness(0) invert(1);
+}
+html[class*='style-'].dark .aside .logo img[src*='.svg'],
+html[class*='style-'].dark .aside .logo img[src*='logo'] {
+  filter: none;
+}
+
+/* ─── 8. InputNumber 数字输入框 ────────────────────────── */
+
+html[class*='style-'].dark .el-input-number {
+  background-color: hsl(var(--input) / 0.6) !important;
+}
+html[class*='style-'].dark .el-input-number__decrease,
+html[class*='style-'].dark .el-input-number__increase {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-input-number__decrease:hover,
+html[class*='style-'].dark .el-input-number__increase:hover {
+  color: var(--el-color-primary) !important;
+}
+
+/* ─── 9. Slider 滑块 ──────────────────────────────────── */
+
+html[class*='style-'].dark .el-slider__runway {
+  background-color: hsl(var(--muted)) !important;
+}
+html[class*='style-'].dark .el-slider__bar {
+  background-color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-slider__button {
+  border-color: var(--el-color-primary) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html[class*='style-'].dark .el-slider__stop {
+  background-color: hsl(var(--muted-foreground) / 0.3) !important;
+}
+
+/* ─── 10. Timeline 时间线 ──────────────────────────────── */
+
+html[class*='style-'].dark .el-timeline-item__timestamp {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-timeline-item__content {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-timeline-item__tail {
+  border-left-color: hsl(var(--border)) !important;
+}
+
+/* ─── 11. Divider 分割线 ──────────────────────────────── */
+
+html[class*='style-'].dark .el-divider {
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-divider__text {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+
+/* ─── 12. Progress 进度条文字 ──────────────────────────── */
+
+html[class*='style-'].dark .el-progress__text {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ─── 13. Upload 上传 ──────────────────────────────────── */
+
+html[class*='style-'].dark .el-upload-dragger {
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-upload-dragger:hover {
+  border-color: var(--el-color-primary) !important;
+  color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-upload__text {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html[class*='style-'].dark .el-upload-list__item {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ─── 14. Calendar 日历 ────────────────────────────────── */
+
+html[class*='style-'].dark .el-calendar {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-calendar__header {
+  border-bottom-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-calendar-table td {
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-calendar-day {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-calendar-day:hover {
+  background-color: hsl(var(--accent)) !important;
+}
+
+/* ─── 15. 卡片背景修复（确保不使用 Element Plus 默认白色）─── */
+
+html[class*='style-'].dark .el-card.is-always-shadow,
+html[class*='style-'].dark .el-card.is-hover-shadow {
+  background-color: hsl(var(--card)) !important;
+}
+
+/* ─── 16. 暗色模式滚动条颜色 ────────────────────────────── */
+
+html[class*='style-'].dark ::-webkit-scrollbar-track {
+  background: hsl(var(--muted)) !important;
+}
+html[class*='style-'].dark ::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3) !important;
+}
+html[class*='style-'].dark ::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5) !important;
+}
+
+/* ─── 17. 按钮组边框 ──────────────────────────────────── */
+
+html[class*='style-'].dark .el-button-group .el-button + .el-button {
+  border-left-color: hsl(var(--border)) !important;
+}
+
+/* ─── 18. 链接 ────────────────────────────────────────── */
+
+html[class*='style-'].dark .el-link.el-link--default {
+  color: hsl(var(--foreground)) !important;
+}
+html[class*='style-'].dark .el-link.el-link--default:hover {
+  color: var(--el-color-primary) !important;
+}
+html[class*='style-'].dark .el-link.is-disabled {
+  color: hsl(var(--muted-foreground) / 0.4) !important;
+}
+
+/* ─── 19. 头像占位 ────────────────────────────────────── */
+
+html[class*='style-'].dark .el-avatar {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* ─── 20. MotionFit / Nerv 亮色模式补充修复 ────────────── */
+
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-radio-button__inner {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-radio-button__inner:hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  color: var(--el-color-primary) !important;
+  background-color: var(--el-color-primary-light-9) !important;
+  border-color: var(--el-color-primary) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select__placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select__selected-item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-select__caret {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-segmented {
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-segmented__item-label {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-segmented__item.is-selected {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-badge__content {
+  color: #ffffff !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-input-number__decrease,
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-input-number__increase {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-slider__runway {
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-slider__bar {
+  background-color: var(--el-color-primary) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-divider {
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-divider__text {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-progress__text {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-link.el-link--default {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-avatar {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-timeline-item__timestamp {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-timeline-item__content {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-timeline-item__tail {
+  border-left-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-upload-dragger {
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-upload__text {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-upload-list__item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-statistic__head {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-statistic__number {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__title {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__title.is-process,
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__title.is-finish {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-step__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-empty__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-loading-mask {
+  background-color: hsl(var(--card) / 0.8) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-loading-text {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-collapse-item__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-collapse-item__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-tree {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-breadcrumb__inner {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-switch__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-switch__core {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-motionfit.light,
+html.style-motionfit:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-radio-button__inner {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-radio-button__inner:hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  color: var(--el-color-primary) !important;
+  background-color: var(--el-color-primary-light-9) !important;
+  border-color: var(--el-color-primary) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select__placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select__selected-item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-select__caret {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-segmented {
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-segmented__item-label {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-segmented__item.is-selected {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-badge__content {
+  color: #ffffff !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-input-number__decrease,
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-input-number__increase {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-slider__runway {
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-slider__bar {
+  background-color: var(--el-color-primary) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-divider {
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-divider__text {
+  color: hsl(var(--muted-foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-progress__text {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-link.el-link--default {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-avatar {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-timeline-item__timestamp {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-timeline-item__content {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-timeline-item__tail {
+  border-left-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-upload-dragger {
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-upload__text {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-upload-list__item {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-statistic__head {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-statistic__number {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__title {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__title.is-process,
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__title.is-finish {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-step__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-empty__description {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-loading-mask {
+  background-color: hsl(var(--card) / 0.8) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-loading-text {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-collapse-item__header {
+  color: hsl(var(--foreground)) !important;
+  border-bottom-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-collapse-item__content {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-tree {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--card)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-breadcrumb__inner {
+  color: hsl(var(--muted-foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-switch__label {
+  color: hsl(var(--foreground)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-switch__core {
+  border-color: hsl(var(--border)) !important;
+  background-color: hsl(var(--muted)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--muted)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html.style-nerv.light,
+html.style-nerv:not(.dark) .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):hover {
+  color: var(--el-color-primary) !important;
+  background-color: hsl(var(--accent)) !important;
+}
+

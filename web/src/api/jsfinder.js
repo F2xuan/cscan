@@ -19,3 +19,23 @@ export function resetJSFinderConfig() {
 export function getJSFinderDetail(data) {
   return request.post('/jsfinder/detail', data)
 }
+
+// 单条AI研判
+export function analyzeJSByAI(data) {
+  return request.post('/jsfinder/ai/analyze', data)
+}
+
+// 批量研判所有未研判数据（异步）
+export function batchAnalyzeJSByAI(data) {
+  return request.post('/jsfinder/ai/batch-analyze', data)
+}
+
+// 查询批量研判进度
+export function getBatchAnalyzeProgress(data) {
+  return request.post('/jsfinder/ai/batch-progress', data)
+}
+
+// 停止批量AI研判
+export function stopBatchAnalyze(data) {
+  return request.post('/jsfinder/ai/batch-stop', data)
+}

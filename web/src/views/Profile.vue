@@ -14,7 +14,7 @@
           <el-form ref="profileFormRef" :model="profileForm" :rules="profileRules" label-width="100px" class="profile-form">
             <el-form-item :label="$t('profile.avatar')">
               <div class="avatar-updater">
-                <el-avatar :size="80" :src="avatarPreview || undefined" icon="User" />
+                <el-avatar :size="80" :src="avatarPreview" />
                 <el-upload
                   :show-file-list="false"
                   :before-upload="handleAvatarBeforeUpload"
@@ -254,7 +254,7 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { Plus, Refresh, Loading } from '@element-plus/icons-vue'
 import axios from 'axios'
-import { useUserStore } from '@/stores/user'
+import { useUserStore, DEFAULT_AVATAR } from '@/stores/user'
 import {
   getUserProfile,
   updateUserProfile,
@@ -278,7 +278,7 @@ const profileFormRef = ref()
 const profileForm = reactive({ username: '', email: '', phone: '', avatar: '' })
 const profileSaving = ref(false)
 const avatarUploading = ref(false)
-const avatarPreview = computed(() => profileForm.avatar || '')
+const avatarPreview = computed(() => profileForm.avatar || DEFAULT_AVATAR)
 
 const isAdmin = computed(() => userStore.isAdmin)
 const roleLabel = computed(() => (userStore.isAdmin ? t('user.admin') : t('user.user')))

@@ -95,7 +95,7 @@
         <el-table-column :label="$t('common.operation')" width="260" fixed="right">
           <template #default="{ row }">
             <el-button link size="small" type="primary" @click="openConsole(row.name)" :disabled="row.status !== 'running'">{{ $t('worker.console') }}</el-button>
-            <el-button link size="small" type="info" @click="openLogDrawer(row.name)">{{ $t('worker.logs') }}</el-button>
+            <el-button link size="small" type="info" @click="openLogDialog(row.name)">{{ $t('worker.logs') }}</el-button>
             <el-popconfirm
               :title="$t('worker.confirmRestart')"
               :confirm-button-text="$t('common.confirm')"
@@ -304,44 +304,29 @@
       </template>
     </el-dialog>
 
-    <!-- Worker 日志 Drawer -->
-    <el-drawer
-      v-model="logDrawerVisible"
-      :title="`${$t('worker.logs')} - ${logDrawerWorker}`"
-      size="70%"
-      direction="rtl"
-      :close-on-click-modal="false"
-      @close="closeLogStream"
-    >
-      <template #header>
-        <div class="log-drawer-header">
-          <span class="log-drawer-title">{{ $t('worker.logs') }} - {{ logDrawerWorker }}</span>
-          <div class="log-drawer-actions">
-            <el-input
-              v-model="logSearch"
-              :placeholder="$t('container.searchLogs')"
-              clearable
-              size="small"
-              style="width: 160px"
-            >
-              <template #prefix><el-icon><Search /></el-icon></template>
-            </el-input>
-            <el-select v-model="logLevelFilter" size="small" style="width: 90px">
-              <el-option :label="$t('container.allLevels')" value="all" />
-              <el-option label="ERROR" value="ERROR" />
-              <el-option label="WARN" value="WARN" />
-              <el-option label="INFO" value="INFO" />
-              <el-option label="DEBUG" value="DEBUG" />
-            </el-select>
-            <el-button :type="logPaused ? 'success' : 'warning'" size="small" @click="logPaused = !logPaused">
-              {{ logPaused ? $t('container.resume') : $t('container.pause') }}
-            </el-button>
-            <el-button size="small" @click="logLines = []">{{ $t('container.clear') }}</el-button>
-            <span class="log-line-count">{{ filteredLogLines.length }}/{{ logLines.length }}</span>
-          </div>
+    <!-- Worker 日志对话框 -->
+    <el-dialog v-model="logDialogVisible" :title="`${$t('worker.logs')} - ${logDialogWorker}`" width="1000px" @close="closeLogDialog">
+      <div class="log-filter-bar">
+        <el-input v-model="logSearch" :placeholder="$t('container.searchLogs')" clearable size="small" style="width: 200px">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-select v-model="logLevelFilter" size="small" style="width: 120px" :placeholder="$t('container.allLevels')">
+          <el-option :label="$t('container.allLevels')" value="all" />
+          <el-option label="ERROR" value="ERROR" />
+          <el-option label="WARN" value="WARN" />
+          <el-option label="INFO" value="INFO" />
+          <el-option label="DEBUG" value="DEBUG" />
+        </el-select>
+        <el-button type="primary" size="small" :loading="logLoading" @click="fetchWorkerLogs">
+          <el-icon style="margin-right: 4px"><Refresh /></el-icon>{{ $t('common.refresh') }}
+        </el-button>
+        <span class="log-count-badge">{{ filteredLogLines.length }} / {{ logLines.length }}</span>
+      </div>
+      <div class="worker-log-container" ref="workerLogBox">
+        <div v-if="!filteredLogLines.length && !logLoading" class="log-empty-state">
+          <el-icon :size="40" style="color: var(--el-text-color-disabled)"><Document /></el-icon>
+          <span>{{ $t('container.noLogs') }}</span>
         </div>
-      </template>
-      <div class="worker-log-box" ref="workerLogBox">
         <div
           v-for="(l, idx) in filteredLogLines"
           :key="idx"
@@ -351,14 +336,14 @@
           <span class="wlog-ln">{{ idx + 1 }}</span>
           <span class="wlog-level" :class="'wlevel-' + (l.level || 'log').toLowerCase()">{{ l.level || 'LOG' }}</span>
           <span v-if="l.time" class="wlog-time">{{ l.time }}</span>
-          <span v-if="l.taskId" class="wlog-task">[..{{ l.taskId.slice(-4) }}]</span>
+          <span v-if="l.taskId" class="wlog-task" :title="l.taskId">[..{{ l.taskId.slice(-4) }}]</span>
           <span class="wlog-body">{{ l.body }}</span>
         </div>
-        <div v-if="!filteredLogLines.length && logConn !== 'connected'" class="wlog-empty">
-          {{ logConn === 'connecting' ? $t('container.connecting') : $t('container.noLogs') }}
-        </div>
       </div>
-    </el-drawer>
+      <template #footer>
+        <el-button @click="closeLogDialog">{{ $t('common.close') }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -369,7 +354,6 @@ import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import request from '@/api/request'
 import { useI18n } from 'vue-i18n'
-import { useUserStore } from '@/stores/user'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -704,17 +688,14 @@ function fallbackCopyToClipboard(text) {
   }
 }
 
-// ==================== Worker 日志 Drawer ====================
-const userStore = useUserStore()
-const logDrawerVisible = ref(false)
-const logDrawerWorker = ref('')
+// ==================== Worker 日志对话框 ====================
+const logDialogVisible = ref(false)
+const logDialogWorker = ref('')
 const logLines = ref([])
-const logPaused = ref(false)
-const logConn = ref('disconnected')
 const workerLogBox = ref(null)
 const logSearch = ref('')
 const logLevelFilter = ref('all')
-let logEs = null
+const logLoading = ref(false)
 
 const filteredLogLines = computed(() => {
   const kw = logSearch.value.trim().toLowerCase()
@@ -726,57 +707,64 @@ const filteredLogLines = computed(() => {
   })
 })
 
-function openLogDrawer(workerName) {
-  logDrawerWorker.value = workerName
-  logDrawerVisible.value = true
-  logLines.value = []
-  logPaused.value = false
-  logSearch.value = ''
-  logLevelFilter.value = 'all'
-  logConn.value = 'connecting'
-
-  // 使用专用的 Worker 日志 SSE 接口（基于 Redis Pub/Sub，不依赖 Docker）
-  const url = `/api/v1/worker/logs/stream?token=${encodeURIComponent(userStore.token)}`
-
-  closeLogStream()
-  logEs = new EventSource(url)
-
-  logEs.addEventListener('open', () => {
-    logConn.value = 'connected'
-  })
-
-  logEs.onmessage = (ev) => {
-    if (logPaused.value) return
-    try {
-      const obj = JSON.parse(ev.data)
-      // 按 workerName 过滤（流会广播所有 worker 的日志）
-      if (obj.workerName && obj.workerName !== workerName && obj.workerName !== 'API') return
-      logLines.value.push({
-        level: (obj.level || '').toUpperCase(),
-        time: obj.timestamp || '',
-        taskId: obj.taskId || '',
-        body: obj.message || obj.msg || ''
-      })
-      if (logLines.value.length > 3000) logLines.value.splice(0, logLines.value.length - 3000)
+async function fetchWorkerLogs() {
+  const workerName = logDialogWorker.value
+  if (!workerName) return
+  logLoading.value = true
+  try {
+    const res = await request.post('/worker/logs/history', {
+      worker: workerName,
+      limit: 500,
+      refresh: true
+    })
+    if (res.code === 0) {
+      const list = res.list || []
+      logLines.value = list.map(item => ({
+        level: (item.level || '').toUpperCase(),
+        time: formatLogTime(item.ts || ''),
+        taskId: item.taskId || '',
+        body: item.msg || ''
+      }))
       nextTick(() => {
         const el = workerLogBox.value
         if (el) el.scrollTop = el.scrollHeight
       })
-    } catch (_) {}
-  }
-
-  logEs.onerror = () => {
-    logConn.value = 'disconnected'
-    closeLogStream()
+    } else if (res.msg) {
+      ElMessage.error(res.msg)
+    }
+  } catch (e) {
+    // ignore
+  } finally {
+    logLoading.value = false
   }
 }
 
-function closeLogStream() {
-  if (logEs) {
-    logEs.close()
-    logEs = null
+function formatLogTime(ts) {
+  if (!ts) return ''
+  // Handle ISO 8601 format: 2026-07-30T17:43:03.439+08:00
+  if (ts.includes('T')) {
+    const parts = ts.split('T')
+    if (parts.length > 1) {
+      return parts[1].split('.')[0] || parts[1]
+    }
   }
-  logConn.value = 'disconnected'
+  const parts = ts.split(' ')
+  return parts.length > 1 ? parts[1] : ts
+}
+
+function openLogDialog(workerName) {
+  logDialogWorker.value = workerName
+  logDialogVisible.value = true
+  logLines.value = []
+  logSearch.value = ''
+  logLevelFilter.value = 'all'
+  fetchWorkerLogs()
+}
+
+function closeLogDialog() {
+  logDialogVisible.value = false
+  logDialogWorker.value = ''
+  logLines.value = []
 }
 
 function openConsole(workerName) {
@@ -896,48 +884,53 @@ function openConsole(workerName) {
   }
 }
 
-// Worker 日志 Drawer 样式
-.log-drawer-header {
+/* Worker 日志对话框 */
+.log-filter-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding-right: 20px;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
 }
-.log-drawer-title {
-  font-size: 15px;
-  font-weight: 600;
-}
-.log-drawer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.log-line-count {
+.log-count-badge {
+  margin-left: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
-.worker-log-box {
-  height: 100%;
+.worker-log-container {
+  height: 500px;
   overflow-y: auto;
   background: #1a1b26;
   border-radius: 6px;
   padding: 8px 0;
-  font-family: 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-family: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Menlo', monospace;
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.7;
+}
+.log-empty-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
 }
 .wlog-line {
   display: flex;
   align-items: baseline;
+  gap: 0;
   padding: 2px 12px 2px 0;
-  &:hover { background: rgba(255, 255, 255, 0.05); }
+  &:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .wlog-ln {
-  width: 44px;
-  min-width: 44px;
+  display: inline-block;
+  width: 48px;
+  min-width: 48px;
   text-align: right;
-  padding-right: 8px;
+  padding-right: 10px;
   color: #565f89;
   font-size: 11px;
   user-select: none;
@@ -945,20 +938,21 @@ function openConsole(workerName) {
 }
 .wlog-level {
   display: inline-block;
-  min-width: 44px;
-  padding: 0 5px;
+  min-width: 48px;
+  padding: 0 6px;
   margin-right: 6px;
   text-align: center;
   font-size: 10px;
   font-weight: 600;
   border-radius: 3px;
   flex-shrink: 0;
+  letter-spacing: 0.5px;
 }
 .wlevel-error, .wlevel-fatal { color: #fff; background: rgba(247, 118, 142, 0.8); }
 .wlevel-warn, .wlevel-slow { color: #1a1b26; background: rgba(224, 175, 104, 0.85); }
 .wlevel-info { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
 .wlevel-debug { color: #565f89; background: rgba(86, 95, 137, 0.15); }
-.wlevel-log { color: #7aa2f7; background: rgba(122, 162, 247, 0.12); }
+.wlevel-log { color: #7aa2f7; background: rgba(122, 162, 247, 0.1); }
 .wlog-time {
   color: #565f89;
   font-size: 12px;
@@ -967,9 +961,13 @@ function openConsole(workerName) {
   flex-shrink: 0;
 }
 .wlog-task {
-  color: #bb9af7;
-  font-size: 11px;
+  display: inline-block;
+  padding: 0 5px;
   margin-right: 6px;
+  font-size: 11px;
+  color: #7aa2f7;
+  background: rgba(122, 162, 247, 0.1);
+  border-radius: 3px;
   flex-shrink: 0;
 }
 .wlog-body {
@@ -982,12 +980,14 @@ function openConsole(workerName) {
 .wlog-error .wlog-body { color: #f7768e; }
 .wlog-warn .wlog-body { color: #e0af68; }
 .wlog-debug .wlog-body { color: #565f89; }
-.wlog-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 200px;
-  color: #565f89;
-  font-size: 14px;
-}
+
+/* Light mode */
+:global(html:not(.dark)) .worker-log-container { background: #f8f9fc; }
+:global(html:not(.dark)) .wlog-line:hover { background: rgba(0, 0, 0, 0.03); }
+:global(html:not(.dark)) .wlog-body { color: #343b58; }
+:global(html:not(.dark)) .wlog-error .wlog-body { color: #c64343; }
+:global(html:not(.dark)) .wlog-warn .wlog-body { color: #8f5e15; }
+:global(html:not(.dark)) .wlog-debug .wlog-body { color: #9699a3; }
+:global(html:not(.dark)) .wlog-ln { color: #c0c8d8; }
+:global(html:not(.dark)) .wlog-time { color: #9699a3; }
 </style>

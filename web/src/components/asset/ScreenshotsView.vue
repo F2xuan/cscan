@@ -147,9 +147,10 @@
 
           <!-- 底部信息 -->
           <div class="screenshot-footer">
+            <span class="create-time">创建 {{ formatTimeAgo(item.createTime) }}</span>
             <span class="update-time">
               <el-icon><Clock /></el-icon>
-              {{ formatTimeAgo(item.updateTime) }}
+              更新 {{ formatTimeAgo(item.updateTime) }}
             </span>
             <el-button
               type="text"

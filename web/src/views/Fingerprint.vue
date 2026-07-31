@@ -1,6 +1,51 @@
 <template>
   <div class="fingerprint-page">
-    <el-tabs v-model="activeTab" @tab-change="handleTabChange">
+    <!-- 常驻批量验证任务进度条 -->
+    <div v-if="persistentTask" class="persistent-task-bar">
+      <el-card shadow="hover" class="persistent-task-card">
+        <div class="persistent-task-content">
+          <div class="persistent-task-info">
+            <el-icon :size="18" :class="persistentTask.status === 'running' ? 'rotating' : ''">
+              <Loading v-if="persistentTask.status === 'running'" />
+              <CircleCheck v-else-if="persistentTask.status === 'completed'" color="#67c23a" />
+              <CircleClose v-else-if="persistentTask.status === 'failed'" color="#f56c6c" />
+              <VideoPause v-else />
+            </el-icon>
+            <span class="persistent-task-title">
+              {{ persistentTask.status === 'running' ? '批量验证进行中' : persistentTask.status === 'completed' ? '批量验证已完成' : persistentTask.status === 'failed' ? '批量验证失败' : '批量验证已停止' }}
+            </span>
+            <span class="persistent-task-url" :title="persistentTask.url">{{ persistentTask.url }}</span>
+            <el-tag size="small" :type="getScopeTagType(persistentTask.scope)">{{ getScopeLabel(persistentTask.scope) }}</el-tag>
+          </div>
+          <div v-if="persistentTask.status === 'running'" class="persistent-task-progress">
+            <el-progress
+              :percentage="persistentTask.total > 0 ? Math.min(99, Math.floor(persistentTask.completed / persistentTask.total * 100)) : 0"
+              :stroke-width="8"
+              style="width: 280px;"
+            />
+            <span class="persistent-task-stat">{{ persistentTask.completed }}/{{ persistentTask.total || '?' }}</span>
+          </div>
+          <div v-else-if="persistentTask.status === 'completed'" class="persistent-task-result">
+            <el-tag type="success" size="small">匹配 {{ persistentTask.matched || 0 }} 个</el-tag>
+            <el-tag type="info" size="small" style="margin-left: 4px;">共检测 {{ persistentTask.total || 0 }} 个</el-tag>
+          </div>
+          <div class="persistent-task-actions">
+            <el-button v-if="persistentTask.status === 'running'" type="danger" size="small" text @click="handleStopBatchValidate">
+              停止
+            </el-button>
+            <el-button v-if="persistentTask.status === 'completed' || persistentTask.status === 'stopped'" type="primary" size="small" @click="showBatchResultDialog">
+              查看结果
+            </el-button>
+            <el-button type="info" size="small" text @click="dismissPersistentTask">
+              <el-icon><Close /></el-icon>
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
+    <div class="tabs-with-action">
+      <el-tabs v-model="activeTab" @tab-change="handleTabChange" class="flex-grow-tabs">
       <!-- 内置指纹 -->
       <el-tab-pane :label="$t('fingerprint.builtinFingerprint')" name="builtin">
         <el-card>
@@ -11,9 +56,6 @@
                 {{ $t('fingerprint.totalFingerprints', { count: stats.builtin || 0 }) }}
               </span>
               <div style="margin-left: auto; display: flex; gap: 8px;">
-                <el-button type="warning" size="small" @click="showBatchValidateDialog">
-                  <el-icon><Search /></el-icon>{{ $t('fingerprint.batchValidate') }}
-                </el-button>
                 <el-button type="success" size="small" @click="showBuiltinImportDialog">
                   <el-icon><Upload /></el-icon>{{ $t('fingerprint.importFingerprint') }}
                 </el-button>
@@ -485,7 +527,13 @@
           </el-tab-pane>
         </el-tabs>
       </el-tab-pane>
-    </el-tabs>
+      </el-tabs>
+      <div class="tabs-action-buttons">
+        <el-button type="warning" size="small" @click="showBatchValidateDialog">
+          <el-icon><Search /></el-icon>{{ $t('fingerprint.batchValidate') }}
+        </el-button>
+      </div>
+    </div>
 
     <!-- 指纹详情对话框 -->
     <el-dialog v-model="detailDialogVisible" :title="currentFingerprint.name || $t('fingerprint.fingerprintDetail')" width="900px" top="5vh">
@@ -799,7 +847,7 @@
             {{ validateResult.matched ? '✓ ' + $t('fingerprint.matched') : '✗ ' + $t('fingerprint.notMatched') }}
           </el-tag>
         </div>
-        <pre class="result-details" v-html="formatValidateDetails(validateResult.details)"></pre>
+        <pre class="result-details" v-html="DOMPurify.sanitize(formatValidateDetails(validateResult.details))"></pre>
       </div>
       <template #footer>
         <el-button @click="validateDialogVisible = false">{{ $t('common.close') }}</el-button>
@@ -808,8 +856,8 @@
     </el-dialog>
 
     <!-- 批量验证对话框 -->
-    <el-dialog v-model="batchValidateDialogVisible" :title="$t('fingerprint.batchValidateFingerprint')" width="800px">
-      <el-form label-width="80px">
+    <el-dialog v-model="batchValidateDialogVisible" :title="$t('fingerprint.batchValidateFingerprint')" width="600px">
+      <el-form label-width="100px">
         <el-form-item :label="$t('fingerprint.targetUrl')">
           <el-input v-model="batchValidateUrl" :placeholder="$t('fingerprint.targetUrlPlaceholder')" />
         </el-form-item>
@@ -818,43 +866,53 @@
             <el-radio label="all">{{ $t('fingerprint.allFingerprints') }}</el-radio>
             <el-radio label="builtin">{{ $t('fingerprint.builtinFingerprint') }}</el-radio>
             <el-radio label="custom">{{ $t('fingerprint.customFingerprint') }}</el-radio>
+            <el-radio label="active">{{ $t('fingerprint.activeFingerprint') }}</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
+      <el-alert type="info" :closable="false" show-icon style="margin-top: 10px;">
+        <template #title>提交后任务将在后台运行，可在页面顶部查看进度，完成后点击「查看结果」查看详情。</template>
+      </el-alert>
+      <template #footer>
+        <el-button @click="batchValidateDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleBatchValidate" :loading="batchValidateLoading" :disabled="!batchValidateUrl">开始验证</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量验证结果对话框 -->
+    <el-dialog v-model="batchResultDialogVisible" title="批量验证结果" width="800px">
       <div v-if="batchValidateResult" class="batch-validate-result">
-        <div class="result-header">
+        <div class="result-header" style="margin-bottom: 15px;">
           <el-tag type="success" size="large">
-            {{ $t('fingerprint.matchedAssets', { count: batchValidateResult.matchedCount }) }}
+            匹配 {{ batchValidateResult.matchedCount }} 个指纹
           </el-tag>
-          <span class="card-header-hint">
-            {{ batchValidateResult.duration }}
-          </span>
+          <el-tag v-if="batchValidateResult.totalScanned" type="info" size="large" style="margin-left: 8px;">
+            共检测 {{ batchValidateResult.totalScanned }} 个
+          </el-tag>
         </div>
         <div v-if="batchValidateResult.matched && batchValidateResult.matched.length > 0" class="matched-list">
           <el-table :data="batchValidateResult.matched" stripe max-height="400">
-            <el-table-column prop="name" :label="$t('fingerprint.fingerprintName')" width="200" />
-            <el-table-column prop="category" :label="$t('fingerprint.category')" width="120" />
-            <el-table-column prop="source" :label="$t('fingerprint.type')" width="100">
+            <el-table-column prop="name" label="指纹名称" width="200" />
+            <el-table-column prop="source" label="类型" width="130">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.isBuiltin ? 'primary' : 'warning'">
-                  {{ row.isBuiltin ? $t('fingerprint.builtinFingerprint') : $t('fingerprint.customFingerprint') }}
+                <el-tag size="small" :type="row.isBuiltin ? 'primary' : (row.isActive ? 'danger' : 'warning')">
+                  {{ row.isBuiltin ? '内置' : (row.isActive ? '主动' : '自定义') }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="matchedConditions" :label="$t('fingerprint.matchRules')" min-width="300">
+            <el-table-column prop="matchedConditions" label="匹配规则" min-width="300">
               <template #default="{ row }">
-                <span class="text-danger hint-secondary">{{ row.matchedConditions || '-' }}</span>
+                <span style="color: #f56c6c;">{{ row.matchedConditions || '-' }}</span>
               </template>
             </el-table-column>
           </el-table>
         </div>
-        <div v-else class="no-match">
-          <el-empty :description="$t('fingerprint.noMatchedAssets')" :image-size="60" />
+        <div v-else>
+          <el-empty description="未匹配到任何指纹" :image-size="80" />
         </div>
       </div>
       <template #footer>
-        <el-button @click="batchValidateDialogVisible = false">{{ $t('common.close') }}</el-button>
-        <el-button type="primary" @click="handleBatchValidate" :loading="batchValidateLoading" :disabled="!batchValidateUrl">{{ $t('fingerprint.startValidate') }}</el-button>
+        <el-button @click="batchResultDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -1239,12 +1297,13 @@ SpringBoot-Actuator:
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
+import DOMPurify from 'dompurify'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, ArrowDown, Delete, Upload, Search, Download, Operation, Loading, Check } from '@element-plus/icons-vue'
+import { Plus, Refresh, ArrowDown, Delete, Upload, Search, Download, Operation, Loading, Check, CircleCheck, CircleClose, VideoPause, Close } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
-import { getFingerprintList, saveFingerprint, deleteFingerprint, getFingerprintCategories, syncFingerprints, updateFingerprintEnabled, batchUpdateFingerprintEnabled, importFingerprints, clearCustomFingerprints, validateFingerprint as validateFingerprintApi, batchValidateFingerprints, matchFingerprintAssets, getHttpServiceMappingList, saveHttpServiceMapping, deleteHttpServiceMapping, getHttpServiceConfig, saveHttpServiceConfig, exportHttpServiceConfig, importHttpServiceConfig, getActiveFingerprintList, saveActiveFingerprint, deleteActiveFingerprint, importActiveFingerprints, exportActiveFingerprints, clearActiveFingerprints, validateActiveFingerprint } from '@/api/fingerprint'
+import { getFingerprintList, saveFingerprint, deleteFingerprint, getFingerprintCategories, syncFingerprints, updateFingerprintEnabled, batchUpdateFingerprintEnabled, importFingerprints, clearCustomFingerprints, validateFingerprint as validateFingerprintApi, batchValidateFingerprints, getFingerprintBatchProgress, getFingerprintBatchResult, stopFingerprintBatchValidate, matchFingerprintAssets, getHttpServiceMappingList, saveHttpServiceMapping, deleteHttpServiceMapping, getHttpServiceConfig, saveHttpServiceConfig, exportHttpServiceConfig, importHttpServiceConfig, getActiveFingerprintList, saveActiveFingerprint, deleteActiveFingerprint, importActiveFingerprints, exportActiveFingerprints, clearActiveFingerprints, validateActiveFingerprint } from '@/api/fingerprint'
 import { saveAs } from 'file-saver'
 
 const { t } = useI18n()
@@ -1329,10 +1388,20 @@ const validateLoading = ref(false)
 
 // 批量验证对话框
 const batchValidateDialogVisible = ref(false)
+const batchResultDialogVisible = ref(false)
 const batchValidateUrl = ref('')
 const batchValidateScope = ref('all')
 const batchValidateResult = ref(null)
 const batchValidateLoading = ref(false)
+// 批量验证异步进度
+const batchTaskId = ref(null)
+const batchProgress = reactive({ total: 0, completed: 0, matched: 0 })
+const batchTaskStatus = ref('')
+let batchPollTimer = null
+const FINGERPRINT_BATCH_STORAGE_KEY = 'cscan_fingerprint_batch_task'
+
+// 常驻任务状态（页面顶部进度条）
+const persistentTask = ref(null)
 
 // 匹配现有资产对话框
 const matchAssetsDialogVisible = ref(false)
@@ -1514,8 +1583,17 @@ onMounted(() => {
     router.replace({ query: { ...route.query, tab: activeTab.value } })
   }
   loadCategories()
+  // 恢复持久化的批量验证任务
+  restorePersistentTask()
   // 根据当前tab加载数据
   handleTabChange(activeTab.value)
+})
+
+onUnmounted(() => {
+  if (batchPollTimer) {
+    clearInterval(batchPollTimer)
+    batchPollTimer = null
+  }
 })
 
 function handleTabChange(tab) {
@@ -1746,7 +1824,7 @@ async function handleImportFingerprints() {
     }
     resultHtml += '</div>'
     
-    ElMessageBox.alert(resultHtml, '导入结果', {
+    ElMessageBox.alert(DOMPurify.sanitize(resultHtml), '导入结果', {
       dangerouslyUseHTMLString: true,
       confirmButtonText: '确定',
       type: failedFiles.length > 0 ? 'warning' : 'success'
@@ -1824,11 +1902,11 @@ async function handleImportBuiltinFingerprints() {
     if (res.code === 0) {
       builtinImportDialogVisible.value = false
       ElMessageBox.alert(
-        `<div style="text-align: center; font-size: 14px;">
+        DOMPurify.sanitize(`<div style="text-align: center; font-size: 14px;">
           <p style="margin-bottom: 10px;">导入完成</p>
           <p><strong class="text-success" style="font-size: 20px;">${res.imported || 0}</strong> 个指纹导入成功</p>
           <p><strong class="text-muted" style="font-size: 20px;">${res.skipped || 0}</strong> 个指纹已跳过</p>
-        </div>`,
+        </div>`),
         '导入结果',
         {
           dangerouslyUseHTMLString: true,
@@ -2180,13 +2258,133 @@ function formatValidateDetails(details) {
 
 // 显示批量验证对话框
 function showBatchValidateDialog() {
+  // 如果有正在运行的任务，提示用户
+  if (persistentTask.value && persistentTask.value.status === 'running') {
+    ElMessage.warning('已有批量验证任务正在运行，请等待完成或先停止')
+    return
+  }
   batchValidateUrl.value = ''
   batchValidateScope.value = 'all'
   batchValidateResult.value = null
   batchValidateDialogVisible.value = true
 }
 
-// 执行批量验证
+// localStorage 持久化（只保存进度，不保存结果详情以减少存储占用）
+function saveBatchTaskToStorage() {
+  if (!batchTaskId.value) return
+  const data = {
+    taskId: batchTaskId.value,
+    url: batchValidateUrl.value,
+    scope: batchValidateScope.value,
+    status: batchTaskStatus.value,
+    total: batchProgress.total,
+    completed: batchProgress.completed,
+    matched: batchProgress.matched,
+    savedAt: Date.now()
+  }
+  localStorage.setItem(FINGERPRINT_BATCH_STORAGE_KEY, JSON.stringify(data))
+}
+
+// 恢复常驻任务（页面加载时调用）
+function restorePersistentTask() {
+  const saved = localStorage.getItem(FINGERPRINT_BATCH_STORAGE_KEY)
+  if (!saved) return
+  try {
+    const info = JSON.parse(saved)
+    if (info.taskId && Date.now() - info.savedAt < 2 * 60 * 60 * 1000) {
+      batchTaskId.value = info.taskId
+      batchValidateUrl.value = info.url || ''
+      batchValidateScope.value = info.scope || 'all'
+      batchTaskStatus.value = info.status || 'running'
+      batchProgress.total = info.total || 0
+      batchProgress.completed = info.completed || 0
+      batchProgress.matched = info.matched || 0
+      // 结果不在localStorage中保存，点击查看结果时重新请求
+
+      persistentTask.value = {
+        taskId: info.taskId,
+        url: info.url,
+        scope: info.scope,
+        status: info.status,
+        total: info.total,
+        completed: info.completed,
+        matched: info.matched
+      }
+
+      if (info.status === 'running') {
+        startBatchPolling()
+      }
+    } else {
+      localStorage.removeItem(FINGERPRINT_BATCH_STORAGE_KEY)
+    }
+  } catch (e) {
+    localStorage.removeItem(FINGERPRINT_BATCH_STORAGE_KEY)
+  }
+}
+
+// 更新常驻任务状态
+function updatePersistentTask(status) {
+  if (!persistentTask.value) return
+  persistentTask.value = {
+    ...persistentTask.value,
+    status,
+    total: batchProgress.total,
+    completed: batchProgress.completed,
+    matched: batchProgress.matched
+  }
+}
+
+// 关闭常驻任务
+function dismissPersistentTask() {
+  persistentTask.value = null
+  localStorage.removeItem(FINGERPRINT_BATCH_STORAGE_KEY)
+  if (batchPollTimer) {
+    clearInterval(batchPollTimer)
+    batchPollTimer = null
+  }
+  batchTaskId.value = null
+  batchTaskStatus.value = ''
+}
+
+// 显示结果对话框
+async function showBatchResultDialog() {
+  batchResultDialogVisible.value = true
+  // 如果还没有加载结果，主动请求
+  if (!batchValidateResult.value && batchTaskId.value) {
+    try {
+      const res = await getFingerprintBatchResult({ taskId: batchTaskId.value })
+      if (res.code === 0) {
+        batchValidateResult.value = {
+          matchedCount: res.matched || 0,
+          totalScanned: res.total || 0,
+          matched: res.results || []
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load batch result:', e)
+    }
+  }
+}
+
+// 辅助函数：scope标签
+function getScopeTagType(scope) {
+  switch (scope) {
+    case 'builtin': return 'primary'
+    case 'custom': return 'warning'
+    case 'active': return 'danger'
+    default: return 'info'
+  }
+}
+function getScopeLabel(scope) {
+  switch (scope) {
+    case 'builtin': return '内置指纹'
+    case 'custom': return '自定义指纹'
+    case 'active': return '主动指纹'
+    default: return '全部指纹'
+  }
+}
+
+// 执行批量验证（异步提交）
 async function handleBatchValidate() {
   if (!batchValidateUrl.value) {
     ElMessage.warning('请输入目标URL')
@@ -2202,12 +2400,30 @@ async function handleBatchValidate() {
       scope: batchValidateScope.value
     })
 
-    if (res.code === 0) {
-      batchValidateResult.value = {
-        matchedCount: res.matchedCount,
-        duration: res.duration,
-        matched: res.matched || []
+    if (res.code === 0 && res.taskId) {
+      batchTaskId.value = res.taskId
+      batchTaskStatus.value = 'running'
+      batchProgress.total = 0
+      batchProgress.completed = 0
+      batchProgress.matched = 0
+
+      // 初始化常驻任务
+      persistentTask.value = {
+        taskId: res.taskId,
+        url: batchValidateUrl.value,
+        scope: batchValidateScope.value,
+        status: 'running',
+        total: 0,
+        completed: 0,
+        matched: 0
       }
+
+      saveBatchTaskToStorage()
+      startBatchPolling()
+
+      // 关闭弹窗
+      batchValidateDialogVisible.value = false
+      ElMessage.success('批量验证任务已提交，可在页面顶部查看进度')
     } else {
       ElMessage.error(res.msg || '验证失败')
     }
@@ -2215,6 +2431,80 @@ async function handleBatchValidate() {
     ElMessage.error('验证请求失败: ' + e.message)
   } finally {
     batchValidateLoading.value = false
+  }
+}
+
+// 轮询批量验证进度
+function startBatchPolling() {
+  if (batchPollTimer) clearInterval(batchPollTimer)
+  batchPollTimer = setInterval(async () => {
+    if (!batchTaskId.value) {
+      clearInterval(batchPollTimer)
+      batchPollTimer = null
+      return
+    }
+    try {
+      const res = await getFingerprintBatchProgress({ taskId: batchTaskId.value })
+      if (res.code === 0) {
+        batchProgress.total = res.total || 0
+        batchProgress.completed = res.completed || 0
+        batchProgress.matched = res.matched || 0
+        batchTaskStatus.value = res.status
+
+        if (res.status === 'running') {
+          updatePersistentTask('running')
+          saveBatchTaskToStorage()
+        } else if (res.status === 'completed') {
+          clearInterval(batchPollTimer)
+          batchPollTimer = null
+          // 结果不在这里加载，点击"查看结果"时再请求（减少轮询包大小）
+          batchValidateResult.value = null
+          batchTaskStatus.value = 'completed'
+          updatePersistentTask('completed')
+          persistentTask.value.matched = res.matched || 0
+          saveBatchTaskToStorage()
+          ElMessage.success(`批量验证完成，匹配 ${res.matched || 0} 个指纹`)
+        } else if (res.status === 'failed') {
+          clearInterval(batchPollTimer)
+          batchPollTimer = null
+          batchTaskStatus.value = 'failed'
+          updatePersistentTask('failed')
+          saveBatchTaskToStorage()
+          ElMessage.error('批量验证失败')
+        } else if (res.status === 'stopped') {
+          clearInterval(batchPollTimer)
+          batchPollTimer = null
+          batchValidateResult.value = null
+          batchTaskStatus.value = 'stopped'
+          updatePersistentTask('stopped')
+          persistentTask.value.matched = res.matched || 0
+          saveBatchTaskToStorage()
+          ElMessage.info('批量验证已停止')
+        }
+      } else if (res.code === 404) {
+        clearInterval(batchPollTimer)
+        batchPollTimer = null
+        batchTaskStatus.value = ''
+        persistentTask.value = null
+        localStorage.removeItem(FINGERPRINT_BATCH_STORAGE_KEY)
+        ElMessage.error('任务不存在或已过期')
+      }
+    } catch (e) {
+      console.error('Poll batch progress error:', e)
+    }
+  }, 2000)
+}
+
+// 停止批量验证
+async function handleStopBatchValidate() {
+  if (!batchTaskId.value) return
+  try {
+    await stopFingerprintBatchValidate({ taskId: batchTaskId.value })
+    batchTaskStatus.value = 'stopping'
+    updatePersistentTask('stopping')
+    ElMessage.info('已发送停止信号')
+  } catch (e) {
+    ElMessage.error('停止失败: ' + e.message)
   }
 }
 
@@ -2845,11 +3135,11 @@ async function handleImportActiveFingerprints() {
     if (res.code === 0) {
       activeImportDialogVisible.value = false
       ElMessageBox.alert(
-        `<div style="text-align: center; font-size: 14px;">
+        DOMPurify.sanitize(`<div style="text-align: center; font-size: 14px;">
           <p style="margin-bottom: 10px;">导入完成</p>
           <p><strong class="text-success" style="font-size: 20px;">${res.imported || 0}</strong> 个指纹新增</p>
           <p><strong class="text-warning" style="font-size: 20px;">${res.updated || 0}</strong> 个指纹更新</p>
-        </div>`,
+        </div>`),
         '导入结果',
         {
           dangerouslyUseHTMLString: true,
@@ -2935,6 +3225,88 @@ async function handleActiveValidateFingerprint() {
 
 <style lang="scss" scoped>
 .fingerprint-page {
+  .persistent-task-bar {
+    margin-bottom: 12px;
+  }
+  .persistent-task-card {
+    border-radius: 8px;
+    border-left: 4px solid var(--el-color-primary);
+    :deep(.el-card__body) {
+      padding: 12px 16px;
+    }
+  }
+  .persistent-task-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .persistent-task-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+  .persistent-task-title {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .persistent-task-url {
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 300px;
+  }
+  .persistent-task-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .persistent-task-stat {
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+    white-space: nowrap;
+    min-width: 60px;
+  }
+  .persistent-task-result {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .persistent-task-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .rotating {
+    animation: rotating 1.5s linear infinite;
+  }
+  @keyframes rotating {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .tabs-with-action {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .flex-grow-tabs {
+    flex: 1;
+    min-width: 0;
+  }
+  .tabs-action-buttons {
+    padding-top: 4px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 8px;
+  }
+
   .card-header {
     display: flex;
     justify-content: space-between;

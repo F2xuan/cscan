@@ -1,31 +1,30 @@
 import request from './request'
 
-// 容器日志 API - Docker 容器实时日志查看
+// 容器日志 API - Docker 容器日志查看
 
 // 列出所有 cscan 相关 Docker 容器
 export function listContainers() {
   return request.post('/container/list')
 }
 
-// 一次性拉取最近 N 行容器日志(用于导出或 SSE 降级)
+// 一次性拉取最近 N 行容器日志
 export function fetchContainerLogs(data) {
   return request.post('/container/logs/fetch', data)
 }
 
-// 构建单容器 SSE 订阅 URL(EventSource 无法设置 Authorization 头,token 通过查询参数传递)
-export function buildStreamURL(params) {
-  const qs = new URLSearchParams()
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.set(k, v)
-  })
-  return `/api/v1/container/logs/stream?${qs.toString()}`
+// ==================== 日志历史(本地文件) ====================
+
+// 获取有日志的日期列表(降序)
+export function getLogDates() {
+  return request.get('/container/logs/dates')
 }
 
-// 构建多容器合并 SSE 订阅 URL
-export function buildMergedStreamURL(params) {
-  const qs = new URLSearchParams()
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.set(k, v)
-  })
-  return `/api/v1/container/logs/stream/merged?${qs.toString()}`
+// 获取某天有日志的容器文件列表
+export function getLogFiles(date) {
+  return request.get('/container/logs/files', { params: { date } })
+}
+
+// 读取指定日期+容器的历史日志
+export function getLogHistory(params) {
+  return request.get('/container/logs/history', { params })
 }

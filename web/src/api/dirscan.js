@@ -51,3 +51,30 @@ export function batchDeleteDirScanResult(data) {
 export function clearDirScanResult(data) {
   return request.post('/dirscan/result/clear', data)
 }
+
+// 目录扫描详情（含request/response大字段）
+export function getDirScanDetail(data) {
+  return request.post('/dirscan/result/detail', data)
+}
+
+// ==================== 目录扫描 AI研判 API ====================
+
+// 单条AI研判
+export function analyzeDirByAI(data) {
+  return request.post('/dirscan/ai/analyze', data)
+}
+
+// 批量AI研判（异步启动）
+export function batchAnalyzeDirByAI(data) {
+  return request.post('/dirscan/ai/batch-analyze', data)
+}
+
+// 批量研判进度查询
+export function getBatchAnalyzeProgress(data) {
+  return request.post('/dirscan/ai/batch-progress', data)
+}
+
+// 停止批量研判
+export function stopBatchAnalyze(data) {
+  return request.post('/dirscan/ai/stop-batch', data)
+}

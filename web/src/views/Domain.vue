@@ -1,28 +1,48 @@
 ﻿<template>
   <div class="domain-page">
-    <!-- 搜索区域 -->
-    <el-card class="search-card">
-      <el-form :inline="true" class="search-form">
-        <el-form-item :label="$t('domain.domain')">
-          <el-input v-model="searchForm.domain" :placeholder="$t('domain.domain')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('domain.rootDomain')">
-          <el-input v-model="searchForm.rootDomain" :placeholder="$t('domain.rootDomain')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item label="IP">
-          <el-input v-model="searchForm.ip" :placeholder="$t('domain.resolveIP')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('domain.organization')">
-          <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable style="width: 140px">
-            <el-option :label="$t('common.allOrganizations')" value="" />
-            <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
-          <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
-        </el-form-item>
-      </el-form>
+    <!-- 工具栏 -->
+    <el-card class="toolbar-card">
+      <div class="toolbar">
+        <el-input v-model="searchForm.domain" :placeholder="$t('domain.domain')" clearable class="search-input" @keyup.enter="handleSearch">
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <div class="header-actions">
+          <el-button @click="showFilters = !showFilters">
+            <el-icon><Filter /></el-icon>
+            {{ $t('asset.assetInventoryTab.filters') }}
+          </el-button>
+        </div>
+        <div class="toolbar-right">
+          <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') }}</el-button>
+        </div>
+      </div>
+
+      <!-- 过滤器面板 -->
+      <div v-if="showFilters" class="filters-panel">
+        <el-form :inline="true" class="search-form">
+          <el-form-item :label="$t('domain.domain')">
+            <el-input v-model="searchForm.domain" :placeholder="$t('domain.domain')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('domain.rootDomain')">
+            <el-input v-model="searchForm.rootDomain" :placeholder="$t('domain.rootDomain')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item label="IP">
+            <el-input v-model="searchForm.ip" :placeholder="$t('domain.resolveIP')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('domain.organization')">
+            <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable style="width: 140px">
+              <el-option :label="$t('common.allOrganizations')" value="" />
+              <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
+            <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
     </el-card>
 
     <!-- 统计信息 -->
@@ -108,9 +128,14 @@
             {{ row.orgName || $t('common.defaultOrganization') }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('domain.discoveryTime')" width="160">
+        <el-table-column :label="$t('common.createTime')" width="160">
           <template #default="{ row }">
             {{ row.createTime }}
+          </template>
+        </el-table-column>
+        <el-table-column :label="$t('common.updateTime')" width="160">
+          <template #default="{ row }">
+            {{ row.updateTime }}
           </template>
         </el-table-column>
         <el-table-column :label="$t('common.operation')" width="80" fixed="right">
@@ -139,7 +164,9 @@ import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Filter } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { clearDomains } from '@/api/asset'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
@@ -149,6 +176,7 @@ const loading = ref(false)
 const tableData = ref([])
 const selectedRows = ref([])
 const organizations = ref([])
+const showFilters = ref(false)
 
 const searchForm = reactive({
   domain: '',
@@ -240,11 +268,35 @@ async function loadOrganizations() {
 function handleSearch() {
   pagination.page = 1
   loadData()
+  loadStat()
 }
 
 function handleReset() {
   Object.assign(searchForm, { domain: '', rootDomain: '', ip: '', orgId: '' })
+  showFilters.value = false
   handleSearch()
+}
+
+async function handleClear() {
+  try {
+    await ElMessageBox.confirm(
+      t('asset.confirmClearAll'),
+      t('common.warning'),
+      { type: 'error', confirmButtonText: t('asset.confirmClearBtn'), cancelButtonText: t('common.cancel') }
+    )
+    const res = await clearDomains()
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('asset.clearSuccess'))
+      handleReset()
+      loadStat()
+    } else {
+      ElMessage.error(res.msg || t('asset.clearFailed'))
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('asset.clearFailed'))
+    }
+  }
 }
 
 function handleSelectionChange(rows) {
@@ -281,62 +333,93 @@ function handleScan() {
 
 <style scoped>
 .domain-page {
-  .search-card {
+  .toolbar-card {
     margin-bottom: 16px;
   }
-  
+
+  .toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+
+    .search-input {
+      width: 360px;
+      max-width: 100%;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .toolbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+  }
+
+  .filters-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--el-border-color);
+  }
+
   .stat-row {
     margin-bottom: 16px;
-    
+
     .stat-card {
       text-align: center;
-      
+
       .stat-value {
         font-size: 28px;
         font-weight: 600;
         color: var(--el-color-primary);
       }
-      
+
       .stat-label {
         color: var(--el-text-color-secondary);
         margin-top: 8px;
       }
     }
   }
-  
+
   .table-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
-    
+
     .total-info {
       color: var(--el-text-color-secondary);
     }
   }
-  
+
   .domain-cell {
     display: flex;
     align-items: center;
-    
+
     .domain-name {
       font-family: monospace;
     }
-    
+
     .new-tag {
       margin-left: 8px;
     }
   }
-  
+
   .more-ips {
     color: var(--el-text-color-secondary);
     font-size: 12px;
   }
-  
+
   .no-resolve {
     color: var(--el-text-color-placeholder);
   }
-  
+
   .pagination {
     margin-top: 16px;
     justify-content: flex-end;

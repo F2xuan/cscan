@@ -36,18 +36,18 @@
           </el-button-group>
         </div>
         
-        <div class="color-theme-section">
-          <h4>{{ $t('theme.colorTheme') }}</h4>
-          <div class="color-themes">
+        <div class="style-theme-section">
+          <h4>{{ $t('theme.styleTitle') }}</h4>
+          <div class="style-themes">
             <div 
-              v-for="theme in colorThemes" 
-              :key="theme.value"
-              class="color-theme-item"
-              :class="{ active: themeStore.colorTheme === theme.value }"
-              @click="themeStore.setColorTheme(theme.value)"
+              v-for="style in themeStore.THEME_STYLES" 
+              :key="style.value"
+              class="style-theme-item"
+              :class="{ active: themeStore.themeStyle === style.value }"
+              @click="themeStore.setThemeStyle(style.value)"
             >
-              <div class="color-preview" :class="`preview-${theme.value}`"></div>
-              <span>{{ $t(theme.label) }}</span>
+              <div class="style-color-dot" :style="{ background: style.primaryColor }"></div>
+              <span>{{ $t(style.label) }}</span>
             </div>
           </div>
         </div>
@@ -116,7 +116,6 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
@@ -125,15 +124,6 @@ import { Palette, Sunny, Moon, Monitor, Menu } from '@element-plus/icons-vue'
 const { t } = useI18n()
 const themeStore = useThemeStore()
 const localeStore = useLocaleStore()
-
-const colorThemes = [
-  { value: 'default', label: 'theme.default' },
-  { value: 'vercel', label: 'theme.vercel' },
-  { value: 'vercel-dark', label: 'theme.vercelDark' },
-  { value: 'cosmic-night', label: 'theme.cosmicNight' },
-  { value: 'quantum-rose', label: 'theme.quantumRose' },
-  { value: 'clean-slate', label: 'theme.cleanSlate' }
-]
 
 const getCurrentThemeLabel = () => {
   const labels = {
@@ -164,19 +154,24 @@ const getCurrentThemeLabel = () => {
     margin: 20px 0;
   }
   
-  .color-theme-section {
-    .color-themes {
+  .style-theme-section {
+    .style-themes {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
       margin-top: 12px;
     }
-    
-    .color-theme-item {
+
+    @media (max-width: 768px) {
+      .style-themes {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .style-theme-item {
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       padding: 12px;
       border: 2px solid hsl(var(--border));
       border-radius: 8px;
@@ -193,40 +188,18 @@ const getCurrentThemeLabel = () => {
         background: hsl(var(--primary) / 0.1);
       }
 
+      .style-color-dot {
+        flex-shrink: 0;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid hsl(var(--border));
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+      }
+
       span {
         font-size: 12px;
         color: hsl(var(--muted-foreground));
-      }
-    }
-    
-    .color-preview {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      border: 2px solid hsl(var(--border));
-
-      &.preview-default {
-        background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
-      }
-
-      &.preview-vercel {
-        background: linear-gradient(135deg, #000 0%, #333 100%);
-      }
-
-      &.preview-vercel-dark {
-        background: linear-gradient(135deg, #111 0%, #000 100%);
-      }
-
-      &.preview-cosmic-night {
-        background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-      }
-
-      &.preview-quantum-rose {
-        background: linear-gradient(135deg, #ec4899 0%, #f97316 100%);
-      }
-
-      &.preview-clean-slate {
-        background: linear-gradient(135deg, #64748b 0%, #94a3b8 100%);
       }
     }
   }

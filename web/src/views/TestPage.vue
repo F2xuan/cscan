@@ -9,7 +9,7 @@
       <div class="test-section">
         <h3>主题测试</h3>
         <p>当前主题: {{ themeStore.theme }}</p>
-        <p>当前颜色主题: {{ themeStore.colorTheme }}</p>
+        <p>当前款式: {{ themeStore.themeStyle }}</p>
         <p>是否暗色模式: {{ themeStore.isDark }}</p>
         
         <div class="button-group">

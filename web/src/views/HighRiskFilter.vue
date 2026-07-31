@@ -33,6 +33,22 @@
             </span>
           </el-form-item>
 
+          <el-divider content-position="left">{{ $t('highRiskFilter.newRiskNotify') }}</el-divider>
+          <el-form-item :label="$t('highRiskFilter.newRiskNotifyLabel')">
+            <el-switch v-model="filterConfig.newRiskNotify" />
+            <span class="hint-secondary" style="margin-left: 10px">
+              {{ $t('highRiskFilter.newRiskNotifyHint') }}
+            </span>
+          </el-form-item>
+
+          <el-divider content-position="left">{{ $t('highRiskFilter.fixedNotify') }}</el-divider>
+          <el-form-item :label="$t('highRiskFilter.fixedNotifyLabel')">
+            <el-switch v-model="filterConfig.fixedNotify" />
+            <span class="hint-secondary" style="margin-left: 10px">
+              {{ $t('highRiskFilter.fixedNotifyHint') }}
+            </span>
+          </el-form-item>
+
           <el-divider content-position="left">{{ $t('highRiskFilter.highRiskFingerprints') }}</el-divider>
           <el-form-item :label="$t('highRiskFilter.selectFingerprint')">
             <el-select 
@@ -106,6 +122,16 @@
             {{ filterConfig.newAssetNotify ? $t('highRiskFilter.enabled') : $t('highRiskFilter.disabled') }}
           </el-tag>
         </el-descriptions-item>
+        <el-descriptions-item :label="$t('highRiskFilter.newRiskNotifyLabel')">
+          <el-tag :type="filterConfig.newRiskNotify ? 'success' : 'info'" size="small">
+            {{ filterConfig.newRiskNotify ? $t('highRiskFilter.enabled') : $t('highRiskFilter.disabled') }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('highRiskFilter.fixedNotifyLabel')">
+          <el-tag :type="filterConfig.fixedNotify ? 'success' : 'info'" size="small">
+            {{ filterConfig.fixedNotify ? $t('highRiskFilter.enabled') : $t('highRiskFilter.disabled') }}
+          </el-tag>
+        </el-descriptions-item>
         <el-descriptions-item :label="$t('highRiskFilter.highRiskFingerprints')">
           <el-tag v-for="fp in filterConfig.highRiskFingerprints" :key="fp" style="margin-right: 5px; margin-bottom: 5px">
             {{ fp }}
@@ -152,7 +178,9 @@ const filterConfig = reactive({
   highRiskFingerprints: [],
   highRiskPorts: [],
   highRiskPocSeverities: [],
-  newAssetNotify: false
+  newAssetNotify: false,
+  newRiskNotify: true,
+  fixedNotify: true
 })
 
 onMounted(() => {
@@ -215,6 +243,8 @@ async function loadFilterConfig() {
       filterConfig.highRiskPorts = config.highRiskPorts || []
       filterConfig.highRiskPocSeverities = config.highRiskPocSeverities || []
       filterConfig.newAssetNotify = config.newAssetNotify || false
+      filterConfig.newRiskNotify = config.newRiskNotify ?? true
+      filterConfig.fixedNotify = config.fixedNotify ?? true
     }
   } catch (e) {
     console.error('Load filter config error:', e)
@@ -230,7 +260,9 @@ async function saveConfig() {
       highRiskFingerprints: filterConfig.highRiskFingerprints,
       highRiskPorts: filterConfig.highRiskPorts,
       highRiskPocSeverities: filterConfig.highRiskPocSeverities,
-      newAssetNotify: filterConfig.newAssetNotify
+      newAssetNotify: filterConfig.newAssetNotify,
+      newRiskNotify: filterConfig.newRiskNotify,
+      fixedNotify: filterConfig.fixedNotify
     })
     if (res.code === 0) {
       ElMessage.success(t('common.operationSuccess'))

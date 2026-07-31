@@ -8,111 +8,128 @@
     @update:model-value="handleClose"
   >
     <div v-if="asset" class="asset-detail">
-      <!-- 顶部截图和基本信息 -->
-      <div class="detail-header">
-        <div
-          class="detail-screenshot"
-          @mouseenter="handlePreviewShow"
-          @mouseleave="handlePreviewHide"
-        >
-          <img
-            v-if="asset.screenshot"
-            :src="formatScreenshotUrl(asset.screenshot)"
-            :alt="asset.title"
-            class="detail-screenshot-img"
-          />
-          <div v-else class="detail-screenshot-placeholder">
-            {{ t('asset.noScreenshot') }}
-          </div>
-        </div>
-        <div class="detail-basic-info">
-          <div class="info-row">
-            <span class="info-label">URL:</span>
-            <a :href="assetUrl" target="_blank" class="info-value link">
-              {{ assetUrl }}
-            </a>
-          </div>
-          <div class="info-row">
-            <span class="info-label">{{ t('asset.ip') }}:</span>
-            <span class="info-value">{{ asset.ips?.length ? asset.ips.join(', ') : (asset.ip || '-') }}</span>
-          </div>
-          <div v-if="asset.status && asset.status !== '0'" class="info-row">
-            <span class="info-label">{{ t('asset.statusCode') }}:</span>
-            <el-tag :type="getStatusType(asset.status)" size="small">
-              {{ asset.status }}
-            </el-tag>
-          </div>
-          <div v-if="asset.asn" class="info-row">
-            <span class="info-label">ASN:</span>
-            <span class="info-value">{{ asset.asn }}</span>
-          </div>
-          <div v-if="asset.title" class="info-row">
-            <span class="info-label">{{ t('asset.title') }}:</span>
-            <span class="info-value">{{ asset.title }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 概览内容 -->
-      <div class="detail-content">
-        <div class="section">
-          <h4 class="section-title">{{ t('asset.assetDetail.networkInfo') }}</h4>
-          <div class="info-grid">
-            <div class="info-item">
-              <span class="item-label">{{ t('asset.assetDetail.host') }}:</span>
-              <span class="item-value">{{ asset.host || asset.name }}</span>
+      <el-tabs v-model="activeTab" class="asset-detail-tabs">
+        <!-- 概览 -->
+        <el-tab-pane :label="t('asset.assetDetail.overview')" name="overview">
+          <!-- 顶部截图和基本信息 -->
+          <div class="detail-header">
+            <div
+              class="detail-screenshot"
+              @mouseenter="handlePreviewShow"
+              @mouseleave="handlePreviewHide"
+            >
+              <img
+                v-if="asset.screenshot"
+                :src="formatScreenshotUrl(asset.screenshot)"
+                :alt="asset.title"
+                class="detail-screenshot-img"
+              />
+              <div v-else class="detail-screenshot-placeholder">
+                {{ t('asset.noScreenshot') }}
+              </div>
             </div>
-            <div v-if="asset.port && asset.port !== 0" class="info-item">
-              <span class="item-label">{{ t('asset.assetDetail.port') }}:</span>
-              <span class="item-value">{{ asset.port }}</span>
-            </div>
-            <div class="info-item">
-              <span class="item-label">{{ t('asset.assetDetail.service') }}:</span>
-              <span class="item-value">{{ asset.service || '-' }}</span>
-            </div>
-            <div v-if="asset.cname" class="info-item">
-              <span class="item-label">{{ t('asset.assetDetail.cname') }}:</span>
-              <span class="item-value">{{ asset.cname }}</span>
-            </div>
-            <div v-if="asset.iconHash" class="info-item">
-              <span class="item-label">{{ t('asset.assetDetail.iconHash') }}:</span>
-              <div class="icon-hash-display">
-                <img
-                  v-if="asset.iconHashBytes"
-                  :src="'data:image/x-icon;base64,' + asset.iconHashBytes"
-                  class="favicon-large"
-                  @error="(e) => e.target.style.display = 'none'"
-                />
-                <span class="item-value">{{ asset.iconHash }}</span>
+            <div class="detail-basic-info">
+              <div class="info-row">
+                <span class="info-label">URL:</span>
+                <a :href="assetUrl" target="_blank" class="info-value link">
+                  {{ assetUrl }}
+                </a>
+              </div>
+              <div class="info-row">
+                <span class="info-label">{{ t('asset.ip') }}:</span>
+                <span class="info-value">{{ asset.ips?.length ? asset.ips.join(', ') : (asset.ip || '-') }}</span>
+              </div>
+              <div v-if="asset.status && asset.status !== '0'" class="info-row">
+                <span class="info-label">{{ t('asset.statusCode') }}:</span>
+                <el-tag :type="getStatusType(asset.status)" size="small">
+                  {{ asset.status }}
+                </el-tag>
+              </div>
+              <div v-if="asset.asn" class="info-row">
+                <span class="info-label">ASN:</span>
+                <span class="info-value">{{ asset.asn }}</span>
+              </div>
+              <div v-if="asset.title" class="info-row">
+                <span class="info-label">{{ t('asset.title') }}:</span>
+                <span class="info-value">{{ asset.title }}</span>
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="section">
-          <h4 class="section-title">{{ t('asset.assetDetail.httpResponse') }}</h4>
-          <div class="code-block">
-            <pre>{{ asset.httpHeader || t('asset.assetDetail.noHttpData') }}</pre>
-          </div>
-        </div>
+          <!-- 概览内容 -->
+          <div class="detail-content">
+            <div class="section">
+              <h4 class="section-title">{{ t('asset.assetDetail.networkInfo') }}</h4>
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="item-label">{{ t('asset.assetDetail.host') }}:</span>
+                  <span class="item-value">{{ asset.host || asset.name }}</span>
+                </div>
+                <div v-if="asset.port && asset.port !== 0" class="info-item">
+                  <span class="item-label">{{ t('asset.assetDetail.port') }}:</span>
+                  <span class="item-value">{{ asset.port }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="item-label">{{ t('asset.assetDetail.service') }}:</span>
+                  <span class="item-value">{{ asset.service || '-' }}</span>
+                </div>
+                <div v-if="asset.cname" class="info-item">
+                  <span class="item-label">{{ t('asset.assetDetail.cname') }}:</span>
+                  <span class="item-value">{{ asset.cname }}</span>
+                </div>
+                <div v-if="asset.iconHash" class="info-item">
+                  <span class="item-label">{{ t('asset.assetDetail.iconHash') }}:</span>
+                  <div class="icon-hash-display">
+                    <img
+                      v-if="asset.iconHashBytes"
+                      :src="'data:image/x-icon;base64,' + asset.iconHashBytes"
+                      class="favicon-large"
+                      @error="(e) => e.target.style.display = 'none'"
+                    />
+                    <span class="item-value">{{ asset.iconHash }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-        <div v-if="asset.httpBody" class="section">
-          <h4 class="section-title">{{ t('asset.assetDetail.httpBody') }}</h4>
-          <div class="code-block">
-            <pre>{{ asset.httpBody.substring(0, 1000) }}{{ asset.httpBody.length > 1000 ? '...' : '' }}</pre>
+            <div class="section">
+              <h4 class="section-title">{{ t('asset.assetDetail.httpResponse') }}</h4>
+              <div class="code-block">
+                <pre>{{ asset.httpHeader || t('asset.assetDetail.noHttpData') }}</pre>
+              </div>
+            </div>
+
+            <div v-if="asset.httpBody" class="section">
+              <h4 class="section-title">{{ t('asset.assetDetail.httpBody') }}</h4>
+              <div class="code-block">
+                <pre>{{ asset.httpBody.substring(0, 1000) }}{{ asset.httpBody.length > 1000 ? '...' : '' }}</pre>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </el-tab-pane>
+
+        <!-- T4.3 变化时间线 -->
+        <el-tab-pane :label="t('asset.timeline.tab')" name="timeline">
+          <AssetTimeline
+            :asset-id="asset.id"
+            :authority="asset.authority"
+            :host="asset.host"
+            :port="asset.port"
+          />
+        </el-tab-pane>
+      </el-tabs>
     </div>
   </el-drawer>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatScreenshotUrl } from '@/utils/screenshot'
+import AssetTimeline from '@/components/asset/AssetTimeline.vue'
 
 const { t } = useI18n()
+const activeTab = ref('overview')
 
 const props = defineProps({
   visible: {

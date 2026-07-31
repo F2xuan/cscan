@@ -5,101 +5,76 @@
         <div class="log-header">
           <span>{{ $t('container.title') }}</span>
           <div class="log-filters">
-            <el-input
-              v-model="activeTab.searchKeyword"
-              :placeholder="$t('container.searchLogs')"
-              clearable
-              size="small"
-              style="width: 200px"
-            >
-              <template #prefix>
-                <el-icon><Search /></el-icon>
-              </template>
-            </el-input>
-            <el-select v-model="activeTab.streamFilter" size="small" style="width: 100px">
-              <el-option :label="$t('container.streamAll')" value="all" />
-              <el-option :label="$t('container.streamStdout')" value="stdout" />
-              <el-option :label="$t('container.streamStderr')" value="stderr" />
-            </el-select>
-            <el-select v-model="activeTab.levelFilter" size="small" style="width: 90px" :placeholder="$t('container.levelFilter')">
-              <el-option :label="$t('container.allLevels')" value="all" />
-              <el-option label="ERROR" value="ERROR" />
-              <el-option label="WARN" value="WARN" />
-              <el-option label="INFO" value="INFO" />
-              <el-option label="DEBUG" value="DEBUG" />
-            </el-select>
-            <el-checkbox v-model="showFullTs" size="small">{{ $t('container.showFullTs') }}</el-checkbox>
-            <el-button :type="activeTab.paused ? 'success' : 'warning'" size="small" @click="activeTab.paused = !activeTab.paused">
-              {{ activeTab.paused ? $t('container.resume') : $t('container.pause') }}
-            </el-button>
-            <el-button size="small" @click="clearActiveTab">{{ $t('container.clear') }}</el-button>
-            <el-dropdown size="small" @command="exportLogs">
-              <el-button size="small">{{ $t('container.export') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="txt">{{ $t('container.exportTxt') }}</el-dropdown-item>
-                  <el-dropdown-item command="json">{{ $t('container.exportJson') }}</el-dropdown-item>
-                  <el-dropdown-item command="csv">{{ $t('container.exportCsv') }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <span class="line-count">{{ $t('container.lineCount') }}: {{ activeTab.lines.length }}</span>
+            <!-- 第一行：数据选择 -->
+            <div class="filter-row">
+              <el-select v-model="historyDate" size="small" style="width: 140px" :placeholder="$t('container.selectDate')" @change="loadHistoryFiles">
+                <el-option v-for="d in logDates" :key="d" :label="d" :value="d" />
+              </el-select>
+              <el-select v-model="historyContainer" size="small" style="width: 200px" :placeholder="$t('container.selectContainer')" @change="loadHistoryLogs">
+                <el-option v-for="f in historyFiles" :key="f.name" :label="f.name" :value="f.name" />
+              </el-select>
+              <el-select v-model="historyTail" size="small" style="width: 110px" @change="loadHistoryLogs">
+                <el-option label="200 行" :value="200" />
+                <el-option label="500 行" :value="500" />
+                <el-option label="1000 行" :value="1000" />
+                <el-option label="5000 行" :value="5000" />
+              </el-select>
+              <el-button size="small" type="primary" @click="loadHistoryLogs" :loading="historyLoading">
+                <el-icon style="margin-right: 4px"><Refresh /></el-icon>
+                {{ $t('container.refresh') }}
+              </el-button>
+            </div>
+            <!-- 第二行：筛选和工具 -->
+            <div class="filter-row">
+              <el-input
+                v-model="searchKeyword"
+                :placeholder="$t('container.searchLogs')"
+                clearable
+                size="small"
+                style="width: 220px"
+              >
+                <template #prefix>
+                  <el-icon><Search /></el-icon>
+                </template>
+              </el-input>
+              <el-select v-model="levelFilter" size="small" style="width: 100px">
+                <el-option :label="$t('container.allLevels')" value="all" />
+                <el-option label="ERROR" value="ERROR" />
+                <el-option label="WARN" value="WARN" />
+                <el-option label="INFO" value="INFO" />
+                <el-option label="DEBUG" value="DEBUG" />
+              </el-select>
+              <el-dropdown size="small" @command="exportLogs">
+                <el-button size="small">{{ $t('container.export') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="txt">{{ $t('container.exportTxt') }}</el-dropdown-item>
+                    <el-dropdown-item command="json">{{ $t('container.exportJson') }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <span class="line-count">{{ $t('container.lineCount') }}: {{ filteredLines.length }}</span>
+            </div>
           </div>
         </div>
       </template>
 
       <div class="layout">
-        <!-- 左侧容器列表 -->
-        <aside class="sidebar">
-          <div class="sidebar-header">
-            <span>{{ $t('container.containers') }}</span>
-            <el-button text size="small" @click="loadContainers">
-              <el-icon><Refresh /></el-icon>
-            </el-button>
-          </div>
-          <el-menu>
-            <el-menu-item
-              v-for="c in containers"
-              :key="c.name"
-              :index="c.name"
-              @click="openTab(c.name)"
-              :class="{ 'is-opened': tabs.some(t => t.name === c.name) }"
-            >
-              <span class="dot" :class="c.state === 'running' ? 'dot-on' : 'dot-off'"></span>
-              <span class="ctn-name">{{ c.name }}</span>
-              <span class="ctn-state">{{ c.status }}</span>
-            </el-menu-item>
-            <el-menu-item v-if="!containers.length && !loading" disabled>
-              <span style="color: var(--el-text-color-secondary)">{{ $t('container.noContainers') }}</span>
-            </el-menu-item>
-          </el-menu>
-        </aside>
-
-        <!-- 右侧日志区 -->
+        <!-- 日志查看区 -->
         <section class="viewer">
-          <!-- 标签栏 -->
-          <div v-if="tabs.length" class="tab-bar">
-            <div
-              v-for="tab in tabs"
-              :key="tab.name"
-              class="tab-item"
-              :class="{ active: tab.name === activeTabName }"
-              @click="switchTab(tab.name)"
-              @contextmenu.prevent="showTabMenu($event, tab.name)"
-            >
-              <span class="dot-sm" :class="tab.conn === 'connected' ? 'dot-on' : tab.conn === 'connecting' ? 'dot-warn' : 'dot-off'"></span>
-              <span class="tab-name">{{ tab.name }}</span>
-              <el-icon class="tab-close" @click.stop="closeTab(tab.name)"><Close /></el-icon>
-            </div>
+          <!-- 历史信息栏 -->
+          <div v-if="historyContainer" class="history-info">
+            <span class="history-meta">{{ historyDate }} / {{ historyContainer }}</span>
+            <span v-if="historyTotal > 0" class="history-meta">
+              {{ $t('container.totalLines') }}: {{ historyTotal }}
+              <template v-if="historyTruncated"> ({{ $t('container.showingLast') }} {{ historyLines.length }})</template>
+            </span>
           </div>
 
           <!-- 空状态 -->
-          <div v-if="!tabs.length" class="empty">
+          <div v-if="!historyContainer && !historyLoading" class="empty">
             <el-icon :size="48" style="color: var(--el-text-color-disabled)"><Document /></el-icon>
-            <span>{{ $t('container.noTabs') }}</span>
-          </div>
-          <div v-else-if="dockerUnavailable" class="empty">
-            <span>{{ $t('container.dockerUnavailable') }}</span>
+            <span>{{ $t('container.selectDateAndContainer') }}</span>
           </div>
 
           <!-- 日志内容 -->
@@ -111,12 +86,9 @@
               :class="lineClass(l)"
             >
               <span class="log-ln">{{ idx + 1 }}</span>
-              <span v-if="showFullTs && l.ts" class="log-ts-full">{{ formatDockerTs(l.ts) }}</span>
+              <span class="log-time">{{ l.time || '--:--:--' }}</span>
               <span class="log-level" :class="levelClass(l.level)">{{ l.level || 'LOG' }}</span>
               <span v-if="l.container" class="log-container">{{ l.container }}</span>
-              <span v-if="l.worker" class="log-worker">{{ l.worker }}</span>
-              <span v-if="l.taskId" class="log-task">[{{ l.taskId }}]</span>
-              <span class="log-time">{{ formatTime(l.time) }}</span>
               <span class="log-body">{{ l.body }}</span>
             </div>
           </div>
@@ -139,183 +111,109 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useUserStore } from '@/stores/user'
-import { listContainers, fetchContainerLogs, buildStreamURL } from '@/api/container'
+import { getLogDates, getLogFiles, getLogHistory } from '@/api/container'
+import { useI18n } from 'vue-i18n'
 
-const userStore = useUserStore()
+const { t } = useI18n()
 
-// ==================== 容器列表 ====================
-const containers = ref([])
-const loading = ref(false)
-const dockerUnavailable = ref(false)
-
-async function loadContainers() {
-  loading.value = true
-  try {
-    const res = await listContainers()
-    if (res.code === 503) {
-      dockerUnavailable.value = true
-      containers.value = []
-      return
-    }
-    if (res.code !== 0) {
-      ElMessage.error(res.msg || 'error')
-      return
-    }
-    dockerUnavailable.value = false
-    containers.value = (res.list || []).filter(c => !c.name.toLowerCase().includes('worker'))
-  } catch (e) {
-    ElMessage.error(e.message || 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-// ==================== 标签页管理 ====================
-const tabs = ref([])
-const activeTabName = ref('')
-const showFullTs = ref(false)
+// ==================== 通用状态 ====================
+const searchKeyword = ref('')
+const levelFilter = ref('all')
 const logBox = ref(null)
 const showScrollBtn = ref(false)
 
-// 每个标签页的独立状态
-function createTabState(name) {
-  return reactive({
-    name,
-    lines: [],
-    searchKeyword: '',
-    streamFilter: 'all',
-    levelFilter: 'all',
-    paused: false,
-    autoScroll: true,
-    conn: 'disconnected',
-    es: null,
-    backoff: 1000
-  })
+// ==================== 历史日志 ====================
+const logDates = ref([])
+const historyDate = ref('')
+const historyFiles = ref([])
+const historyContainer = ref('')
+const historyTail = ref(500)
+const historyLines = ref([])
+const historyTotal = ref(0)
+const historyTruncated = ref(false)
+const historyLoading = ref(false)
+
+async function loadLogDates() {
+  try {
+    const res = await getLogDates()
+    if (res.code === 0 && res.dates) {
+      logDates.value = res.dates
+      if (res.dates.length && !historyDate.value) {
+        historyDate.value = res.dates[0]
+        await loadHistoryFiles()
+      }
+    }
+  } catch (_) {}
 }
 
-const activeTab = computed(() => {
-  return tabs.value.find(t => t.name === activeTabName.value) || {
-    lines: [],
-    searchKeyword: '',
-    streamFilter: 'all',
-    levelFilter: 'all',
-    paused: false,
-    conn: 'disconnected'
+async function loadHistoryFiles() {
+  historyContainer.value = ''
+  historyFiles.value = []
+  historyLines.value = []
+  if (!historyDate.value) return
+  try {
+    const res = await getLogFiles(historyDate.value)
+    if (res.code === 0 && res.files) {
+      historyFiles.value = res.files
+      if (res.files.length) {
+        historyContainer.value = res.files[0].name
+        await loadHistoryLogs()
+      }
+    }
+  } catch (_) {}
+}
+
+async function loadHistoryLogs() {
+  if (!historyDate.value || !historyContainer.value) return
+  historyLoading.value = true
+  try {
+    const res = await getLogHistory({
+      date: historyDate.value,
+      name: historyContainer.value,
+      tail: historyTail.value
+    })
+    if (res.code === 0) {
+      historyLines.value = (res.lines || []).map(parseHistoryLine)
+      historyTotal.value = res.total || 0
+      historyTruncated.value = res.truncated || false
+      nextTick(scrollToBottom)
+    }
+  } catch (e) {
+    ElMessage.error(e.message || 'error')
+  } finally {
+    historyLoading.value = false
   }
+}
+
+// 解析历史日志行: "2026-07-28T08:37:34.123Z [stdout] actual content"
+function parseHistoryLine(raw) {
+  const obj = { line: '', stream: 'stdout', ts: '', container: historyContainer.value }
+  // Try Docker format: "2026-07-28T08:37:34.123Z [stdout] content"
+  const m = raw.match(/^(\S+)\s+\[(\w+)\]\s+([\s\S]*)$/)
+  if (m) {
+    obj.ts = m[1]
+    obj.stream = m[2]
+    obj.line = m[3]
+  } else {
+    obj.line = raw
+  }
+  return parseLogLine(obj)
+}
+
+// ==================== 过滤 ====================
+const filteredLines = computed(() => {
+  const kw = searchKeyword.value.trim().toLowerCase()
+  const lf = levelFilter.value
+  return historyLines.value.filter(l => {
+    if (lf !== 'all' && l.level !== lf) return false
+    if (kw && !(l.raw || l.body || '').toLowerCase().includes(kw)) return false
+    return true
+  })
 })
 
-function openTab(name) {
-  const existing = tabs.value.find(t => t.name === name)
-  if (existing) {
-    activeTabName.value = name
-    return
-  }
-  const tab = createTabState(name)
-  tabs.value.push(tab)
-  activeTabName.value = name
-  openStream(tab)
-}
-
-function switchTab(name) {
-  activeTabName.value = name
-  nextTick(scrollToBottom)
-}
-
-function closeTab(name) {
-  const idx = tabs.value.findIndex(t => t.name === name)
-  if (idx < 0) return
-  const tab = tabs.value[idx]
-  closeStream(tab)
-  tabs.value.splice(idx, 1)
-  if (activeTabName.value === name) {
-    activeTabName.value = tabs.value.length ? tabs.value[Math.min(idx, tabs.value.length - 1)].name : ''
-  }
-}
-
-function closeOtherTabs(name) {
-  tabs.value.forEach(tab => {
-    if (tab.name !== name) closeStream(tab)
-  })
-  tabs.value = tabs.value.filter(t => t.name === name)
-  activeTabName.value = name
-}
-
-function closeAllTabs() {
-  tabs.value.forEach(tab => closeStream(tab))
-  tabs.value = []
-  activeTabName.value = ''
-}
-
-function showTabMenu(e, name) {
-  // 简单实现：右键直接关闭
-  // 可以后续升级为 ContextMenu 组件
-}
-
-// ==================== 日志流 ====================
-function openStream(tab) {
-  closeStream(tab)
-  if (!tab.name || dockerUnavailable.value) return
-  tab.conn = 'connecting'
-
-  const url = buildStreamURL({
-    name: tab.name,
-    token: userStore.token,
-    tail: '1000'
-  })
-
-  const es = new EventSource(url)
-  tab.es = es
-
-  es.onmessage = (ev) => {
-    if (tab.paused) return
-    try {
-      const obj = JSON.parse(ev.data)
-      const parsed = parseLogLine(obj)
-      tab.lines.push(parsed)
-      if (tab.lines.length > 5000) tab.lines.splice(0, tab.lines.length - 5000)
-      if (tab.name === activeTabName.value && tab.autoScroll) {
-        nextTick(scrollToBottom)
-      }
-    } catch (_) {}
-  }
-
-  es.addEventListener('end', () => {
-    tab.conn = 'disconnected'
-    closeStream(tab)
-  })
-
-  es.addEventListener('error', () => {
-    tab.conn = 'disconnected'
-    closeStream(tab)
-  })
-
-  es.onerror = () => {
-    tab.conn = 'disconnected'
-    closeStream(tab)
-    if (!tab.name) return
-    tab.backoff = Math.min(tab.backoff * 2, 30000)
-    setTimeout(() => {
-      if (tabs.value.some(t => t.name === tab.name)) openStream(tab)
-    }, tab.backoff)
-  }
-
-  es.addEventListener('open', () => {
-    tab.conn = 'connected'
-    tab.backoff = 1000
-  })
-}
-
-function closeStream(tab) {
-  if (tab.es) {
-    tab.es.close()
-    tab.es = null
-  }
-}
-
-// ==================== 日志解析（多格式） ====================
+// ==================== 日志解析(多格式) ====================
 const ANSI_RE = /\x1b\[[0-9;]*m/g
 const GOZERO_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\t(info|error|debug|slow|stat|alert|fatal)\t([\s\S]*)$/i
 const GOZERO_SHORT_RE = /^(\d{2}:\d{2}:\d{2})\t(info|error|debug|slow|stat|alert|fatal)\t([\s\S]*)$/i
@@ -324,39 +222,57 @@ const NGINX_ACCESS_RE = /^([\d.]+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"(\S+)\s+(\S+)\s
 const NGINX_ERROR_RE = /^(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+(\d+)#(\d+):\s+(.*)$/
 const WORKER_INNER_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\[(ERROR|WARN|INFO|DEBUG|FATAL|PANIC|TRACE)\]\s+(?:\[([a-zA-Z0-9_-]+(?:-\d+)?)\]\s+)?(?:\[Task:([a-zA-Z0-9_-]+)\]\s+)?([\s\S]*)$/i
 const LEVEL_RE = /\[(ERROR|WARN|INFO|DEBUG|FATAL|PANIC|TRACE)\]/i
-const TASK_RE = /\[Task:([a-zA-Z0-9_-]+)\]/
 
 const REDIS_LEVEL_MAP = { '*': 'INFO', '#': 'WARN', '-': 'DEBUG' }
 const MONGO_SEVERITY_MAP = { F: 'FATAL', E: 'ERROR', W: 'WARN', I: 'INFO', D: 'DEBUG', D1: 'DEBUG', D2: 'DEBUG' }
+
+// go-zero JSON 格式: {"level":"info","ts":"...","caller":"...","content":"..."}
+function tryParseGoZeroJSON(raw) {
+  if (!raw.startsWith('{')) return null
+  try {
+    const json = JSON.parse(raw)
+    if (json.level && json.ts) {
+      let level = (json.level || '').toUpperCase()
+      if (level === 'SLOW') level = 'WARN'
+      const parts = []
+      if (json.caller) parts.push(`[${json.caller}]`)
+      if (json.content) parts.push(json.content)
+      if (json.trace) parts.push(json.trace)
+      if (json.span) parts.push(JSON.stringify(json.span))
+      const body = parts.join(' ') || raw
+      return { stream: 'stdout', level, time: formatTimeShort(json.ts), body, container: '', raw }
+    }
+  } catch (_) {}
+  return null
+}
 
 function parseLogLine(obj) {
   const raw = (obj.line || '').replace(ANSI_RE, '')
   const containerName = obj.container || ''
   let level = ''
-  let worker = ''
-  let taskId = ''
-  let time = ''
+  let time = obj.ts || ''  // 默认使用 Docker 日志时间戳
   let body = raw
 
-  // 1) go-zero plain: "2026-07-27 10:11:12\tinfo\tmessage\tkey=val..."
+  // 0) go-zero JSON 格式
+  const gzJson = tryParseGoZeroJSON(raw)
+  if (gzJson) {
+    gzJson.container = containerName
+    return gzJson
+  }
+
+  // 1) go-zero plain
   const gzMatch = raw.match(GOZERO_RE) || raw.match(GOZERO_SHORT_RE)
   if (gzMatch) {
     time = gzMatch[1]
     level = gzMatch[2].toUpperCase()
-    const rest = gzMatch[3]
-    // 分离 message 和 fields（以 \t 分割）
-    const parts = rest.split('\t')
-    body = parts[0] || rest
-    // 检查是否是 worker 内嵌格式
+    const parts = gzMatch[3].split('\t')
+    body = parts[0] || gzMatch[3]
     const innerMatch = body.match(WORKER_INNER_RE)
     if (innerMatch) {
       time = innerMatch[1]
       level = innerMatch[2].toUpperCase()
-      worker = innerMatch[3] || ''
-      taskId = innerMatch[4] || ''
       body = innerMatch[5] || body
     }
-    // HTTP 访问日志标记
     if (body.startsWith('[HTTP]')) {
       const statusMatch = body.match(/\[HTTP\]\s+(\d{3})/)
       if (statusMatch) {
@@ -365,19 +281,19 @@ function parseLogLine(obj) {
         else if (level === 'SLOW') level = 'WARN'
       }
     }
-    return { stream: obj.stream || 'stdout', ts: obj.ts || '', level, worker, taskId, time, body, container: containerName, raw }
+    return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body, container: containerName, raw }
   }
 
-  // 2) Redis: "1:M 27 Jul 2026 02:24:36.132 * Background saving started"
+  // 2) Redis
   const redisMatch = raw.match(REDIS_RE)
   if (redisMatch) {
     time = redisMatch[3]
     level = REDIS_LEVEL_MAP[redisMatch[4]] || 'INFO'
-    body = redisMatch[5].replace(/oO0OoO0OoO0Oo/g, '').trim()
-    return { stream: obj.stream || 'stdout', ts: obj.ts || '', level, worker: '', taskId: '', time, body, container: containerName, raw }
+    body = redisMatch[5].trim()
+    return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body, container: containerName, raw }
   }
 
-  // 3) MongoDB JSON: {"t":{"$date":...},"s":"I",...}
+  // 3) MongoDB JSON
   if (raw.startsWith('{')) {
     try {
       const json = JSON.parse(raw)
@@ -388,73 +304,82 @@ function parseLogLine(obj) {
       if (json.msg) parts.push(json.msg)
       if (json.attr) {
         const attrStr = typeof json.attr === 'string' ? json.attr : JSON.stringify(json.attr)
-        if (attrStr.length <= 200) parts.push(attrStr)
-        else parts.push(attrStr.slice(0, 200) + '...')
+        parts.push(attrStr.length <= 200 ? attrStr : attrStr.slice(0, 200) + '...')
       }
       body = parts.join(' ') || raw
-      return { stream: obj.stream || 'stdout', ts: obj.ts || '', level, worker: '', taskId: '', time: '', body, container: containerName, raw }
-    } catch (_) { /* not JSON, fall through */ }
+      return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body, container: containerName, raw }
+    } catch (_) {}
   }
 
-  // 4) nginx error: "2026/07/27 01:52:58 [error] 123#456: message"
+  // 4) nginx error
   const nginxErrMatch = raw.match(NGINX_ERROR_RE)
   if (nginxErrMatch) {
     time = nginxErrMatch[1]
     const lvl = nginxErrMatch[2].toLowerCase()
     level = lvl === 'error' || lvl === 'crit' || lvl === 'alert' || lvl === 'emerg' ? 'ERROR' : lvl === 'warn' ? 'WARN' : 'INFO'
     body = nginxErrMatch[5]
-    return { stream: obj.stream || 'stderr', ts: obj.ts || '', level, worker: '', taskId: '', time, body, container: containerName, raw }
+    return { stream: obj.stream || 'stderr', level, time: formatTimeShort(time), body, container: containerName, raw }
   }
 
-  // 5) nginx access: '172.18.0.1 - - [27/Jul/2026:01:52:58 +0000] "GET / HTTP/1.1" 200 612'
+  // 5) nginx access
   const nginxAccMatch = raw.match(NGINX_ACCESS_RE)
   if (nginxAccMatch) {
     time = nginxAccMatch[3]
     const code = parseInt(nginxAccMatch[7])
     level = code >= 500 ? 'ERROR' : code >= 400 ? 'WARN' : 'INFO'
     body = `${nginxAccMatch[4]} ${nginxAccMatch[5]} → ${code}`
-    return { stream: obj.stream || 'stdout', ts: obj.ts || '', level, worker: '', taskId: '', time, body, container: containerName, raw }
+    return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body, container: containerName, raw }
   }
 
-  // 6) Worker 内嵌格式（无 go-zero 外层）
+  // 6) Worker 内嵌格式
   const workerMatch = raw.match(WORKER_INNER_RE)
   if (workerMatch) {
     time = workerMatch[1]
     level = workerMatch[2].toUpperCase()
-    worker = workerMatch[3] || ''
-    taskId = workerMatch[4] || ''
     body = workerMatch[5] || raw
-    return { stream: obj.stream || 'stdout', ts: obj.ts || '', level, worker, taskId, time, body, container: containerName, raw }
+    return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body, container: containerName, raw }
   }
 
-  // 7) Fallback: 尝试提取 [LEVEL] 标记
+  // 7) Fallback - try to extract timestamp from beginning of line
+  const tsMatch = raw.match(/^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)/)
+  if (tsMatch) {
+    time = tsMatch[1]
+    body = raw.substring(tsMatch[0].length).trim()
+  }
+  // 如果未从内容中提取到时间戳，保留 Docker 时间戳 (obj.ts)
   const lm = raw.match(LEVEL_RE)
   if (lm) level = lm[1].toUpperCase()
-  const tm = raw.match(TASK_RE)
-  if (tm) taskId = tm[1]
-
-  return { stream: obj.stream || 'stdout', ts: obj.ts || '', level, worker, taskId, time, body: body || raw, container: containerName, raw }
+  return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body: body || raw, container: containerName, raw }
 }
 
-// ==================== 过滤 ====================
-const filteredLines = computed(() => {
-  const tab = activeTab.value
-  const kw = tab.searchKeyword?.trim() || ''
-  const sf = tab.streamFilter || 'all'
-  const lf = tab.levelFilter || 'all'
-
-  return tab.lines.filter(l => {
-    if (sf !== 'all' && l.stream !== sf) return false
-    if (lf !== 'all' && l.level !== lf) return false
-    if (kw) {
-      const target = l.raw.toLowerCase()
-      if (!target.includes(kw.toLowerCase())) return false
+function formatTimeShort(time) {
+  if (!time) return ''
+  // ISO 8601 / Docker: 2026-07-30T17:43:03.439+08:00 or 2026-07-29T15:59:52.439576466Z
+  if (time.includes('T')) {
+    const parts = time.split('T')
+    if (parts.length > 1) {
+      const timePart = parts[1].split('.')[0] || parts[1]
+      const datePart = parts[0].substring(5) // MM-DD
+      return `${datePart} ${timePart}`
     }
-    return true
-  })
-})
+  }
+  // Redis format: "29 Jul 2026 15:59:52.265"
+  const redisMatch = time.match(/^(\d{2})\s+(\w{3})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})/)
+  if (redisMatch) {
+    const monthMap = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' }
+    const mm = monthMap[redisMatch[2]] || redisMatch[2]
+    return `${mm}-${redisMatch[1]} ${redisMatch[4]}`
+  }
+  // Space-separated ISO: "2026-07-29 15:59:52"
+  const parts = time.split(' ')
+  if (parts.length > 1) {
+    const datePart = parts[0].length >= 10 ? parts[0].substring(5) : parts[0] // MM-DD
+    return `${datePart} ${parts[1].split('.')[0]}`
+  }
+  return time
+}
 
-// ==================== 样式类 ====================
+// ==================== 样式 ====================
 function lineClass(l) {
   return {
     'log-stderr': l.stream === 'stderr',
@@ -466,31 +391,8 @@ function lineClass(l) {
 
 function levelClass(level) {
   if (!level) return ''
-  const map = {
-    ERROR: 'level-error',
-    FATAL: 'level-error',
-    PANIC: 'level-error',
-    WARN: 'level-warn',
-    SLOW: 'level-warn',
-    INFO: 'level-info',
-    DEBUG: 'level-debug',
-    TRACE: 'level-debug',
-    STAT: 'level-debug'
-  }
+  const map = { ERROR: 'level-error', FATAL: 'level-error', PANIC: 'level-error', WARN: 'level-warn', SLOW: 'level-warn', INFO: 'level-info', DEBUG: 'level-debug', TRACE: 'level-debug', STAT: 'level-debug' }
   return map[level] || ''
-}
-
-// ==================== 格式化 ====================
-function formatDockerTs(ts) {
-  if (!ts) return ''
-  return ts.replace('T', ' ').replace(/\.\d+Z?$/, '')
-}
-
-function formatTime(time) {
-  if (!time) return ''
-  // "2026-07-27 10:11:12" → "10:11:12"
-  const parts = time.split(' ')
-  return parts.length > 1 ? parts[1] : time
 }
 
 // ==================== 滚动 ====================
@@ -504,64 +406,34 @@ function onScroll() {
   if (!el) return
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
   showScrollBtn.value = !atBottom
-  const tab = activeTab.value
-  if (tab) tab.autoScroll = atBottom
 }
 
-// ==================== 操作 ====================
-function clearActiveTab() {
-  const tab = activeTab.value
-  if (tab && tab.lines) tab.lines = []
-}
-
-async function exportLogs(fmt) {
-  const tab = activeTab.value
-  if (!tab || !tab.name) return
-  try {
-    const res = await fetchContainerLogs({ name: tab.name, tail: '5000' })
-    if (res.code !== 0) {
-      ElMessage.error(res.msg || 'error')
-      return
-    }
-    const rawList = res.list || []
-    const list = rawList.map(l => parseLogLine(l))
-    let blob
-    let filename
-    if (fmt === 'json') {
-      blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' })
-      filename = `${tab.name}.json`
-    } else if (fmt === 'csv') {
-      const rows = ['level,time,worker,task,message', ...list.map(l => {
-        const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`
-        return `${esc(l.level)},${esc(l.time)},${esc(l.worker)},${esc(l.taskId)},${esc(l.body)}`
-      })]
-      blob = new Blob([rows.join('\n')], { type: 'text/csv' })
-      filename = `${tab.name}.csv`
-    } else {
-      blob = new Blob([list.map(l => {
-        const parts = [l.time, l.level ? `[${l.level}]` : '', l.worker ? `[${l.worker}]` : '', l.taskId ? `[Task:${l.taskId}]` : '', l.body]
-        return parts.filter(Boolean).join(' ')
-      }).join('\n')], { type: 'text/plain' })
-      filename = `${tab.name}.txt`
-    }
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('container.exportSuccess')
-  } catch (e) {
-    ElMessage.error(e.message || 'container.exportFailed')
+// ==================== 导出 ====================
+function exportLogs(fmt) {
+  const lines = filteredLines.value
+  if (!lines.length) return
+  let blob, filename
+  const baseName = `${historyDate.value}_${historyContainer.value}`
+  if (fmt === 'json') {
+    blob = new Blob([JSON.stringify(lines, null, 2)], { type: 'application/json' })
+    filename = `${baseName}.json`
+  } else {
+    blob = new Blob([lines.map(l => {
+      const parts = [l.time, l.level ? `[${l.level}]` : '', l.body]
+      return parts.filter(Boolean).join(' ')
+    }).join('\n')], { type: 'text/plain' })
+    filename = `${baseName}.txt`
   }
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
-// ==================== 生命周期 ====================
-onBeforeUnmount(() => {
-  tabs.value.forEach(tab => closeStream(tab))
-})
-
-loadContainers()
+// ==================== 初始化 ====================
+loadLogDates()
 </script>
 
 <style scoped lang="scss">
@@ -577,9 +449,17 @@ loadContainers()
 }
 .log-filters {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.filter-row {
+  display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  &:not(:last-child) {
+    margin-bottom: 8px;
+  }
 }
 .line-count {
   font-size: 12px;
@@ -593,60 +473,6 @@ loadContainers()
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   overflow: hidden;
-}
-
-/* ========== 左侧容器列表 ========== */
-.sidebar {
-  width: 220px;
-  min-width: 220px;
-  border-right: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
-  overflow-y: auto;
-}
-.sidebar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 6px;
-  flex-shrink: 0;
-}
-.dot-on { background: #67c23a; }
-.dot-off { background: var(--el-text-color-disabled); }
-.dot-warn { background: #e6a23c; }
-.dot-sm {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-right: 4px;
-  flex-shrink: 0;
-}
-.ctn-name {
-  display: inline-block;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
-  font-size: 13px;
-}
-.ctn-state {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
-.is-opened {
-  background: var(--el-fill-color-light) !important;
 }
 
 /* ========== 右侧查看器 ========== */
@@ -669,51 +495,18 @@ loadContainers()
   font-size: 14px;
 }
 
-/* ========== 标签栏 ========== */
-.tab-bar {
+/* ========== 历史模式信息栏 ========== */
+.history-info {
   display: flex;
   align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--el-border-color-lighter);
   background: var(--el-fill-color-lighter);
-  overflow-x: auto;
-  min-height: 36px;
-  &::-webkit-scrollbar { height: 2px; }
-}
-.tab-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  height: 36px;
   font-size: 12px;
-  color: var(--el-text-color-regular);
-  cursor: pointer;
-  white-space: nowrap;
-  border-right: 1px solid var(--el-border-color-lighter);
-  transition: background 0.15s, color 0.15s;
-  user-select: none;
-  &:hover {
-    background: var(--el-fill-color-light);
-  }
-  &.active {
-    background: var(--el-bg-color);
-    color: var(--el-text-color-primary);
-    font-weight: 500;
-    border-bottom: 2px solid var(--el-color-primary);
-    margin-bottom: -1px;
-  }
 }
-.tab-name {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tab-close {
-  font-size: 12px;
-  margin-left: 4px;
-  color: var(--el-text-color-placeholder);
-  cursor: pointer;
-  &:hover { color: var(--el-color-danger); }
+.history-meta {
+  color: var(--el-text-color-secondary);
 }
 
 /* ========== 日志内容区 ========== */
@@ -723,9 +516,8 @@ loadContainers()
   padding: 8px 0;
   font-family: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Menlo', monospace;
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.9; /* increased from 1.8 */
   background: #1a1b26;
-  counter-reset: log-line;
 }
 .log-line {
   display: flex;
@@ -733,9 +525,8 @@ loadContainers()
   gap: 0;
   padding: 2px 12px 2px 0;
   transition: background 0.1s;
-  &:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
+  &:nth-child(odd) { background: rgba(255, 255, 255, 0.02); }
+  &:hover { background: rgba(255, 255, 255, 0.06); }
 }
 .log-ln {
   display: inline-block;
@@ -746,13 +537,6 @@ loadContainers()
   color: #565f89;
   font-size: 11px;
   user-select: none;
-  flex-shrink: 0;
-}
-.log-ts-full {
-  color: #565f89;
-  font-size: 11px;
-  margin-right: 8px;
-  white-space: nowrap;
   flex-shrink: 0;
 }
 .log-level {
@@ -767,22 +551,10 @@ loadContainers()
   flex-shrink: 0;
   letter-spacing: 0.5px;
 }
-.level-error {
-  color: #fff;
-  background: rgba(247, 118, 142, 0.8);
-}
-.level-warn {
-  color: #1a1b26;
-  background: rgba(224, 175, 104, 0.85);
-}
-.level-info {
-  color: #9ece6a;
-  background: rgba(158, 206, 106, 0.12);
-}
-.level-debug {
-  color: #565f89;
-  background: rgba(86, 95, 137, 0.15);
-}
+.level-error { color: #fff; background: rgba(247, 118, 142, 0.8); }
+.level-warn { color: #1a1b26; background: rgba(224, 175, 104, 0.85); }
+.level-info { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
+.level-debug { color: #565f89; background: rgba(86, 95, 137, 0.15); }
 .log-container {
   display: inline-block;
   padding: 0 5px;
@@ -793,29 +565,13 @@ loadContainers()
   border-radius: 3px;
   flex-shrink: 0;
 }
-.log-worker {
-  display: inline-block;
-  padding: 0 5px;
-  margin-right: 4px;
-  font-size: 11px;
-  color: #bb9af7;
-  background: rgba(187, 154, 247, 0.1);
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-.log-task {
-  display: inline-block;
-  margin-right: 6px;
-  font-size: 11px;
-  color: #c0caf5;
-  flex-shrink: 0;
-}
 .log-time {
-  color: #565f89;
+  color: #7aa2f7;
   font-size: 12px;
   margin-right: 8px;
   white-space: nowrap;
   flex-shrink: 0;
+  min-width: 110px;
 }
 .log-body {
   color: #c0caf5;
@@ -825,19 +581,11 @@ loadContainers()
   min-width: 0;
 }
 
-/* stderr 整行着色 */
-.log-stderr .log-body {
-  color: #f7768e;
-}
-.log-error .log-body {
-  color: #f7768e;
-}
-.log-warn .log-body {
-  color: #e0af68;
-}
-.log-debug .log-body {
-  color: #565f89;
-}
+/* stderr/level 整行着色 */
+.log-stderr .log-body { color: #f7768e; }
+.log-error .log-body { color: #f7768e; }
+.log-warn .log-body { color: #e0af68; }
+.log-debug .log-body { color: #565f89; }
 
 /* ========== 滚动按钮 ========== */
 .scroll-bottom-btn {
@@ -863,49 +611,15 @@ loadContainers()
   }
 }
 
-/* ========== 亮色模式覆盖（:global 逃逸 scoped） ========== */
-:global(html:not(.dark)) .log-box {
-  background: #f8f9fc;
-}
-:global(html:not(.dark)) .log-line:hover {
-  background: rgba(0, 0, 0, 0.03);
-}
-:global(html:not(.dark)) .log-body {
-  color: #343b58;
-}
+/* ========== 亮色模式覆盖 ========== */
+:global(html:not(.dark)) .log-box { background: #f8f9fc; }
+:global(html:not(.dark)) .log-line:nth-child(odd) { background: rgba(0, 0, 0, 0.02); }
+:global(html:not(.dark)) .log-line:hover { background: rgba(0, 0, 0, 0.05); }
+:global(html:not(.dark)) .log-body { color: #343b58; }
 :global(html:not(.dark)) .log-stderr .log-body,
-:global(html:not(.dark)) .log-error .log-body {
-  color: #c64343;
-}
-:global(html:not(.dark)) .log-warn .log-body {
-  color: #8f5e15;
-}
-:global(html:not(.dark)) .log-debug .log-body {
-  color: #9699a3;
-}
-:global(html:not(.dark)) .log-ln {
-  color: #c0c8d8;
-}
-:global(html:not(.dark)) .log-time {
-  color: #9699a3;
-}
-:global(html:not(.dark)) .log-ts-full {
-  color: #b0b8c8;
-}
-:global(html:not(.dark)) .level-info {
-  color: #3d7a3d;
-  background: rgba(61, 122, 61, 0.1);
-}
-:global(html:not(.dark)) .level-debug {
-  color: #9699a3;
-  background: rgba(150, 153, 163, 0.1);
-}
-:global(html:not(.dark)) .log-container {
-  color: #2a5db0;
-  background: rgba(42, 93, 176, 0.08);
-}
-:global(html:not(.dark)) .log-worker {
-  color: #7c4dcc;
-  background: rgba(124, 77, 204, 0.08);
-}
+:global(html:not(.dark)) .log-error .log-body { color: #c64343; }
+:global(html:not(.dark)) .log-warn .log-body { color: #8f5e15; }
+:global(html:not(.dark)) .log-debug .log-body { color: #9699a3; }
+:global(html:not(.dark)) .log-ln { color: #c0c8d8; }
+:global(html:not(.dark)) .log-time { color: #5b8def; }
 </style>

@@ -417,20 +417,22 @@
                   <el-button type="primary" link @click="showDictSelectDialog">{{ $t('task.selectDict') }}</el-button>
                 </div>
               </el-form-item>
-              <el-row :gutter="20">
-                <el-col :span="12">
-                  <el-form-item :label="$t('task.concurrentThreads')">
-                    <el-input-number v-model="form.dirscanThreads" :min="1" :max="200" style="width:100%" />
-                  </el-form-item>
-                </el-col>
-                <el-col :span="12">
-                  <el-form-item :label="$t('task.requestTimeoutSeconds')">
-                    <el-input-number v-model="form.dirscanTimeout" :min="1" :max="60" style="width:100%" />
-                  </el-form-item>
-                </el-col>
-              </el-row>
               <el-form-item :label="$t('task.followRedirect')">
                 <el-switch v-model="form.dirscanFollowRedirect" />
+              </el-form-item>
+              <el-form-item :label="$t('task.statusCodes')">
+                <el-select
+                  v-model="form.dirscanStatusCodes"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  style="width:100%"
+                  :placeholder="$t('task.statusCodesPlaceholder')"
+                >
+                  <el-option v-for="code in commonStatusCodes" :key="code" :label="String(code)" :value="code" />
+                </el-select>
+                <span class="form-hint">{{ $t('task.statusCodesHint') }}</span>
               </el-form-item>
               <!-- ffuf 高级配置 -->
               <el-divider content-position="left">{{ $t('task.ffufAdvanced') }}</el-divider>
@@ -438,62 +440,12 @@
                 <el-switch v-model="form.dirscanAutoCalibration" />
                 <span class="form-hint">{{ $t('task.autoCalibrationHint') }}</span>
               </el-form-item>
-              <el-row :gutter="20">
-                <el-col :span="12">
-                  <el-form-item :label="$t('task.rateLimit')">
-                    <el-input-number v-model="form.dirscanRate" :min="0" :max="10000" style="width:100%" />
-                    <span class="form-hint">{{ $t('task.rateLimitHint') }}</span>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="12">
-                  <el-form-item :label="$t('task.recursion')">
-                    <el-switch v-model="form.dirscanRecursion" />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="20" v-if="form.dirscanRecursion">
-                <el-col :span="12">
-                  <el-form-item :label="$t('task.recursionDepth')">
-                    <el-input-number v-model="form.dirscanRecursionDepth" :min="1" :max="10" style="width:100%" />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-row :gutter="20">
-                <el-col :span="12">
-                  <el-form-item :label="$t('task.filterMode')">
-                    <el-select v-model="form.dirscanFilterMode" style="width:100%">
-                      <el-option label="OR" value="or" />
-                      <el-option label="AND" value="and" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <!-- 过滤条件组 -->
-              <div class="filter-group">
-                <div class="filter-group-title">{{ $t('task.filterConditions') }}</div>
-                <el-row :gutter="20">
-                  <el-col :span="6">
-                    <el-form-item :label="$t('task.filterSize')">
-                      <el-input v-model="form.dirscanFilterSize" :placeholder="$t('task.filterSizeHint')" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="6">
-                    <el-form-item :label="$t('task.filterWords')">
-                      <el-input v-model="form.dirscanFilterWords" :placeholder="$t('task.filterWordsHint')" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="6">
-                    <el-form-item :label="$t('task.filterLines')">
-                      <el-input v-model="form.dirscanFilterLines" :placeholder="$t('task.filterLinesHint')" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="6">
-                    <el-form-item :label="$t('task.filterRegex')">
-                      <el-input v-model="form.dirscanFilterRegex" :placeholder="$t('task.filterRegexHint')" />
-                    </el-form-item>
-                  </el-col>
-                </el-row>
-              </div>
+              <el-form-item :label="$t('task.recursion')">
+                <el-switch v-model="form.dirscanRecursion" />
+              </el-form-item>
+              <el-form-item v-if="form.dirscanRecursion" :label="$t('task.recursionDepth')">
+                <el-input-number v-model="form.dirscanRecursionDepth" :min="1" :max="10" style="width:100%" />
+              </el-form-item>
             </template>
           </el-collapse-item>
 
@@ -1076,6 +1028,9 @@ const bruteServiceOptions = [
   { label: 'MQTT', value: 'mqtt' },
 ]
 
+// 目录扫描常用状态码预设
+const commonStatusCodes = [200, 204, 301, 302, 307, 308, 401, 403, 405, 500]
+
 const form = reactive({
   id: '',
   name: '',
@@ -1166,19 +1121,11 @@ const form = reactive({
   dirscanEnable: false,
   dirscanDictIds: [],
   dirscanDicts: [], // 保存已选择的字典信息
-  dirscanThreads: 50,
-  dirscanTimeout: 10,
   dirscanFollowRedirect: false,
   dirscanForceScan: false,
+  dirscanStatusCodes: [],
   // ffuf 高级配置
   dirscanAutoCalibration: true,
-  dirscanFilterSize: '',
-  dirscanFilterWords: '',
-  dirscanFilterLines: '',
-  dirscanFilterRegex: '',
-  dirscanMatcherMode: 'or',
-  dirscanFilterMode: 'or',
-  dirscanRate: 0,
   dirscanRecursion: false,
   dirscanRecursionDepth: 2,
   jsfinderEnable: false,
@@ -1414,9 +1361,12 @@ function applyConfig(config) {
     // 目录扫描
     dirscanEnable: config.dirscan?.enable ?? false,
     dirscanDictIds: config.dirscan?.dictIds || [],
-    dirscanThreads: config.dirscan?.threads || 50,
-    dirscanTimeout: config.dirscan?.timeout || 10,
     dirscanFollowRedirect: config.dirscan?.followRedirect ?? false,
+    dirscanForceScan: config.dirscan?.forceScan ?? false,
+    dirscanStatusCodes: config.dirscan?.statusCodes || [],
+    dirscanAutoCalibration: config.dirscan?.autoCalibration ?? true,
+    dirscanRecursion: config.dirscan?.recursion ?? false,
+    dirscanRecursionDepth: config.dirscan?.recursionDepth || 2,
     // JS扫描
     jsfinderEnable: config.jsfinder?.enable ?? false,
     jsfinderThreads: config.jsfinder?.threads || 10,
@@ -1529,9 +1479,12 @@ watch(
     // 目录扫描
     dirscanEnable: form.dirscanEnable,
     dirscanDictIds: form.dirscanDictIds,
-    dirscanThreads: form.dirscanThreads,
-    dirscanTimeout: form.dirscanTimeout,
-    dirscanFollowRedirect: form.dirscanFollowRedirect
+    dirscanFollowRedirect: form.dirscanFollowRedirect,
+    dirscanForceScan: form.dirscanForceScan,
+    dirscanStatusCodes: form.dirscanStatusCodes,
+    dirscanAutoCalibration: form.dirscanAutoCalibration,
+    dirscanRecursion: form.dirscanRecursion,
+    dirscanRecursionDepth: form.dirscanRecursionDepth
   }),
   () => {
     if (!isEdit.value) {
@@ -1656,18 +1609,10 @@ function buildConfig() {
     dirscan: {
       enable: form.dirscanEnable,
       dictIds: form.dirscanDictIds,
-      threads: form.dirscanThreads,
-      timeout: form.dirscanTimeout,
       followRedirect: form.dirscanFollowRedirect,
       forceScan: form.dirscanForceScan && !hasPrePhaseEnabled.value,
+      statusCodes: form.dirscanStatusCodes || [],
       autoCalibration: form.dirscanAutoCalibration,
-      filterSize: form.dirscanFilterSize,
-      filterWords: form.dirscanFilterWords,
-      filterLines: form.dirscanFilterLines,
-      filterRegex: form.dirscanFilterRegex,
-      matcherMode: form.dirscanMatcherMode,
-      filterMode: form.dirscanFilterMode,
-      rate: form.dirscanRate,
       recursion: form.dirscanRecursion,
       recursionDepth: form.dirscanRecursionDepth
     },
@@ -1763,7 +1708,8 @@ async function handleSubmit() {
         await startTask({ id: res.id, workspaceId: form.workspaceId })
         ElMessage.success(t('task.taskStarted'))
       }
-      router.push('/task')
+      // 跳转回任务列表并带上新建任务 id，触发列表延迟刷新以更新任务状态
+      router.push({ path: '/task', query: isEdit.value ? {} : { created: res.id || '1' } })
     } else {
       ElMessage.error(res.msg || t('common.operationFailed'))
     }

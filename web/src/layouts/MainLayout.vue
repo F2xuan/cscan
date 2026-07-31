@@ -1,7 +1,8 @@
 <template>
   <el-container class="layout-container">
     <!-- 侧边栏 -->
-    <el-aside :width="isCollapse ? '64px' : '250px'" :class="['aside', `style-${themeStore.themeStyle}`, { collapsed: isCollapse }]">
+    <el-aside :width="isCollapse ? '64px' : '250px'"
+      :class="['aside', `style-${themeStore.themeStyle}`, { collapsed: isCollapse }]">
       <div class="logo">
         <img :src="brandingStore.logoSrc" alt="logo" />
         <span v-show="!isCollapse">{{ brandingStore.displayTitle }}</span>
@@ -17,18 +18,23 @@
             </el-icon>
             <template #title>{{ $t('navigation.dashboard') }}</template>
           </el-menu-item>
-          <!-- 资产管理分组 -->
           <el-sub-menu index="asset-menu">
             <template #title>
-              <el-icon><Monitor /></el-icon>
+              <el-icon>
+                <Monitor />
+              </el-icon>
               <span>{{ $t('navigation.assetManagement') }}</span>
             </template>
             <el-menu-item index="/asset-management">
-              <el-icon><DataAnalysis /></el-icon>
+              <el-icon>
+                <DataAnalysis />
+              </el-icon>
               <template #title>{{ $t('navigation.assetOverview') }}</template>
             </el-menu-item>
             <el-menu-item index="/asset-management/space-search">
-              <el-icon><Search /></el-icon>
+              <el-icon>
+                <Search />
+              </el-icon>
               <template #title>{{ $t('navigation.assetSpaceSearch') }}</template>
             </el-menu-item>
           </el-sub-menu>
@@ -36,7 +42,9 @@
           <!-- 暴露面管理 -->
           <el-sub-menu index="exposure-menu">
             <template #title>
-              <el-icon><View /></el-icon>
+              <el-icon>
+                <View />
+              </el-icon>
               <span>{{ $t('navigation.exposure') }}</span>
             </template>
             <el-menu-item index="/asset-management/exposure/subdomain">
@@ -68,26 +76,82 @@
             </el-menu-item>
           </el-sub-menu>
 
-          <!-- 漏洞 -->
-          <el-menu-item index="/asset-management/risk/vuln">
-            <el-icon><Warning /></el-icon>
-            <template #title>{{ $t('navigation.riskVuln') }}</template>
-          </el-menu-item>
+          <!-- 风险（证书 / 敏感信息 / 漏洞） -->
+          <el-sub-menu index="risk-menu">
+            <template #title>
+              <el-icon>
+                <Warning />
+              </el-icon>
+              <span>{{ $t('navigation.risk') }}</span>
+            </template>
+            <el-menu-item index="/asset-management/fingerprint/cert">
+              <template #title>{{ $t('navigation.certAsset') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/risk/sensitive-info">
+              <template #title>{{ $t('navigation.riskSensitiveInfo') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset-management/risk/vuln">
+              <template #title>{{ $t('navigation.riskVuln') }}</template>
+            </el-menu-item>
+          </el-sub-menu>
           <!-- 分割线 -->
           <div class="menu-divider"></div>
 
-          <!-- 扫描分组 -->
-            <el-menu-item index="/task">
+          <!-- 任务管理 -->
+          <el-menu-item index="/task">
+            <el-icon>
+              <List />
+            </el-icon>
+            <template #title>{{ $t('navigation.taskManagement') }}</template>
+          </el-menu-item>
+
+          <!-- 空间引擎分组 -->
+          <el-sub-menu index="space-engine-menu">
+            <template #title>
               <el-icon>
-                <List />
+                <Connection />
               </el-icon>
-              <template #title>{{ $t('navigation.taskManagement') }}</template>
+              <span>{{ $t('navigation.spaceEngine') }}</span>
+            </template>
+            <el-menu-item index="/space-engine/online-search">
+              <el-icon>
+                <Search />
+              </el-icon>
+              <template #title>{{ $t('navigation.onlineSearch') }}</template>
             </el-menu-item>
+            <el-menu-item index="/space-engine/api-config">
+              <el-icon>
+                <Key />
+              </el-icon>
+              <template #title>{{ $t('navigation.spaceEngineApiConfig') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/space-engine/cron-task">
+              <el-icon>
+                <Timer />
+              </el-icon>
+              <template #title>{{ $t('navigation.spaceEngineCronTask') }}</template>
+            </el-menu-item>
+          </el-sub-menu>
+
+          <!-- 扫描配置分组 -->
+          <el-sub-menu index="scan-config-menu">
+            <template #title>
+              <el-icon>
+                <Operation />
+              </el-icon>
+              <span>{{ $t('navigation.scanConfig') }}</span>
+            </template>
             <el-menu-item index="/cron-task">
               <el-icon>
                 <Timer />
               </el-icon>
               <template #title>{{ $t('navigation.cronTask') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/settings?tab=subfinder">
+              <el-icon>
+                <Search />
+              </el-icon>
+              <template #title>{{ $t('navigation.subdomainConfig') }}</template>
             </el-menu-item>
             <el-menu-item index="/poc">
               <el-icon>
@@ -101,58 +165,56 @@
               </el-icon>
               <template #title>{{ $t('navigation.fingerprintManagement') }}</template>
             </el-menu-item>
-                        <el-menu-item index="/blacklist">
+            <el-menu-item index="/blacklist">
               <el-icon>
                 <CircleClose />
               </el-icon>
               <template #title>{{ $t('navigation.blacklist') }}</template>
             </el-menu-item>
-            <el-menu-item index="/settings?tab=subfinder">
-              <el-icon>
-                <Search />
-              </el-icon>
-              <template #title>{{ $t('navigation.subdomainConfig') }}</template>
-            </el-menu-item>
+          </el-sub-menu>
 
           <!-- 分割线 -->
           <div class="menu-divider"></div>
 
-          <!-- 工具分组 -->
-          <el-menu-item index="/online-search">
+          <!-- AI配置（管理员，置顶） -->
+          <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'" index="/ai-config">
             <el-icon>
-              <Search />
+              <MagicStick />
             </el-icon>
-            <template #title>{{ $t('navigation.onlineSearch') }}</template>
-
+            <template #title>{{ $t('navigation.aiConfig') }}</template>
           </el-menu-item>
-            <el-menu-item index="/settings?tab=onlineapi">
-              <el-icon>
-                <Key />
-              </el-icon>
-              <template #title>{{ $t('navigation.onlineApiConfig') }}</template>
-            </el-menu-item>
+          <el-menu-item index="/worker">
+            <el-icon>
+              <Connection />
+            </el-icon>
+            <template #title>{{ $t('navigation.workerNodes') }}</template>
+          </el-menu-item>
+          <el-menu-item index="/worker-logs">
+            <el-icon>
+              <Document />
+            </el-icon>
+            <template #title>{{ $t('navigation.workerLogs') }}</template>
+          </el-menu-item>
 
-          <!-- 分割线 -->
-          <div class="menu-divider"></div>
-
-          <!-- 系统管理分组 -->
-            <el-menu-item index="/worker">
+          <!-- 高级配置分组 -->
+          <el-sub-menu index="advanced-config-menu">
+            <template #title>
               <el-icon>
-                <Connection />
+                <Operation />
               </el-icon>
-              <template #title>{{ $t('navigation.workerNodes') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/worker-logs">
-              <el-icon>
-                <Document />
-              </el-icon>
-              <template #title>{{ $t('navigation.workerLogs') }}</template>
-            </el-menu-item>
+              <span>{{ $t('navigation.advancedConfig') }}</span>
+            </template>
             <el-menu-item index="/settings?tab=notify">
               <el-icon>
                 <Bell />
               </el-icon>
               <template #title>{{ $t('navigation.notifyConfig') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/settings?tab=reverify">
+              <el-icon>
+                <Timer />
+              </el-icon>
+              <template #title>{{ $t('navigation.reverifyConfig') }}</template>
             </el-menu-item>
             <el-menu-item index="/high-risk-filter">
               <el-icon>
@@ -160,11 +222,22 @@
               </el-icon>
               <template #title>{{ $t('navigation.highRiskFilter') }}</template>
             </el-menu-item>
-            <el-menu-item index="/settings?tab=workspace">
+          </el-sub-menu>
+
+          <!-- 系统管理分组 -->
+          <el-sub-menu index="system-management">
+            <template #title>
               <el-icon>
-                <Folder />
+                <Setting />
               </el-icon>
-              <template #title>{{ $t('navigation.workspaceManagement') }}</template>
+              <span>{{ $t('navigation.systemManagement') }}</span>
+            </template>
+            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
+              index="/settings?tab=user">
+              <el-icon>
+                <User />
+              </el-icon>
+              <template #title>{{ $t('navigation.userManagement') }}</template>
             </el-menu-item>
             <el-menu-item index="/settings?tab=organization">
               <el-icon>
@@ -172,33 +245,26 @@
               </el-icon>
               <template #title>{{ $t('navigation.organizationManagement') }}</template>
             </el-menu-item>
-
-            <!-- 系统管理（用户 / 接口 / 外观 / AI） -->
-            <el-sub-menu
-              v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="system-management"
-            >
-              <template #title>
-                <el-icon><Setting /></el-icon>
-                <span>{{ $t('navigation.systemManagement') }}</span>
-              </template>
-              <el-menu-item index="/settings?tab=user">
-                <el-icon><User /></el-icon>
-                <template #title>{{ $t('navigation.userManagement') }}</template>
-              </el-menu-item>
-              <el-menu-item index="/api-docs">
-                <el-icon><Document /></el-icon>
-                <template #title>{{ $t('navigation.apiDocs') }}</template>
-              </el-menu-item>
-              <el-menu-item index="/settings?tab=branding">
-                <el-icon><Picture /></el-icon>
-                <template #title>{{ $t('navigation.brandingConfig') }}</template>
-              </el-menu-item>
-              <el-menu-item index="/ai-config">
-                <el-icon><MagicStick /></el-icon>
-                <template #title>{{ $t('navigation.aiConfig') }}</template>
-              </el-menu-item>
-            </el-sub-menu>
+            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
+              index="/settings?tab=branding">
+              <el-icon>
+                <Picture />
+              </el-icon>
+              <template #title>{{ $t('navigation.brandingConfig') }}</template>
+            </el-menu-item>
+            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'" index="/api-docs">
+              <el-icon>
+                <Document />
+              </el-icon>
+              <template #title>{{ $t('navigation.apiDocs') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/settings?tab=workspace">
+              <el-icon>
+                <Folder />
+              </el-icon>
+              <template #title>{{ $t('navigation.workspaceManagement') }}</template>
+            </el-menu-item>
+          </el-sub-menu>
 
         </el-menu>
       </div>
@@ -225,13 +291,21 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
+          <!-- 扫描引导 -->
+          <el-tooltip :content="$t('onboarding.scanGuideBtn')" placement="bottom">
+            <div class="scan-guide-btn" @click="showOnboarding = true">
+              <el-icon>
+                <Aim />
+              </el-icon>
+            </div>
+          </el-tooltip>
           <!-- 语言切换 -->
           <LanguageSwitcher />
           <!-- 主题切换 -->
           <ThemeSwitcher />
           <el-dropdown @command="handleCommand">
             <span class="user-info">
-              <el-avatar :size="32" :src="avatarSrc || undefined" icon="User" />
+              <el-avatar :size="32" :src="userStore.avatarSrc" />
               <span class="username">{{ userStore.username }}</span>
             </span>
             <template #dropdown>
@@ -245,13 +319,17 @@
       </el-header>
 
       <!-- 主内容区 -->
-      <el-main class="main" v-loading.fullscreen.lock="isSwitchingWorkspace" :element-loading-text="$t('common.switchingWorkspace', '正在切换工作空间...')">
+      <el-main class="main" v-loading.fullscreen.lock="isSwitchingWorkspace"
+        :element-loading-text="$t('common.switchingWorkspace', '正在切换工作空间...')">
         <router-view v-slot="{ Component }">
           <transition name="fade-transform" mode="out-in">
             <component :is="Component" :key="workspaceStore.currentWorkspaceId + $route.path" />
           </transition>
         </router-view>
       </el-main>
+
+      <!-- 扫描引导弹窗（首次登录自动弹出 + 顶栏按钮手动唤起）-->
+      <OnboardingGuide v-if="showOnboarding" @finished="showOnboarding = false" />
     </el-container>
   </el-container>
 </template>
@@ -267,7 +345,10 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useBrandingStore } from '@/stores/branding'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
-import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, Folder, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick } from '@element-plus/icons-vue'
+import OnboardingGuide from '@/components/OnboardingGuide.vue'
+import { getOnboardingStatus } from '@/api/auth'
+import { shouldShowOnboarding } from '@/utils/onboarding'
+import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, Folder, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick, Operation } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -278,13 +359,26 @@ const brandingStore = useBrandingStore()
 const isCollapse = ref(false)
 const defaultOpeneds = ref(['scan-group', 'system-group'])
 
+// === 扫描引导：首次登录自动弹出，顶栏按钮可手动唤起 ===
+const showOnboarding = ref(false)
+async function checkOnboarding() {
+  try {
+    const res = await getOnboardingStatus()
+    if (res && res.code === 0 && shouldShowOnboarding(res)) {
+      showOnboarding.value = true
+    }
+  } catch (e) {
+    // 引导检查失败不应阻塞主界面
+  }
+}
+
 onMounted(() => {
   workspaceStore.loadWorkspaces()
   // 刷新当前登录用户信息（头像、邮箱等可能在其他会话中已变更）
   userStore.refreshProfile()
+  // 首次登录自动弹出扫描引导
+  checkOnboarding()
 })
-
-const avatarSrc = computed(() => userStore.avatar || '')
 
 const isSwitchingWorkspace = ref(false)
 
@@ -421,9 +515,9 @@ function handleCommand(command) {
       }
 
       &.is-active {
-        background: var(--el-color-primary) !important;
-        color: var(--el-color-primary-contrast, #fff) !important;
-        box-shadow: 0 2px 8px var(--el-color-primary-light-5);
+        background: hsl(var(--sidebar-primary) / 0.15) !important;
+        color: hsl(var(--sidebar-primary)) !important;
+        box-shadow: none;
       }
     }
 
@@ -504,14 +598,17 @@ function handleCommand(command) {
 
 // 简化的深度选择器，只处理必要的样式覆盖
 :deep(.el-menu) {
-  .el-menu-item, .el-sub-menu .el-sub-menu__title {
+
+  .el-menu-item,
+  .el-sub-menu .el-sub-menu__title {
+
     // 重置所有可能的隐藏样式
     .el-icon {
       display: flex !important;
       visibility: visible !important;
       opacity: 1 !important;
     }
-    
+
     span {
       display: block !important;
       visibility: visible !important;
@@ -574,6 +671,27 @@ function handleCommand(command) {
       }
     }
 
+    .scan-guide-btn {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      cursor: pointer;
+      color: hsl(var(--muted-foreground));
+      transition: all 0.3s;
+
+      &:hover {
+        background: hsl(var(--accent));
+        color: hsl(var(--primary));
+      }
+
+      .el-icon {
+        font-size: 18px;
+      }
+    }
+
     .user-info {
       display: flex;
       align-items: center;
@@ -608,6 +726,7 @@ function handleCommand(command) {
   &::-webkit-scrollbar {
     display: none;
   }
+
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
@@ -627,5 +746,4 @@ function handleCommand(command) {
   opacity: 0;
   transform: translateX(10px);
 }
-
 </style>

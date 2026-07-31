@@ -83,6 +83,46 @@ export function clearAssets() {
   })
 }
 
+// 清空域名
+export function clearDomains() {
+  return request({
+    url: '/asset/domain/clear',
+    method: 'post'
+  })
+}
+
+// 清空 IP
+export function clearIPs() {
+  return request({
+    url: '/asset/ip/clear',
+    method: 'post'
+  })
+}
+
+// 清空站点
+export function clearSites() {
+  return request({
+    url: '/asset/site/clear',
+    method: 'post'
+  })
+}
+
+// 清空端口
+export function clearPorts() {
+  return request({
+    url: '/asset/port/clear',
+    method: 'post'
+  })
+}
+
+// 清空截图
+export function clearScreenshots() {
+  return request({
+    url: '/asset/screenshots/clear',
+    method: 'post'
+  })
+}
+
 // 获取资产历史
 export function getAssetHistory(data) {
   return request({
@@ -96,6 +136,15 @@ export function getAssetHistory(data) {
 export function compareVersions(data) {
   return request({
     url: '/assets/compareVersions',
+    method: 'post',
+    data
+  })
+}
+
+// T4.3: 资产变更时间线数据源（V1 /asset/history，返回 AssetHistoryItem 含 changes）
+export function getAssetChangeHistory(data) {
+  return request({
+    url: '/asset/history',
     method: 'post',
     data
   })
@@ -187,6 +236,15 @@ export function getAssetDirScans(data) {
 export function getAssetVulnScans(data) {
   return request({
     url: '/assets/vulnscans',
+    method: 'post',
+    data
+  })
+}
+
+// T1.3：批量更新漏洞生命周期状态（open / fixed / ignored）
+export function updateVulStatus(data) {
+  return request({
+    url: '/vul/updateStatus',
     method: 'post',
     data
   })

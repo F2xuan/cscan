@@ -52,6 +52,68 @@
           </el-form>
         </el-tab-pane>
       </el-tabs>
+
+      <!-- T3.1 自动拉取配置 -->
+      <el-divider content-position="left">{{ $t('settings.autoPull.title') }}</el-divider>
+      <el-alert type="warning" :closable="false" style="margin-bottom: 16px">
+        <template #title>{{ $t('settings.autoPull.warnTip') }}</template>
+      </el-alert>
+      <el-form label-width="130px" style="max-width: 760px">
+        <el-form-item :label="$t('settings.autoPull.enabled')">
+          <el-switch v-model="currentPlatform.autoPullEnabled" />
+          <span class="ap-hint">{{ $t('settings.autoPull.enabledHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="$t('settings.autoPull.cronSpec')">
+          <el-input v-model="currentPlatform.cronSpec" :placeholder="$t('settings.autoPull.cronPlaceholder')" style="max-width: 280px" />
+          <span class="ap-hint">{{ $t('settings.autoPull.cronHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="$t('settings.autoPull.queries')">
+          <div class="ap-queries">
+            <div v-for="(q, idx) in currentPlatform.queries" :key="idx" class="ap-query-row">
+              <el-input v-model="currentPlatform.queries[idx]" :placeholder="$t('settings.autoPull.queryPlaceholder')" style="width: 460px" />
+              <el-button type="danger" link @click="removeQuery(idx)">{{ $t('common.delete') }}</el-button>
+            </div>
+            <el-button type="primary" link @click="addQuery">{{ $t('settings.autoPull.addQuery') }}</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item :label="$t('settings.autoPull.maxResults')">
+          <el-input-number v-model="currentPlatform.maxResultsPerPull" :min="1" :max="10000" />
+          <span class="ap-hint">{{ $t('settings.autoPull.maxResultsHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="$t('settings.autoPull.dailyLimit')">
+          <el-input-number v-model="currentPlatform.dailyCallLimit" :min="0" :max="100000" />
+          <span class="ap-hint">{{ $t('settings.autoPull.dailyLimitHint') }}</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="saveApiConfig(apiConfigTab)">{{ $t('common.save') }}</el-button>
+          <el-button @click="refreshPullStatus" :loading="pullStatusLoading">{{ $t('settings.autoPull.refreshStatus') }}</el-button>
+        </el-form-item>
+      </el-form>
+
+      <!-- T3.1 拉取状态 -->
+      <el-divider content-position="left">{{ $t('settings.autoPull.statusTitle') }}</el-divider>
+      <el-table :data="pullStatusList" v-loading="pullStatusLoading" stripe max-height="360" style="margin-bottom: 20px">
+        <el-table-column prop="platform" :label="$t('settings.autoPull.platform')" width="120" />
+        <el-table-column :label="$t('settings.autoPull.enabled')" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.autoPullEnabled ? 'success' : 'info'">{{ row.autoPullEnabled ? $t('common.enabled') : $t('common.disabled') }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="lastPullTime" :label="$t('settings.autoPull.lastPullTime')" width="180" />
+        <el-table-column prop="lastPullCount" :label="$t('settings.autoPull.lastPullCount')" width="110" />
+        <el-table-column :label="$t('settings.autoPull.lastPullStatus')" width="130">
+          <template #default="{ row }">
+            <el-tag :type="pullStatusTagType(row.lastPullStatus)">{{ pullStatusText(row.lastPullStatus) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="lastPullError" :label="$t('settings.autoPull.lastPullError')" min-width="160" show-overflow-tooltip />
+        <el-table-column :label="$t('settings.autoPull.dailyCall')" width="140">
+          <template #default="{ row }">
+            {{ row.dailyCallUsed }} / {{ row.dailyCallLimit === 0 ? '∞' : row.dailyCallLimit }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="nextRunTime" :label="$t('settings.autoPull.nextRunTime')" width="180" />
+      </el-table>
     </el-card>
 
     <!-- Subfinder数据源配置 -->
@@ -349,6 +411,85 @@
       </template>
     </el-drawer>
 
+    <!-- 持续复验配置（T3.3 弱口令 / T3.4 敏感信息） -->
+    <el-card v-if="activeTab === 'reverify'">
+      <template #header>
+        <div class="card-header">
+          <span>{{ $t('navigation.reverifyConfig') }}</span>
+        </div>
+      </template>
+
+      <!-- 未选择工作空间提示 -->
+      <el-alert v-if="!workspaceStore.effectiveWorkspaceId" type="warning" :closable="false" show-icon style="margin-bottom: 20px">
+        <template #title>{{ $t('reverify.pleaseSelectWorkspace') }}</template>
+      </el-alert>
+
+      <template v-else>
+        <el-alert type="info" :closable="false" style="margin-bottom: 20px">
+          <template #title>{{ $t('reverify.tip') }}</template>
+        </el-alert>
+        <el-form label-width="140px" style="max-width: 680px;" v-loading="reverifyConfigLoading">
+          <el-form-item :label="$t('reverify.weakPassEnabled')">
+            <el-switch v-model="reverifyConfigForm.weakPassEnabled" />
+            <span class="ap-hint">{{ $t('reverify.weakPassHint') }}</span>
+          </el-form-item>
+          <el-form-item :label="$t('reverify.exposureEnabled')">
+            <el-switch v-model="reverifyConfigForm.exposureEnabled" />
+            <span class="ap-hint">{{ $t('reverify.exposureHint') }}</span>
+          </el-form-item>
+
+          <!-- 复验周期：模仿定时任务调度方式 -->
+          <el-form-item :label="$t('reverify.cronSpec')">
+            <el-input v-model="reverifyConfigForm.cronSpec" :placeholder="$t('reverify.cronPlaceholder')" style="max-width: 320px">
+              <template #append>
+                <el-button @click="handleReverifyCronValidate">{{ $t('cronTask.validate') || '验证' }}</el-button>
+              </template>
+            </el-input>
+            <div class="cron-help">
+              <div class="cron-presets">
+                <span class="preset-label">{{ $t('cronTask.quickSelect') || '快捷选择' }}</span>
+                <el-tag
+                  v-for="preset in reverifyCronPresets"
+                  :key="preset.value"
+                  size="small"
+                  class="preset-tag"
+                  :class="{ 'is-active': reverifyConfigForm.cronSpec === preset.value }"
+                  @click="reverifyConfigForm.cronSpec = preset.value; handleReverifyCronValidate()"
+                >
+                  {{ preset.label }}
+                </el-tag>
+              </div>
+              <div v-if="reverifyCronValidation.valid" class="cron-next-times">
+                <div class="next-label">{{ $t('cronTask.next5Times') || '接下来 5 次执行时间' }}</div>
+                <div v-for="(time, index) in reverifyCronValidation.nextTimes" :key="index" class="next-time">
+                  {{ index + 1 }}. {{ time }}
+                </div>
+              </div>
+              <div v-else-if="reverifyCronValidation.error" class="cron-error">
+                {{ reverifyCronValidation.error }}
+              </div>
+            </div>
+          </el-form-item>
+
+          <el-form-item>
+            <el-button type="primary" :loading="reverifyConfigSubmitting" @click="handleReverifyConfigSubmit">{{ $t('common.save') }}</el-button>
+            <el-button type="success" :loading="reverifyRunning" @click="handleReverifyRunNow">{{ $t('reverify.runNow') }}</el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-divider content-position="left">{{ $t('reverify.statusTitle') }}</el-divider>
+        <el-descriptions :column="2" border v-loading="reverifyConfigLoading">
+          <el-descriptions-item :label="$t('reverify.lastRunTime')">{{ reverifyStatus.lastRunTime || $t('common.none') }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('reverify.lastRunStatus')">
+            <el-tag :type="reverifyStatusTagType(reverifyStatus.lastRunStatus)">{{ reverifyStatusText(reverifyStatus.lastRunStatus) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item :label="$t('reverify.lastRunCount')">{{ reverifyStatus.lastRunCount }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('reverify.nextRunTime')">{{ reverifyStatus.nextRunTime || $t('common.none') }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('reverify.lastRunError')" :span="2">{{ reverifyStatus.lastRunError || $t('common.none') }}</el-descriptions-item>
+        </el-descriptions>
+      </template>
+    </el-card>
+
     <!-- 品牌配置：Logo / 标题 -->
     <el-card v-if="activeTab === 'branding'">
       <template #header>
@@ -411,7 +552,7 @@
       <el-table :data="userList" v-loading="userLoading" stripe max-height="500">
         <el-table-column :label="$t('user.avatar')" width="80">
           <template #default="{ row }">
-            <el-avatar :size="40" :src="row.avatar || undefined" icon="User" />
+            <el-avatar :size="40" :src="row.avatar || DEFAULT_AVATAR" />
           </template>
         </el-table-column>
         <el-table-column prop="username" :label="$t('user.userName')" min-width="150" />
@@ -460,7 +601,7 @@
       <el-form ref="userFormRef" :model="userForm" :rules="userRules" label-width="80px">
         <el-form-item :label="$t('user.avatar')">
           <div class="avatar-updater">
-            <el-avatar :size="80" :src="avatarPreview || undefined" icon="User" />
+            <el-avatar :size="80" :src="avatarPreview" />
             <el-upload
               :show-file-list="false"
               :before-upload="handleAvatarBeforeUpload"
@@ -552,19 +693,23 @@ import { useI18n } from 'vue-i18n'
 import request from '@/api/request'
 import { getSubfinderProviderList, getSubfinderProviderInfo, saveSubfinderProvider as saveSubfinderProviderApi } from '@/api/subfinder'
 import { getUserList, createUser, updateUser, deleteUser, resetUserPassword, uploadUserAvatar } from '@/api/auth'
-import { useUserStore } from '@/stores/user'
+import { useUserStore, DEFAULT_AVATAR } from '@/stores/user'
 import { useBrandingStore } from '@/stores/branding'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { getNotifyProviders, getNotifyConfigList, saveNotifyConfig, deleteNotifyConfig, testNotifyConfig } from '@/api/notify'
+import { getReverifyConfig, saveReverifyConfig, runNowReverify } from '@/api/vul'
+import { validateCronSpec } from '@/api/crontask'
 
 const { t } = useI18n()
 const userStore = useUserStore()
+const workspaceStore = useWorkspaceStore()
 const brandingStore = useBrandingStore()
 
 const route = useRoute()
 const router = useRouter()
 
 // 有效的tab名称
-const validTabs = ['onlineapi', 'subfinder', 'workspace', 'organization', 'notify', 'user', 'branding']
+const validTabs = ['onlineapi', 'subfinder', 'workspace', 'organization', 'notify', 'reverify', 'user', 'branding']
 
 // 从URL获取当前tab
 const activeTab = computed(() => {
@@ -576,10 +721,13 @@ const subfinderLoading = ref(false)
 const subfinderProviders = ref([])
 
 const apiConfigs = reactive({
-  fofa: { key: '', secret: '', version: 'v1' },
-  hunter: { key: '', secret: '' },
-  quake: { key: '', secret: '' }
+  fofa: { key: '', secret: '', version: 'v1', autoPullEnabled: false, cronSpec: '', queries: [], maxResultsPerPull: 100, dailyCallLimit: 1000 },
+  hunter: { key: '', secret: '', autoPullEnabled: false, cronSpec: '', queries: [], maxResultsPerPull: 100, dailyCallLimit: 1000 },
+  quake: { key: '', secret: '', autoPullEnabled: false, cronSpec: '', queries: [], maxResultsPerPull: 100, dailyCallLimit: 1000 }
 })
+
+// T3.1 当前平台（随 Tab 切换）的自动拉取配置代理
+const currentPlatform = computed(() => apiConfigs[apiConfigTab.value])
 
 // 工作空间相关
 const workspaceLoading = ref(false)
@@ -600,7 +748,7 @@ const userSubmitting = ref(false)
 const userFormRef = ref()
 const userForm = ref({ id: '', username: '', password: '', role: 'user', status: 'enable', avatar: '' })
 const isAdminRow = computed(() => userForm.value.username === 'admin')
-const avatarPreview = computed(() => userForm.value.avatar || '')
+const avatarPreview = computed(() => userForm.value.avatar || DEFAULT_AVATAR)
 const avatarUploading = ref(false)
 const userRules = computed(() => ({
   username: [{ required: true, message: t('user.pleaseEnterUsername'), trigger: 'blur' }],
@@ -702,6 +850,163 @@ const notifyFields = computed(() => [
   { key: 'reportUrl', label: t('settings.fieldReportUrl'), enabled: true }
 ])
 
+// 持续复验配置相关（T3.3 弱口令 / T3.4 敏感信息）
+const reverifyConfigLoading = ref(false)
+const reverifyConfigSubmitting = ref(false)
+const reverifyRunning = ref(false)
+const reverifyConfigForm = reactive({
+  weakPassEnabled: false,
+  exposureEnabled: false,
+  cronSpec: '0 0 3 * * *'
+})
+const reverifyStatus = reactive({
+  lastRunTime: '',
+  lastRunStatus: '',
+  lastRunCount: 0,
+  nextRunTime: '',
+  lastRunError: ''
+})
+
+// 复验周期快捷选择（与定时任务保持一致的 6 段秒级 cron）
+const reverifyCronPresets = computed(() => [
+  { label: t('cronTask.everyHour') || '每小时', value: '0 0 * * * *' },
+  { label: t('reverify.everyDay3am') || '每日 03:00', value: '0 0 3 * * *' },
+  { label: t('reverify.everyDay6am') || '每日 06:00', value: '0 0 6 * * *' },
+  { label: t('cronTask.every6hours') || '每 6 小时', value: '0 0 */6 * * *' },
+  { label: t('cronTask.everyMonday') || '每周一 03:00', value: '0 0 3 * * 1' }
+])
+
+// Cron 表达式验证状态
+const reverifyCronValidation = reactive({
+  valid: false,
+  nextTimes: [],
+  error: ''
+})
+
+async function loadReverifyConfig() {
+  const wsId = workspaceStore.effectiveWorkspaceId
+  if (!wsId) return
+  reverifyConfigLoading.value = true
+  try {
+    const res = await getReverifyConfig({ workspaceId: wsId })
+    if (res.code === 0 && res.config) {
+      reverifyConfigForm.weakPassEnabled = res.config.weakPassEnabled || false
+      reverifyConfigForm.exposureEnabled = res.config.exposureEnabled || false
+      reverifyConfigForm.cronSpec = res.config.cronSpec || '0 0 3 * * *'
+      reverifyStatus.lastRunTime = res.config.lastRunTime || ''
+      reverifyStatus.lastRunStatus = res.config.lastRunStatus || ''
+      reverifyStatus.lastRunCount = res.config.lastRunCount || 0
+      reverifyStatus.nextRunTime = res.config.nextRunTime || ''
+      reverifyStatus.lastRunError = res.config.lastRunError || ''
+      // 加载后自动验证 cron 表达式
+      if (reverifyConfigForm.cronSpec) {
+        handleReverifyCronValidate()
+      }
+    }
+  } catch (e) {
+    console.error('load reverify config failed', e)
+  } finally {
+    reverifyConfigLoading.value = false
+  }
+}
+
+async function handleReverifyConfigSubmit() {
+  const wsId = workspaceStore.effectiveWorkspaceId
+  if (!wsId) {
+    ElMessage.warning(t('reverify.pleaseSelectWorkspace'))
+    return
+  }
+  reverifyConfigSubmitting.value = true
+  try {
+    const res = await saveReverifyConfig({
+      workspaceId: wsId,
+      weakPassEnabled: reverifyConfigForm.weakPassEnabled,
+      exposureEnabled: reverifyConfigForm.exposureEnabled,
+      cronSpec: reverifyConfigForm.cronSpec
+    })
+    if (res.code === 0) {
+      ElMessage.success(t('common.saveSuccess'))
+    } else {
+      ElMessage.error(res.msg || t('common.saveFailed'))
+    }
+  } catch (e) {
+    ElMessage.error(e.message || t('common.saveFailed'))
+  } finally {
+    reverifyConfigSubmitting.value = false
+  }
+}
+
+async function handleReverifyRunNow() {
+  const wsId = workspaceStore.effectiveWorkspaceId
+  if (!wsId) {
+    ElMessage.warning(t('reverify.pleaseSelectWorkspace'))
+    return
+  }
+  reverifyRunning.value = true
+  try {
+    const res = await runNowReverify({ workspaceId: wsId })
+    if (res.code === 0) {
+      ElMessage.success(t('reverify.runNowSuccess'))
+      await loadReverifyConfig()
+    } else {
+      ElMessage.error(res.msg || t('common.operationFailed'))
+    }
+  } catch (e) {
+    ElMessage.error(e.message || t('common.operationFailed'))
+  } finally {
+    reverifyRunning.value = false
+  }
+}
+
+// Cron 表达式验证（复用定时任务的验证接口）
+async function handleReverifyCronValidate() {
+  if (!reverifyConfigForm.cronSpec) {
+    reverifyCronValidation.valid = false
+    reverifyCronValidation.error = t('cronTask.cronValidateError') || '请输入 Cron 表达式'
+    reverifyCronValidation.nextTimes = []
+    return
+  }
+  try {
+    const res = await validateCronSpec({ cronSpec: reverifyConfigForm.cronSpec })
+    if (res.code === 0 && res.data) {
+      reverifyCronValidation.valid = res.data.valid
+      if (res.data.valid) {
+        reverifyCronValidation.error = ''
+        reverifyCronValidation.nextTimes = res.data.nextTimes || []
+      } else {
+        reverifyCronValidation.error = res.data.message || t('cronTask.cronValidateError') || 'Cron 表达式无效'
+        reverifyCronValidation.nextTimes = []
+      }
+    } else {
+      reverifyCronValidation.valid = false
+      reverifyCronValidation.error = res.msg || t('cronTask.cronValidateError') || '验证失败'
+      reverifyCronValidation.nextTimes = []
+    }
+  } catch {
+    reverifyCronValidation.valid = false
+    reverifyCronValidation.error = t('cronTask.validateRequestError') || '验证请求失败'
+    reverifyCronValidation.nextTimes = []
+  }
+}
+
+function reverifyStatusText(s) {
+  switch (s) {
+    case 'success': return t('reverify.statusSuccess')
+    case 'failed': return t('reverify.statusFailed')
+    case 'partial': return t('reverify.statusPartial')
+    default: return t('reverify.statusEmpty')
+  }
+}
+
+function reverifyStatusTagType(s) {
+  switch (s) {
+    case 'success': return 'success'
+    case 'failed': return 'danger'
+    case 'partial': return 'warning'
+    default: return 'info'
+  }
+}
+
 onMounted(() => {
   // 根据当前tab加载对应数据
   loadDataByTab(activeTab.value)
@@ -728,6 +1033,8 @@ function loadDataByTab(tab) {
     loadNotifyConfigList()
   } else if (tab === 'branding') {
     loadBrandingConfig()
+  } else if (tab === 'reverify') {
+    loadReverifyConfig()
   }
 }
 
@@ -797,9 +1104,17 @@ async function loadApiConfigs() {
         if (item.platform === 'fofa' && item.version) {
           apiConfigs.fofa.version = item.version
         }
+        // T3.1 自动拉取配置
+        apiConfigs[item.platform].autoPullEnabled = !!item.autoPullEnabled
+        apiConfigs[item.platform].cronSpec = item.cronSpec || ''
+        apiConfigs[item.platform].queries = Array.isArray(item.queries) ? item.queries : []
+        apiConfigs[item.platform].maxResultsPerPull = item.maxResultsPerPull || 100
+        apiConfigs[item.platform].dailyCallLimit = item.dailyCallLimit || 0
       }
     })
   }
+  // T3.1 一并加载自动拉取运行状态
+  await refreshPullStatus()
 }
 
 async function saveApiConfig(platform) {
@@ -807,7 +1122,13 @@ async function saveApiConfig(platform) {
   const data = {
     platform,
     key: config.key,
-    secret: config.secret
+    secret: config.secret,
+    // T3.1 自动拉取配置
+    autoPullEnabled: config.autoPullEnabled,
+    cronSpec: config.cronSpec,
+    queries: config.queries,
+    maxResultsPerPull: config.maxResultsPerPull,
+    dailyCallLimit: config.dailyCallLimit
   }
   // Fofa需要传递版本信?
   if (platform === 'fofa') {
@@ -816,8 +1137,54 @@ async function saveApiConfig(platform) {
   const res = await request.post('/onlineapi/config/save', data)
   if (res.code === 0) {
     ElMessage.success(t('common.operationSuccess'))
+    await refreshPullStatus()
   } else {
     ElMessage.error(res.msg || t('common.operationFailed'))
+  }
+}
+
+// T3.1 自动拉取配置：查询语句动态增删
+function addQuery() {
+  currentPlatform.value.queries.push('')
+}
+function removeQuery(idx) {
+  currentPlatform.value.queries.splice(idx, 1)
+}
+
+// T3.1 自动拉取运行状态
+const pullStatusLoading = ref(false)
+const pullStatusList = ref([])
+
+async function refreshPullStatus() {
+  pullStatusLoading.value = true
+  try {
+    const res = await request.post('/onlineapi/pull/status', {})
+    if (res.code === 0) {
+      pullStatusList.value = res.list || []
+    } else {
+      ElMessage.error(res.msg || t('common.loadFailed'))
+    }
+  } finally {
+    pullStatusLoading.value = false
+  }
+}
+
+function pullStatusText(s) {
+  switch (s) {
+    case 'ok': return t('settings.autoPull.statusOk')
+    case 'error': return t('settings.autoPull.statusError')
+    case 'quota_exhausted': return t('settings.autoPull.statusQuotaExhausted')
+    case 'disabled': return t('settings.autoPull.statusDisabled')
+    default: return t('settings.autoPull.statusEmpty')
+  }
+}
+
+function pullStatusTagType(s) {
+  switch (s) {
+    case 'ok': return 'success'
+    case 'error': return 'danger'
+    case 'quota_exhausted': return 'warning'
+    default: return 'info'
   }
 }
 
@@ -1360,6 +1727,73 @@ async function handleDeleteNotify(row) {
     font-size: 12px;
     margin-left: 8px;
   }
+
+  .ap-hint {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    margin-left: 10px;
+  }
+
+  .ap-queries .ap-query-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+}
+
+/* Cron 调度快捷选择样式 */
+.settings-page .cron-help {
+  margin-top: 8px;
+}
+
+.settings-page .cron-help .cron-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.settings-page .cron-help .cron-presets .preset-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.settings-page .cron-help .cron-presets .preset-tag {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-page .cron-help .cron-presets .preset-tag:hover {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+
+.settings-page .cron-help .cron-presets .preset-tag.is-active {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+  background-color: var(--el-color-primary-light-9);
+}
+
+.settings-page .cron-help .cron-next-times {
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  margin-top: 4px;
+}
+
+.settings-page .cron-help .cron-next-times .next-label {
+  color: var(--el-text-color-secondary);
+  margin-bottom: 2px;
+}
+
+.settings-page .cron-help .cron-next-times .next-time {
+  line-height: 1.6;
+}
+
+.settings-page .cron-help .cron-error {
+  font-size: 12px;
+  color: var(--el-color-danger);
+  margin-top: 4px;
 }
 
 /* 通知配置左右分栏布局 */

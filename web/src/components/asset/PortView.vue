@@ -26,6 +26,10 @@
         </el-dropdown>
       </template>
 
+      <template #toolbar-right>
+        <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') || '清空数据' }}</el-button>
+      </template>
+
       <!-- 列: 端口 -->
       <template #port="{ row }">
         <div class="port-cell">
@@ -72,13 +76,17 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import ProTable from '@/components/common/ProTable.vue'
 import { useAssetView } from '@/composables/useAssetView'
+import { clearPorts } from '@/api/asset'
 
+const { t } = useI18n()
 const emit = defineEmits(['data-changed'])
 
 const {
-  t, proTableRef, organizations, selectedRows,
+  proTableRef, organizations, selectedRows,
   loadOrganizations, handleExport
 } = useAssetView({
   apiPrefix: '/asset/port',
@@ -94,6 +102,28 @@ const {
     row.updateTime || ''
   ]
 })
+
+async function handleClear() {
+  try {
+    await ElMessageBox.confirm(
+      t('asset.confirmClearAll'),
+      t('common.warning'),
+      { type: 'error', confirmButtonText: t('asset.confirmClearBtn'), cancelButtonText: t('common.cancel') }
+    )
+    const res = await clearPorts()
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('asset.clearSuccess'))
+      proTableRef.value?.loadData()
+      emit('data-changed')
+    } else {
+      ElMessage.error(res.msg || t('asset.clearFailed'))
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('asset.clearFailed'))
+    }
+  }
+}
 
 const searchPortPlaceholder = computed(() => t('asset.portNumber') || '搜索端口')
 

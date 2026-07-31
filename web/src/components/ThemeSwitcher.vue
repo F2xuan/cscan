@@ -1,9 +1,11 @@
 <template>
   <el-popover
-    placement="bottom"
-    :width="320"
+    placement="bottom-end"
+    :width="520"
     trigger="click"
     popper-class="theme-switcher-popover"
+    :show-arrow="false"
+    :offset="8"
   >
     <template #reference>
       <div class="theme-switch-btn" :title="$t('theme.settings')">
@@ -28,7 +30,7 @@
             :class="{ active: themeStore.theme === mode.value }"
             @click="themeStore.setTheme(mode.value)"
           >
-            <el-icon :size="20">
+            <el-icon :size="18">
               <component :is="mode.icon" />
             </el-icon>
             <span>{{ $t(mode.label) }}</span>
@@ -41,43 +43,18 @@
         <div class="section-title">{{ $t('theme.styleTitle') }}</div>
         <div class="style-options">
           <div
-            v-for="style in themeStyles"
+            v-for="style in themeStore.THEME_STYLES"
             :key="style.value"
             class="style-option"
             :class="{ active: themeStore.themeStyle === style.value }"
             @click="themeStore.setThemeStyle(style.value)"
           >
-            <div class="style-preview" :class="`preview-${style.value}`">
-              <div class="preview-card">
-                <div class="preview-line w60"></div>
-                <div class="preview-line w90"></div>
-                <div class="preview-line w40"></div>
-              </div>
-              <div class="preview-btn"></div>
+            <div class="style-color-dot" :style="{ background: style.primaryColor }"></div>
+            <div class="style-info">
+              <span class="style-label">{{ $t(style.label) }}</span>
+              <span class="style-desc">{{ $t(style.description) }}</span>
             </div>
-            <span class="style-label">{{ $t(style.label) }}</span>
             <el-icon v-if="themeStore.themeStyle === style.value" class="style-check">
-              <Check />
-            </el-icon>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 颜色主题选择 -->
-      <div class="theme-section">
-        <div class="section-title">{{ $t('theme.colorTheme') }}</div>
-        <div class="color-options">
-          <div
-            v-for="color in colorThemes"
-            :key="color.value"
-            class="color-option"
-            :class="{ active: themeStore.colorTheme === color.value }"
-            :style="{ '--theme-color': color.color }"
-            :title="$t(color.label)"
-            @click="themeStore.setColorTheme(color.value)"
-          >
-            <div class="color-preview" :style="{ background: color.color }"></div>
-            <el-icon v-if="themeStore.colorTheme === color.value" class="check-icon">
               <Check />
             </el-icon>
           </div>
@@ -88,8 +65,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useThemeStore, COLOR_THEMES, THEME_STYLES } from '@/stores/theme'
+import { useThemeStore } from '@/stores/theme'
 import { Sunny, Moon, Monitor, Check } from '@element-plus/icons-vue'
 
 const themeStore = useThemeStore()
@@ -99,9 +75,6 @@ const themeModes = [
   { value: 'dark', label: 'theme.dark', icon: Moon },
   { value: 'system', label: 'theme.system', icon: Monitor },
 ]
-
-const colorThemes = computed(() => COLOR_THEMES)
-const themeStyles = computed(() => THEME_STYLES)
 </script>
 
 <style lang="scss" scoped>
@@ -128,7 +101,7 @@ const themeStyles = computed(() => THEME_STYLES)
 
 .theme-switcher {
   .theme-section {
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     
     &:last-child {
       margin-bottom: 0;
@@ -136,10 +109,12 @@ const themeStyles = computed(() => THEME_STYLES)
   }
   
   .section-title {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 600;
     color: hsl(var(--muted-foreground));
-    margin-bottom: 10px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
   
   .mode-options {
@@ -151,8 +126,8 @@ const themeStyles = computed(() => THEME_STYLES)
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 6px;
-      padding: 12px 8px;
+      gap: 4px;
+      padding: 10px 8px;
       border-radius: 8px;
       cursor: pointer;
       border: 2px solid transparent;
@@ -173,166 +148,80 @@ const themeStyles = computed(() => THEME_STYLES)
       
       span {
         font-size: 12px;
+        font-weight: 500;
       }
     }
   }
   
   .style-options {
-    display: flex;
-    gap: 10px;
-    
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+
     .style-option {
-      flex: 1;
       position: relative;
       display: flex;
-      flex-direction: column;
       align-items: center;
       gap: 8px;
-      padding: 12px;
-      border-radius: 10px;
-      cursor: pointer;
-      border: 2px solid transparent;
-      background: hsl(var(--muted));
-      transition: all 0.2s;
-      
-      &:hover {
-        background: hsl(var(--accent));
-      }
-      
-      &.active {
-        border-color: hsl(var(--primary));
-        background: hsl(var(--primary) / 0.06);
-      }
-      
-      .style-preview {
-        width: 100%;
-        height: 64px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        padding: 8px;
-        background: hsl(var(--background));
-        border: 1px solid hsl(var(--border));
-        
-        &.preview-vercel {
-          border-radius: 6px;
-          
-          .preview-card {
-            border-radius: 3px;
-          }
-          .preview-btn {
-            border-radius: 3px;
-          }
-        }
-        
-        &.preview-apple {
-          border-radius: 14px;
-          
-          .preview-card {
-            border-radius: 8px;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-          }
-          .preview-btn {
-            border-radius: 99px;
-          }
-        }
-        
-        .preview-card {
-          width: 80%;
-          padding: 6px 8px;
-          border: 1px solid hsl(var(--border));
-          background: hsl(var(--card));
-          display: flex;
-          flex-direction: column;
-          gap: 3px;
-          
-          .preview-line {
-            height: 3px;
-            border-radius: 2px;
-            background: hsl(var(--muted-foreground) / 0.4);
-            
-            &.w60 { width: 60%; }
-            &.w90 { width: 90%; }
-            &.w40 { width: 40%; }
-          }
-        }
-        
-        .preview-btn {
-          width: 36px;
-          height: 10px;
-          background: hsl(var(--primary));
-        }
-      }
-      
-      .style-label {
-        font-size: 12px;
-        font-weight: 500;
-        color: hsl(var(--foreground));
-      }
-      
-      .style-check {
-        position: absolute;
-        top: 6px;
-        right: 6px;
-        width: 16px;
-        height: 16px;
-        background: hsl(var(--primary));
-        border-radius: 50%;
-        color: hsl(var(--primary-foreground));
-        font-size: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-    }
-  }
-  
-  .color-options {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 8px;
-    
-    .color-option {
-      position: relative;
-      width: 100%;
-      aspect-ratio: 1;
+      padding: 8px 10px;
       border-radius: 8px;
       cursor: pointer;
       border: 2px solid transparent;
       background: hsl(var(--muted));
-      display: flex;
-      align-items: center;
-      justify-content: center;
       transition: all 0.2s;
-      
+
       &:hover {
-        transform: scale(1.1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        background: hsl(var(--accent));
       }
-      
+
       &.active {
-        border-color: var(--theme-color);
+        border-color: hsl(var(--primary));
+        background: hsl(var(--primary) / 0.06);
       }
-      
-      .color-preview {
-        width: 24px;
-        height: 24px;
+
+      .style-color-dot {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
         border-radius: 50%;
-        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+        border: 2px solid hsl(var(--border));
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
       }
-      
-      .check-icon {
+
+      .style-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .style-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: hsl(var(--foreground));
+        line-height: 1.3;
+      }
+
+      .style-desc {
+        font-size: 10px;
+        color: hsl(var(--muted-foreground));
+        line-height: 1.3;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .style-check {
         position: absolute;
-        bottom: 2px;
-        right: 2px;
+        top: 4px;
+        right: 4px;
         width: 14px;
         height: 14px;
-        background: var(--theme-color);
+        background: hsl(var(--primary));
         border-radius: 50%;
-        color: white;
-        font-size: 10px;
+        color: hsl(var(--primary-foreground));
+        font-size: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -344,6 +233,6 @@ const themeStyles = computed(() => THEME_STYLES)
 
 <style>
 .theme-switcher-popover {
-  padding: 16px !important;
+  padding: 14px !important;
 }
 </style>

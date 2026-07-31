@@ -1,5 +1,67 @@
 <template>
   <div class="report-page">
+    <!-- 周期报告 (T5.1) -->
+    <el-card class="periodic-report" shadow="never">
+      <template #header>
+        <span class="periodic-title">{{ $t('periodicReport.title') }}</span>
+      </template>
+      <el-form :inline="true" class="periodic-form">
+        <el-form-item :label="$t('periodicReport.period')">
+          <el-select v-model="periodicPeriod" style="width:130px">
+            <el-option :label="$t('periodicReport.daily')" value="daily" />
+            <el-option :label="$t('periodicReport.weekly')" value="weekly" />
+            <el-option :label="$t('periodicReport.monthly')" value="monthly" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="$t('periodicReport.endDate')">
+          <el-date-picker v-model="periodicEnd" type="date" value-format="YYYY-MM-DD" :placeholder="$t('periodicReport.endDate')" style="width:160px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="generatePeriodic" :loading="periodicLoading">
+            <el-icon><Loading /></el-icon>{{ $t('periodicReport.generate') }}
+          </el-button>
+          <el-button @click="exportPeriodic" :disabled="!periodicData" :loading="periodicExporting">
+            <el-icon><Download /></el-icon>{{ $t('periodicReport.export') }}
+          </el-button>
+        </el-form-item>
+      </el-form>
+
+      <div v-if="periodicData" class="periodic-result">
+        <el-alert
+          :title="`${$t('periodicReport.range')}: ${periodicData.start} ~ ${periodicData.end}  |  ${$t('periodicReport.prev')}: ${periodicData.prevStart} ~ ${periodicData.prevEnd}`"
+          type="info" :closable="false" class="periodic-range" />
+        <el-row :gutter="16" class="periodic-stats">
+          <el-col :span="6"><el-statistic :title="$t('periodicReport.newAssets')" :value="periodicData.newAssets" /></el-col>
+          <el-col :span="6"><el-statistic :title="$t('periodicReport.newVulns')" :value="periodicData.newVulns" /></el-col>
+          <el-col :span="6"><el-statistic :title="$t('periodicReport.fixed')" :value="periodicData.fixed" /></el-col>
+        </el-row>
+        <el-divider>{{ $t('periodicReport.trend') }}</el-divider>
+        <el-descriptions :column="3" border>
+          <el-descriptions-item :label="$t('periodicReport.trendAssets')">{{ formatTrend(periodicData.trend.newAssetsDelta) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('periodicReport.trendVulns')">{{ formatTrend(periodicData.trend.newVulnsDelta) }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('periodicReport.trendFixed')">{{ formatTrend(periodicData.trend.fixedDelta) }}</el-descriptions-item>
+        </el-descriptions>
+        <el-divider>{{ $t('periodicReport.vulBySeverity') }}</el-divider>
+        <el-descriptions :column="6" border>
+          <el-descriptions-item label="critical">{{ periodicData.newVulnsBySeverity.critical }}</el-descriptions-item>
+          <el-descriptions-item label="high">{{ periodicData.newVulnsBySeverity.high }}</el-descriptions-item>
+          <el-descriptions-item label="medium">{{ periodicData.newVulnsBySeverity.medium }}</el-descriptions-item>
+          <el-descriptions-item label="low">{{ periodicData.newVulnsBySeverity.low }}</el-descriptions-item>
+          <el-descriptions-item label="info">{{ periodicData.newVulnsBySeverity.info }}</el-descriptions-item>
+          <el-descriptions-item label="unknown">{{ periodicData.newVulnsBySeverity.unknown }}</el-descriptions-item>
+        </el-descriptions>
+        <el-divider>{{ $t('periodicReport.summary') }}</el-divider>
+        <el-table :data="periodicData.topItems" border class="periodic-top" max-height="360">
+          <el-table-column prop="refType" :label="$t('periodicReport.type')" width="90" />
+          <el-table-column prop="key" :label="$t('periodicReport.target')" />
+          <el-table-column prop="summary" :label="$t('periodicReport.summary')" />
+          <el-table-column prop="severity" :label="$t('periodicReport.severity')" width="110" />
+          <el-table-column prop="createTime" :label="$t('common.createTime')" width="170" />
+        </el-table>
+      </div>
+      <el-empty v-else-if="!periodicLoading" :description="$t('periodicReport.empty')" />
+    </el-card>
+
     <!-- 报告头部 -->
     <el-card class="report-header" v-if="reportData">
       <div class="header-content">
@@ -272,7 +334,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Download, Back, Loading, Picture } from '@element-plus/icons-vue'
-import { getReportDetail, exportReport } from '@/api/report'
+import { getReportDetail, exportReport, getPeriodicReport, exportPeriodicReport } from '@/api/report'
 import { formatScreenshotUrl } from '@/utils/screenshot'
 
 const { t } = useI18n()
@@ -285,6 +347,13 @@ const assetSearch = ref('')
 const vulSearch = ref('')
 const activeTab = ref('overview')
 const dirScanActiveNames = ref([])
+
+// T5.1 周期报告状态
+const periodicPeriod = ref('weekly')
+const periodicEnd = ref('')
+const periodicLoading = ref(false)
+const periodicExporting = ref(false)
+const periodicData = ref(null)
 
 const topPorts = computed(() => (reportData.value?.topPorts || []).slice(0, 5))
 const topServices = computed(() => (reportData.value?.topServices || []).slice(0, 5))
@@ -376,6 +445,48 @@ async function handleExport() {
 }
 
 function goBack() { router.push('/task') }
+
+// T5.1 周期报告：生成预览 / 导出 / 趋势格式化
+function formatTrend(delta) {
+  if (delta > 0) return '+' + delta
+  return String(delta)
+}
+
+async function generatePeriodic() {
+  periodicLoading.value = true
+  try {
+    const res = await getPeriodicReport({ period: periodicPeriod.value, end: periodicEnd.value || '' })
+    if (res.code === 0) {
+      periodicData.value = res.data
+    } else {
+      ElMessage.error(res.msg || t('periodicReport.generateFailed'))
+    }
+  } catch (e) {
+    ElMessage.error(t('periodicReport.generateFailed'))
+  } finally {
+    periodicLoading.value = false
+  }
+}
+
+async function exportPeriodic() {
+  if (!periodicData.value) return
+  periodicExporting.value = true
+  try {
+    const res = await exportPeriodicReport({ period: periodicPeriod.value, end: periodicEnd.value || '' })
+    const blob = new Blob([res], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `report_periodic_${periodicPeriod.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    link.click()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success(t('periodicReport.exportSuccess'))
+  } catch (e) {
+    ElMessage.error(t('periodicReport.exportFailed'))
+  } finally {
+    periodicExporting.value = false
+  }
+}
 
 function expandAllDirScan() { dirScanActiveNames.value = Object.keys(groupedDirScans.value) }
 function collapseAllDirScan() { dirScanActiveNames.value = [] }

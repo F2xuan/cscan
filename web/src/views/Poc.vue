@@ -1,6 +1,47 @@
 <template>
   <div class="poc-page">
-    <el-tabs v-model="activeTab" @tab-change="handleTabChange">
+    <!-- 常驻全局批量验证任务进度条 -->
+    <div v-if="persistentTask" class="persistent-task-bar">
+      <el-card shadow="hover" class="persistent-task-card">
+        <div class="persistent-task-content">
+          <div class="persistent-task-info">
+            <el-icon :size="18" :class="persistentTask.status === 'running' ? 'rotating' : ''">
+              <Loading v-if="persistentTask.status === 'running'" />
+              <CircleCheck v-else-if="persistentTask.status === 'completed'" color="#67c23a" />
+              <CircleClose v-else-if="persistentTask.status === 'failed'" color="#f56c6c" />
+            </el-icon>
+            <span class="persistent-task-title">
+              {{ persistentTask.status === 'running' ? 'POC批量验证进行中' : persistentTask.status === 'completed' ? 'POC批量验证已完成' : 'POC批量验证失败' }}
+            </span>
+            <el-tag size="small" :type="getPocScopeTagType(persistentTask.scope)">{{ getPocScopeLabel(persistentTask.scope) }}</el-tag>
+            <span class="persistent-task-url">{{ persistentTask.urlCount }} 个目标</span>
+          </div>
+          <div v-if="persistentTask.status === 'running'" class="persistent-task-progress">
+            <el-progress
+              :percentage="persistentTask.total > 0 ? Math.min(99, Math.floor(persistentTask.completed / persistentTask.total * 100)) : 0"
+              :stroke-width="8"
+              style="width: 280px;"
+            />
+            <span class="persistent-task-stat">{{ persistentTask.completed }}/{{ persistentTask.total || '?' }}</span>
+          </div>
+          <div v-else-if="persistentTask.status === 'completed'" class="persistent-task-result">
+            <el-tag type="danger" size="small">漏洞 {{ persistentTask.matched || 0 }} 个</el-tag>
+            <el-tag type="info" size="small" style="margin-left: 4px;">共 {{ persistentTask.total || 0 }} 个</el-tag>
+          </div>
+          <div class="persistent-task-actions">
+            <el-button v-if="persistentTask.status === 'completed'" type="primary" size="small" @click="showGlobalBatchResultDialog">
+              查看结果
+            </el-button>
+            <el-button type="info" size="small" text @click="dismissPersistentTask">
+              <el-icon><Close /></el-icon>
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
+    <div class="tabs-with-action">
+      <el-tabs v-model="activeTab" @tab-change="handleTabChange" class="flex-grow-tabs">
       <!-- Nuclei默认模板 -->
       <el-tab-pane :label="$t('poc.defaultTemplates')" name="nucleiTemplates">
         <el-card>
@@ -489,7 +530,13 @@
           </el-row>
         </el-card>
       </el-tab-pane>
-    </el-tabs>
+      </el-tabs>
+      <div class="tabs-action-buttons">
+        <el-button type="warning" size="small" @click="showGlobalBatchValidateDialog">
+          <el-icon><Search /></el-icon>{{ $t('poc.batchValidate') }}
+        </el-button>
+      </div>
+    </div>
 
     <!-- 目录扫描字典编辑对话框 -->
     <el-dialog v-model="dirscanDictDialogVisible" :title="dirscanDictForm.id ? $t('poc.editDict') : $t('poc.addDictTitle')" width="700px">
@@ -986,6 +1033,111 @@
       </template>
     </el-dialog>
 
+    <!-- 全局批量验证POC对话框 -->
+    <el-dialog v-model="globalBatchValidateDialogVisible" :title="$t('poc.batchValidatePoc')" width="650px">
+      <el-form label-width="100px">
+        <el-form-item :label="$t('poc.selectPocType')">
+          <el-radio-group v-model="globalBatchScope">
+            <el-radio label="all">{{ $t('poc.allPoc') }}</el-radio>
+            <el-radio label="template">{{ $t('poc.defaultTemplates') }}</el-radio>
+            <el-radio label="custom">{{ $t('poc.customPoc') }}</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item :label="$t('poc.targetUrlLabel')">
+          <div style="width: 100%">
+            <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+              <el-radio-group v-model="globalBatchTargetInputType" size="small">
+                <el-radio-button value="text">{{ $t('poc.textInput') }}</el-radio-button>
+                <el-radio-button value="file">{{ $t('poc.fileUpload') }}</el-radio-button>
+              </el-radio-group>
+              <span class="text-muted hint-text">
+                {{ globalBatchTargetInputType === 'text' ? $t('poc.oneUrlPerLine') : $t('poc.supportsTxtFile') }}
+              </span>
+            </div>
+            <el-input 
+              v-if="globalBatchTargetInputType === 'text'"
+              v-model="globalBatchValidateUrls" 
+              type="textarea" 
+              :rows="5" 
+              :placeholder="$t('poc.targetUrlsPlaceholder')"
+            />
+            <el-upload
+              v-else
+              ref="globalBatchUrlUploadRef"
+              :auto-upload="false"
+              :limit="1"
+              accept=".txt"
+              :on-change="handleGlobalBatchUrlFileChange"
+              :on-remove="handleGlobalBatchUrlFileRemove"
+              drag
+            >
+              <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+              <div class="el-upload__text">{{ $t('poc.uploadHint') }}</div>
+              <template #tip>
+                <div class="el-upload__tip">{{ $t('poc.onlyTxtFile') }}</div>
+              </template>
+            </el-upload>
+            <div v-if="globalBatchTargetUrls.length > 0" class="text-success hint-text" style="margin-top: 8px;">
+              {{ $t('poc.parsedUrls', { count: globalBatchTargetUrls.length }) }}
+            </div>
+          </div>
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon style="margin-top: 10px;">
+        <template #title>提交后任务将在后台运行，可在页面顶部查看进度，完成后点击「查看结果」查看详情。</template>
+      </el-alert>
+      <template #footer>
+        <el-button @click="globalBatchValidateDialogVisible = false">{{ $t('poc.close') }}</el-button>
+        <el-button type="primary" @click="handleGlobalBatchValidate" :loading="globalBatchValidateLoading" :disabled="globalBatchTargetUrls.length === 0">
+          开始验证
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 全局批量验证结果对话框 -->
+    <el-dialog v-model="globalBatchResultDialogVisible" title="POC批量验证结果" width="900px">
+      <div v-if="globalBatchValidateResults.length > 0" class="batch-validate-results">
+        <div class="results-header" style="margin-bottom: 15px;">
+          <el-tag type="danger" size="large">发现漏洞: {{ globalBatchValidateResults.filter(r => r.matched).length }}</el-tag>
+          <el-tag type="info" size="large" style="margin-left: 8px;">未匹配: {{ globalBatchValidateResults.filter(r => !r.matched).length }}</el-tag>
+          <el-dropdown style="margin-left: auto" @command="handleGlobalExportResults">
+            <el-button type="success" size="small">
+              导出结果<el-icon class="el-icon--right"><arrow-down /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="all">{{ $t('poc.exportAll') }}</el-dropdown-item>
+                <el-dropdown-item command="matched">{{ $t('poc.exportMatched') }}</el-dropdown-item>
+                <el-dropdown-item command="csv">{{ $t('poc.exportCsv') }}</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <el-table :data="globalBatchValidateResults" max-height="400" stripe>
+          <el-table-column prop="pocName" label="模板名称" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="severity" label="级别" width="80">
+            <template #default="{ row }">
+              <el-tag :type="getSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="matched" label="结果" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.matched ? 'danger' : 'info'" size="small">
+                {{ row.matched ? '匹配' : '未匹配' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="matchedUrl" label="匹配URL" min-width="200" show-overflow-tooltip />
+        </el-table>
+      </div>
+      <div v-else>
+        <el-empty description="暂无结果" :image-size="80" />
+      </div>
+      <template #footer>
+        <el-button @click="globalBatchResultDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 默认模板批量验证对话框 -->
     <el-dialog v-model="templateBatchValidateDialogVisible" :title="$t('poc.batchValidatePoc')" width="900px" @close="handleBatchValidateDialogClose">
       <el-form label-width="100px">
@@ -1188,11 +1340,12 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import DOMPurify from 'dompurify'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check, Search } from '@element-plus/icons-vue'
-import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax } from '@/api/poc'
+import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check, Search, Loading, CircleCheck, CircleClose, Close } from '@element-plus/icons-vue'
+import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax, batchValidatePoc } from '@/api/poc'
 import { DEFAULT_AI_CONFIG, loadAIConfig, chat, extractYamlBlock } from '@/utils/aiClient'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
@@ -1202,6 +1355,7 @@ import { useUserStore } from '@/stores/user'
 import jsYaml from 'js-yaml'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
+import { getTaskLogs } from '@/api/task'
 
 const route = useRoute()
 const router = useRouter()
@@ -1468,7 +1622,8 @@ const pocValidateResult = ref(null)
 const pocValidateLoading = ref(false)
 const pocValidateLogs = ref([])
 const logsContainerRef = ref(null)
-let logEventSource = null
+let logPollTimer = null
+let logPollLastCount = 0
 let currentTaskId = null
 
 // 扫描现有资产
@@ -1484,7 +1639,8 @@ const scanAssetsProgress = reactive({
   vulnCount: 0
 })
 let scanAssetsTaskIds = []
-let scanAssetsEventSource = null
+let scanAssetsLogPollTimer = null
+let scanAssetsLogLastCount = 0
 let scanAssetsPollTimer = null
 
 // 默认模板批量验证
@@ -1498,9 +1654,39 @@ const templateBatchValidateResults = ref([])
 const templateBatchValidateProgress = reactive({ total: 0, completed: 0 })
 const batchLogsContainerRef = ref(null)
 const currentBatchTaskIds = ref([]) // 当前批次的任务ID列表
-let batchLogEventSource = null
+let batchLogPollTimer = null
+let batchLogLastCount = 0
 let batchPollTimer = null
 let currentBatchId = null
+
+// 全局批量验证（Tab右侧按钮）
+const globalBatchValidateDialogVisible = ref(false)
+const globalBatchResultDialogVisible = ref(false)
+const globalBatchScope = ref('all')
+const globalBatchValidateUrls = ref('')
+const globalBatchTargetInputType = ref('text')
+const globalBatchUrlUploadRef = ref(null)
+const globalBatchValidateLoading = ref(false)
+const globalBatchValidateLogs = ref([])
+const globalBatchValidateResults = ref([])
+const globalBatchValidateProgress = reactive({ total: 0, completed: 0 })
+const globalBatchLogsContainerRef = ref(null)
+let globalBatchPollTimer = null
+let globalCurrentBatchId = null
+const POC_GLOBAL_BATCH_STORAGE_KEY = 'cscan_poc_global_batch_task'
+
+// 常驻任务状态（页面顶部进度条）
+const persistentTask = ref(null)
+
+// 计算属性：解析全局批量URL为数组
+const globalBatchTargetUrls = computed(() => {
+  if (!globalBatchValidateUrls.value) return []
+  const urls = globalBatchValidateUrls.value
+    .split('\n')
+    .map(url => url.trim())
+    .filter(url => url && (url.startsWith('http://') || url.startsWith('https://')))
+  return [...new Set(urls)]
+})
 
 // 计算属性：解析多行URL为数组（自动去重）
 const batchTargetUrls = computed(() => {
@@ -1520,6 +1706,8 @@ onMounted(() => {
   }
   // 加载AI配置
   loadAiConfig()
+  // 恢复持久化的批量验证任务
+  restorePersistentTask()
   // 根据当前tab加载数据
   handleTabChange(activeTab.value)
 })
@@ -2728,9 +2916,9 @@ function cleanupScanAssets() {
     clearInterval(scanAssetsPollTimer)
     scanAssetsPollTimer = null
   }
-  if (scanAssetsEventSource) {
-    scanAssetsEventSource.close()
-    scanAssetsEventSource = null
+  if (scanAssetsLogPollTimer) {
+    clearInterval(scanAssetsLogPollTimer)
+    scanAssetsLogPollTimer = null
   }
   scanAssetsTaskIds = []
 }
@@ -2744,68 +2932,59 @@ function handleScanAssetsDialogClose() {
 // 开始监听扫描资产日志流
 function startScanAssetsLogStream(taskIds) {
   // 关闭之前的连接
-  if (scanAssetsEventSource) {
-    scanAssetsEventSource.close()
+  if (scanAssetsLogPollTimer) {
+    clearInterval(scanAssetsLogPollTimer)
   }
-  
+
   scanAssetsTaskIds = taskIds
-  
-  // 连接SSE日志流
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-  const token = localStorage.getItem('token')
-  scanAssetsEventSource = new EventSource(`${baseUrl}/api/v1/worker/logs/stream?token=${token}`)
-  
-  scanAssetsEventSource.onmessage = (event) => {
-    try {
-      const log = JSON.parse(event.data)
-      // 检查日志是否属于当前扫描的任务
-      const matchedTaskId = scanAssetsTaskIds.find(tid => log.message && log.message.includes(tid))
-      if (matchedTaskId) {
-        // 提取日志中的关键信息，去掉taskId前缀
-        let displayMsg = log.message
-        const taskIdPrefix = `[${matchedTaskId}] `
-        if (displayMsg.startsWith(taskIdPrefix)) {
-          displayMsg = displayMsg.substring(taskIdPrefix.length)
-        }
-        
-        scanAssetsLogs.value.push({
-          level: log.level || 'INFO',
-          message: displayMsg,
-          timestamp: log.timestamp || new Date().toLocaleTimeString()
-        })
-        
-        // 检查是否发现漏洞（匹配日志中的漏洞标记）
-        if (displayMsg.includes('✓') || displayMsg.includes('Vulnerability found') || displayMsg.includes('发现漏洞')) {
-          scanAssetsProgress.vulnCount++
-        }
-        
-        // 从完成日志中提取漏洞数
-        // 匹配格式1: Batch scan completed: 50 targets, 2 vuls found
-        // 匹配格式2: Batch scan completed: targets=50, vuls=2
-        // 匹配格式3: Batch scan completed, duration: 27.45s, vuls: 2
-        const vulMatch = displayMsg.match(/vuls[:=]\s*(\d+)|(\d+)\s*vuls found/i)
-        if (vulMatch) {
-          const count = vulMatch[1] || vulMatch[2]
-          if (count) {
-            scanAssetsProgress.vulnCount = parseInt(count)
+  scanAssetsLogLastCount = 0
+
+  // Immediately fetch once
+  fetchScanAssetsLogs()
+
+  // Poll every 3 seconds
+  scanAssetsLogPollTimer = setInterval(fetchScanAssetsLogs, 3000)
+}
+
+async function fetchScanAssetsLogs() {
+  if (scanAssetsTaskIds.length === 0) return
+  try {
+    // Fetch logs for the first task (batch task)
+    const res = await getTaskLogs({ taskId: scanAssetsTaskIds[0], limit: 500 })
+    if (res.code === 0 && res.list) {
+      const newLogs = res.list.slice(scanAssetsLogLastCount)
+      scanAssetsLogLastCount = res.list.length
+      for (const log of newLogs) {
+        let displayMsg = log.message || ''
+        // Check if log belongs to any of the current scan tasks
+        const matchedTaskId = scanAssetsTaskIds.find(tid => displayMsg.includes(tid))
+        if (matchedTaskId) {
+          const taskIdPrefix = `[${matchedTaskId}] `
+          if (displayMsg.startsWith(taskIdPrefix)) {
+            displayMsg = displayMsg.substring(taskIdPrefix.length)
           }
+          scanAssetsLogs.value.push({
+            level: log.level || 'INFO',
+            message: displayMsg,
+            timestamp: log.timestamp || new Date().toLocaleTimeString()
+          })
+          // Check for vulnerability markers
+          if (displayMsg.includes('✓') || displayMsg.includes('Vulnerability found') || displayMsg.includes('发现漏洞')) {
+            scanAssetsProgress.vulnCount++
+          }
+          const vulMatch = displayMsg.match(/vuls[:=]\s*(\d+)|(\d+)\s*vuls found/i)
+          if (vulMatch) {
+            const count = vulMatch[1] || vulMatch[2]
+            if (count) scanAssetsProgress.vulnCount = parseInt(count)
+          }
+          if (scanAssetsLogs.value.length > 200) {
+            scanAssetsLogs.value.shift()
+          }
+          scrollScanAssetsLogsToBottom()
         }
-        
-        // 限制日志数量
-        if (scanAssetsLogs.value.length > 200) {
-          scanAssetsLogs.value.shift()
-        }
-        // 滚动到底部
-        scrollScanAssetsLogsToBottom()
       }
-    } catch (e) {
-      // 忽略解析错误
     }
-  }
-  
-  scanAssetsEventSource.onerror = () => {
-    // 连接错误时不做处理
-  }
+  } catch (e) { /* ignore */ }
 }
 
 // 滚动扫描日志到底部
@@ -2945,6 +3124,12 @@ let pollTimer = null
 onUnmounted(() => {
   cleanupValidation()
   cleanupScanAssets()
+  cleanupBatchValidation()
+  // 清理全局批量验证轮询
+  if (globalBatchPollTimer) {
+    clearInterval(globalBatchPollTimer)
+    globalBatchPollTimer = null
+  }
   // 清理下载状态轮询
   if (downloadStatusTimer) {
     clearInterval(downloadStatusTimer)
@@ -2958,9 +3143,9 @@ function cleanupValidation() {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  if (logEventSource) {
-    logEventSource.close()
-    logEventSource = null
+  if (logPollTimer) {
+    clearInterval(logPollTimer)
+    logPollTimer = null
   }
   currentTaskId = null
 }
@@ -2973,51 +3158,44 @@ function handleValidateDialogClose() {
 
 // 开始监听日志流
 function startLogStream(taskId) {
-  // 关闭之前的连接
-  if (logEventSource) {
-    logEventSource.close()
+  if (logPollTimer) {
+    clearInterval(logPollTimer)
   }
-  
   pocValidateLogs.value = []
   currentTaskId = taskId
-  
-  // 连接SSE日志流（需要通过query参数传递token，因为EventSource不支持自定义Header）
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-  const token = localStorage.getItem('token')
-  logEventSource = new EventSource(`${baseUrl}/api/v1/worker/logs/stream?token=${token}`)
-  
-  logEventSource.onmessage = (event) => {
-    try {
-      const log = JSON.parse(event.data)
-      // 只显示包含当前taskId的日志
-      if (log.message && log.message.includes(taskId)) {
-        // 提取日志中的关键信息，去掉taskId前缀
-        let displayMsg = log.message
+  logPollLastCount = 0
+
+  // Immediately fetch once
+  fetchValidationLogs(taskId)
+
+  // Poll every 3 seconds
+  logPollTimer = setInterval(() => fetchValidationLogs(taskId), 3000)
+}
+
+async function fetchValidationLogs(taskId) {
+  try {
+    const res = await getTaskLogs({ taskId, limit: 200 })
+    if (res.code === 0 && res.list) {
+      const newLogs = res.list.slice(logPollLastCount)
+      logPollLastCount = res.list.length
+      for (const log of newLogs) {
+        let displayMsg = log.message || ''
         const taskIdPrefix = `[${taskId}] `
         if (displayMsg.startsWith(taskIdPrefix)) {
           displayMsg = displayMsg.substring(taskIdPrefix.length)
         }
-        
         pocValidateLogs.value.push({
           level: log.level || 'INFO',
           message: displayMsg,
           timestamp: log.timestamp || new Date().toLocaleTimeString()
         })
-        // 限制日志数量
-        if (pocValidateLogs.value.length > 50) {
-          pocValidateLogs.value.shift()
-        }
-        // 滚动到底部
-        scrollLogsToBottom()
       }
-    } catch (e) {
-      // 忽略解析错误
+      if (pocValidateLogs.value.length > 50) {
+        pocValidateLogs.value = pocValidateLogs.value.slice(-50)
+      }
+      scrollLogsToBottom()
     }
-  }
-  
-  logEventSource.onerror = () => {
-    // 连接错误时不做处理，轮询会继续
-  }
+  } catch (e) { /* ignore */ }
 }
 
 // 滚动日志到底部
@@ -3100,9 +3278,9 @@ function startPollingResult(taskId) {
     if (pollCount > maxPollCount) {
       clearInterval(pollTimer)
       pollTimer = null
-      if (logEventSource) {
-        logEventSource.close()
-        logEventSource = null
+      if (logPollTimer) {
+        clearInterval(logPollTimer)
+        logPollTimer = null
       }
       pocValidateLoading.value = false
       pocValidateLogs.value.push({
@@ -3128,9 +3306,9 @@ function startPollingResult(taskId) {
           // 任务完成
           clearInterval(pollTimer)
           pollTimer = null
-          if (logEventSource) {
-            logEventSource.close()
-            logEventSource = null
+          if (logPollTimer) {
+            clearInterval(logPollTimer)
+            logPollTimer = null
           }
           pocValidateLoading.value = false
 
@@ -3290,9 +3468,9 @@ function cleanupBatchValidation() {
     clearInterval(batchPollTimer)
     batchPollTimer = null
   }
-  if (batchLogEventSource) {
-    batchLogEventSource.close()
-    batchLogEventSource = null
+  if (batchLogPollTimer) {
+    clearInterval(batchLogPollTimer)
+    batchLogPollTimer = null
   }
   currentBatchId = null
   currentBatchTaskIds.value = []
@@ -3306,54 +3484,51 @@ function handleBatchValidateDialogClose() {
 
 // 开始批量验证日志流
 function startBatchLogStream(batchId) {
-  if (batchLogEventSource) {
-    batchLogEventSource.close()
+  if (batchLogPollTimer) {
+    clearInterval(batchLogPollTimer)
   }
-  
   currentBatchId = batchId
-  
-  // 连接SSE日志流（需要通过query参数传递token，因为EventSource不支持自定义Header）
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-  const token = localStorage.getItem('token')
-  batchLogEventSource = new EventSource(`${baseUrl}/api/v1/worker/logs/stream?token=${token}`)
-  
-  batchLogEventSource.onmessage = (event) => {
-    try {
-      const log = JSON.parse(event.data)
-      // 只显示当前批次任务的日志
-      if (log.message && currentBatchTaskIds.value.length > 0) {
-        // 检查日志是否属于当前批次的任务
-        const isCurrentBatchLog = currentBatchTaskIds.value.some(taskId => log.message.includes(taskId))
-        if (!isCurrentBatchLog) return
-        
-        let displayMsg = log.message
-        // 去掉taskId前缀
-        const taskIdMatch = displayMsg.match(/^\[poc-validate-\d+\]\s*/)
-        if (taskIdMatch) {
-          displayMsg = displayMsg.substring(taskIdMatch[0].length)
-        }
-        
-        templateBatchValidateLogs.value.push({
-          level: log.level || 'INFO',
-          message: displayMsg,
-          timestamp: log.timestamp || new Date().toLocaleTimeString()
-        })
-        
-        if (templateBatchValidateLogs.value.length > 100) {
-          templateBatchValidateLogs.value.shift()
-        }
-        
-        // 滚动到底部
-        setTimeout(() => {
-          if (batchLogsContainerRef.value) {
-            batchLogsContainerRef.value.scrollTop = batchLogsContainerRef.value.scrollHeight
+  batchLogLastCount = 0
+
+  // Immediately fetch once
+  fetchBatchLogs()
+
+  // Poll every 3 seconds
+  batchLogPollTimer = setInterval(fetchBatchLogs, 3000)
+}
+
+async function fetchBatchLogs() {
+  if (currentBatchTaskIds.value.length === 0) return
+  try {
+    // Fetch logs for each task in the batch
+    for (const taskId of currentBatchTaskIds.value) {
+      const res = await getTaskLogs({ taskId, limit: 500 })
+      if (res.code === 0 && res.list) {
+        const newLogs = res.list.slice(batchLogLastCount)
+        batchLogLastCount = res.list.length
+        for (const log of newLogs) {
+          let displayMsg = log.message || ''
+          const taskIdMatch = displayMsg.match(/^\[poc-validate-\d+\]\s*/)
+          if (taskIdMatch) {
+            displayMsg = displayMsg.substring(taskIdMatch[0].length)
           }
-        }, 50)
+          templateBatchValidateLogs.value.push({
+            level: log.level || 'INFO',
+            message: displayMsg,
+            timestamp: log.timestamp || new Date().toLocaleTimeString()
+          })
+          if (templateBatchValidateLogs.value.length > 100) {
+            templateBatchValidateLogs.value.shift()
+          }
+          setTimeout(() => {
+            if (batchLogsContainerRef.value) {
+              batchLogsContainerRef.value.scrollTop = batchLogsContainerRef.value.scrollHeight
+            }
+          }, 50)
+        }
       }
-    } catch (e) {
-      // 忽略解析错误
     }
-  }
+  } catch (e) { /* ignore */ }
 }
 
 // 执行默认模板批量验证
@@ -3502,6 +3677,270 @@ function startBatchPolling(batchId, taskIds) {
       }
     }
   }, 2000)
+}
+
+// ==================== 全局批量验证（Tab右侧按钮） ====================
+
+function showGlobalBatchValidateDialog() {
+  if (persistentTask.value && persistentTask.value.status === 'running') {
+    ElMessage.warning('已有POC批量验证任务正在运行，请等待完成')
+    return
+  }
+  globalBatchScope.value = 'all'
+  globalBatchValidateUrls.value = ''
+  globalBatchTargetInputType.value = 'text'
+  globalBatchValidateResults.value = []
+  globalBatchValidateProgress.total = 0
+  globalBatchValidateProgress.completed = 0
+  globalCurrentBatchId = null
+  globalBatchValidateLoading.value = false
+  globalBatchValidateDialogVisible.value = true
+}
+
+function saveGlobalBatchTaskToStorage() {
+  if (!globalCurrentBatchId) return
+  const data = {
+    batchId: globalCurrentBatchId,
+    scope: globalBatchScope.value,
+    urls: globalBatchValidateUrls.value,
+    status: globalBatchValidateLoading.value ? 'running' : 'completed',
+    total: globalBatchValidateProgress.total,
+    completed: globalBatchValidateProgress.completed,
+    matched: globalBatchValidateResults.value.filter(r => r.matched).length,
+    results: !globalBatchValidateLoading.value ? globalBatchValidateResults.value : null,
+    savedAt: Date.now()
+  }
+  localStorage.setItem(POC_GLOBAL_BATCH_STORAGE_KEY, JSON.stringify(data))
+}
+
+// 恢复常驻任务
+function restorePersistentTask() {
+  const saved = localStorage.getItem(POC_GLOBAL_BATCH_STORAGE_KEY)
+  if (!saved) return
+  try {
+    const info = JSON.parse(saved)
+    if (info.batchId && Date.now() - info.savedAt < 2 * 60 * 60 * 1000) {
+      globalCurrentBatchId = info.batchId
+      globalBatchScope.value = info.scope || 'all'
+      globalBatchValidateUrls.value = info.urls || ''
+      globalBatchValidateProgress.total = info.total || 0
+      globalBatchValidateProgress.completed = info.completed || 0
+      globalBatchValidateResults.value = info.results || []
+      globalBatchValidateLoading.value = info.status === 'running'
+
+      const urlCount = (info.urls || '').split('\n').filter(u => u.trim()).length
+
+      persistentTask.value = {
+        batchId: info.batchId,
+        scope: info.scope,
+        status: info.status || 'running',
+        total: info.total,
+        completed: info.completed,
+        matched: info.matched || 0,
+        urlCount
+      }
+
+      if (info.status === 'running') {
+        startGlobalBatchPolling(info.batchId)
+      }
+    } else {
+      localStorage.removeItem(POC_GLOBAL_BATCH_STORAGE_KEY)
+    }
+  } catch (e) {
+    localStorage.removeItem(POC_GLOBAL_BATCH_STORAGE_KEY)
+  }
+}
+
+function updatePersistentTask(status) {
+  if (!persistentTask.value) return
+  const matched = globalBatchValidateResults.value.filter(r => r.matched).length
+  persistentTask.value = {
+    ...persistentTask.value,
+    status,
+    total: globalBatchValidateProgress.total,
+    completed: globalBatchValidateProgress.completed,
+    matched
+  }
+}
+
+function dismissPersistentTask() {
+  persistentTask.value = null
+  localStorage.removeItem(POC_GLOBAL_BATCH_STORAGE_KEY)
+  if (globalBatchPollTimer) {
+    clearInterval(globalBatchPollTimer)
+    globalBatchPollTimer = null
+  }
+  globalCurrentBatchId = null
+  globalBatchValidateLoading.value = false
+}
+
+function showGlobalBatchResultDialog() {
+  globalBatchResultDialogVisible.value = true
+}
+
+function getPocScopeTagType(scope) {
+  switch (scope) {
+    case 'template': return 'primary'
+    case 'custom': return 'warning'
+    default: return 'info'
+  }
+}
+function getPocScopeLabel(scope) {
+  switch (scope) {
+    case 'template': return '默认模板'
+    case 'custom': return '自定义POC'
+    default: return '全部POC'
+  }
+}
+
+function handleGlobalBatchValidateDialogClose() {
+  // 弹窗关闭不影响后台任务
+}
+
+function handleGlobalBatchUrlFileChange(file) {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    globalBatchValidateUrls.value = e.target.result
+  }
+  reader.readAsText(file.raw)
+}
+
+function handleGlobalBatchUrlFileRemove() {
+  globalBatchValidateUrls.value = ''
+}
+
+async function handleGlobalBatchValidate() {
+  const urls = globalBatchTargetUrls.value
+  if (urls.length === 0) {
+    ElMessage.warning('请输入有效的目标URL')
+    return
+  }
+
+  globalBatchValidateLoading.value = true
+  globalBatchValidateResults.value = []
+  globalBatchValidateProgress.total = urls.length
+  globalBatchValidateProgress.completed = 0
+
+  const scope = globalBatchScope.value
+  const useTemplate = scope === 'all' || scope === 'template'
+  const useCustom = scope === 'all' || scope === 'custom'
+
+  try {
+    const res = await batchValidatePoc({
+      urls: urls,
+      useTemplate: useTemplate,
+      useCustom: useCustom,
+      timeout: 30,
+      concurrency: 10
+    })
+
+    if (res.code === 0 && res.batchId) {
+      globalCurrentBatchId = res.batchId
+
+      // 初始化常驻任务
+      persistentTask.value = {
+        batchId: res.batchId,
+        scope: scope,
+        status: 'running',
+        total: urls.length,
+        completed: 0,
+        matched: 0,
+        urlCount: urls.length
+      }
+
+      saveGlobalBatchTaskToStorage()
+      startGlobalBatchPolling(res.batchId)
+
+      // 关闭弹窗
+      globalBatchValidateDialogVisible.value = false
+      ElMessage.success('POC批量验证任务已提交，可在页面顶部查看进度')
+    } else {
+      globalBatchValidateLoading.value = false
+      ElMessage.error(res.msg || '下发失败')
+    }
+  } catch (e) {
+    globalBatchValidateLoading.value = false
+    ElMessage.error('验证请求失败: ' + e.message)
+  }
+}
+
+function startGlobalBatchPolling(batchId) {
+  globalBatchPollTimer = setInterval(async () => {
+    try {
+      const res = await getPocValidationResult({ batchId })
+      if (res.code === 0) {
+        globalBatchValidateProgress.completed = res.completedCount || 0
+        globalBatchValidateProgress.total = res.totalCount || globalBatchValidateProgress.total
+
+        if (res.results && res.results.length > 0) {
+          globalBatchValidateResults.value = res.results
+        }
+
+        if (res.status === 'SUCCESS' || res.status === 'FAILURE') {
+          clearInterval(globalBatchPollTimer)
+          globalBatchPollTimer = null
+          globalBatchValidateLoading.value = false
+          globalBatchValidateResults.value = res.results || []
+
+          const matchedCount = (res.results || []).filter(r => r.matched).length
+
+          if (res.status === 'SUCCESS') {
+            updatePersistentTask('completed')
+            saveGlobalBatchTaskToStorage()
+            if (matchedCount > 0) {
+              ElMessage.success(`批量验证完成，发现 ${matchedCount} 个漏洞`)
+            } else {
+              ElMessage.info('批量验证完成，未发现漏洞')
+            }
+          } else {
+            updatePersistentTask('failed')
+            saveGlobalBatchTaskToStorage()
+            ElMessage.error('批量验证失败')
+          }
+        } else {
+          updatePersistentTask('running')
+          saveGlobalBatchTaskToStorage()
+        }
+      }
+    } catch (e) {
+      console.error('Global batch poll error:', e)
+    }
+  }, 2000)
+}
+
+function handleGlobalExportResults(command) {
+  let dataToExport = globalBatchValidateResults.value
+  if (command === 'matched') {
+    dataToExport = dataToExport.filter(r => r.matched)
+  }
+  if (dataToExport.length === 0) {
+    ElMessage.warning('没有可导出的数据')
+    return
+  }
+
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '')
+
+  if (command === 'csv') {
+    const headers = ['POC名称', '模板ID', '级别', '结果', '匹配URL', '详情']
+    const rows = dataToExport.map(r => [
+      r.pocName || '',
+      r.templateId || r.pocId || '',
+      r.severity || '',
+      r.matched ? '匹配' : '未匹配',
+      r.matchedUrl || '',
+      (r.details || '').replace(/[\n\r]/g, ' ')
+    ])
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .join('\n')
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8' })
+    downloadFile(blob, `poc_validation_results_${timestamp}.csv`)
+  } else {
+    const jsonContent = JSON.stringify(dataToExport, null, 2)
+    const blob = new Blob([jsonContent], { type: 'application/json' })
+    downloadFile(blob, `poc_validation_results_${timestamp}.json`)
+  }
+  ElMessage.success('导出成功')
 }
 
 // 显示AI辅助对话框
@@ -4045,7 +4484,7 @@ function highlightLine(line, query) {
   if (!query) return escaped
   const q = escapeHtml(query)
   const regex = new RegExp(`(${escapeRegex(q)})`, 'gi')
-  return escaped.replace(regex, '<mark class="jsfinder-highlight">$1</mark>')
+  return DOMPurify.sanitize(escaped.replace(regex, '<mark class="jsfinder-highlight">$1</mark>'))
 }
 
 async function loadJSFinderConfigData() {
@@ -4122,6 +4561,85 @@ async function handleResetJSFinderConfig() {
 }
 
 .poc-page {
+  .persistent-task-bar {
+    margin-bottom: 12px;
+  }
+  .persistent-task-card {
+    border-radius: 8px;
+    border-left: 4px solid var(--el-color-danger);
+    :deep(.el-card__body) {
+      padding: 12px 16px;
+    }
+  }
+  .persistent-task-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .persistent-task-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+  .persistent-task-title {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .persistent-task-url {
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .persistent-task-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .persistent-task-stat {
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+    white-space: nowrap;
+    min-width: 60px;
+  }
+  .persistent-task-result {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .persistent-task-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .rotating {
+    animation: rotating 1.5s linear infinite;
+  }
+  @keyframes rotating {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .tabs-with-action {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .flex-grow-tabs {
+    flex: 1;
+    min-width: 0;
+  }
+  .tabs-action-buttons {
+    padding-top: 4px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 8px;
+  }
+
   .card-header {
     display: flex;
     justify-content: space-between;

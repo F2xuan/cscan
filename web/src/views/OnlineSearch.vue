@@ -1,5 +1,49 @@
 <template>
   <div class="online-search-page">
+    <!-- 常驻导入任务进度条 -->
+    <div v-if="persistentTask" class="persistent-task-bar">
+      <el-card shadow="hover" class="persistent-task-card">
+        <div class="persistent-task-content">
+          <div class="persistent-task-info">
+            <el-icon :size="18" :class="persistentTask.status === 'running' ? 'rotating' : ''">
+              <Loading v-if="persistentTask.status === 'running'" />
+              <CircleCheck v-else-if="persistentTask.status === 'completed'" color="#67c23a" />
+              <CircleClose v-else-if="persistentTask.status === 'failed'" color="#f56c6c" />
+            </el-icon>
+            <span class="persistent-task-title">
+              {{ persistentTask.status === 'running' ? '资产导入进行中' : persistentTask.status === 'completed' ? '资产导入已完成' : '资产导入失败' }}
+            </span>
+            <el-tag size="small" :type="getPlatformTagType(persistentTask.platform)">
+              {{ getPlatformLabel(persistentTask.platform) }}
+            </el-tag>
+            <el-tag size="small" type="info">
+              {{ persistentTask.importType === 'all' ? '导入全部' : '导入当前页' }}
+            </el-tag>
+          </div>
+          <div v-if="persistentTask.status === 'running'" class="persistent-task-progress">
+            <el-progress
+              :percentage="persistentTask.total > 0 ? Math.min(99, Math.floor(persistentTask.completed / persistentTask.total * 100)) : 0"
+              :stroke-width="8"
+              style="width: 280px;"
+            />
+            <span class="persistent-task-stat">{{ persistentTask.completed }}/{{ persistentTask.total || '?' }}</span>
+          </div>
+          <div v-else-if="persistentTask.status === 'completed'" class="persistent-task-result">
+            <el-tag type="success" size="small">成功导入 {{ persistentTask.imported }} 条</el-tag>
+            <el-tag v-if="persistentTask.skipped > 0" type="warning" size="small" style="margin-left: 4px;">跳过 {{ persistentTask.skipped }} 条</el-tag>
+          </div>
+          <div class="persistent-task-actions">
+            <el-button v-if="persistentTask.status === 'completed' || persistentTask.status === 'failed'" type="primary" size="small" @click="showImportResultDialog">
+              查看结果
+            </el-button>
+            <el-button type="info" size="small" text @click="dismissPersistentTask">
+              <el-icon><Close /></el-icon>
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
     <!-- 搜索区域 -->
     <el-card class="search-card">
       <el-form :model="store.searchForm" inline>
@@ -28,8 +72,9 @@
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="handleSearch">{{ $t('onlineSearch.search') }}</el-button>
-          <el-button @click="handleImport" :disabled="!tableData.length">{{ $t('onlineSearch.importCurrent') }}</el-button>
-          <el-button type="success" @click="handleImportAll" :disabled="!total" :loading="importAllLoading">{{ $t('onlineSearch.importAll') }}</el-button>
+          <el-button @click="handleImport" :disabled="!tableData.length || importTaskRunning" :loading="importLoading">{{ $t('onlineSearch.importCurrent') }}</el-button>
+          <el-button type="success" @click="handleImportAll" :disabled="!total || importTaskRunning" :loading="importAllLoading">{{ $t('onlineSearch.importAll') }}</el-button>
+          <el-button type="warning" :icon="Timer" @click="openCronDialog" :disabled="!total">{{ $t('onlineSearch.cronDialog.createTaskBtn') }}</el-button>
           <el-button @click="showHelpDialog">{{ $t('onlineSearch.syntaxHelp') }}</el-button>
         </el-form-item>
       </el-form>
@@ -120,23 +165,371 @@
         </el-tab-pane>
       </el-tabs>
     </el-dialog>
+
+    <!-- 导入结果对话框 -->
+    <el-dialog v-model="importResultDialogVisible" title="导入结果" width="600px">
+      <div v-if="importResult" class="import-result">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="任务状态">
+            <el-tag :type="importResult.status === 'completed' ? 'success' : importResult.status === 'failed' ? 'danger' : 'info'">
+              {{ importResult.status === 'completed' ? '已完成' : importResult.status === 'failed' ? '失败' : importResult.status }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="数据平台">
+            {{ getPlatformLabel(importResult.platform) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="导入类型">
+            {{ importResult.importType === 'all' ? '导入全部' : '导入当前页' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="开始时间">
+            {{ importResult.startTime }}
+          </el-descriptions-item>
+          <el-descriptions-item label="结束时间">
+            {{ importResult.endTime || '-' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="耗时">
+            {{ formatDuration(importResult.startTime, importResult.endTime) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="成功导入">
+            <span class="result-success">{{ importResult.imported }} 条</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="跳过(空主机/重复)">
+            <span class="result-warning">{{ importResult.skipped }} 条</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="importResult.importType === 'all'" label="API获取总数">
+            {{ importResult.totalFetched }} 条
+          </el-descriptions-item>
+          <el-descriptions-item v-if="importResult.importType === 'all'" label="遍历页数">
+            {{ importResult.totalPages }} 页
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-alert v-if="importResult.errorMsg" type="error" :title="importResult.errorMsg" show-icon style="margin-top: 16px;" />
+      </div>
+      <template #footer>
+        <el-button @click="importResultDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 创建定时任务对话框 -->
+    <el-dialog v-model="cronDialogVisible" :title="$t('onlineSearch.cronDialog.title')" width="560px" @close="resetCronForm">
+      <el-form ref="cronFormRef" :model="cronForm" :rules="cronRules" label-width="110px">
+        <el-form-item :label="$t('onlineSearch.cronDialog.taskName')" prop="name">
+          <el-input v-model="cronForm.name" :placeholder="$t('onlineSearch.cronDialog.enterTaskName')" />
+        </el-form-item>
+        <el-form-item :label="$t('onlineSearch.cronDialog.dataSource')">
+          <el-input :value="platformLabel" disabled />
+        </el-form-item>
+        <el-form-item :label="$t('onlineSearch.cronDialog.queryStatement')">
+          <el-input v-model="cronForm.query" type="textarea" :rows="2" disabled />
+        </el-form-item>
+        <el-form-item :label="$t('onlineSearch.cronDialog.maxResults')" prop="maxResults">
+          <el-input-number v-model="cronForm.maxResults" :min="1" :max="10000" :step="100" />
+        </el-form-item>
+        <el-form-item :label="$t('onlineSearch.cronDialog.scheduleType')" prop="scheduleType">
+          <el-radio-group v-model="cronForm.scheduleType">
+            <el-radio value="cycle">{{ $t('onlineSearch.cronDialog.cycleExec') }}</el-radio>
+            <el-radio value="once">{{ $t('onlineSearch.cronDialog.onceExec') }}</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="cronForm.scheduleType === 'cycle'" :label="$t('onlineSearch.cronDialog.cronExpression')" prop="cronSpec">
+          <el-input v-model="cronForm.cronSpec" :placeholder="$t('onlineSearch.cronDialog.cronPlaceholder')" />
+          <div class="cron-presets">
+            <el-tag
+              v-for="preset in cronPresets"
+              :key="preset.value"
+              class="preset-tag"
+              @click="cronForm.cronSpec = preset.value"
+            >
+              {{ preset.label }}
+            </el-tag>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="cronForm.scheduleType === 'once'" :label="$t('onlineSearch.cronDialog.execTime')" prop="scheduleTime">
+          <el-date-picker
+            v-model="cronForm.scheduleTime"
+            type="datetime"
+            :placeholder="$t('onlineSearch.cronDialog.selectExecTime')"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-alert type="info" :closable="false" show-icon :title="$t('onlineSearch.cronDialog.infoTip')" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cronDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="cronSubmitting" @click="handleCronSubmit">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Timer, Loading, CircleCheck, CircleClose, Close } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { saveSpaceEngineCronTask } from '@/api/crontask'
 import { useOnlineSearchStore } from '@/stores/onlineSearch'
 
 const { t } = useI18n()
 const store = useOnlineSearchStore()
 
 const loading = ref(false)
+const importLoading = ref(false)
 const importAllLoading = ref(false)
 const helpDialogVisible = ref(false)
 const helpTab = ref('fofa')
+
+// ===== 导入任务异步进度 =====
+const importTaskRunning = computed(() => {
+  return persistentTask.value && persistentTask.value.status === 'running'
+})
+const persistentTask = ref(null)
+const importResultDialogVisible = ref(false)
+const importResult = ref(null)
+let importPollTimer = null
+const ONLINE_IMPORT_STORAGE_KEY = 'cscan_online_import_task'
+
+const platformMap = { fofa: 'Fofa', hunter: 'Hunter', quake: 'Quake' }
+const platformTagTypeMap = { fofa: '', hunter: 'success', quake: 'warning' }
+
+function getPlatformLabel(platform) {
+  return platformMap[platform] || platform
+}
+function getPlatformTagType(platform) {
+  return platformTagTypeMap[platform] || ''
+}
+
+function formatDuration(startStr, endStr) {
+  if (!startStr || !endStr) return '-'
+  // 支持带毫秒的时间格式 "2006-01-02 15:04:05.000" 和不带毫秒的格式
+  const parseTime = (s) => {
+    const normalized = s.replace(/-/g, '/')
+    return new Date(normalized).getTime()
+  }
+  const start = parseTime(startStr)
+  const end = parseTime(endStr)
+  const diffMs = end - start
+  if (diffMs < 0) return '-'
+  if (diffMs < 1000) return diffMs + ' 毫秒'
+  const totalSec = Math.floor(diffMs / 1000)
+  const ms = diffMs % 1000
+  if (totalSec < 60) {
+    return ms > 0 ? totalSec + ' 秒 ' + ms + ' 毫秒' : totalSec + ' 秒'
+  }
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  if (min < 60) return min + ' 分 ' + sec + ' 秒'
+  const hour = Math.floor(min / 60)
+  const remMin = min % 60
+  return hour + ' 时 ' + remMin + ' 分'
+}
+
+function saveImportTaskToStorage() {
+  if (persistentTask.value) {
+    localStorage.setItem(ONLINE_IMPORT_STORAGE_KEY, JSON.stringify(persistentTask.value))
+  } else {
+    localStorage.removeItem(ONLINE_IMPORT_STORAGE_KEY)
+  }
+}
+
+function loadImportTaskFromStorage() {
+  try {
+    const saved = localStorage.getItem(ONLINE_IMPORT_STORAGE_KEY)
+    if (saved) {
+      const task = JSON.parse(saved)
+      if (task && task.taskId) {
+        persistentTask.value = task
+        startImportPolling()
+      }
+    }
+  } catch (e) {
+    console.error('Load import task from storage failed:', e)
+  }
+}
+
+function dismissPersistentTask() {
+  persistentTask.value = null
+  if (importPollTimer) {
+    clearInterval(importPollTimer)
+    importPollTimer = null
+  }
+  localStorage.removeItem(ONLINE_IMPORT_STORAGE_KEY)
+}
+
+function startImportPolling() {
+  if (importPollTimer) clearInterval(importPollTimer)
+  importPollTimer = setInterval(async () => {
+    if (!persistentTask.value || !persistentTask.value.taskId) {
+      clearInterval(importPollTimer)
+      importPollTimer = null
+      return
+    }
+    try {
+      const res = await request.post('/onlineapi/import/progress', { taskId: persistentTask.value.taskId })
+      if (res.code === 0) {
+        persistentTask.value = {
+          ...persistentTask.value,
+          status: res.status,
+          total: res.total,
+          completed: res.completed,
+          imported: res.imported,
+          skipped: res.skipped,
+          platform: res.platform,
+          importType: res.importType,
+        }
+
+        if (res.status === 'running') {
+          saveImportTaskToStorage()
+        } else if (res.status === 'completed') {
+          clearInterval(importPollTimer)
+          importPollTimer = null
+          saveImportTaskToStorage()
+          ElMessage.success(`资产导入完成，成功导入 ${res.imported} 条`)
+        } else if (res.status === 'failed') {
+          clearInterval(importPollTimer)
+          importPollTimer = null
+          saveImportTaskToStorage()
+          ElMessage.error('资产导入失败: ' + (res.errorMsg || '未知错误'))
+        }
+      } else if (res.code === 404) {
+        clearInterval(importPollTimer)
+        importPollTimer = null
+        persistentTask.value = null
+        localStorage.removeItem(ONLINE_IMPORT_STORAGE_KEY)
+      }
+    } catch (e) {
+      console.error('Poll import progress error:', e)
+    }
+  }, 1500)
+}
+
+async function showImportResultDialog() {
+  if (!persistentTask.value || !persistentTask.value.taskId) return
+  try {
+    const res = await request.post('/onlineapi/import/result', { taskId: persistentTask.value.taskId })
+    if (res.code === 0) {
+      importResult.value = res
+      importResultDialogVisible.value = true
+    } else {
+      ElMessage.error(res.msg || '获取结果失败')
+    }
+  } catch (e) {
+    ElMessage.error('获取结果失败: ' + e.message)
+  }
+}
+
+// ===== 定时任务对话框 =====
+const cronDialogVisible = ref(false)
+const cronSubmitting = ref(false)
+const cronFormRef = ref(null)
+
+const platformLabel = computed(() => platformMap[store.searchForm.source] || store.searchForm.source)
+
+const cronPresets = computed(() => [
+  { label: t('onlineSearch.cronDialog.everyDay3am'), value: '0 0 3 * * ?' },
+  { label: t('onlineSearch.cronDialog.everyMonday3am'), value: '0 0 3 ? * MON' },
+  { label: t('onlineSearch.cronDialog.everyMonth1st3am'), value: '0 0 3 1 * ?' },
+  { label: t('onlineSearch.cronDialog.everyHour'), value: '0 0 * * * ?' },
+])
+
+function buildDefaultTaskName() {
+  const platform = platformLabel.value
+  const q = (store.searchForm.query || '').replace(/\s+/g, ' ').trim()
+  const truncated = q.length > 20 ? q.slice(0, 20) + '...' : q
+  return `${t('onlineSearch.cronDialog.namePrefix')}-${platform}-${truncated || t('onlineSearch.cronDialog.defaultName')}`
+}
+
+const cronForm = reactive({
+  name: '',
+  query: '',
+  maxResults: 100,
+  scheduleType: 'cycle',
+  cronSpec: '0 0 3 * * ?',
+  scheduleTime: null,
+})
+
+const cronRules = {
+  name: [{ required: true, message: t('onlineSearch.cronDialog.enterTaskName'), trigger: 'blur' }],
+  maxResults: [{ required: true, message: t('onlineSearch.cronDialog.enterMaxResults'), trigger: 'blur' }],
+  scheduleType: [{ required: true, message: t('onlineSearch.cronDialog.selectScheduleType'), trigger: 'change' }],
+  cronSpec: [
+    {
+      required: true,
+      validator: (_rule, value, callback) => {
+        if (cronForm.scheduleType !== 'cycle') return callback()
+        if (!value) return callback(new Error(t('onlineSearch.cronDialog.enterCronSpec')))
+        const parts = value.trim().split(/\s+/)
+        if (parts.length < 6 || parts.length > 7) {
+          return callback(new Error(t('onlineSearch.cronDialog.cronFormatError')))
+        }
+        callback()
+      },
+      trigger: 'blur',
+    },
+  ],
+  scheduleTime: [
+    {
+      required: true,
+      validator: (_rule, value, callback) => {
+        if (cronForm.scheduleType !== 'once') return callback()
+        if (!value) return callback(new Error(t('onlineSearch.cronDialog.selectExecTimeFirst')))
+        callback()
+      },
+      trigger: 'change',
+    },
+  ],
+}
+
+function openCronDialog() {
+  if (!total.value) {
+    ElMessage.warning(t('onlineSearch.cronDialog.searchFirst'))
+    return
+  }
+  cronForm.name = buildDefaultTaskName()
+  cronForm.query = store.searchForm.query
+  cronForm.maxResults = 100
+  cronForm.scheduleType = 'cycle'
+  cronForm.cronSpec = '0 0 3 * * ?'
+  cronForm.scheduleTime = null
+  cronDialogVisible.value = true
+}
+
+function resetCronForm() {
+  cronFormRef.value?.resetFields()
+}
+
+async function handleCronSubmit() {
+  if (!cronFormRef.value) return
+  await cronFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    cronSubmitting.value = true
+    try {
+      const payload = {
+        name: cronForm.name,
+        platform: store.searchForm.source,
+        query: store.searchForm.query,
+        maxResults: cronForm.maxResults,
+        scheduleType: cronForm.scheduleType,
+        cronSpec: cronForm.scheduleType === 'cycle' ? cronForm.cronSpec : undefined,
+        scheduleTime: cronForm.scheduleType === 'once' ? cronForm.scheduleTime : undefined,
+      }
+      const res = await saveSpaceEngineCronTask(payload)
+      if (res.code === 0) {
+        ElMessage.success(t('onlineSearch.cronDialog.createSuccess'))
+        cronDialogVisible.value = false
+      } else {
+        ElMessage.error(res.msg || t('onlineSearch.cronDialog.createFailed'))
+      }
+    } finally {
+      cronSubmitting.value = false
+    }
+  })
+}
 
 // 使用 store 中的数据
 const tableData = computed(() => store.tableData)
@@ -185,73 +578,163 @@ function handleSourceChange() {
   }
 }
 
-async function handleImport() {
-  await ElMessageBox.confirm(t('onlineSearch.confirmImportCurrent', { count: tableData.value.length }), t('common.tip'))
-  
-  const res = await request.post('/onlineapi/import', { 
-    assets: tableData.value,
-    platform: store.searchForm.source 
-  })
-  
-  if (res.code === 0) {
-    ElMessage.success(res.msg || t('onlineSearch.importSuccess'))
-  } else {
-    ElMessage.error(res.msg || t('onlineSearch.importFailed'))
-  }
+function handleImport() {
+  ElMessageBox.confirm(t('onlineSearch.confirmImportCurrent', { count: tableData.value.length }), t('common.tip'))
+    .then(async () => {
+      importLoading.value = true
+      try {
+        const res = await request.post('/onlineapi/import', {
+          assets: tableData.value,
+          platform: store.searchForm.source
+        })
+        if (res.code === 0 && res.taskId) {
+          // 初始化常驻任务
+          persistentTask.value = {
+            taskId: res.taskId,
+            status: 'running',
+            total: tableData.value.length,
+            completed: 0,
+            imported: 0,
+            skipped: 0,
+            platform: store.searchForm.source,
+            importType: 'current',
+          }
+          saveImportTaskToStorage()
+          startImportPolling()
+          ElMessage.success(res.msg || '导入任务已提交')
+        } else {
+          ElMessage.error(res.msg || t('onlineSearch.importFailed'))
+        }
+      } finally {
+        importLoading.value = false
+      }
+    })
+    .catch(() => {})
 }
 
-async function handleImportAll() {
+function handleImportAll() {
   if (!store.searchForm.query) {
     ElMessage.warning(t('onlineSearch.enterQueryFirst'))
     return
   }
 
-  // 计算预计导入数量
   const estimatedCount = total.value
-  
-  await ElMessageBox.confirm(
+
+  ElMessageBox.confirm(
     t('onlineSearch.confirmImportAll', { count: estimatedCount }),
     t('onlineSearch.importAllTitle'),
     { type: 'warning' }
   )
-
-  importAllLoading.value = true
-  try {
-    // Hunter 和 Quake 单次最多 100，Fofa 可以 500
-    const pageSize = store.searchForm.source === 'fofa' ? store.searchForm.size : Math.min(store.searchForm.size, 100)
-    
-    const res = await request.post('/onlineapi/importAll', {
-      platform: store.searchForm.source,
-      query: store.searchForm.query,
-      pageSize: pageSize,
-      maxPages: 0  // 0 表示不限制页数
-    })
-
-    if (res.code === 0) {
-      // 利用结构化字段构造清晰的提示消息
-      const fetched = res.totalFetched || 0
-      const imported = res.totalImport || 0
-      const duplicates = fetched - imported
-      let msg = t('onlineSearch.importSuccess') + `：${imported} ` + t('onlineSearch.items')
-      if (duplicates > 0) {
-        msg += t('onlineSearch.importDedupInfo', { fetched, duplicates })
+    .then(async () => {
+      importAllLoading.value = true
+      try {
+        const res = await request.post('/onlineapi/importAll', {
+          platform: store.searchForm.source,
+          query: store.searchForm.query,
+          pageSize: store.searchForm.source === 'fofa' ? 500 : 100,
+          maxPages: 0
+        })
+        if (res.code === 0 && res.taskId) {
+          // 初始化常驻任务
+          persistentTask.value = {
+            taskId: res.taskId,
+            status: 'running',
+            total: estimatedCount,
+            completed: 0,
+            imported: 0,
+            skipped: 0,
+            platform: store.searchForm.source,
+            importType: 'all',
+          }
+          saveImportTaskToStorage()
+          startImportPolling()
+          ElMessage.success(res.msg || '导入任务已提交')
+        } else {
+          ElMessage.error(res.msg || t('onlineSearch.importFailed'))
+        }
+      } finally {
+        importAllLoading.value = false
       }
-      ElMessage.success(msg)
-    } else {
-      ElMessage.error(res.msg || t('onlineSearch.importFailed'))
-    }
-  } finally {
-    importAllLoading.value = false
-  }
+    })
+    .catch(() => {})
 }
 
 function showHelpDialog() {
   helpDialogVisible.value = true
 }
+
+onMounted(() => {
+  loadImportTaskFromStorage()
+})
+
+onBeforeUnmount(() => {
+  if (importPollTimer) {
+    clearInterval(importPollTimer)
+    importPollTimer = null
+  }
+})
 </script>
 
 <style scoped>
 .online-search-page {
+  .persistent-task-bar {
+    margin-bottom: 12px;
+  }
+  .persistent-task-card {
+    border-radius: 8px;
+    border-left: 4px solid var(--el-color-primary);
+    :deep(.el-card__body) {
+      padding: 12px 16px;
+    }
+  }
+  .persistent-task-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .persistent-task-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+  .persistent-task-title {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .persistent-task-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .persistent-task-stat {
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+    white-space: nowrap;
+    min-width: 60px;
+  }
+  .persistent-task-result {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .persistent-task-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .rotating {
+    animation: rotating 1.5s linear infinite;
+  }
+  @keyframes rotating {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
   .search-card {
     margin-bottom: 20px;
 
@@ -310,6 +793,31 @@ function showHelpDialog() {
       }
     }
   }
+
+  .cron-presets {
+    margin-top: 8px;
+
+    .preset-tag {
+      cursor: pointer;
+      margin-right: 8px;
+      margin-bottom: 4px;
+
+      &:hover {
+        background: var(--el-color-primary);
+        color: var(--el-color-white);
+      }
+    }
+  }
+
+  .import-result {
+    .result-success {
+      color: var(--el-color-success);
+      font-weight: 600;
+    }
+    .result-warning {
+      color: var(--el-color-warning);
+      font-weight: 600;
+    }
+  }
 }
 </style>
-

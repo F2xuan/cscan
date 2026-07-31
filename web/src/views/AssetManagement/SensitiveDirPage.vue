@@ -6,22 +6,30 @@
         <p class="description">{{ $t('asset.sensitiveDir.description') }}</p>
       </div>
     </div>
-    <VulView :extra-params="filterParams" />
+    <DirScanView :extra-params="filterParams" />
   </div>
 </template>
 
 <script setup>
-import VulView from '@/components/asset/VulView.vue'
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import DirScanView from '@/components/asset/DirScanView.vue'
 
-// Phase 5：与 assettarget_risk_keywords.go sensitiveDirKeywords 对齐。
-const filterParams = {
-  isRisk: true,
-  riskSource: 'auto:info-leak',
-  keywordAny: [
-    '敏感目录', '敏感文件', 'dir-listing', 'directory listing', 'dir listing',
-    '_backup', 'backup', '.git', '.svn', '.env', 'dump', 'exposed'
-  ]
-}
+const route = useRoute()
+
+// 与后端 assettarget_risk_keywords.go sensitivePathKeywords 对齐
+const sensitivePathRegex = '(\\.git|\\.svn|\\.env|backup|dump|config|admin|phpinfo|test|debug|\\.bak)'
+
+const filterParams = computed(() => {
+  const params = { path: sensitivePathRegex }
+  // 从资产概览跳转时携带 rootDomain 或 ip 参数
+  if (route.query.rootDomain) {
+    params.authority = route.query.rootDomain
+  } else if (route.query.ip) {
+    params.authority = route.query.ip
+  }
+  return params
+})
 </script>
 
 <style scoped>

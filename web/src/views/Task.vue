@@ -1,7 +1,7 @@
 <template>
   <div class="task-page">
     <!-- 操作栏 -->
-    <el-card class="action-card">
+    <el-card class="action-card" :body-style="{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }">
       <el-button type="primary" @click="goToCreateTask">
         <el-icon><Plus /></el-icon>{{ $t('task.newTask') }}
       </el-button>
@@ -10,11 +10,14 @@
       </el-button>
       <el-switch
         v-model="autoRefresh"
-        style="margin-left: 20px"
+        style="margin-left: 10px"
         :active-text="$t('task.autoRefresh')"
         inactive-text=""
         @change="handleAutoRefreshChange"
       />
+      <el-button :loading="loading" style="margin-left: auto" @click="loadData">
+        <el-icon><Refresh /></el-icon>{{ $t('common.refresh') }}
+      </el-button>
     </el-card>
 
     <!-- 数据表格 -->
@@ -53,7 +56,14 @@
         <template #default>
           <el-table :data="tableData" v-loading="loading && tableData.length > 0" stripe max-height="500" @selection-change="handleSelectionChange">
             <el-table-column type="selection" width="50" />
-            <el-table-column prop="name" :label="$t('task.taskName')" min-width="150" />
+            <el-table-column prop="name" :label="$t('task.taskName')" min-width="150">
+              <template #default="{ row }">
+                <span>{{ row.name }}</span>
+                <el-tag v-if="row.isCron && row.cronRule" type="info" size="small" effect="plain" style="margin-left: 6px;">
+                  {{ getCronSourceLabel(row) }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="target" :label="$t('task.scanTarget')" min-width="150" show-overflow-tooltip />
             <el-table-column prop="status" :label="$t('task.status')" width="150">
               <template #default="{ row }">
@@ -620,19 +630,19 @@
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.statusCodeFilter') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan?.statusCodes || '200,301,302,403' }}</span>
+                <span class="config-value">{{ (parsedConfig.dirscan?.statusCodes && parsedConfig.dirscan.statusCodes.length) ? parsedConfig.dirscan.statusCodes.join(',') : '200,204,301,302,307,401,403,405,500' }}</span>
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.useDict') }}</span>
                 <span class="config-value">{{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' ' + $t('task.dicts')) : $t('task.defaultDict') }}</span>
               </div>
-              <div v-if="parsedConfig.dirscan?.extensions" class="config-item">
+              <div v-if="parsedConfig.dirscan?.extensions && parsedConfig.dirscan.extensions.length" class="config-item">
                 <span class="config-label">{{ $t('task.fileExtensions') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan.extensions }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan.extensions.join(', ') }}</span>
               </div>
-              <div v-if="parsedConfig.dirscan?.recursiveDepth" class="config-item">
-                <span class="config-label">{{ $t('task.recursiveDepth') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan.recursiveDepth }}</span>
+              <div v-if="parsedConfig.dirscan?.recursionDepth" class="config-item">
+                <span class="config-label">{{ $t('task.recursionDepth') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan.recursionDepth }}</span>
               </div>
             </div>
           </el-collapse-item>
@@ -960,7 +970,6 @@
           <el-option label="WARN" value="WARN" />
           <el-option label="ERROR" value="ERROR" />
         </el-select>
-        <el-switch v-model="logAutoRefresh" size="small" :active-text="$t('task.autoRefreshLogs')" style="margin-left: 15px" @change="handleLogAutoRefreshChange" />
         <span class="log-stats">{{ $t('task.totalLogs', { count: filteredLogs.length }) }}</span>
       </div>
       <div class="log-container" ref="logContainerRef">
@@ -982,10 +991,10 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Search, Clock, VideoPlay, CircleCheck, Document, Setting, Connection, Monitor, Stamp, WarnTriangleFilled, FolderOpened, Grid, Aim, Operation, Key } from '@element-plus/icons-vue'
+import { Plus, Delete, Search, Clock, VideoPlay, CircleCheck, Document, Setting, Connection, Monitor, Stamp, WarnTriangleFilled, FolderOpened, Grid, Aim, Operation, Key, Refresh } from '@element-plus/icons-vue'
 import ScanWorkflow from '@/components/ScanWorkflow.vue'
 import { getTaskList, createTask, deleteTask, batchDeleteTask, retryTask, startTask, pauseTask, resumeTask, stopTask, updateTask, getTaskLogs, getWorkerList, saveScanConfig, getScanConfig } from '@/api/task'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -993,6 +1002,7 @@ import { validateTargets, formatValidationErrors } from '@/utils/target'
 import request from '@/api/request'
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
 const loading = ref(false)
@@ -1016,14 +1026,10 @@ const isEdit = ref(false)
 const taskLogs = ref([])
 const currentLogTaskId = ref('')
 const currentLogTask = ref(null)
-const logIdSet = new Set()
 const logWorkerFilter = ref('')
 const logLevelFilter = ref('')
 const logSearchKeyword = ref('')
-const logAutoRefresh = ref(true)
 let refreshTimer = null
-let logEventSource = null
-let logPollingTimer = null
 
 const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
 
@@ -1157,11 +1163,17 @@ onMounted(() => {
   loadWorkers()
   if (autoRefresh.value) startAutoRefresh()
   window.addEventListener('workspace-changed', () => { pagination.page = 1; loadData() })
+  // 从新建任务页跳转回来时，Worker 拉取任务需要短暂时间，
+  // 立即刷新只能看到 PENDING（等待执行）状态，延迟再刷新一次让状态更新为执行中
+  if (route.query.created) {
+    setTimeout(() => loadData(), 2000)
+    // 清除 query 参数，避免刷新页面时重复触发延迟刷新
+    router.replace({ path: route.path, query: {} })
+  }
 })
 
 onUnmounted(() => {
   stopAutoRefresh()
-  if (logEventSource) { logEventSource.close(); logEventSource = null }
 })
 
 function handleAutoRefreshChange(val) { val ? startAutoRefresh() : stopAutoRefresh() }
@@ -1231,6 +1243,15 @@ function getStatusType(status, row) {
   }
   
   return 'info'
+}
+
+// 获取定时任务来源标签
+function getCronSourceLabel(row) {
+  if (!row.isCron || !row.cronRule) return ''
+  // 根据任务名称或配置判断来源
+  if (row.name && row.name.includes('空间引擎')) return '空间引擎'
+  if (row.name && row.name.includes('(定时)')) return '定时扫描'
+  return '定时任务'
 }
 
 // 获取进度环颜色
@@ -1489,6 +1510,10 @@ async function handleSubmit() {
       ElMessage.success(isEdit.value ? t('task.taskUpdateSuccess') : t('task.taskCreateSuccess'))
       dialogVisible.value = false
       loadData()
+      // 新建任务后延迟再刷新一次，等待 Worker 拉取任务后状态从“等待执行”更新为“执行中”
+      if (!isEdit.value) {
+        setTimeout(() => loadData(), 2000)
+      }
     } else { ElMessage.error(res.msg) }
   } finally { submitting.value = false }
 }
@@ -1560,10 +1585,9 @@ async function showLogs(row) {
   currentLogTaskId.value = row.taskId
   currentLogTask.value = { ...row }
   taskLogs.value = []
-  logIdSet.clear()
   logDialogVisible.value = true
+  // 打开日志对话框时自动刷新一次（纯手动刷新模式，不再自动轮询/SSE）
   await refreshLogs()
-  if (logAutoRefresh.value) { connectLogStream(); startLogPolling() }
 }
 
 async function refreshLogs() {
@@ -1573,60 +1597,25 @@ async function refreshLogs() {
     if (task) currentLogTask.value = { ...task }
     const res = await getTaskLogs({ taskId: currentLogTaskId.value, limit: 500 })
     if (res.code === 0) {
-      for (const log of (res.list || [])) {
-        const logId = (log.timestamp || '') + (log.message || '')
-        if (!logIdSet.has(logId)) { logIdSet.add(logId); taskLogs.value.push(parseLogMessage(log)) }
-      }
+      // 每次刷新都是完整请求，直接替换日志列表（不再使用 logIdSet 去重）
+      taskLogs.value = (res.list || []).map(log => parseLogMessage(log))
       taskLogs.value.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
       scrollToBottom()
     }
   } catch (err) { console.error('Failed to load task logs:', err) }
 }
 
-function startLogPolling() {
-  if (logPollingTimer || !logAutoRefresh.value) return
-  logPollingTimer = setInterval(async () => {
-    if (logDialogVisible.value && currentLogTaskId.value && logAutoRefresh.value) { await loadData(); await refreshLogs() }
-  }, 2000)
-}
-
-function handleLogAutoRefreshChange(val) {
-  if (val) { startLogPolling(); connectLogStream() }
-  else { stopLogPolling(); if (logEventSource) { logEventSource.close(); logEventSource = null } }
-}
-
 function scrollToBottom() {
   setTimeout(() => { if (logContainerRef.value) logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight }, 100)
 }
-
-function connectLogStream() {
-  if (logEventSource) { logEventSource.close(); logEventSource = null }
-  if (!currentLogTaskId.value) return
-  const token = localStorage.getItem('token')
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-  logEventSource = new EventSource(`${baseUrl}/api/v1/task/logs/stream?taskId=${currentLogTaskId.value}&token=${token}`)
-  logEventSource.onmessage = (event) => {
-    try {
-      const log = JSON.parse(event.data)
-      const logId = (log.timestamp || '') + (log.message || '')
-      if (!logIdSet.has(logId)) { logIdSet.add(logId); taskLogs.value.push(parseLogMessage(log)); scrollToBottom() }
-    } catch (err) { console.error('Failed to parse log:', err) }
-  }
-  logEventSource.onerror = () => {}
-}
-
-function stopLogPolling() { if (logPollingTimer) { clearInterval(logPollingTimer); logPollingTimer = null } }
 
 function closeLogDialog() {
   logDialogVisible.value = false
   currentLogTaskId.value = ''
   currentLogTask.value = null
   taskLogs.value = []
-  logIdSet.clear()
   logWorkerFilter.value = ''
   logLevelFilter.value = ''
-  if (logEventSource) { logEventSource.close(); logEventSource = null }
-  stopLogPolling()
 }
 </script>
 
@@ -1678,6 +1667,12 @@ function closeLogDialog() {
   display: flex;
   align-items: center;
   .log-stats { margin-left: auto; color: var(--el-text-color-secondary); font-size: 12px; }
+}
+
+.log-refresh-hint {
+  margin-right: auto;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .log-container {

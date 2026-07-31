@@ -162,7 +162,7 @@
               size="small"
               type="warning"
               class="bubble clickable"
-              @click="goRisk(row, 'vuln')"
+              @click="goRisk(row, 'sensitive-info')"
             >{{ t('asset.assetGroupsTab.riskSensitiveInfo') }} {{ row.riskSensitiveInfo }}</el-tag>
             <el-tag
               v-if="row.riskSensitiveDir"

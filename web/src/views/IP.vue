@@ -1,31 +1,51 @@
 ﻿<template>
   <div class="ip-page">
-    <!-- 搜索区域 -->
-    <el-card class="search-card">
-      <el-form :inline="true" class="search-form">
-        <el-form-item label="IP">
-          <el-input v-model="searchForm.ip" :placeholder="$t('ip.ipAddress')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('ip.port')">
-          <el-input v-model="searchForm.port" :placeholder="$t('ip.port')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('ip.service')">
-          <el-input v-model="searchForm.service" :placeholder="$t('ip.serviceType')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('ip.location')">
-          <el-input v-model="searchForm.location" :placeholder="$t('ip.location')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('ip.organization')">
-          <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable style="width: 140px">
-            <el-option :label="$t('common.allOrganizations')" value="" />
-            <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
-          <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
-        </el-form-item>
-      </el-form>
+    <!-- 工具栏 -->
+    <el-card class="toolbar-card">
+      <div class="toolbar">
+        <el-input v-model="searchForm.ip" :placeholder="$t('ip.ipAddress')" clearable class="search-input" @keyup.enter="handleSearch">
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <div class="header-actions">
+          <el-button @click="showFilters = !showFilters">
+            <el-icon><Filter /></el-icon>
+            {{ $t('asset.assetInventoryTab.filters') }}
+          </el-button>
+        </div>
+        <div class="toolbar-right">
+          <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') }}</el-button>
+        </div>
+      </div>
+
+      <!-- 过滤器面板 -->
+      <div v-if="showFilters" class="filters-panel">
+        <el-form :inline="true" class="search-form">
+          <el-form-item label="IP">
+            <el-input v-model="searchForm.ip" :placeholder="$t('ip.ipAddress')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('ip.port')">
+            <el-input v-model="searchForm.port" :placeholder="$t('ip.port')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('ip.service')">
+            <el-input v-model="searchForm.service" :placeholder="$t('ip.serviceType')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('ip.location')">
+            <el-input v-model="searchForm.location" :placeholder="$t('ip.location')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('ip.organization')">
+            <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable style="width: 140px">
+              <el-option :label="$t('common.allOrganizations')" value="" />
+              <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
+            <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
     </el-card>
 
     <!-- 统计信息 -->
@@ -121,6 +141,11 @@
             {{ row.orgName || $t('common.defaultOrganization') }}
           </template>
         </el-table-column>
+        <el-table-column :label="$t('common.createTime')" width="160">
+          <template #default="{ row }">
+            {{ row.createTime }}
+          </template>
+        </el-table-column>
         <el-table-column :label="$t('common.updateTime')" width="160">
           <template #default="{ row }">
             {{ row.updateTime }}
@@ -183,7 +208,9 @@ import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Filter } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { clearIPs } from '@/api/asset'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
@@ -195,6 +222,7 @@ const selectedRows = ref([])
 const organizations = ref([])
 const detailVisible = ref(false)
 const currentIP = ref(null)
+const showFilters = ref(false)
 
 const searchForm = reactive({
   ip: '',
@@ -286,11 +314,35 @@ async function loadOrganizations() {
 function handleSearch() {
   pagination.page = 1
   loadData()
+  loadStat()
 }
 
 function handleReset() {
   Object.assign(searchForm, { ip: '', port: '', service: '', location: '', orgId: '' })
+  showFilters.value = false
   handleSearch()
+}
+
+async function handleClear() {
+  try {
+    await ElMessageBox.confirm(
+      t('asset.confirmClearAll'),
+      t('common.warning'),
+      { type: 'error', confirmButtonText: t('asset.confirmClearBtn'), cancelButtonText: t('common.cancel') }
+    )
+    const res = await clearIPs()
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('asset.clearSuccess'))
+      handleReset()
+      loadStat()
+    } else {
+      ElMessage.error(res.msg || t('asset.clearFailed'))
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('asset.clearFailed'))
+    }
+  }
 }
 
 function handleSelectionChange(rows) {
@@ -340,108 +392,139 @@ function getPortType(service) {
 
 <style scoped>
 .ip-page {
-  .search-card {
+  .toolbar-card {
     margin-bottom: 16px;
   }
-  
+
+  .toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+
+    .search-input {
+      width: 360px;
+      max-width: 100%;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .toolbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+  }
+
+  .filters-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--el-border-color);
+  }
+
   .stat-row {
     margin-bottom: 16px;
-    
+
     .stat-card {
       text-align: center;
-      
+
       .stat-value {
         font-size: 28px;
         font-weight: 600;
         color: var(--el-color-primary);
       }
-      
+
       .stat-label {
         color: var(--el-text-color-secondary);
         margin-top: 8px;
       }
     }
   }
-  
+
   .table-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
-    
+
     .total-info {
       color: var(--el-text-color-secondary);
     }
   }
-  
+
   .ip-cell {
     display: flex;
     align-items: center;
     gap: 8px;
-    
+
     .new-tag {
       flex-shrink: 0;
     }
   }
-  
+
   .ip-text {
     font-family: monospace;
     font-weight: 500;
   }
-  
+
   .port-list {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    
+
     .port-tag {
       font-family: monospace;
     }
-    
+
     .more-ports {
       color: var(--el-text-color-secondary);
       font-size: 12px;
       line-height: 22px;
     }
   }
-  
+
   .domain-count {
     color: var(--el-color-primary);
     cursor: pointer;
-    
+
     &:hover {
       text-decoration: underline;
     }
   }
-  
+
   .domain-list {
     .domain-item {
       font-family: monospace;
       font-size: 12px;
       line-height: 1.6;
       color: var(--el-text-color-regular);
-      
+
       &:hover {
         color: var(--el-color-primary);
       }
     }
-    
+
     .more-domains {
       font-size: 12px;
       color: var(--el-text-color-secondary);
       cursor: pointer;
-      
+
       &:hover {
         color: var(--el-color-primary);
       }
     }
   }
-  
+
   .pagination {
     margin-top: 16px;
     justify-content: flex-end;
   }
-  
+
   .detail-ports {
     max-height: 150px;
     overflow-y: auto;

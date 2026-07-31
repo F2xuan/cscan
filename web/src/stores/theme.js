@@ -2,84 +2,24 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import request from '@/api/request'
 
-// 可用的颜色主题列表（支持明暗两种模式）
-export const COLOR_THEMES = [
-  { value: 'default', label: 'theme.default', color: '#3b82f6', darkColor: '#60a5fa', contrastColor: '#ffffff' },
-  { value: 'pure-white', label: 'theme.pureWhite', color: '#64748b', darkColor: '#94a3b8', contrastColor: '#ffffff', lightBorder: true },
-  { value: 'forest-green', label: 'theme.forestGreen', color: '#009100', darkColor: '#22c55e', contrastColor: '#ffffff' },
-  { value: 'ocean-blue', label: 'theme.oceanBlue', color: '#0ea5e9', darkColor: '#38bdf8', contrastColor: '#ffffff' },
-  { value: 'sunset-orange', label: 'theme.sunsetOrange', color: '#f97316', darkColor: '#fb923c', contrastColor: '#ffffff' },
-  { value: 'royal-purple', label: 'theme.royalPurple', color: '#8b5cf6', darkColor: '#a78bfa', contrastColor: '#ffffff' },
-  { value: 'cherry-blossom', label: 'theme.cherryBlossom', color: '#ec4899', darkColor: '#f472b6', contrastColor: '#ffffff' },
-  { value: 'midnight-teal', label: 'theme.midnightTeal', color: '#14b8a6', darkColor: '#2dd4bf', contrastColor: '#ffffff' },
-  { value: 'quantum-rose', label: 'theme.quantumRose', color: '#e11d48', darkColor: '#fb7185', contrastColor: '#ffffff' },
-  { value: 'vercel', label: 'theme.vercel', color: '#000000', darkColor: '#ffffff', contrastColor: '#ffffff', darkContrastColor: '#000000' },
-  { value: 'clean-slate', label: 'theme.cleanSlate', color: '#334155', darkColor: '#94a3b8', contrastColor: '#ffffff' },
-]
-
-// 可用的款式列表（设计语言风格）
+// 可用的款式列表（设计语言风格）— 10 个设计系统
 export const THEME_STYLES = [
-  { value: 'vercel', label: 'theme.styleVercel', description: 'theme.styleVercelDesc' },
-  { value: 'apple', label: 'theme.styleApple', description: 'theme.styleAppleDesc' },
+  { value: 'vercel', label: 'theme.styleVercel', description: 'theme.styleVercelDesc', primaryColor: '#121212', darkPrimaryColor: '#e5e5e5' },
+  { value: 'apple', label: 'theme.styleApple', description: 'theme.styleAppleDesc', primaryColor: '#007aff', darkPrimaryColor: '#2e8dff' },
+  { value: '21th', label: 'theme.style21th', description: 'theme.style21thDesc', primaryColor: '#111111', darkPrimaryColor: '#ffffff' },
+  { value: 'claude', label: 'theme.styleClaude', description: 'theme.styleClaudeDesc', primaryColor: '#c96442', darkPrimaryColor: '#d97757' },
+  { value: 'google', label: 'theme.styleGoogle', description: 'theme.styleGoogleDesc', primaryColor: '#4285f4', darkPrimaryColor: '#fc2c50' },
+  { value: 'minimal', label: 'theme.styleMinimal', description: 'theme.styleMinimalDesc', primaryColor: '#18181b', darkPrimaryColor: '#fafafa' },
+  { value: 'motionfit', label: 'theme.styleMotionfit', description: 'theme.styleMotionfitDesc', primaryColor: '#ff4000', darkPrimaryColor: '#00ff85' },
+  { value: 'nerv', label: 'theme.styleNerv', description: 'theme.styleNervDesc', primaryColor: '#ea343a', darkPrimaryColor: '#ff99cc' },
+  { value: 'tiktok', label: 'theme.styleTiktok', description: 'theme.styleTiktokDesc', primaryColor: '#fe2c55', darkPrimaryColor: '#fe2c55' },
+  { value: 'yuanli', label: 'theme.styleYuanli', description: 'theme.styleYuanliDesc', primaryColor: '#1664ff', darkPrimaryColor: '#387bff' },
 ]
-
-// 将 HEX 颜色转换为 RGB
-function hexToRgb(hex) {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : null
-}
-
-// 调整颜色亮度
-function adjustBrightness(hex, percent) {
-  const rgb = hexToRgb(hex)
-  if (!rgb) return hex
-  
-  const adjust = (value) => {
-    const adjusted = Math.round(value + (255 - value) * (percent / 100))
-    return Math.min(255, Math.max(0, adjusted))
-  }
-  
-  if (percent > 0) {
-    // 变亮
-    return `rgb(${adjust(rgb.r)}, ${adjust(rgb.g)}, ${adjust(rgb.b)})`
-  } else {
-    // 变暗
-    const darken = (value) => Math.round(value * (1 + percent / 100))
-    return `rgb(${darken(rgb.r)}, ${darken(rgb.g)}, ${darken(rgb.b)})`
-  }
-}
-
-// 设置 Element Plus 主色变量
-function setElementPlusPrimaryColor(color, contrastColor = '#ffffff') {
-  const root = document.documentElement
-  
-  // 设置主色
-  root.style.setProperty('--el-color-primary', color)
-  
-  // 设置对比色（用于按钮文字等）
-  root.style.setProperty('--el-color-primary-contrast', contrastColor)
-  
-  // 设置主色的亮色变体（用于 hover、disabled 等状态）
-  root.style.setProperty('--el-color-primary-light-3', adjustBrightness(color, 30))
-  root.style.setProperty('--el-color-primary-light-5', adjustBrightness(color, 50))
-  root.style.setProperty('--el-color-primary-light-7', adjustBrightness(color, 70))
-  root.style.setProperty('--el-color-primary-light-8', adjustBrightness(color, 80))
-  root.style.setProperty('--el-color-primary-light-9', adjustBrightness(color, 90))
-  
-  // 设置主色的暗色变体（用于 active 状态）
-  root.style.setProperty('--el-color-primary-dark-2', adjustBrightness(color, -20))
-}
 
 export const useThemeStore = defineStore('theme', () => {
   // 主题模式（亮色/暗色/跟随系统）
   const theme = ref('system')
-  // 颜色主题
-  const colorTheme = ref('default')
-  // 款式（设计语言风格：vercel / apple）
+  // 款式（设计语言风格）
   const themeStyle = ref('vercel')
   // 是否为暗色模式
   const isDark = ref(false)
@@ -92,17 +32,15 @@ export const useThemeStore = defineStore('theme', () => {
       const res = await request.post('/theme/config/get')
       if (res.code === 0 && res.config) {
         theme.value = res.config.theme || 'system'
-        colorTheme.value = res.config.colorTheme || 'default'
-        themeStyle.value = res.config.themeStyle || 'vercel'
+        // 仅在服务端返回了 themeStyle 时才覆盖，避免旧数据导致款式丢失
+        if (res.config.themeStyle) {
+          themeStyle.value = res.config.themeStyle
+        }
         loaded.value = true
-        // watch([theme, colorTheme, themeStyle]) 会自动触发 updateTheme()，无需手动调用
       }
     } catch (e) {
       console.error('Failed to load theme config:', e)
-      // 加载失败时使用本地存储的配置
-      theme.value = localStorage.getItem('theme') || 'system'
-      colorTheme.value = localStorage.getItem('colorTheme') || 'default'
-      themeStyle.value = localStorage.getItem('themeStyle') || 'vercel'
+      // 加载失败时保留 localStorage 的值（initTheme 中已设置）
     }
   }
 
@@ -111,7 +49,6 @@ export const useThemeStore = defineStore('theme', () => {
     try {
       await request.post('/theme/config/save', {
         theme: theme.value,
-        colorTheme: colorTheme.value,
         themeStyle: themeStyle.value
       })
     } catch (e) {
@@ -121,84 +58,62 @@ export const useThemeStore = defineStore('theme', () => {
 
   // 初始化主题
   async function initTheme() {
-    // 先从服务端加载
+    // 1. 先从 localStorage 同步加载（避免刷新时闪烁/丢失款式）
+    const localTheme = localStorage.getItem('theme')
+    const localStyle = localStorage.getItem('themeStyle')
+    if (localTheme) theme.value = localTheme
+    if (localStyle) themeStyle.value = localStyle
+    // 立即应用一次，确保页面渲染时就有正确的款式
+    updateTheme()
+
+    // 2. 再从服务端加载（覆盖本地，确保多端同步）
     await loadFromServer()
-    // 始终手动触发一次 updateTheme，因为：
-    // 1. 如果服务端返回的值与 ref 初始值相同（如 theme='system', colorTheme='default'），
-    //    watch 不会触发，导致 updateTheme 永远不被调用
-    // 2. 初始 isDark=false 可能与实际 theme='system' + 系统深色模式不一致
     updateTheme()
   }
 
   // 更新主题
   function updateTheme() {
     const root = document.documentElement
-    
+
     // 移除所有主题类
     root.classList.remove('light', 'dark')
-    // 移除所有颜色主题类
-    COLOR_THEMES.forEach(t => {
-      if (t.value !== 'default') {
-        root.classList.remove(`theme-${t.value}`)
-      }
+    // 移除旧的颜色主题类（兼容性清理）
+    const oldColorThemes = ['default', 'pure-white', 'forest-green', 'ocean-blue', 'sunset-orange',
+      'royal-purple', 'cherry-blossom', 'midnight-teal', 'quantum-rose', 'vercel', 'clean-slate',
+      'cosmic-night', 'vercel-dark']
+    oldColorThemes.forEach(t => {
+      root.classList.remove(`theme-${t}`)
     })
-    // 移除旧的主题类
-    root.classList.remove('theme-cosmic-night', 'theme-vercel-dark')
-    // 移除款式类
-    root.classList.remove('style-vercel', 'style-apple')
-    
+    // 移除所有款式类
+    THEME_STYLES.forEach(s => {
+      root.classList.remove(`style-${s.value}`)
+    })
+
     // 确定是否使用暗色模式
     let shouldBeDark = false
-    
+
     if (theme.value === 'dark') {
       shouldBeDark = true
     } else if (theme.value === 'system') {
       shouldBeDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     }
-    
+
     isDark.value = shouldBeDark
-    
+
     // 应用主题类
     root.classList.add(shouldBeDark ? 'dark' : 'light')
-    
-    // 应用颜色主题
-    if (colorTheme.value !== 'default') {
-      root.classList.add(`theme-${colorTheme.value}`)
-    }
-    
+
     // 应用款式类
     root.classList.add(`style-${themeStyle.value}`)
-    
-    // 设置 Element Plus 主色
-    const currentColorTheme = COLOR_THEMES.find(t => t.value === colorTheme.value)
-    if (currentColorTheme) {
-      // 根据明暗模式选择合适的颜色
-      const primaryColor = shouldBeDark && currentColorTheme.darkColor 
-        ? currentColorTheme.darkColor 
-        : currentColorTheme.color
-      // 根据明暗模式选择对比色
-      const contrastColor = shouldBeDark && currentColorTheme.darkContrastColor
-        ? currentColorTheme.darkContrastColor
-        : currentColorTheme.contrastColor || '#ffffff'
-      setElementPlusPrimaryColor(primaryColor, contrastColor)
-    }
-    
+
     // 同时保存到本地存储（作为备份）
     localStorage.setItem('theme', theme.value)
-    localStorage.setItem('colorTheme', colorTheme.value)
     localStorage.setItem('themeStyle', themeStyle.value)
   }
 
   // 切换主题模式
   function setTheme(newTheme) {
     theme.value = newTheme
-    updateTheme()
-    saveToServer()
-  }
-
-  // 切换颜色主题
-  function setColorTheme(newColorTheme) {
-    colorTheme.value = newColorTheme
     updateTheme()
     saveToServer()
   }
@@ -226,39 +141,36 @@ export const useThemeStore = defineStore('theme', () => {
   // 监听系统主题变化
   function watchSystemTheme() {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    
+
     const handleChange = () => {
       if (theme.value === 'system') {
         updateTheme()
       }
     }
-    
+
     mediaQuery.addEventListener('change', handleChange)
-    
+
     return () => {
       mediaQuery.removeEventListener('change', handleChange)
     }
   }
 
   // 监听主题变化
-  watch([theme, colorTheme, themeStyle], () => {
+  watch([theme, themeStyle], () => {
     updateTheme()
   })
 
   return {
     theme,
-    colorTheme,
     themeStyle,
     isDark,
     loaded,
     initTheme,
     loadFromServer,
     setTheme,
-    setColorTheme,
     setThemeStyle,
     toggleTheme,
     watchSystemTheme,
-    COLOR_THEMES,
     THEME_STYLES,
   }
 })

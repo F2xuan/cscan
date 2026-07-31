@@ -113,10 +113,22 @@ const routes = [
         meta: { title: '敏感目录/文件', icon: 'FolderOpened' }
       },
       {
+        path: 'asset-management/risk/sensitive-info',
+        name: 'RiskSensitiveInfo',
+        component: lazyLoad(() => import('@/views/AssetManagement/SensitiveInfoPage.vue')),
+        meta: { title: '敏感信息', icon: 'Warning' }
+      },
+      {
         path: 'asset-management/risk/vuln',
         name: 'RiskVuln',
         component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
         meta: { title: '漏洞', icon: 'Warning' }
+      },
+      {
+        path: 'asset-management/fingerprint/cert',
+        name: 'CertAsset',
+        component: lazyLoad(() => import('@/views/CertAsset.vue')),
+        meta: { title: '证书', icon: 'Lock' }
       },
       {
         path: 'task/create',
@@ -129,6 +141,12 @@ const routes = [
         name: 'TaskEdit',
         component: lazyLoad(() => import('@/views/TaskCreate.vue')),
         meta: { title: '编辑任务', icon: 'List', hidden: true }
+      },
+      {
+        path: 'task/detail',
+        name: 'TaskDetail',
+        component: lazyLoad(() => import('@/views/TaskDetail.vue')),
+        meta: { title: '任务详情', icon: 'List', hidden: true }
       },
       {
         path: 'task',
@@ -148,12 +166,43 @@ const routes = [
         component: lazyLoad(() => import('@/views/CronTask.vue')),
         meta: { title: '定时扫描', icon: 'Timer' }
       },
-
       {
-        path: 'online-search',
-        name: 'OnlineSearch',
+        path: 'cron-task/create',
+        name: 'CronTaskCreate',
+        component: lazyLoad(() => import('@/views/CronTaskCreate.vue')),
+        meta: { title: '新建定时扫描', icon: 'Timer', hidden: true }
+      },
+      {
+        path: 'cron-task/edit/:id',
+        name: 'CronTaskEdit',
+        component: lazyLoad(() => import('@/views/CronTaskCreate.vue')),
+        meta: { title: '编辑定时扫描', icon: 'Timer', hidden: true }
+      },
+
+      // ===== 空间引擎（/space-engine/*）=====
+      {
+        path: 'space-engine/online-search',
+        name: 'SpaceEngineOnlineSearch',
         component: lazyLoad(() => import('@/views/OnlineSearch.vue')),
         meta: { title: '在线搜索', icon: 'Search' }
+      },
+      {
+        path: 'space-engine/api-config',
+        name: 'SpaceEngineApiConfig',
+        component: lazyLoad(() => import('@/views/space-engine/ApiConfig.vue')),
+        meta: { title: 'API密钥配置', icon: 'Key' }
+      },
+      {
+        path: 'space-engine/cron-task',
+        name: 'SpaceEngineCronTask',
+        component: lazyLoad(() => import('@/views/space-engine/CronTask.vue')),
+        meta: { title: '空间引擎定时任务', icon: 'Timer' }
+      },
+
+      // 旧路径重定向
+      {
+        path: 'online-search',
+        redirect: '/space-engine/online-search'
       },
       {
         path: 'workspace',

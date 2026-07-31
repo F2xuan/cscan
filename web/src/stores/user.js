@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { login as loginApi, getUserList, getUserProfile } from '@/api/auth'
 
+// 默认头像路径
+export const DEFAULT_AVATAR = '/default-avatar.jpg'
+
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('token') || '')
   const userId = ref(localStorage.getItem('userId') || '')
@@ -19,6 +22,7 @@ export const useUserStore = defineStore('user', () => {
 
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => role.value === 'admin' || role.value === 'superadmin')
+  const avatarSrc = computed(() => avatar.value || DEFAULT_AVATAR)
 
   async function login(loginForm) {
     const res = await loginApi(loginForm)
@@ -119,6 +123,7 @@ export const useUserStore = defineStore('user', () => {
     role,
     workspaceId,
     avatar,
+    avatarSrc,
     profile,
     isLoggedIn,
     isAdmin,

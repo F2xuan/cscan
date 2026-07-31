@@ -73,22 +73,30 @@
     <div class="filters-panel">
       <div class="stat-panel">
         <div class="stat-column">
-          <div class="stat-title">Port</div>
-          <div v-for="item in stat.topPorts" :key="'port-'+item.name" class="stat-item" @click="quickFilter('port', item.name)">
+          <div class="stat-title">Port <span v-if="stat.topPorts.length > 10" class="stat-count-total">({{ stat.topPorts.length }})</span></div>
+          <div v-for="(item, idx) in displayStatItems(stat.topPorts, statExpanded.port)" :key="'port-'+item.name" class="stat-item" @click="quickFilter('port', item.name)">
             <span class="stat-count">{{ item.count }}</span>
             <span class="stat-name">{{ item.name }}</span>
           </div>
-        </div>
-        <div class="stat-column">
-          <div class="stat-title">Service</div>
-          <div v-for="item in stat.topService" :key="'svc-'+item.name" class="stat-item" @click="quickFilter('service', item.name)">
-            <span class="stat-count">{{ item.count }}</span>
-            <span class="stat-name">{{ item.name }}</span>
+          <div v-if="stat.topPorts.length > 10" class="stat-toggle" @click="toggleStatExpand('port')">
+            {{ statExpanded.port ? '收起' : '更多' }}
+            <el-icon :class="{ 'rotated': statExpanded.port }"><ArrowDown /></el-icon>
           </div>
         </div>
         <div class="stat-column">
-          <div class="stat-title">App</div>
-          <div v-for="item in stat.topApp" :key="'app-'+item.name" class="stat-item" @click="quickFilter('app', item.name)">
+          <div class="stat-title">Service <span v-if="stat.topService.length > 10" class="stat-count-total">({{ stat.topService.length }})</span></div>
+          <div v-for="(item, idx) in displayStatItems(stat.topService, statExpanded.service)" :key="'svc-'+item.name" class="stat-item" @click="quickFilter('service', item.name)">
+            <span class="stat-count">{{ item.count }}</span>
+            <span class="stat-name">{{ item.name }}</span>
+          </div>
+          <div v-if="stat.topService.length > 10" class="stat-toggle" @click="toggleStatExpand('service')">
+            {{ statExpanded.service ? '收起' : '更多' }}
+            <el-icon :class="{ 'rotated': statExpanded.service }"><ArrowDown /></el-icon>
+          </div>
+        </div>
+        <div class="stat-column">
+          <div class="stat-title">App <span v-if="stat.topApp.length > 10" class="stat-count-total">({{ stat.topApp.length }})</span></div>
+          <div v-for="(item, idx) in displayStatItems(stat.topApp, statExpanded.app)" :key="'app-'+item.name" class="stat-item" @click="quickFilter('app', item.name)">
             <span class="stat-count">{{ item.count }}</span>
             <span class="stat-name">
               <el-tooltip :content="item.name.match(/\((.*)\)/)?.[1] || ''" placement="top" :disabled="!item.name.includes('(')">
@@ -96,10 +104,14 @@
               </el-tooltip>
             </span>
           </div>
+          <div v-if="stat.topApp.length > 10" class="stat-toggle" @click="toggleStatExpand('app')">
+            {{ statExpanded.app ? '收起' : '更多' }}
+            <el-icon :class="{ 'rotated': statExpanded.app }"><ArrowDown /></el-icon>
+          </div>
         </div>
         <div class="stat-column">
-          <div class="stat-title">IconHash</div>
-          <div v-for="item in stat.topIconHash" :key="'icon-'+item.iconHash" class="stat-item stat-item-icon" @click="quickFilter('iconHash', item.iconHash)">
+          <div class="stat-title">IconHash <span v-if="stat.topIconHash.length > 10" class="stat-count-total">({{ stat.topIconHash.length }})</span></div>
+          <div v-for="(item, idx) in displayStatItems(stat.topIconHash, statExpanded.icon)" :key="'icon-'+item.iconHash" class="stat-item stat-item-icon" @click="quickFilter('iconHash', item.iconHash)">
             <span class="stat-count">{{ item.count }}</span>
             <img
               v-if="(item.iconData || item.iconHashBytes) && getIconDataUrl(item.iconData || item.iconHashBytes)"
@@ -109,6 +121,10 @@
               @error="handleIconError($event)"
             />
             <span v-else class="stat-icon-placeholder"></span>
+          </div>
+          <div v-if="stat.topIconHash.length > 10" class="stat-toggle" @click="toggleStatExpand('icon')">
+            {{ statExpanded.icon ? '收起' : '更多' }}
+            <el-icon :class="{ 'rotated': statExpanded.icon }"><ArrowDown /></el-icon>
           </div>
         </div>
       </div>
@@ -382,7 +398,8 @@ import {
   Document,
   Clock,
   Warning,
-  Edit
+  Edit,
+  ArrowDown
 } from '@element-plus/icons-vue'
 import { getAssetInventory, getAssetStat, updateAssetLabels, getAssetFilterOptions, deleteAsset, getAssetHistory, getAssetExposures, clearAssets } from '@/api/asset'
 import { formatScreenshotUrl, handleScreenshotError } from '@/utils/screenshot'
@@ -418,6 +435,20 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const stat = reactive({ topPorts: [], topService: [], topApp: [], topIconHash: [] })
+
+// 统计面板展开/收起状态（默认false即只显示top10）
+const statExpanded = reactive({ port: false, service: false, app: false, icon: false })
+const STAT_DEFAULT_SHOW = 10
+
+function displayStatItems(items, expanded) {
+  if (!items || items.length === 0) return []
+  if (expanded || items.length <= STAT_DEFAULT_SHOW) return items
+  return items.slice(0, STAT_DEFAULT_SHOW)
+}
+
+function toggleStatExpand(type) {
+  statExpanded[type] = !statExpanded[type]
+}
 const assets = ref([])
 const filters = ref({
   technologies: [],
@@ -699,6 +730,7 @@ const resetFilters = async () => {
     iconHash: ''
   }
   searchQuery.value = ''
+  showFilters.value = false
   currentPage.value = 1
 
   const newQuery = { ...route.query }
@@ -1145,11 +1177,24 @@ function querySearch(queryString, cb, ...fields) {
   }
   
   .filters-panel {
+    width: 100%;
     background: hsl(var(--card));
     border: 1px solid hsl(var(--border));
     border-radius: 8px;
     padding: 16px;
     margin-bottom: 16px;
+
+    :deep(.el-form) {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      align-items: flex-end;
+    }
+
+    :deep(.el-form-item) {
+      margin-bottom: 0;
+      margin-right: 0;
+    }
 
     :deep(.el-select) {
       min-width: 200px;
@@ -1232,6 +1277,41 @@ function querySearch(queryString, cb, ...fields) {
 
         .app-main {
           cursor: pointer;
+        }
+      }
+
+      .stat-count-total {
+        font-size: 11px;
+        color: hsl(var(--muted-foreground));
+        font-weight: normal;
+        margin-left: 4px;
+      }
+
+      .stat-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 6px 8px;
+        margin-top: 4px;
+        font-size: 12px;
+        color: hsl(var(--primary));
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background 0.15s;
+        user-select: none;
+
+        &:hover {
+          background: hsl(var(--primary) / 0.1);
+        }
+
+        .el-icon {
+          font-size: 12px;
+          transition: transform 0.2s;
+
+          &.rotated {
+            transform: rotate(180deg);
+          }
         }
       }
     }

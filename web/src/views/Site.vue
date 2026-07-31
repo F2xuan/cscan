@@ -1,38 +1,58 @@
 <template>
   <div class="site-page">
-    <!-- 搜索区域 -->
-    <el-card class="search-card">
-      <el-form :inline="true" class="search-form">
-        <el-form-item :label="$t('site.site')">
-          <el-input v-model="searchForm.site" :placeholder="$t('site.url')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('site.pageTitle')">
-          <el-input v-model="searchForm.title" :placeholder="$t('site.pageTitle')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('site.fingerprint')">
-          <el-input v-model="searchForm.app" :placeholder="$t('site.fingerprint')" clearable @keyup.enter="handleSearch" />
-        </el-form-item>
-        <el-form-item :label="$t('site.statusCode')">
-          <el-select v-model="searchForm.httpStatus" :placeholder="$t('common.all')" clearable style="width: 100px">
-            <el-option label="200" value="200" />
-            <el-option label="301" value="301" />
-            <el-option label="302" value="302" />
-            <el-option label="403" value="403" />
-            <el-option label="404" value="404" />
-            <el-option label="500" value="500" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="$t('site.organization')">
-          <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable style="width: 140px">
-            <el-option :label="$t('common.allOrganizations')" value="" />
-            <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
-          <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
-        </el-form-item>
-      </el-form>
+    <!-- 工具栏 -->
+    <el-card class="toolbar-card">
+      <div class="toolbar">
+        <el-input v-model="searchForm.site" :placeholder="$t('site.url')" clearable class="search-input" @keyup.enter="handleSearch">
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <div class="header-actions">
+          <el-button @click="showFilters = !showFilters">
+            <el-icon><Filter /></el-icon>
+            {{ $t('asset.assetInventoryTab.filters') }}
+          </el-button>
+        </div>
+        <div class="toolbar-right">
+          <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') }}</el-button>
+        </div>
+      </div>
+
+      <!-- 过滤器面板 -->
+      <div v-if="showFilters" class="filters-panel">
+        <el-form :inline="true" class="search-form">
+          <el-form-item :label="$t('site.site')">
+            <el-input v-model="searchForm.site" :placeholder="$t('site.url')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('site.pageTitle')">
+            <el-input v-model="searchForm.title" :placeholder="$t('site.pageTitle')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('site.fingerprint')">
+            <el-input v-model="searchForm.app" :placeholder="$t('site.fingerprint')" clearable @keyup.enter="handleSearch" />
+          </el-form-item>
+          <el-form-item :label="$t('site.statusCode')">
+            <el-select v-model="searchForm.httpStatus" :placeholder="$t('common.all')" clearable style="width: 100px">
+              <el-option label="200" value="200" />
+              <el-option label="301" value="301" />
+              <el-option label="302" value="302" />
+              <el-option label="403" value="403" />
+              <el-option label="404" value="404" />
+              <el-option label="500" value="500" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('site.organization')">
+            <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable style="width: 140px">
+              <el-option :label="$t('common.allOrganizations')" value="" />
+              <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
+            <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
     </el-card>
 
     <!-- 统计信息 -->
@@ -186,8 +206,9 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Picture } from '@element-plus/icons-vue'
+import { Picture, Search, Filter } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { clearSites } from '@/api/asset'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { formatScreenshotUrl } from '@/utils/screenshot'
 import { getIconDataUrl, handleIconError } from '@/utils/icon'
@@ -200,6 +221,7 @@ const selectedRows = ref([])
 const organizations = ref([])
 const detailVisible = ref(false)
 const currentSite = ref(null)
+const showFilters = ref(false)
 
 const searchForm = reactive({
   site: '',
@@ -288,11 +310,35 @@ async function loadOrganizations() {
 function handleSearch() {
   pagination.page = 1
   loadData()
+  loadStat()
 }
 
 function handleReset() {
   Object.assign(searchForm, { site: '', title: '', app: '', httpStatus: '', orgId: '' })
+  showFilters.value = false
   handleSearch()
+}
+
+async function handleClear() {
+  try {
+    await ElMessageBox.confirm(
+      t('asset.confirmClearAll'),
+      t('common.warning'),
+      { type: 'error', confirmButtonText: t('asset.confirmClearBtn'), cancelButtonText: t('common.cancel') }
+    )
+    const res = await clearSites()
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('asset.clearSuccess'))
+      handleReset()
+      loadStat()
+    } else {
+      ElMessage.error(res.msg || t('asset.clearFailed'))
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(t('asset.clearFailed'))
+    }
+  }
 }
 
 function handleSelectionChange(rows) {
@@ -342,44 +388,75 @@ function getAppName(app) {
 
 <style scoped>
 .site-page {
-  .search-card {
+  .toolbar-card {
     margin-bottom: 16px;
   }
-  
+
+  .toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+
+    .search-input {
+      width: 360px;
+      max-width: 100%;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .toolbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+  }
+
+  .filters-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--el-border-color);
+  }
+
   .stat-row {
     margin-bottom: 16px;
-    
+
     .stat-card {
       text-align: center;
-      
+
       .stat-value {
         font-size: 28px;
         font-weight: 600;
         color: var(--el-color-primary);
       }
-      
+
       .stat-label {
         color: var(--el-text-color-secondary);
         margin-top: 8px;
       }
     }
   }
-  
+
   .table-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
-    
+
     .total-info {
       color: var(--el-text-color-secondary);
     }
   }
-  
+
   .site-cell {
     display: flex;
     align-items: center;
-    
+
     .site-screenshot {
       width: 80px;
       height: 60px;
@@ -387,10 +464,10 @@ function getAppName(app) {
       margin-right: 12px;
       flex-shrink: 0;
     }
-    
+
     .site-info {
       overflow: hidden;
-      
+
       .site-link {
         color: var(--el-color-primary);
         text-decoration: none;
@@ -398,12 +475,12 @@ function getAppName(app) {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        
+
         &:hover {
           text-decoration: underline;
         }
       }
-      
+
       .site-title-row {
         display: flex;
         align-items: center;
@@ -433,34 +510,34 @@ function getAppName(app) {
       }
     }
   }
-  
+
   .location-text {
     color: var(--el-text-color-secondary);
     font-size: 12px;
   }
-  
+
   .app-tags {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    
+
     .app-tag {
       max-width: 100px;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    
+
     .more-apps {
       color: var(--el-text-color-secondary);
       font-size: 12px;
     }
   }
-  
+
   .pagination {
     margin-top: 16px;
     justify-content: flex-end;
   }
-  
+
   .header-pre {
     margin: 0;
     white-space: pre-wrap;

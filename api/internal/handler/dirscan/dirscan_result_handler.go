@@ -28,6 +28,8 @@ type DirScanResultListReq struct {
 	SortField  string `json:"sortField"`      // 排序字段: statusCode, contentLength, contentWords, contentLines, duration
 	SortOrder  string `json:"sortOrder"`      // 排序方向: asc, desc
 	Query      string `json:"query,optional"` // 全局搜索关键词
+	AIStatus   string `json:"aiStatus"`       // AI研判状态筛选: pending=未研判
+	AIResult   string `json:"aiResult"`       // AI研判结果筛选: risk/no_risk
 }
 
 // DirScanResultListResp 列表响应
@@ -94,6 +96,20 @@ func DirScanResultListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				sizeFilter["$lte"] = *req.SizeMax
 			}
 			filter["content_length"] = sizeFilter
+		}
+
+		// AI研判状态筛选：与列显示对齐（AI未研判/有风险/无风险）
+		// pending -> 未研判（ai_status 为空/不存在/显式 pending）
+		// risk    -> 有风险（ai_result=risk）
+		// no_risk -> 无风险（ai_result=no_risk）
+		if req.AIStatus == "pending" {
+			filter["$or"] = []bson.M{
+				{"ai_status": bson.M{"$exists": false}},
+				{"ai_status": ""},
+				{"ai_status": "pending"},
+			}
+		} else if req.AIResult != "" {
+			filter["ai_result"] = req.AIResult
 		}
 
 		// 先统计总数（不带分页）

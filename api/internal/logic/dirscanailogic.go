@@ -59,7 +59,7 @@ func (l *DirScanLogic) AnalyzeSingle(req *types.DirScanAIAnalyzeReq) (*types.Dir
 	// 1. 加载AI配置
 	aiCfg, err := l.loadDirScanAIConfig(req.WorkspaceId)
 	if err != nil {
-		return &types.DirScanAIAnalyzeResp{Code: 500, Msg: "AI配置加载失败: " + err.Error()}, nil
+		return &types.DirScanAIAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
 	// 2. 查找目标记录
@@ -125,8 +125,13 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 	if workspaceId != "" && workspaceId != "all" {
 		andConditions = append(andConditions, bson.M{"workspace_id": workspaceId})
 	}
-	// 强制未研判条件
-	andConditions = append(andConditions, bson.M{"ai_status": bson.M{"$ne": "completed"}})
+	// 当指定了 aiResult 筛选时，按筛选条件匹配；未指定时默认只处理未研判数据
+	if req.AIResult != "" {
+		andConditions = append(andConditions, bson.M{"ai_result": req.AIResult})
+	} else {
+		// 强制未研判条件
+		andConditions = append(andConditions, bson.M{"ai_status": bson.M{"$ne": "completed"}})
+	}
 
 	filter := bson.M{}
 	if len(andConditions) > 0 {
@@ -145,6 +150,11 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 
 	if len(pendingDocs) == 0 {
 		return &types.DirScanAIBatchAnalyzeResp{Code: 0, Msg: "无待研判数据", Total: 0}, nil
+	}
+
+	// 提前校验AI配置，避免启动goroutine后才发现配置缺失
+	if _, err := l.loadDirScanAIConfig(workspaceId); err != nil {
+		return &types.DirScanAIBatchAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
 	taskId := primitive.NewObjectID().Hex()

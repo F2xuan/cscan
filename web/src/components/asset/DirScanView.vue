@@ -9,6 +9,7 @@
       :searchItems="dirSearchItems"
       :statLabels="statLabels"
       :extra-params="props.extraParams"
+      :transform-payload="transformListPayload"
       :searchPlaceholder="$t('dirscan.targetPlaceholder')"
       :searchKeys="['authority']"
       selection
@@ -320,12 +321,23 @@ const dirSearchItems = computed(() => {
       type: 'select',
       options: [
         { label: t('dirscan.aiNotAnalyzed'), value: 'pending' },
-        { label: t('dirscan.aiCompleted'), value: 'completed' }
+        { label: t('dirscan.aiRisk'), value: 'risk' },
+        { label: t('dirscan.aiNoRisk'), value: 'no_risk' }
       ]
     })
   }
   return items
 })
+
+// 列表请求参数转换：将前端 aiStatus 筛选值映射到后端的 aiStatus/aiResult 参数
+// AI未研判 -> aiStatus=pending；有风险 -> aiResult=risk；无风险 -> aiResult=no_risk
+function transformListPayload(payload) {
+  if (payload.aiStatus && payload.aiStatus !== 'pending') {
+    payload.aiResult = payload.aiStatus
+    delete payload.aiStatus
+  }
+  return payload
+}
 
 function getStatusType(code) {
   if (code >= 200 && code < 300) return 'success'
@@ -439,6 +451,13 @@ async function handleBatchAnalyze() {
       if (currentSearch.path) params.path = currentSearch.path
       if (currentSearch.statusCode) params.statusCode = currentSearch.statusCode
       if (currentSearch.authority) params.authority = currentSearch.authority
+      if (currentSearch.aiStatus) {
+        if (currentSearch.aiStatus === 'pending') {
+          params.aiStatus = 'pending'
+        } else {
+          params.aiResult = currentSearch.aiStatus
+        }
+      }
       confirmMsg = t('dirscan.batchAnalyzeFilteredConfirm')
     }
   }

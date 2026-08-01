@@ -252,6 +252,12 @@ const props = defineProps({
   extraParams: {
     type: Object,
     default: () => ({})
+  },
+  // 可选的请求参数转换函数，在发送请求前对 payload 做最后修改
+  // 用于将前端筛选值映射到后端实际参数名（例如 aiStatus 的不同值映射到 aiStatus/aiResult）
+  transformPayload: {
+    type: Function,
+    default: null
   }
 })
 
@@ -417,7 +423,10 @@ async function loadData() {
       })
     }
 
-    const res = await request.post(props.api, payload)
+    // 应用自定义 payload 转换（例如将 aiStatus 筛选值映射到 aiStatus/aiResult）
+    const finalPayload = props.transformPayload ? props.transformPayload(payload) : payload
+
+    const res = await request.post(props.api, finalPayload)
     if (res.code === 0) {
       tableData.value = res.list || []
       pagination.total = res.total || 0

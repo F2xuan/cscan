@@ -533,7 +533,7 @@ func (l *JSFinderLogic) AnalyzeSingle(req *types.JSFinderAIAnalyzeReq) (*types.J
 	// 1. 加载AI配置
 	aiCfg, err := l.loadAIConfig(workspaceId)
 	if err != nil {
-		return &types.JSFinderAIAnalyzeResp{Code: 500, Msg: "AI配置加载失败: " + err.Error()}, nil
+		return &types.JSFinderAIAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
 	// 2. 查找目标记录（需要含result/extracted_results内容，不使用列表投影）
@@ -602,8 +602,14 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 	if req.MatcherName != "" {
 		andConditions = append(andConditions, bson.M{"matcher_name": req.MatcherName})
 	}
-	// 强制加上未研判条件：ai_status 不是 completed（包含空/不存在/pending）
-	andConditions = append(andConditions, bson.M{"ai_status": bson.M{"$ne": "completed"}})
+	// 当指定了 aiResult 筛选时（如 "有风险"/"无风险"），按筛选条件匹配；
+	// 未指定时默认只处理未研判数据
+	if req.AIResult != "" {
+		andConditions = append(andConditions, bson.M{"ai_result": req.AIResult})
+	} else {
+		// 强制加上未研判条件：ai_status 不是 completed（包含空/不存在/pending）
+		andConditions = append(andConditions, bson.M{"ai_status": bson.M{"$ne": "completed"}})
+	}
 
 	filter := bson.M{}
 	if len(andConditions) > 0 {
@@ -645,6 +651,11 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 
 	if len(pendingDocs) == 0 {
 		return &types.JSFinderAIBatchAnalyzeResp{Code: 0, Msg: "无待研判数据", Total: 0}, nil
+	}
+
+	// 提前校验AI配置，避免启动goroutine后才发现配置缺失
+	if _, err := l.loadAIConfig(workspaceId); err != nil {
+		return &types.JSFinderAIBatchAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
 	taskId := primitive.NewObjectID().Hex()

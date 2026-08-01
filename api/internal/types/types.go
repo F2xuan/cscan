@@ -929,6 +929,7 @@ type GetTaskLogsReq struct {
 	TaskId string `json:"taskId"`            // 任务ID
 	Limit  int    `json:"limit,default=100"` // 返回条数限制
 	Search string `json:"search,optional"`   // 模糊搜索关键词
+	IncludeDebug bool `json:"includeDebug,optional"` // 是否包含 DEBUG 级别日志（默认不含，用于与容器日志对齐排查）
 }
 
 // TaskLogEntry 任务日志条目
@@ -3659,6 +3660,8 @@ type DirScanAIBatchAnalyzeReq struct {
 	StatusCode  int      `json:"statusCode,optional"`
 	Path        string   `json:"path,optional"`
 	Authority   string   `json:"authority,optional"`
+	AIStatus    string   `json:"aiStatus,optional"`
+	AIResult    string   `json:"aiResult,optional"`
 }
 
 // DirScanAIBatchAnalyzeResp 批量研判响应
@@ -3745,6 +3748,7 @@ type CertListReq struct {
 	Issuer        string `json:"issuer,optional" form:"issuer,optional"`               // 按颁发机构 DN 模糊过滤
 	ExpiredBefore string `json:"expiredBefore,optional" form:"expiredBefore,optional"` // 到期时间 <= 该时间戳（秒）
 	ExpiredAfter  string `json:"expiredAfter,optional" form:"expiredAfter,optional"`   // 到期时间 >= 该时间戳（秒）
+	Validity      string `json:"validity,optional" form:"validity,optional"`           // 有效期筛选：valid=有效 / invalid=无效（已过期）
 	Sort          string `json:"sort,optional" form:"sort,optional"`                   // notAfter / -notAfter；默认 -notAfter（最紧急在前）
 	Page          int    `json:"page,default=1" form:"page,default=1"`
 	PageSize      int    `json:"pageSize,default=10" form:"pageSize,default=10"`

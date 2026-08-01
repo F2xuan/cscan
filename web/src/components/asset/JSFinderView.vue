@@ -9,7 +9,8 @@
       :columns="jsfinderColumns"
       :searchItems="jsfinderSearchItems"
       :extra-params="props.extraParams"
-      
+      :transform-payload="transformListPayload"
+
       
       selection
       :searchPlaceholder="$t('jsfinder.searchPlaceholder')"
@@ -353,14 +354,15 @@ const jsfinderSearchItems = computed(() => {
   ]
   // JS模式保留标签过滤，敏感信息模式移除（由后端固定过滤aiResult=risk）
   if (props.mode === 'js') {
-    // AI研判状态筛选
+    // AI研判状态筛选（与列显示对齐：AI未研判/有风险/无风险）
     items.push({
       label: t('jsfinder.aiStatus'),
       prop: 'aiStatus',
       type: 'select',
       options: [
         { label: t('jsfinder.aiNotAnalyzed'), value: 'pending' },
-        { label: t('jsfinder.aiCompleted'), value: 'completed' }
+        { label: t('jsfinder.aiRisk'), value: 'risk' },
+        { label: t('jsfinder.aiNoRisk'), value: 'no_risk' }
       ]
     })
     items.push({
@@ -397,6 +399,16 @@ const jsfinderSearchItems = computed(() => {
   })
   return items
 })
+
+// 列表请求参数转换：将前端 aiStatus 筛选值映射到后端的 aiStatus/aiResult 参数
+// AI未研判 -> aiStatus=pending；有风险 -> aiResult=risk；无风险 -> aiResult=no_risk
+function transformListPayload(payload) {
+  if (payload.aiStatus && payload.aiStatus !== 'pending') {
+    payload.aiResult = payload.aiStatus
+    delete payload.aiStatus
+  }
+  return payload
+}
 
 function getSeverityType(severity) {
   const map = { critical: 'danger', high: 'danger', medium: 'warning', low: 'info', info: 'info', unknown: 'info' }
@@ -771,7 +783,14 @@ async function handleBatchAnalyze() {
       if (currentSearch.severity) params.severity = currentSearch.severity
       if (currentSearch.tags) params.tags = currentSearch.tags
       if (currentSearch.matcherName) params.matcherName = currentSearch.matcherName
-      if (currentSearch.aiStatus) params.aiStatus = currentSearch.aiStatus
+      if (currentSearch.aiStatus) {
+        // 筛选值与列显示对齐：pending→未研判, risk→有风险, no_risk→无风险
+        if (currentSearch.aiStatus === 'pending') {
+          params.aiStatus = 'pending'
+        } else {
+          params.aiResult = currentSearch.aiStatus // 'risk' 或 'no_risk'
+        }
+      }
       confirmMsg = t('jsfinder.batchAnalyzeFilteredConfirm')
     }
     // 模式3：无选中无筛选，研判所有未研判数据，使用默认文案

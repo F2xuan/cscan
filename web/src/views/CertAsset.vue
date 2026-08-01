@@ -14,6 +14,12 @@
         <el-form-item :label="$t('certAsset.issuer')">
           <el-input v-model="issuer" :placeholder="$t('certAsset.issuerPlaceholder')" clearable style="width: 200px" @keyup.enter="handleQuery" />
         </el-form-item>
+        <el-form-item :label="$t('certAsset.validity')">
+          <el-select v-model="validity" :placeholder="$t('certAsset.validityPlaceholder')" clearable style="width: 160px" @change="handleQuery">
+            <el-option :label="$t('certAsset.status_valid')" value="valid" />
+            <el-option :label="$t('certAsset.status_expired')" value="invalid" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleQuery"><el-icon><Search /></el-icon>{{ $t('common.search') }}</el-button>
           <el-button @click="handleReset"><el-icon><Refresh /></el-icon>{{ $t('common.reset') }}</el-button>
@@ -121,6 +127,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Search, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { getCertList, getCertDetail } from '@/api/cert'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -133,6 +140,7 @@ const EXPIRING_DAYS = 30
 
 const query = ref('')
 const issuer = ref('')
+const validity = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -184,6 +192,7 @@ async function loadData() {
       workspaceId: wsId,
       query: query.value,
       issuer: issuer.value,
+      validity: validity.value,
       page: page.value,
       pageSize: pageSize.value,
       sort: '-notAfter'
@@ -207,6 +216,7 @@ function handleQuery() {
 function handleReset() {
   query.value = ''
   issuer.value = ''
+  validity.value = ''
   handleQuery()
 }
 

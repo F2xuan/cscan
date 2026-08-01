@@ -234,6 +234,22 @@ func (l *CertLogic) buildCertFilter(req *types.CertListReq) bson.M {
 			}
 		}
 	}
+	// 有效期筛选：valid=有效（未过期） / invalid=无效（已过期）
+	now := time.Now()
+	switch req.Validity {
+	case "valid":
+		if existing, ok := filter["not_after"].(bson.M); ok {
+			existing["$gte"] = now
+		} else {
+			filter["not_after"] = bson.M{"$gte": now}
+		}
+	case "invalid":
+		if existing, ok := filter["not_after"].(bson.M); ok {
+			existing["$lt"] = now
+		} else {
+			filter["not_after"] = bson.M{"$lt": now}
+		}
+	}
 	return filter
 }
 

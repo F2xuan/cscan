@@ -27,6 +27,7 @@
             @keyup.enter.ctrl="next"
           />
           <p class="og-hint">{{ t('onboarding.targetHint') }}</p>
+          <p v-if="targetErrorMsg" class="og-error">{{ targetErrorMsg }}</p>
         </div>
 
         <!-- 步骤2：选择扫描方式 -->
@@ -77,7 +78,8 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { quickCreateTask } from '@/api/task'
 import { completeOnboarding } from '@/api/auth'
-import { splitTargets, isValidTargets } from '@/utils/quickScan'
+import { splitTargets } from '@/utils/quickScan'
+import { validateTargets, formatValidationErrors } from '@/utils/target'
 
 const emit = defineEmits(['finished'])
 const router = useRouter()
@@ -91,10 +93,12 @@ const cardRef = ref(null)
 
 const targetList = computed(() => splitTargets(targets.value))
 const targetCount = computed(() => targetList.value.length)
-const canNext = computed(() => (active.value === 0 ? isValidTargets(targets.value) : true))
+const targetErrors = computed(() => validateTargets(targets.value))
+const targetErrorMsg = computed(() => targetErrors.value.length ? formatValidationErrors(targetErrors.value) : '')
+const canNext = computed(() => (active.value === 0 ? (targetCount.value > 0 && targetErrors.value.length === 0) : true))
 
 function next() {
-  if (active.value === 0 && !isValidTargets(targets.value)) return
+  if (active.value === 0 && (targetCount.value === 0 || targetErrors.value.length > 0)) return
   if (active.value < 2) active.value += 1
 }
 function prev() {
@@ -102,8 +106,12 @@ function prev() {
 }
 
 async function onStart() {
-  if (!isValidTargets(targets.value)) {
+  if (targetCount.value === 0) {
     ElMessage.warning(t('onboarding.invalid'))
+    return
+  }
+  if (targetErrors.value.length > 0) {
+    ElMessage.warning(formatValidationErrors(targetErrors.value))
     return
   }
   loading.value = true
@@ -225,6 +233,14 @@ onMounted(async () => {
   color: hsl(var(--muted-foreground));
   margin: 0;
   line-height: 1.5;
+}
+
+.og-error {
+  font-size: 12px;
+  color: var(--el-color-error, #f56c6c);
+  margin: 8px 0 0;
+  line-height: 1.5;
+  white-space: pre-line;
 }
 
 .og-summary {

@@ -1100,6 +1100,7 @@ import { getNucleiTemplateList, getCustomPocList } from '@/api/poc'
 import { getDirScanDictEnabledList } from '@/api/dirscan'
 import { getSubdomainDictEnabledList } from '@/api/subdomain'
 import request from '@/api/request'
+import { validateTargets, formatValidationErrors } from '@/utils/target'
 
 const router = useRouter()
 const route = useRoute()
@@ -1347,6 +1348,13 @@ const rules = {
     validator: (rule, value, callback) => {
       if (form.targetMode === 'manual' && !value) {
         callback(new Error(t('cronTask.targetPlaceholder')))
+      } else if (form.targetMode === 'manual' && value) {
+        const errors = validateTargets(value)
+        if (errors.length > 0) {
+          callback(new Error(formatValidationErrors(errors)))
+        } else {
+          callback()
+        }
       } else if (form.targetMode === 'asset' && (!form.assetIds || form.assetIds.length === 0)) {
         callback(new Error('请至少选择一个资产'))
       } else {

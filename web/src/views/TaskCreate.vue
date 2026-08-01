@@ -910,6 +910,7 @@ import { getSubdomainDictEnabledList } from '@/api/subdomain'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ScanTemplateSelect from '@/components/ScanTemplateSelect.vue'
 import request from '@/api/request'
+import { validateTargets, formatValidationErrors } from '@/utils/target'
 
 const router = useRouter()
 const route = useRoute()
@@ -1142,9 +1143,15 @@ const hasPrePhaseEnabled = computed(() => {
          form.portidentifyEnable || form.fingerprintEnable
 })
 
+const targetValidator = (rule, value, callback) => {
+  if (!value) { callback(new Error(t('task.pleaseEnterTarget'))); return }
+  const errors = validateTargets(value)
+  errors.length > 0 ? callback(new Error(formatValidationErrors(errors))) : callback()
+}
+
 const rules = {
   name: [{ required: true, message: () => t('task.pleaseEnterTaskName'), trigger: 'blur' }],
-  target: [{ required: true, message: () => t('task.pleaseEnterTarget'), trigger: 'blur' }]
+  target: [{ required: true, message: () => t('task.pleaseEnterTarget'), trigger: 'blur' }, { validator: targetValidator, trigger: 'blur' }]
 }
 
 onMounted(async () => {

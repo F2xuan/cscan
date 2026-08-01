@@ -14,6 +14,7 @@
           :disabled="loading"
           @keyup.ctrl.enter="onScan"
         />
+        <p v-if="targetErrorMsg" class="qs-error">{{ targetErrorMsg }}</p>
         <div class="qs-actions">
           <el-radio-group v-model="mode">
             <el-radio-button value="quick">{{ t('task.quickScanQuick') }}</el-radio-button>
@@ -36,12 +37,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { quickCreateTask } from '@/api/task'
-import { isValidTargets, splitTargets } from '@/utils/quickScan'
+import { splitTargets } from '@/utils/quickScan'
+import { validateTargets, formatValidationErrors } from '@/utils/target'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -51,9 +53,16 @@ const mode = ref('quick')
 const loading = ref(false)
 const result = ref(null)
 
+const targetErrors = computed(() => validateTargets(targets.value))
+const targetErrorMsg = computed(() => targetErrors.value.length ? formatValidationErrors(targetErrors.value) : '')
+
 async function onScan() {
-  if (!isValidTargets(targets.value)) {
+  if (!splitTargets(targets.value).length) {
     ElMessage.warning(t('task.quickScanInvalid'))
+    return
+  }
+  if (targetErrors.value.length > 0) {
+    ElMessage.warning(targetErrorMsg.value)
     return
   }
   loading.value = true
@@ -114,6 +123,14 @@ function typeName(tn) {
   .qs-main {
     flex: 1;
     min-width: 320px;
+  }
+
+  .qs-error {
+    font-size: 12px;
+    color: var(--el-color-error, #f56c6c);
+    margin: 6px 0 0;
+    line-height: 1.5;
+    white-space: pre-line;
   }
 
   .qs-actions {

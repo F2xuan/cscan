@@ -27,7 +27,8 @@ import (
 //   - 任务落地复用 common.TaskBuilder.BuildAndPushSubTasks，不另写队列逻辑。
 //   - 预估耗时复用 scheduler.NewTaskSplitter(...).GetSplitPreview 的静态估值（秒）。
 
-// quickTemplateConfigJSON 快速扫描基线（仅模块段，参数取自内置 quick-scan.json）
+// quickTemplateConfigJSON 快速扫描回退基线（仅模块段，参数取自内置 quick-scan.json）。
+// 仅在 DB 中无对应内置模板时作为回退使用；正常路径由 loadBuiltinTemplateConfig 从 DB 加载。
 const quickTemplateConfigJSON = `{
   "domainscan": {"enable": false, "subfinder": true, "timeout": 300, "maxEnumerationTime": 10, "threads": 10, "rateLimit": 0, "removeWildcard": true, "resolveDNS": true, "concurrent": 50, "subdomainDictIds": [], "bruteforceTimeout": 30, "recursiveBrute": false, "recursiveDictIds": [], "wildcardDetect": false},
   "portscan": {"enable": true, "tool": "naabu", "rate": 3000, "ports": "top100", "portThreshold": 100, "scanType": "s", "timeout": 60, "skipHostDiscovery": false, "excludeCDN": false, "excludeHosts": "", "workers": 50, "retries": 2, "warmUpTime": 1, "verify": false},
@@ -39,7 +40,8 @@ const quickTemplateConfigJSON = `{
   "jsfinder": {"enable": false, "threads": 10, "timeout": 10, "forceScan": false}
 }`
 
-// standardTemplateConfigJSON 深度扫描基线（仅模块段，参数取自内置 standard-scan.json）
+// standardTemplateConfigJSON 标准扫描回退基线（仅模块段，参数取自内置 standard-scan.json）。
+// 仅在 DB 中无对应内置模板时作为回退使用；正常路径由 loadBuiltinTemplateConfig 从 DB 加载。
 const standardTemplateConfigJSON = `{
   "domainscan": {"enable": false, "subfinder": true, "timeout": 300, "maxEnumerationTime": 10, "threads": 10, "rateLimit": 0, "removeWildcard": true, "resolveDNS": true, "concurrent": 50, "subdomainDictIds": [], "bruteforceTimeout": 30, "recursiveBrute": false, "recursiveDictIds": [], "wildcardDetect": false},
   "portscan": {"enable": true, "tool": "naabu", "rate": 3000, "ports": "top100", "portThreshold": 100, "scanType": "s", "timeout": 60, "skipHostDiscovery": false, "excludeCDN": false, "excludeHosts": "", "workers": 50, "retries": 2, "warmUpTime": 1, "verify": false},
@@ -85,13 +87,23 @@ func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*
 		mode = "quick"
 	}
 
+	// 直接对标系统内置扫描模板：quick → 内置「快速扫描」(category=quick)，
+	// full → 内置「标准扫描」(category=standard)。以内置模板配置为基准，
+	// 在其之上叠加按目标类型的智能模块启停（recommendConfig），保证与模板参数同源，
+	// 避免此前在 quickCreate 中维护的重复副本与模板漂移。
+	baseCategory := "quick"
+	if mode == "full" {
+		baseCategory = "standard"
+	}
+	baseCfg := l.loadBuiltinTemplateConfig(baseCategory)
+
 	parser := scanner.NewTargetParser()
 	parsed := parser.ParseMultiple(req.Targets)
 	if len(parsed) == 0 {
 		return &types.TaskQuickCreateResp{Code: 400, Msg: "未能解析出有效目标"}, nil
 	}
 
-	taskConfig, recType := recommendConfig(parsed, mode)
+	taskConfig, recType := recommendConfig(parsed, mode, baseCfg)
 	taskConfig["target"] = req.Targets
 
 	if !hasAnyScanPhaseEnabled(taskConfig) {
@@ -150,9 +162,38 @@ func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*
 	}, nil
 }
 
-// recommendConfig 根据解析后的目标类型分布与模式，返回推荐的扫描配置与推荐类型。
+// loadBuiltinTemplateConfig 按分类加载内置扫描模板的配置，作为一键扫描的基准。
+// 与系统内置模板（快速扫描 / 标准扫描）直接对标，复用模板参数（端口范围、速率、超时、字典等），
+// 避免此前在 quickCreate 中维护的重复副本与模板漂移。DB 无对应模板或解析失败时回退到内置常量。
+func (l *TaskQuickCreateLogic) loadBuiltinTemplateConfig(category string) map[string]interface{} {
+	if l.svcCtx.ScanTemplateModel != nil {
+		if builtins, err := l.svcCtx.ScanTemplateModel.FindBuiltinTemplates(l.ctx); err == nil {
+			for _, tpl := range builtins {
+				if tpl.Category == category {
+					var cfg map[string]interface{}
+					if err := json.Unmarshal([]byte(tpl.Config), &cfg); err == nil {
+						l.Logger.Infof("TaskQuickCreate: loaded builtin template config, category=%s name=%s", category, tpl.Name)
+						return cfg
+					}
+				}
+			}
+		}
+	}
+	// 回退：内置常量（与 template_init.go 的默认模板参数保持一致）
+	base := quickTemplateConfigJSON
+	if category == "standard" {
+		base = standardTemplateConfigJSON
+	}
+	var cfg map[string]interface{}
+	_ = json.Unmarshal([]byte(base), &cfg)
+	return cfg
+}
+
+// recommendConfig 根据解析后的目标类型分布与模式，在 base（内置模板配置）之上
+// 智能启用/停用对应扫描阶段，返回推荐的扫描配置与推荐类型。
 // 推荐类型用于前端展示：port（端口扫描）/ domain（全面扫描）/ web（Web 扫描）。
-func recommendConfig(parsed []*scanner.Target, mode string) (map[string]interface{}, string) {
+// base 已由 loadBuiltinTemplateConfig 按分类从内置模板加载，此处不覆盖模板参数，仅调整 enable 开关。
+func recommendConfig(parsed []*scanner.Target, mode string, base map[string]interface{}) (map[string]interface{}, string) {
 	hasDomain, hasURL, hasIP := false, false, false
 	for _, t := range parsed {
 		switch t.Type {
@@ -165,12 +206,8 @@ func recommendConfig(parsed []*scanner.Target, mode string) (map[string]interfac
 		}
 	}
 
-	base := quickTemplateConfigJSON
-	if mode == "full" {
-		base = standardTemplateConfigJSON
-	}
-	var cfg map[string]interface{}
-	_ = json.Unmarshal([]byte(base), &cfg)
+	// base 已是从内置模板加载的配置，仅在其之上按目标类型智能启停模块
+	cfg := base
 
 	// 模块启用策略
 	enableModule(cfg, "domainscan", hasDomain)
@@ -220,7 +257,7 @@ func recommendedTypeName(t string) string {
 
 func modeName(m string) string {
 	if m == "full" {
-		return "深度"
+		return "标准"
 	}
 	return "快速"
 }

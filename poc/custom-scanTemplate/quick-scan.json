@@ -2,7 +2,10 @@
   "name": "快速扫描",
   "description": "仅进行端口扫描和基础指纹识别，适合快速资产发现",
   "category": "quick",
-  "tags": ["快速", "端口扫描"],
+  "tags": [
+    "快速",
+    "端口扫描"
+  ],
   "sort_number": 1,
   "target": "",
   "template": null,
@@ -39,7 +42,7 @@
     "verify": false
   },
   "portidentify": {
-    "enable": false,
+    "enable": true,
     "tool": "nmap",
     "timeout": 60,
     "concurrency": 10,
@@ -53,7 +56,7 @@
     "tool": "httpx",
     "iconHash": true,
     "customEngine": true,
-    "screenshot": false,
+    "screenshot": true,
     "activeScan": false,
     "activeTimeout": 10,
     "targetTimeout": 30,
@@ -87,23 +90,15 @@
   "dirscan": {
     "enable": false,
     "dictIds": [],
-    "threads": 50,
-    "timeout": 10,
     "followRedirect": true,
     "forceScan": false,
+    "statusCodes": [],
     "autoCalibration": true,
-    "filterSize": "",
-    "filterWords": "",
-    "filterLines": "",
-    "filterRegex": "",
-    "matcherMode": "or",
-    "filterMode": "or",
-    "rate": 0,
     "recursion": false,
     "recursionDepth": 2
   },
   "jsfinder": {
-    "enable": false,
+    "enable": true,
     "threads": 10,
     "timeout": 10,
     "forceScan": false

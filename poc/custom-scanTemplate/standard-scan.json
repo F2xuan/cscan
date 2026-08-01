@@ -1,13 +1,17 @@
 {
   "name": "标准扫描",
-  "description": "端口扫描 + 指纹识别 + 弱口令检测 + 漏洞扫描 + 目录扫描 + JS敏感信息与未授权检测，适合日常安全检测",
+  "description": "适合日常安全的标准检测",
   "category": "standard",
-  "tags": ["标准", "漏洞扫描", "JS审计"],
+  "tags": [
+    "标准",
+    "漏洞扫描",
+    "JS审计"
+  ],
   "sort_number": 2,
   "target": "",
   "template": null,
   "domainscan": {
-    "enable": false,
+    "enable": true,
     "subfinder": true,
     "timeout": 300,
     "maxEnumerationTime": 10,
@@ -26,7 +30,7 @@
     "enable": true,
     "tool": "naabu",
     "rate": 3000,
-    "ports": "top100",
+    "ports": "top1000",
     "portThreshold": 100,
     "scanType": "s",
     "timeout": 60,
@@ -56,7 +60,7 @@
     "screenshot": true,
     "activeScan": true,
     "activeTimeout": 10,
-    "targetTimeout": 90,
+    "targetTimeout": 30,
     "filterMode": "http_mapping",
     "forceScan": false
   },
@@ -85,22 +89,12 @@
     "customPocOnly": false
   },
   "dirscan": {
-    "enable": true,
-    "dictIds": [
-      "69fd35207eaed2f49d40abec"
-    ],
-    "threads": 50,
-    "timeout": 10,
+    "enable": false,
+    "dictIds": [],
     "followRedirect": true,
     "forceScan": false,
+    "statusCodes": [],
     "autoCalibration": true,
-    "filterSize": "",
-    "filterWords": "",
-    "filterLines": "",
-    "filterRegex": "",
-    "matcherMode": "or",
-    "filterMode": "or",
-    "rate": 0,
     "recursion": false,
     "recursionDepth": 2
   },

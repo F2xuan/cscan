@@ -64,9 +64,10 @@ const allPhases = [
   { key: 'portscan', name: computed(() => t('task.workflowPortScan')), configKey: 'portscan', progress: 20 },
   { key: 'portidentify', name: computed(() => t('task.workflowPortIdentify')), configKey: 'portidentify', progress: 40 },
   { key: 'fingerprint', name: computed(() => t('task.workflowFingerprint')), configKey: 'fingerprint', progress: 60 },
-  { key: 'dirscan', name: computed(() => t('task.workflowDirScan')), configKey: 'dirscan', progress: 70 },
-  { key: 'jsfinder', name: computed(() => t('task.workflowJSFinder')), configKey: 'jsfinder', progress: 75 },
-  { key: 'pocscan', name: computed(() => t('task.workflowVulScan')), configKey: 'pocscan', progress: 80 }
+  { key: 'brutescan', name: computed(() => t('task.workflowWeakpassScan')), configKey: 'brutescan', progress: 70 },
+  { key: 'dirscan', name: computed(() => t('task.workflowDirScan')), configKey: 'dirscan', progress: 75 },
+  { key: 'jsfinder', name: computed(() => t('task.workflowJSFinder')), configKey: 'jsfinder', progress: 80 },
+  { key: 'pocscan', name: computed(() => t('task.workflowVulScan')), configKey: 'pocscan', progress: 90 }
 ]
 
 // 阶段名称映射（后端返回的中文名称 -> key）
@@ -75,6 +76,7 @@ const phaseNameMap = {
   '端口扫描': 'portscan',
   '端口识别': 'portidentify',
   '指纹识别': 'fingerprint',
+  '弱口令扫描': 'brutescan',
   '目录扫描': 'dirscan',
   'JS扫描': 'jsfinder',
   '漏洞扫描': 'pocscan',

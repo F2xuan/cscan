@@ -110,20 +110,11 @@ func (m *JSFinderResultModel) UpsertMany(ctx context.Context, results []*JSFinde
 				"result":       r.Result,
 			}
 
-			// $setOnInsert：仅插入时设置的不可变字段
+			// $setOnInsert：仅插入时设置的不可变字段（不可与 $set 字段重叠，否则 MongoDB 报冲突）
 			setOnInsert := bson.M{
-				"_id":               primitive.NewObjectID(),
-				"workspace_id":      r.WorkspaceId,
-				"create_time":       r.CreateTime,
-				"host":              r.Host,
-				"port":              r.Port,
-				"severity":          r.Severity,
-				"tags":              r.Tags,
-				"matcher_name":      r.MatcherName,
-				"extracted_results": r.ExtractedResults,
-				"curl_command":      r.CurlCommand,
-				"request":           r.Request,
-				"response":          r.Response,
+				"_id":          primitive.NewObjectID(),
+				"workspace_id": r.WorkspaceId,
+				"create_time":  r.CreateTime,
 			}
 
 			// $set：每次都更新的可变字段（update_time 始终刷新，

@@ -256,20 +256,20 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		default:
 			// 如果使用httpx且已获取到基本信息，只执行附加功能
 			if useHttpx && asset.Title != "" && asset.HttpStatus != "" {
-				taskLog("INFO", "Fingerprint [%d/%d]: %s:%d", i+1, len(httpAssets), asset.Host, asset.Port)
+				taskLog("INFO", "Fingerprint [%d/%d]: %s", i+1, len(httpAssets), formatAssetTarget(asset))
 				targetCtx, targetCancel := context.WithTimeout(ctx, time.Duration(opts.TargetTimeout)*time.Second)
 				s.runAdditionalFingerprint(targetCtx, asset, opts, taskLog)
 				if targetCtx.Err() == context.DeadlineExceeded {
-					taskLog("WARN", "Fingerprint: %s:%d timeout", asset.Host, asset.Port)
+					taskLog("WARN", "Fingerprint: %s timeout", formatAssetTarget(asset))
 				}
 				targetCancel()
 			} else {
 				// 使用内置方法完整扫描
-				taskLog("INFO", "Fingerprint [%d/%d]: %s:%d", i+1, len(httpAssets), asset.Host, asset.Port)
+				taskLog("INFO", "Fingerprint [%d/%d]: %s", i+1, len(httpAssets), formatAssetTarget(asset))
 				targetCtx, targetCancel := context.WithTimeout(ctx, time.Duration(opts.TargetTimeout)*time.Second)
 				s.fingerprint(targetCtx, asset, opts, taskLog)
 				if targetCtx.Err() == context.DeadlineExceeded {
-					taskLog("WARN", "Fingerprint: %s:%d timeout", asset.Host, asset.Port)
+					taskLog("WARN", "Fingerprint: %s timeout", formatAssetTarget(asset))
 				}
 				targetCancel()
 			}
@@ -345,6 +345,16 @@ var (
 		8800: true, 8880: true, 8881: true, 18080: true, 28080: true,
 	}
 )
+
+// formatAssetTarget 生成资产探测目标的展示字符串
+// 端口为 0 表示仅已知主机名、端口未知（子域名枚举结果），回退到默认 Web 端口 80/443，
+// 避免在日志中打印非法的 "host:0"。
+func formatAssetTarget(asset *Asset) string {
+	if asset.Port == 0 {
+		return fmt.Sprintf("%s (port unknown, probe 80/443)", asset.Host)
+	}
+	return fmt.Sprintf("%s:%d", asset.Host, asset.Port)
+}
 
 // IsHttpAsset 判断资产是否为HTTP/HTTPS服务
 // 重构：使用策略链模式消除多层if/else

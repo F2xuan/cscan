@@ -54,12 +54,22 @@ func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, o
 	assetPtrSet := make(map[*Asset]bool)
 
 	for _, asset := range assets {
-		target := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
-		targets = append(targets, target)
-		targetMap[target] = asset
-		// 同时添加带协议的目标，提高匹配率
-		targetMap[fmt.Sprintf("http://%s:%d", asset.Host, asset.Port)] = asset
-		targetMap[fmt.Sprintf("https://%s:%d", asset.Host, asset.Port)] = asset
+		// 端口为 0 表示资产仅已知主机名、端口未知（常见于子域名枚举结果）。
+		// 直接拼成 host:0 是非法目标，httpx 探测必然失败并误报 "marking as non-http"。
+		// 这里回退到默认 Web 端口 80/443 进行指纹探测：既消除非法端口探测，
+		// 又保留 Web 资产指纹识别能力（与端口已知资产的处理方式保持一致）。
+		ports := []int{asset.Port}
+		if asset.Port == 0 {
+			ports = []int{80, 443}
+		}
+		for _, p := range ports {
+			target := fmt.Sprintf("%s:%d", asset.Host, p)
+			targets = append(targets, target)
+			targetMap[target] = asset
+			// 同时添加带协议的目标，提高匹配率
+			targetMap[fmt.Sprintf("http://%s:%d", asset.Host, p)] = asset
+			targetMap[fmt.Sprintf("https://%s:%d", asset.Host, p)] = asset
+		}
 		// 记录所有 asset 指针
 		assetPtrSet[asset] = true
 	}

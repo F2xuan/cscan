@@ -150,7 +150,7 @@
             <div class="strategy-stats">
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.enabledModules') }}</span>
-                <span class="stat-value">{{ enabledModulesCount }}/6</span>
+                <span class="stat-value">{{ enabledModulesCount }}/8</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.taskSplit') }}</span>
@@ -257,6 +257,18 @@
               {{ parsedConfig.dirscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
+          <div class="module-card" :class="{ active: parsedConfig.jsfinder?.enable }">
+            <el-icon class="module-icon"><Connection /></el-icon>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.jsfinderScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.jsfinder?.enable">
+                <span class="detail-item">JSFinder</span>
+              </div>
+            </div>
+            <el-tag :type="parsedConfig.jsfinder?.enable ? 'success' : 'info'" size="small" effect="plain">
+              {{ parsedConfig.jsfinder?.enable ? $t('task.enabled') : $t('task.disabled') }}
+            </el-tag>
+          </div>
         </div>
       </el-card>
     </template>
@@ -308,8 +320,10 @@ const enabledModulesCount = computed(() => {
   if (parsedConfig.value.portscan?.enable !== false) count++
   if (parsedConfig.value.portidentify?.enable) count++
   if (parsedConfig.value.fingerprint?.enable) count++
+  if (parsedConfig.value.brutescan?.enable) count++
   if (parsedConfig.value.pocscan?.enable) count++
   if (parsedConfig.value.dirscan?.enable) count++
+  if (parsedConfig.value.jsfinder?.enable) count++
   return count
 })
 

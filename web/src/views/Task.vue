@@ -213,7 +213,7 @@
             <div class="strategy-stats">
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.enabledModules') }}</span>
-                <span class="stat-value">{{ enabledModulesCount }}/6</span>
+                <span class="stat-value">{{ enabledModulesCount }}/8</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.taskSplit') }}</span>
@@ -319,6 +319,18 @@
             </div>
             <el-tag :type="parsedConfig.dirscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.dirscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
+            </el-tag>
+          </div>
+          <div class="module-card" :class="{ active: parsedConfig.jsfinder?.enable }">
+            <el-icon class="module-icon"><Connection /></el-icon>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.jsfinderScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.jsfinder?.enable">
+                <span class="detail-item">JSFinder</span>
+              </div>
+            </div>
+            <el-tag :type="parsedConfig.jsfinder?.enable ? 'success' : 'info'" size="small" effect="plain">
+              {{ parsedConfig.jsfinder?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
         </div>
@@ -970,6 +982,7 @@
           <el-option label="WARN" value="WARN" />
           <el-option label="ERROR" value="ERROR" />
         </el-select>
+        <el-checkbox v-model="logIncludeDebug" size="small" style="margin-left: 14px" @change="refreshLogs">包含 DEBUG 日志</el-checkbox>
         <span class="log-stats">{{ $t('task.totalLogs', { count: filteredLogs.length }) }}</span>
       </div>
       <div class="log-container" ref="logContainerRef">
@@ -1029,6 +1042,7 @@ const currentLogTask = ref(null)
 const logWorkerFilter = ref('')
 const logLevelFilter = ref('')
 const logSearchKeyword = ref('')
+const logIncludeDebug = ref(false) // 是否包含 DEBUG 级别日志（默认不含，用于与容器日志对齐排查）
 let refreshTimer = null
 
 const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
@@ -1323,8 +1337,10 @@ const enabledModulesCount = computed(() => {
   if (parsedConfig.value.portscan?.enable !== false) count++
   if (parsedConfig.value.portidentify?.enable) count++
   if (parsedConfig.value.fingerprint?.enable) count++
+  if (parsedConfig.value.brutescan?.enable) count++
   if (parsedConfig.value.pocscan?.enable) count++
   if (parsedConfig.value.dirscan?.enable) count++
+  if (parsedConfig.value.jsfinder?.enable) count++
   return count
 })
 
@@ -1595,7 +1611,7 @@ async function refreshLogs() {
   try {
     const task = tableData.value.find(t => t.id === currentLogTask.value?.id)
     if (task) currentLogTask.value = { ...task }
-    const res = await getTaskLogs({ taskId: currentLogTaskId.value, limit: 500 })
+    const res = await getTaskLogs({ taskId: currentLogTaskId.value, limit: 500, includeDebug: logIncludeDebug.value })
     if (res.code === 0) {
       // 每次刷新都是完整请求，直接替换日志列表（不再使用 logIdSet 去重）
       taskLogs.value = (res.list || []).map(log => parseLogMessage(log))

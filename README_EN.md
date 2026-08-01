@@ -66,9 +66,6 @@ chmod +x cscan.sh && ./cscan.sh
 ```
 
 > Access `https://ip:7777`, default account `admin / 123456`
->
-> Worker nodes must be deployed before executing scans
-
 ---
 
 ## Local Development
@@ -101,3 +98,4 @@ go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 ## License
 
 MIT
+<img src="images/wechat.jpg">

@@ -37,7 +37,6 @@
 </table>
 
 ---
-
 ## 功能特性
 ### 核心能力
 
@@ -66,9 +65,6 @@ chmod +x cscan.sh && ./cscan.sh
 ```
 
 > 访问 `https://ip:7777`，默认账号 `admin / 123456`
->
-> 执行扫描前需先部署 Worker 节点
-
 ---
 
 ## 本地开发
@@ -101,3 +97,4 @@ go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 ## License
 
 MIT
+<img src="images/wechat.jpg">

@@ -113,6 +113,7 @@
 <script setup>
 import { computed, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Search, Refresh, ArrowDown, Document, Bottom } from '@element-plus/icons-vue'
 import { getLogDates, getLogFiles, getLogHistory } from '@/api/container'
 import { useI18n } from 'vue-i18n'
 
@@ -362,6 +363,13 @@ function formatTimeShort(time) {
       const datePart = parts[0].substring(5) // MM-DD
       return `${datePart} ${timePart}`
     }
+  }
+  // nginx access log: "01/Aug/2026:09:12:07 +0800"
+  const nginxMatch = time.match(/^(\d{2})\/(\w{3})\/(\d{4}):(\d{2}:\d{2}:\d{2})/)
+  if (nginxMatch) {
+    const nginxMonthMap = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' }
+    const mm = nginxMonthMap[nginxMatch[2]] || nginxMatch[2]
+    return `${mm}-${nginxMatch[1]} ${nginxMatch[4]}`
   }
   // Redis format: "29 Jul 2026 15:59:52.265"
   const redisMatch = time.match(/^(\d{2})\s+(\w{3})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})/)

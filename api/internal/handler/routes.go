@@ -60,6 +60,11 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		}
 	}
 
+	// 注入"触发全部 Worker 日志同步并等待"回调（任务日志刷新时调用，立即拉取最新日志）
+	svcCtx.TriggerAllWorkerLogSync = func() {
+		WorkerWSHandlerInstance.SyncAllAndWait(3 * time.Second)
+	}
+
 	// 初始化审计服务
 	worker.InitAuditService(svcCtx)
 

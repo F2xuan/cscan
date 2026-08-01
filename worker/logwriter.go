@@ -191,12 +191,10 @@ func (l *TaskLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
 
-	// DEBUG 级别日志仅本地输出，不写入文件（避免指纹探测等大量 DEBUG 日志）
-	if level == LevelDebug {
-		return
-	}
-
 	// 写入本地文件（事实源），游标同步机制会自动将其传输到 API
+	// 说明：不再在写入端丢弃 DEBUG 级别日志。DEBUG 默认在 API 读取端（GetTaskLogs）
+	// 按需过滤，这样任务日志视图默认不显示 DEBUG（避免指纹探测等大量噪音），
+	// 但必要时可通过 IncludeDebug 参数拉取完整日志，与容器日志对齐排查。
 	if l.fileLogger != nil {
 		l.fileLogger.Write(level, l.taskId, msg)
 	}

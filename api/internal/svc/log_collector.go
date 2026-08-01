@@ -333,13 +333,26 @@ func (w *fileLineWriter) writeLine(line string) {
 }
 
 // extractTs 从 Docker 日志行提取时间戳部分
+// Docker 守护进程通过 Timestamps:true 返回的时间戳恒为 UTC，
+// 直接当作本地时间展示会让 mongodb/worker 等容器慢 8 小时，
+// 这里统一转换为 Asia/Shanghai(+0800) 本地时区后再落盘。
 func extractTs(line string) string {
 	// Docker Timestamps:true 格式: "2026-07-28T08:37:34.123456789Z message"
 	idx := strings.IndexByte(line, ' ')
 	if idx > 0 && idx < 40 {
-		return line[:idx]
+		ts := line[:idx]
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			if loc, lerr := time.LoadLocation("Asia/Shanghai"); lerr == nil {
+				return t.In(loc).Format(time.RFC3339Nano)
+			}
+			return t.Local().Format(time.RFC3339Nano)
+		}
+		return ts
 	}
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	if loc, lerr := time.LoadLocation("Asia/Shanghai"); lerr == nil {
+		return time.Now().In(loc).Format(time.RFC3339Nano)
+	}
+	return time.Now().Local().Format(time.RFC3339Nano)
 }
 
 // stripTs 去掉 Docker 时间戳前缀

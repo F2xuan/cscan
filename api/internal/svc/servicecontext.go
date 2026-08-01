@@ -78,6 +78,10 @@ type ServiceContext struct {
 	// 用户点击刷新按钮时调用，向 Worker 发送 LOG_SYNC_REQ
 	TriggerWorkerLogSync func(workerName string)
 
+	// TriggerAllWorkerLogSync 触发所有已连接 Worker 的日志同步并等待落盘（由 routes.go 注入）
+	// 任务日志刷新时调用，确保读取前已把各 Worker 最新日志拉取到 API 本地文件
+	TriggerAllWorkerLogSync func()
+
 	// 弱口令复验立即触发（由 cscan.go 注入；T3.3 runNow 端点调用，解耦 scheduler 依赖）
 	RunWeakPassReverify func(ctx context.Context, workspaceId string) error
 

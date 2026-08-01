@@ -304,6 +304,9 @@ type WorkerConnection struct {
 	syncCursorMu sync.Mutex
 	syncCursor   LogSyncReqPayload // {filename, offset}
 	syncRespChan chan *LogSyncRespPayload // 同步响应通道
+
+	// 日志同步完成信号（供 TriggerLogSyncAndWait 等待本轮同步落盘，用于刷新时立即拉取最新日志）
+	syncDone chan struct{}
 }
 
 // NewWorkerConnection 创建新的Worker连接
@@ -316,6 +319,7 @@ func NewWorkerConnection(conn net.Conn, workerName string, svcCtx *svc.ServiceCo
 		closeChan:    make(chan struct{}),
 		lastPing:     time.Now(),
 		syncRespChan: make(chan *LogSyncRespPayload, 8),
+		syncDone:     make(chan struct{}, 1),
 	}
 }
 
@@ -1533,6 +1537,7 @@ func handleLogSyncResp(ctx context.Context, wc *WorkerConnection, svcCtx *svc.Se
 			wc.syncCursor = LogSyncReqPayload{Filename: resp.NextFile, Offset: 0}
 			wc.syncCursorMu.Unlock()
 		}
+		wc.notifySyncDone()
 		return
 	}
 
@@ -1566,6 +1571,7 @@ func handleLogSyncResp(ctx context.Context, wc *WorkerConnection, svcCtx *svc.Se
 		wc.syncCursor = LogSyncReqPayload{Filename: resp.NextFile, Offset: 0}
 		wc.syncCursorMu.Unlock()
 	}
+	wc.notifySyncDone()
 }
 
 // sendLogSyncAck 发送日志同步确认给 Worker
@@ -1597,6 +1603,58 @@ func TriggerLogSync(wc *WorkerConnection) {
 		Type:    WSTypeLogSyncReq,
 		Payload: payloadData,
 	})
+}
+
+// notifySyncDone 非阻塞地通知等待方"本轮日志同步已完成并落盘"
+func (wc *WorkerConnection) notifySyncDone() {
+	select {
+	case wc.syncDone <- struct{}{}:
+	default:
+	}
+}
+
+// TriggerLogSyncAndWait 触发一次日志同步，并等待本轮同步完成（或超时/连接关闭）
+// 用于用户点击"刷新"时立即拉取 Worker 最新日志，避免仅依赖后台 5s 轮询导致刷新看不到最新内容
+func (wc *WorkerConnection) TriggerLogSyncAndWait(timeout time.Duration) {
+	// 先清空可能残留的完成信号，确保等待的是本轮同步
+	for {
+		select {
+		case <-wc.syncDone:
+			continue
+		default:
+		}
+		break
+	}
+	TriggerLogSync(wc)
+	select {
+	case <-wc.syncDone:
+	case <-time.After(timeout):
+	case <-wc.closeChan:
+	}
+}
+
+// SyncAllAndWait 触发所有已连接 Worker 的日志同步并等待完成（或超时）
+// 任务日志刷新时调用：确保读取前各 Worker 已把最新日志拉取到 API 本地文件
+func (h *WorkerWSHandler) SyncAllAndWait(timeout time.Duration) {
+	var wg sync.WaitGroup
+	h.connections.Range(func(key, value interface{}) bool {
+		wc, ok := value.(*WorkerConnection)
+		if !ok {
+			return true
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wc.TriggerLogSyncAndWait(timeout)
+		}()
+		return true
+	})
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 // startLogSyncLoop 启动日志同步循环（每个 Worker 连接一个 goroutine）

@@ -30,9 +30,9 @@ type MainTaskListLogic struct {
 }
 
 // hasAnyScanPhaseEnabled 检查任务配置中是否至少启用了一项扫描阶段
-// 扫描阶段包括：子域名扫描/端口扫描/端口识别/指纹识别/目录扫描/漏洞扫描/弱口令扫描/JS扫描
+// 扫描阶段包括：子域名扫描/端口扫描/端口识别/指纹识别/弱口令扫描/目录扫描/JS扫描/漏洞扫描
 func hasAnyScanPhaseEnabled(taskConfig map[string]interface{}) bool {
-	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "dirscan", "pocscan", "brutescan", "jsfinder", "certcheck"}
+	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "brutescan", "dirscan", "jsfinder", "pocscan"}
 	for _, phase := range phases {
 		section, ok := taskConfig[phase].(map[string]interface{})
 		if !ok {
@@ -1672,6 +1672,12 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 		return &types.GetTaskLogsResp{Code: 0, Msg: "日志读取器未初始化", List: []types.TaskLogEntry{}}, nil
 	}
 
+	// 刷新前主动触发一次日志同步（向所有已连接 Worker 发送 LOG_SYNC_REQ 并等待落盘），
+	// 确保读取到的是最新日志，而不是依赖后台 5s 轮询的滞后数据。
+	if l.svcCtx.TriggerAllWorkerLogSync != nil {
+		l.svcCtx.TriggerAllWorkerLogSync()
+	}
+
 	// 获取最新日期
 	date, _ := l.svcCtx.WorkerLogReader.FindLatestDate()
 	if date == "" {
@@ -1697,6 +1703,10 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 					!strings.Contains(strings.ToLower(e.Worker), searchLower) {
 					continue
 				}
+			}
+			// DEBUG 级别默认过滤（可通过 IncludeDebug 开启，用于与容器日志对齐排查）
+			if !req.IncludeDebug && strings.EqualFold(e.Level, "DEBUG") {
+				continue
 			}
 			result = append(result, types.TaskLogEntry{
 				Timestamp:  e.Ts,

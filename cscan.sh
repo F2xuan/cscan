@@ -17,6 +17,12 @@ warning() { echo -e "\033[33m[CSCAN]\033[0m $*"; }
 error() { echo -e "\033[31m[CSCAN]\033[0m $*"; }
 abort() { error "$*"; exit 1; }
 
+# 定位脚本所在目录并切换过去，保证相对路径（docker-compose.yaml / scripts/memtune.sh / .env）
+# 始终正确——无论用户在哪个目录执行 `bash cscan.sh` 或 `bash /path/cscan.sh`，
+# 一键安装/启动都会正确触发内存自动调优，无需对 memtune.sh 执行 chmod +x。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || abort "无法切换到项目目录: $SCRIPT_DIR"
+
 # Ctrl+C 退出
 trap 'echo ""; info "已退出 CSCAN 管理工具"; exit 0' INT
 
@@ -260,6 +266,29 @@ init_env_file() {
     fi
 }
 
+# 安装/首次启动时按宿主机内存自动调优资源配额
+# 若尚无 override 且脚本可用，则生成 docker-compose.override.yml 并应用（含 up -d）；
+# 返回 0 表示已处理启动，返回 1 表示由调用方执行 docker compose up -d（兼容已有 override / 脚本缺失）
+tune_memory_on_install() {
+  if [ ! -f "$SCRIPT_DIR/docker-compose.override.yml" ] && [ -f "$SCRIPT_DIR/scripts/memtune.sh" ]; then
+    info "正在根据宿主机内存自动调优资源配额..."
+    if bash "$SCRIPT_DIR/scripts/memtune.sh" apply auto; then
+      return 0
+    fi
+    warning "内存自动调优失败，将使用默认配额继续"
+  fi
+  return 1
+}
+
+# 委托 scripts/memtune.sh 进行内存配额的手动调优
+# 用法: cscan.sh memtune <detect|plan|apply|update|monitor|status|reset> [参数...]
+run_memtune() {
+  if [ ! -f "$SCRIPT_DIR/scripts/memtune.sh" ]; then
+    abort "未找到 scripts/memtune.sh"
+  fi
+  bash "$SCRIPT_DIR/scripts/memtune.sh" "$@" || exit $?
+}
+
 # 一键安装
 install_cscan() {
     info "开始安装 CSCAN..."
@@ -281,12 +310,16 @@ install_cscan() {
     info "正在拉取镜像..."
     $COMPOSE_CMD pull || abort "拉取镜像失败"
 
-    # 启动服务
-    info "正在启动服务..."
-    $COMPOSE_CMD up -d || abort "启动服务失败"
-
-    # 等待服务启动
-    wait_for_healthy
+    # 按宿主机内存自动调优资源配额（若尚无 override 配置）
+    # 成功时 memtune 已执行 up -d，直接等待健康；否则由下方兜底启动
+    if tune_memory_on_install; then
+        wait_for_healthy
+    else
+        # 启动服务
+        info "正在启动服务..."
+        $COMPOSE_CMD up -d || abort "启动服务失败"
+        wait_for_healthy
+    fi
 
     # 保存版本到本地 VERSION 文件
     if [ "$remote_ver" != "unknown" ]; then
@@ -526,8 +559,13 @@ stop_cscan() {
 start_cscan() {
     info "正在启动服务..."
     init_env_file
-    $COMPOSE_CMD up -d || abort "启动失败"
-    wait_for_healthy
+    # 按宿主机内存自动调优资源配额（若尚无 override 配置）
+    if tune_memory_on_install; then
+        wait_for_healthy
+    else
+        $COMPOSE_CMD up -d || abort "启动失败"
+        wait_for_healthy
+    fi
     info "服务已启动"
 }
 
@@ -604,6 +642,7 @@ case "${1:-}" in
     stop) check_docker; stop_cscan ;;
     restart) check_docker; restart_cscan ;;
     logs) check_docker; show_logs ;;
+    memtune) run_memtune "${@:2}" ;;
     version) show_version ;;
     help|--help|-h)
         echo "CSCAN 管理脚本"
@@ -611,14 +650,17 @@ case "${1:-}" in
         echo "用法: $0 [命令]"
         echo ""
         echo "命令:"
-        echo "  install    一键安装"
+        echo "  install    一键安装（首次启动按宿主机内存自动调优资源配额）"
         echo "  upgrade    一键升级"
         echo "  uninstall  一键卸载"
         echo "  status     查看状态"
-        echo "  start      启动服务"
+        echo "  start      启动服务（若尚未调优则自动按宿主机内存调优）"
         echo "  stop       停止服务"
         echo "  restart    重启服务"
         echo "  logs       查看日志"
+        echo "  memtune    内存配额调优（自动计算/动态调整/监控/超限保护）"
+        echo "            子命令: detect | plan | apply | update | monitor | status | reset"
+        echo "            示例: $0 memtune apply auto | $0 memtune status | $0 memtune reset"
         echo "  version    查看版本"
         echo "  help       显示帮助"
         echo ""

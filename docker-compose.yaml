@@ -18,6 +18,13 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
+    # 内存限制配置化：可通过环境变量注入（见 MEMORY_AUTOTUNE.md）。未设置时使用默认值。
+    deploy:
+      resources:
+        limits:
+          memory: ${CSCAN_REDIS_MEM_LIMIT:-512M}
+        reservations:
+          memory: ${CSCAN_REDIS_MEM_RESERVATION:-128M}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -37,6 +44,14 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
+    # 修复 D7：限制 mongo 内存上限，避免 WiredTiger 缓存无节制增长挤占
+    # 其它容器与宿主余量（原 3.6G 远超小机可用内存）。限制值可经环境变量注入。
+    deploy:
+      resources:
+        limits:
+          memory: ${CSCAN_MONGO_MEM_LIMIT:-2G}
+        reservations:
+          memory: ${CSCAN_MONGO_MEM_RESERVATION:-512M}
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -50,7 +65,9 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      - GOMAXPROCS=4
+      # GOMAXPROCS / GOMEMLIMIT 可经环境变量注入；GOMEMLIMIT 为空时由 Go 运行时按 cgroup 自动推导
+      - GOMAXPROCS=${CSCAN_API_GOMAXPROCS:-2}
+      - GOMEMLIMIT=${CSCAN_API_GOMEMLIMIT:-}
       - CSCAN_JWT_SECRET=${CSCAN_JWT_SECRET}
       - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY}
     volumes:
@@ -67,14 +84,19 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
+    # 修复 D2：缩短容器内 DNS 解析超时（默认 5s×多次），降低 docker 嵌入式
+    # DNS 在宿主机 CPU 紧张时长时间挂起、进而清空 mongo 连接池的窗口。
+    dns_opt:
+      - timeout:2
+      - attempts:2
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '${CSCAN_API_CPU_LIMIT:-2}'
+          memory: ${CSCAN_API_MEM_LIMIT:-1G}
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '${CSCAN_API_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_API_MEM_RESERVATION:-256M}
     healthcheck:
       test: ["CMD", "sh", "-c", "wget --quiet --tries=1 --spider http://localhost:8888/health || exit 1"]
       interval: 30s
@@ -89,7 +111,9 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      - GOMAXPROCS=4
+      # GOMAXPROCS / GOMEMLIMIT 可经环境变量注入；GOMEMLIMIT 为空时由 Go 运行时按 cgroup 自动推导
+      - GOMAXPROCS=${CSCAN_RPC_GOMAXPROCS:-2}
+      - GOMEMLIMIT=${CSCAN_RPC_GOMEMLIMIT:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -98,14 +122,18 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
+    # 修复 D2：缩短容器内 DNS 解析超时，降低 docker 嵌入式 DNS 挂起窗口
+    dns_opt:
+      - timeout:2
+      - attempts:2
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '${CSCAN_RPC_CPU_LIMIT:-2}'
+          memory: ${CSCAN_RPC_MEM_LIMIT:-1G}
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '${CSCAN_RPC_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_RPC_MEM_RESERVATION:-256M}
 
   # CSCAN Web 
   cscan-web:
@@ -124,6 +152,15 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
+    deploy:
+      resources:
+        limits:
+          cpus: '${CSCAN_WEB_CPU_LIMIT:-2}'
+          # web(nginx) 内存上限可经环境变量注入
+          memory: ${CSCAN_WEB_MEM_LIMIT:-512M}
+        reservations:
+          cpus: '${CSCAN_WEB_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_WEB_MEM_RESERVATION:-128M}
 
   # CSCAN Worker 默认节点（随主服务一键启动）
   cscan-worker:
@@ -132,10 +169,14 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
+      # GOMAXPROCS / GOMEMLIMIT 可经环境变量注入；GOMEMLIMIT 为空时由 Go 运行时按 cgroup 自动推导
+      - GOMAXPROCS=${CSCAN_WORKER_GOMAXPROCS:-2}
+      - GOMEMLIMIT=${CSCAN_WORKER_GOMEMLIMIT:-}
       - CSCAN_SERVER=http://cscan-api:8888
       - CSCAN_KEY=${CSCAN_WORKER_KEY}
       - CSCAN_NAME=cscan-default-worker
-      - CSCAN_CONCURRENCY=5
+      # 并发可经环境变量注入；未设置时 Worker 按容器内存上限自动推导（见 cmd/worker/main.go）
+      - CSCAN_CONCURRENCY=${CSCAN_WORKER_CONCURRENCY:-2}
     depends_on:
       cscan-api:
         condition: service_healthy
@@ -144,14 +185,19 @@ services:
       - cscan_network
     volumes:
       - cscan_worker_logs:/app/log
+    # 修复 D2：缩短容器内 DNS 解析超时，降低 docker 嵌入式 DNS 挂起窗口
+    dns_opt:
+      - timeout:2
+      - attempts:2
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '${CSCAN_WORKER_CPU_LIMIT:-2}'
+          # 内存上限可经环境变量注入；配合 CSCAN_CONCURRENCY 自动推导，充分利用高配机、避免低配 OOM
+          memory: ${CSCAN_WORKER_MEM_LIMIT:-2G}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '${CSCAN_WORKER_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_WORKER_MEM_RESERVATION:-512M}
 
 volumes:
   cscan_redis_data:

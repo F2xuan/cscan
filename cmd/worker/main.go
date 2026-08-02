@@ -26,7 +26,7 @@ var (
 	// 新参数：-s 改为 API 服务地址（支持环境变量 CSCAN_SERVER）
 	serverAddr  = flag.String("s", getEnvOrDefault("CSCAN_SERVER", "http://localhost:8888"), "API server address (e.g., http://192.168.1.100:8888)")
 	workerName  = flag.String("n", getEnvOrDefault("CSCAN_NAME", ""), "worker name (default: hostname-pid)")
-	concurrency = flag.Int("c", getEnvIntOrDefault("CSCAN_CONCURRENCY", 5), "concurrency")
+	concurrency = flag.Int("c", getEnvIntOrDefault("CSCAN_CONCURRENCY", deriveConcurrencyFromMemory()), "concurrency")
 	installKey  = flag.String("k", getEnvOrDefault("CSCAN_KEY", ""), "install key for authentication")
 )
 
@@ -46,6 +46,74 @@ func getEnvIntOrDefault(key string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+// deriveConcurrencyFromMemory 在未显式设置 CSCAN_CONCURRENCY 时，依据容器 cgroup 内存上限
+// （读取失败则回退到宿主机物理内存）自动推导安全并发数：既能在高配机充分利用资源，
+// 又避免低配环境因 Chrome 标签数过多触发 OOM。详见 MEMORY_AUTOTUNE.md。
+func deriveConcurrencyFromMemory() int {
+	const (
+		perTabMB   = 384  // headless Chrome 单标签 + 扫描器常驻开销经验值
+		utilFactor = 0.6  // 内存利用率上限，预留余量应对突发
+		minConc    = 1
+		maxConc    = 16
+	)
+	limit := readCgroupMemoryLimitBytes()
+	if limit == 0 {
+		limit = hostMemoryTotalBytes() // cgroup 未限制时退回宿主机物理内存
+	}
+	if limit == 0 {
+		return 5 // 终极兜底
+	}
+	mb := float64(limit) / (1024 * 1024)
+	conc := int(mb * utilFactor / perTabMB)
+	if conc < minConc {
+		conc = minConc
+	}
+	if conc > maxConc {
+		conc = maxConc
+	}
+	return conc
+}
+
+// readCgroupMemoryLimitBytes 读取 cgroup 内存上限（cgroup v2 memory.max 或 v1
+// memory.limit_in_bytes）。返回 0 表示未限制或读取失败。
+func readCgroupMemoryLimitBytes() uint64 {
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		s := strings.TrimSpace(string(data))
+		if s != "" && s != "max" {
+			if v, err := strconv.ParseUint(s, 10, 64); err == nil {
+				return v
+			}
+		}
+		return 0
+	}
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		s := strings.TrimSpace(string(data))
+		if v, err := strconv.ParseUint(s, 10, 64); err == nil && v < ^uint64(0)/2 {
+			return v
+		}
+	}
+	return 0
+}
+
+// hostMemoryTotalBytes 读取宿主机物理内存总量（Linux /proc/meminfo）。
+func hostMemoryTotalBytes() uint64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if kb, err := strconv.ParseUint(fields[1], 10, 64); err == nil {
+					return kb * 1024
+				}
+			}
+		}
+	}
+	return 0
 }
 
 // validateInstallKey 验证安装密钥
@@ -118,6 +186,10 @@ func validateInstallKey(apiServer, key, name string) error {
 
 func main() {
 	flag.Parse()
+	// CSCAN_CONCURRENCY 未显式设置时，按内存上限自动推导并发，便于低配防 OOM、高配提吞吐
+	if os.Getenv("CSCAN_CONCURRENCY") == "" {
+		logx.Infof("🔧 CSCAN_CONCURRENCY 未设置，按容器内存上限自动推导并发数: %d", *concurrency)
+	}
 	logx.MustSetup(logx.LogConf{
 		ServiceName:         "cscan-worker",
 		Mode:                "console",           // 开启控制台颜色

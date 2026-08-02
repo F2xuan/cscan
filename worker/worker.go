@@ -401,9 +401,21 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	w.loadHttpServiceMappings()
 
 	// 创建本地结果队列
-	resultQueueDir := filepath.Join("data", "result_queue")
-	w.resultQueue = NewResultQueue(resultQueueDir, 200, func(ctx context.Context, req *TaskResultReq) error {
+	// 修复 P0：队列目录改到挂载卷 log/ 下（cscan_worker_logs 已挂载 /app/log），
+	// 避免容器 OOM 重启后本地队列文件随容器丢失；maxSize 由 200 提升至 2000，
+	// 降低扫描期 API 长时间不可用时队列溢出丢弃最旧结果的风险。
+	resultQueueDir := filepath.Join("log", "result_queue")
+	w.resultQueue = NewResultQueue(resultQueueDir, 2000, func(ctx context.Context, req *TaskResultReq) error {
 		_, err := w.httpClient.SaveTaskResult(ctx, req)
+		return err
+	})
+	// JS 结果与证书结果对称接入本地队列重放（修复 P0：原 JS/Cert 保存无重试、无队列，API 抖动即永久丢失）
+	w.resultQueue.SetJSReplayFn(func(ctx context.Context, req *SaveJSFinderResultReq) error {
+		_, err := w.httpClient.SaveJSFinderResult(ctx, req)
+		return err
+	})
+	w.resultQueue.SetCertReplayFn(func(ctx context.Context, req *SaveCertResultReq) error {
+		_, err := w.httpClient.SaveCertResult(ctx, req)
 		return err
 	})
 	w.resultQueue.SetLogger(func(level, format string, args ...interface{}) {
@@ -1576,6 +1588,19 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			return
 		}
 
+		// 子域名扫描仅针对“纯一级域名”：IP/CIDR/端口范围、以及子域名(www.example.com)
+		// 直接跳过，不做子域名枚举；多段公共后缀(com.cn 等)下的一级域名为 eTLD+1(如 example.com.cn)。
+		// 模块自行判断输入适用性，编排层不再按目标类型预关模块。
+		eligibleTargets := filterEligibleSubdomainTargets(targets)
+		if len(eligibleTargets) == 0 {
+			w.taskLog(task.TaskId, LevelInfo, "Domain scan: skipped (no eligible registrable domains; IP/subdomain targets are not scanned for subdomains)")
+			completedPhases["domainscan"] = true
+			w.incrSubTaskDone(ctx, task, "子域名扫描", false, 1)
+			incrSent++
+			goto domainScanDone
+		}
+		domainScanTarget := strings.Join(eligibleTargets, "\n")
+
 		// 更新当前阶段
 		w.updateTaskProgressWithPhase(ctx, task.TaskId, 10, "子域名扫描中", "子域名扫描")
 		w.taskLog(task.TaskId, LevelInfo, "Starting domain scan...")
@@ -1634,7 +1659,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		if config.DomainScan.Subfinder {
 			if s, ok := w.scanners["subfinder"]; ok {
 				result, err := s.Scan(ctx, &scanner.ScanConfig{
-					Target:      target,
+					Target:      domainScanTarget,
 					WorkspaceId: task.WorkspaceId,
 					MainTaskId:  task.MainTaskId,
 					Options:     subfinderOpts,
@@ -1736,7 +1761,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					// 执行暴力破解
 					if bruteScanner, ok := w.scanners["subdomain_bruteforce"]; ok {
 						bruteResult, err := bruteScanner.Scan(ctx, &scanner.ScanConfig{
-							Target:      target,
+							Target:      domainScanTarget,
 							WorkspaceId: task.WorkspaceId,
 							MainTaskId:  task.MainTaskId,
 							Options:     bruteforceOpts,
@@ -1852,6 +1877,8 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		w.incrSubTaskDone(ctx, task, "子域名扫描", false, 1)
 		incrSent++
 	}
+
+domainScanDone:
 
 	// 执行端口扫描（只有明确启用时才执行）
 	if config.PortScan != nil && config.PortScan.Enable && !completedPhases["portscan"] {
@@ -2437,20 +2464,8 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					})
 				}
 
-				req := &SaveJSFinderResultReq{
-					WorkspaceId: task.WorkspaceId,
-					MainTaskId:  task.MainTaskId,
-					Results:     schedResults,
-				}
-
-				resp, err := w.httpClient.SaveJSFinderResult(ctx, req)
-				if err != nil {
-					w.taskLog(task.TaskId, LevelError, "JSFinder save failed: %v", err)
-				} else if resp.Code != 0 {
-					w.taskLog(task.TaskId, LevelWarn, "JSFinder save response: %s", resp.Msg)
-				} else {
-					w.taskLog(task.TaskId, LevelInfo, "JSFinder completed: saved %d findings", len(jsfinderResults))
-				}
+				// 修复 P0：改为带重试 + 本地队列回退的保存，避免 API 繁忙时 JS 结果永久丢失
+				w.saveJSFinderResult(ctx, task.WorkspaceId, task.MainTaskId, schedResults)
 			}
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 85, "JS扫描完成", "JS扫描")
 			completedPhases["jsfinder"] = true
@@ -3024,44 +3039,136 @@ func (w *Worker) saveAssetResult(ctx context.Context, workspaceId, mainTaskId, o
 				OrgId:       orgId,
 			})
 			cancel()
-			if err == nil {
+			// 仅当传输成功且业务码为 0 才视为成功（API 业务失败仍返回 HTTP 200 + code!=0）
+			if err == nil && resp != nil && resp.Code == 0 {
 				break
 			}
 			if attempt < maxBatchRetry {
-				w.taskLog(mainTaskId, LevelWarn, "Batch %d/%d save attempt %d/%d failed: %v",
-					batchIdx+1, totalBatches, attempt, maxBatchRetry, err)
+				respCode := 0
+				if resp != nil {
+					respCode = resp.Code
+				}
+				w.taskLog(mainTaskId, LevelWarn, "Batch %d/%d save attempt %d/%d failed: err=%v code=%d",
+					batchIdx+1, totalBatches, attempt, maxBatchRetry, err, respCode)
 				time.Sleep(time.Duration(attempt*2) * time.Second)
 			}
 		}
 
-		if err != nil {
-			// API 不可用时，将结果入队到本地队列
-			if w.resultQueue != nil {
-				queueReq := &TaskResultReq{
-					WorkspaceId: workspaceId,
-					MainTaskId:  mainTaskId,
-					Assets:      httpAssets,
-					OrgId:       orgId,
-				}
-				if queueErr := w.resultQueue.Enqueue(queueReq); queueErr != nil {
-					w.taskLog(mainTaskId, LevelError, "Batch %d/%d save failed and queue failed: %v (queue error: %v)",
-						batchIdx+1, totalBatches, maxBatchRetry, err, queueErr)
-				} else {
-					w.taskLog(mainTaskId, LevelWarn, "Batch %d/%d save failed after %d attempts, queued for retry: %v",
-						batchIdx+1, totalBatches, maxBatchRetry, err)
-				}
-			} else {
-				w.taskLog(mainTaskId, LevelError, "Batch %d/%d save failed after %d attempts: %v",
-					batchIdx+1, totalBatches, maxBatchRetry, err)
-			}
-		} else {
+		respCode := 0
+		respMsg := ""
+		if resp != nil {
+			respCode = resp.Code
+			respMsg = resp.Msg
+		}
+		// 成功：累加计数
+		if err == nil && respCode == 0 {
 			totalNew += resp.NewAsset
 			totalUpdate += resp.UpdateAsset
 			w.taskLog(mainTaskId, LevelDebug, "Batch %d/%d saved: new=%d, update=%d", batchIdx+1, totalBatches, resp.NewAsset, resp.UpdateAsset)
+			continue
+		}
+		// 业务拒绝（参数/校验错误，code=400）为非瞬时错误：不重试、不入队，避免永久积压
+		if respCode == 400 {
+			w.taskLog(mainTaskId, LevelError, "Batch %d/%d save rejected by API (code=400), dropped: err=%v msg=%s",
+				batchIdx+1, totalBatches, err, respMsg)
+			continue
+		}
+		// 瞬时失败（传输错误或服务端 5xx）：入队，由 replayLoop 在 API 恢复后重放
+		if w.resultQueue != nil {
+			queueReq := &TaskResultReq{
+				WorkspaceId: workspaceId,
+				MainTaskId:  mainTaskId,
+				Assets:      httpAssets,
+				OrgId:       orgId,
+			}
+			if queueErr := w.resultQueue.Enqueue(queueReq); queueErr != nil {
+				w.taskLog(mainTaskId, LevelError, "Batch %d/%d save failed and queue failed: %v (queue error: %v)",
+					batchIdx+1, totalBatches, maxBatchRetry, err, queueErr)
+			} else {
+				w.taskLog(mainTaskId, LevelWarn, "Batch %d/%d save failed after %d attempts, queued for retry: %v",
+					batchIdx+1, totalBatches, maxBatchRetry, err)
+			}
+		} else {
+			w.taskLog(mainTaskId, LevelError, "Batch %d/%d save failed after %d attempts: %v",
+				batchIdx+1, totalBatches, maxBatchRetry, err)
 		}
 	}
 
 	w.taskLog(mainTaskId, LevelInfo, "Save completed: total=%d, new=%d, update=%d", totalAssets, totalNew, totalUpdate)
+}
+
+// respMsgOf 安全提取 BaseResp 的 Msg，避免 nil 解引用
+func respMsgOf(resp *BaseResp) string {
+	if resp == nil {
+		return ""
+	}
+	return resp.Msg
+}
+
+// saveJSFinderResult 保存 JS 扫描结果（修复 P0：增加重试 + 本地队列回退）
+// 原实现仅在调用处记一条错误日志即返回，API 抖动时结果永久丢失。
+// 现在与资产/漏洞一致：失败重试 3 次，仍失败则落本地队列，API 恢复后由 replayLoop 重放。
+func (w *Worker) saveJSFinderResult(ctx context.Context, workspaceId, mainTaskId string, results []*JSFinderResultItem) {
+	if len(results) == 0 {
+		return
+	}
+
+	req := &SaveJSFinderResultReq{
+		WorkspaceId: workspaceId,
+		MainTaskId:  mainTaskId,
+		Results:     results,
+	}
+
+	const maxRetry = 3
+	var err error
+	var resp *BaseResp
+	var saveErr error
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+		batchCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		resp, saveErr = w.httpClient.SaveJSFinderResult(batchCtx, req)
+		cancel()
+		// 业务码 0 或传输错误为可重试；code=400 为参数/校验拒绝，属非瞬时错误
+		respCode := 0
+		if resp != nil {
+			respCode = resp.Code
+		}
+		if saveErr == nil && respCode == 0 {
+			break
+		}
+		err = saveErr
+		if respCode == 400 {
+			w.taskLog(mainTaskId, LevelWarn, "[JSFinder] save rejected by API (code=400): %s", respMsgOf(resp))
+			return
+		}
+		if attempt < maxRetry {
+			w.taskLog(mainTaskId, LevelWarn, "[JSFinder] save attempt %d/%d failed: err=%v code=%d", attempt, maxRetry, err, respCode)
+			time.Sleep(time.Duration(attempt*2) * time.Second)
+		}
+	}
+
+	respCode := 0
+	if resp != nil {
+		respCode = resp.Code
+	}
+	if err == nil && respCode == 0 {
+		w.taskLog(mainTaskId, LevelInfo, "JSFinder completed: saved %d findings", len(results))
+		return
+	}
+	// 非瞬时拒绝
+	if respCode == 400 {
+		w.taskLog(mainTaskId, LevelError, "[JSFinder] save rejected by API (code=400), dropped: %s", respMsgOf(resp))
+		return
+	}
+	// 瞬时失败：入队重放
+	if w.resultQueue != nil {
+		if qErr := w.resultQueue.EnqueueJS(req); qErr != nil {
+			w.taskLog(mainTaskId, LevelError, "[JSFinder] save failed after %d attempts and queue failed: %v (queue error: %v)", maxRetry, err, qErr)
+		} else {
+			w.taskLog(mainTaskId, LevelWarn, "[JSFinder] save failed after %d attempts, queued for retry: %v", maxRetry, err)
+		}
+	} else {
+		w.taskLog(mainTaskId, LevelError, "[JSFinder] save failed after %d attempts: %v", maxRetry, err)
+	}
 }
 
 // saveVulResult 保存漏洞结果（支持去重与聚合）
@@ -3219,16 +3326,55 @@ func (w *Worker) saveCertResults(ctx context.Context, workspaceId, mainTaskId st
 		Results:     items,
 	}
 
-	resp, err := w.httpClient.SaveCertResult(ctx, req)
-	if err != nil {
-		w.taskLog(mainTaskId, LevelError, "CertResult save failed: %v", err)
+	// 修复 P0：增加重试 + 本地队列回退，与资产/漏洞/JS 对称
+	const maxRetry = 3
+	var err error
+	var resp *BaseResp
+	var saveErr error
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+		batchCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		resp, saveErr = w.httpClient.SaveCertResult(batchCtx, req)
+		cancel()
+		respCode := 0
+		if resp != nil {
+			respCode = resp.Code
+		}
+		if saveErr == nil && respCode == 0 {
+			break
+		}
+		err = saveErr
+		if respCode == 400 {
+			w.taskLog(mainTaskId, LevelWarn, "[CertResult] save rejected by API (code=400): %s", respMsgOf(resp))
+			return
+		}
+		if attempt < maxRetry {
+			w.taskLog(mainTaskId, LevelWarn, "[CertResult] save attempt %d/%d failed: err=%v code=%d", attempt, maxRetry, err, respCode)
+			time.Sleep(time.Duration(attempt*2) * time.Second)
+		}
+	}
+
+	respCode := 0
+	if resp != nil {
+		respCode = resp.Code
+	}
+	if err == nil && respCode == 0 {
+		w.taskLog(mainTaskId, LevelInfo, "CertResult: saved %d certificates", len(certs))
 		return
 	}
-	if resp != nil && resp.Code != 0 {
-		w.taskLog(mainTaskId, LevelWarn, "CertResult save response: %s", resp.Msg)
+	if respCode == 400 {
+		w.taskLog(mainTaskId, LevelError, "[CertResult] save rejected by API (code=400), dropped: %s", respMsgOf(resp))
 		return
 	}
-	w.taskLog(mainTaskId, LevelInfo, "CertResult: saved %d certificates", len(certs))
+	// 瞬时失败：入队重放
+	if w.resultQueue != nil {
+		if qErr := w.resultQueue.EnqueueCert(req); qErr != nil {
+			w.taskLog(mainTaskId, LevelError, "[CertResult] save failed after %d attempts and queue failed: %v (queue error: %v)", maxRetry, err, qErr)
+		} else {
+			w.taskLog(mainTaskId, LevelWarn, "[CertResult] save failed after %d attempts, queued for retry: %v", maxRetry, err)
+		}
+	} else {
+		w.taskLog(mainTaskId, LevelError, "[CertResult] save failed after %d attempts: %v", maxRetry, err)
+	}
 }
 
 // keepAliveLoop 心跳循环（内部方法）
@@ -3947,6 +4093,78 @@ func filterSkippedHostsAssets(assets []*scanner.Asset, skippedHosts []string) []
 		}
 	}
 	return result
+}
+
+// commonSecondLevelSuffixes 常见的二级域名后缀（公共后缀）。
+// 在其之下的“一级域名”为 eTLD+1，共三段（如 example.com.cn）。
+var commonSecondLevelSuffixes = map[string]bool{
+	"com.cn": true, "net.cn": true, "org.cn": true, "gov.cn": true, "edu.cn": true, "ac.cn": true,
+	"co.uk": true, "org.uk": true, "me.uk": true,
+	"co.jp": true, "ne.jp": true, "or.jp": true, "ac.jp": true,
+	"com.hk": true, "org.hk": true, "edu.hk": true,
+	"com.au": true, "net.au": true, "org.au": true, "co.nz": true, "net.nz": true,
+	"co.za": true, "org.za": true, "co.in": true, "net.in": true, "org.in": true,
+	"com.br": true, "com.mx": true, "com.tw": true, "com.sg": true,
+}
+
+// registrableDomain 返回主机名的注册域名（eTLD+1）。
+// 对于多段公共后缀（如 com.cn），注册域名为倒数第三段；否则为倒数第二段。
+// 若 host 不是合法域名（如 IP、CIDR、端口范围，或无法解析为主机名），返回空字符串。
+func registrableDomain(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return ""
+	}
+	// IP / CIDR 不是域名（端口范围已被解析器的 TargetTypeRange 排除，不会到达此处）
+	if net.ParseIP(host) != nil {
+		return ""
+	}
+	if _, _, err := net.ParseCIDR(host); err == nil {
+		return ""
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return "" // 单标签不是完整域名
+	}
+	n := len(labels)
+	// 多段公共后缀：注册域名为倒数第三段
+	if n >= 3 && commonSecondLevelSuffixes[labels[n-2]+"."+labels[n-1]] {
+		return strings.Join(labels[n-3:], ".")
+	}
+	return strings.Join(labels[n-2:], ".")
+}
+
+// isEligibleForSubdomainScan 判断目标是否需要进行子域名扫描。
+// 仅“纯一级域名”（注册域名 eTLD+1，含 com.cn 等多段后缀）参与子域名枚举；
+// IP、CIDR、端口范围、以及其子域名（如 www.example.com、a.b.com.cn）直接跳过。
+// 复用 scanner.NewTargetParser 做目标类型判定（不重写解析器）。
+func isEligibleForSubdomainScan(raw string) bool {
+	t := scanner.NewTargetParser().Parse(raw)
+	if t == nil {
+		return false
+	}
+	// IP / IPv6 / CIDR / 端口范围 直接跳过
+	switch t.Type {
+	case scanner.TargetTypeIPv4, scanner.TargetTypeIPv6, scanner.TargetTypeCIDR, scanner.TargetTypeRange:
+		return false
+	}
+	host := strings.ToLower(t.Host)
+	if host == "" {
+		return false
+	}
+	// URL 取其 Host；域名/子域名取 Host。仅当 Host 恰好等于注册域名时才枚举其下子域名。
+	return host == registrableDomain(host)
+}
+
+// filterEligibleSubdomainTargets 从目标列表中筛选可进行子域名扫描的“纯一级域名”。
+func filterEligibleSubdomainTargets(targets []string) []string {
+	var eligible []string
+	for _, t := range targets {
+		if isEligibleForSubdomainScan(t) {
+			eligible = append(eligible, t)
+		}
+	}
+	return eligible
 }
 
 // generateBruteAssetsFromTargets 从目标生成弱口令扫描资产
@@ -6329,7 +6547,18 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 		w.taskLog(task.TaskId, level, format, args...)
 	}
 
-	result, err := jsScanner.Scan(ctx, &scanner.ScanConfig{
+	// 阶段总超时 = 单目标超时 × 资产数 ÷ 线程数（与端口识别/目录扫描一致），
+	// 确保 JS 扫描阶段有硬上限，不会因大量 JS 文件/接口而无限运行。
+	jsTotalTimeout := timeout * len(httpAssets) / threads
+	if jsTotalTimeout < 60 {
+		jsTotalTimeout = 60
+	}
+	w.taskLog(task.TaskId, LevelInfo, "JSFinder: total timeout=%ds (single=%ds, assets=%d, threads=%d)",
+		jsTotalTimeout, timeout, len(httpAssets), threads)
+	jsCtx, jsCancel := context.WithTimeout(ctx, time.Duration(jsTotalTimeout)*time.Second)
+	defer jsCancel()
+
+	result, err := jsScanner.Scan(jsCtx, &scanner.ScanConfig{
 		Assets:      httpAssets,
 		Options:     opts,
 		WorkspaceId: task.WorkspaceId,
@@ -6337,8 +6566,8 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 		TaskLogger:  jsTaskLogger,
 	})
 
-	if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
-		w.taskLog(task.TaskId, LevelInfo, "JSFinder: task stopped")
+	if ctx.Err() != nil || jsCtx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+		w.taskLog(task.TaskId, LevelInfo, "JSFinder: task stopped or timed out")
 		return nil
 	}
 

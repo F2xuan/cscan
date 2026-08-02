@@ -20,8 +20,10 @@ type ResultQueue struct {
 	mu          sync.Mutex
 	dir         string         // 队列文件目录
 	maxSize     int            // 最大文件数量
-	replayFn    func(ctx context.Context, req *TaskResultReq) error // 重放函数
-	replayVulFn func(ctx context.Context, req *VulResultReq) error  // 漏洞重放函数
+	replayFn    func(ctx context.Context, req *TaskResultReq) error          // 重放函数
+	replayVulFn func(ctx context.Context, req *VulResultReq) error           // 漏洞重放函数
+	replayJSFn  func(ctx context.Context, req *SaveJSFinderResultReq) error  // JS结果重放函数
+	replayCertFn func(ctx context.Context, req *SaveCertResultReq) error     // 证书结果重放函数
 	stopChan    chan struct{}
 	stopOnce    sync.Once
 	logger      func(level, format string, args ...interface{})
@@ -44,6 +46,20 @@ type queuedVulResult struct {
 	Request     *VulResultReq `json:"request"`
 }
 
+// queuedJSResult JS 扫描结果队列条目
+// 修复 P0：JS 结果与资产/漏洞对称处理，API 不可用时本地持久化，恢复后重放
+type queuedJSResult struct {
+	EnqueueTime time.Time              `json:"enqueueTime"`
+	Request     *SaveJSFinderResultReq `json:"request"`
+}
+
+// queuedCertResult 证书采集结果队列条目
+// 修复 P0：证书结果与资产/漏洞对称处理，API 不可用时本地持久化，恢复后重放
+type queuedCertResult struct {
+	EnqueueTime time.Time       `json:"enqueueTime"`
+	Request     *SaveCertResultReq `json:"request"`
+}
+
 // NewResultQueue 创建结果队列
 func NewResultQueue(dir string, maxSize int, replayFn func(ctx context.Context, req *TaskResultReq) error) *ResultQueue {
 	if maxSize <= 0 {
@@ -60,6 +76,16 @@ func NewResultQueue(dir string, maxSize int, replayFn func(ctx context.Context, 
 // SetVulReplayFn 设置漏洞结果的重放函数
 func (q *ResultQueue) SetVulReplayFn(fn func(ctx context.Context, req *VulResultReq) error) {
 	q.replayVulFn = fn
+}
+
+// SetJSReplayFn 设置 JS 结果的重放函数
+func (q *ResultQueue) SetJSReplayFn(fn func(ctx context.Context, req *SaveJSFinderResultReq) error) {
+	q.replayJSFn = fn
+}
+
+// SetCertReplayFn 设置证书结果的重放函数
+func (q *ResultQueue) SetCertReplayFn(fn func(ctx context.Context, req *SaveCertResultReq) error) {
+	q.replayCertFn = fn
 }
 
 // SetLogger 设置日志回调
@@ -188,10 +214,107 @@ func (q *ResultQueue) EnqueueVul(req *TaskResultReq, vuls []VulDocument) error {
 	return nil
 }
 
+// EnqueueJS 将失败的 JS 扫描结果入队到本地文件
+// 修复 P0：与资产/漏洞对称，API 不可用时本地持久化，恢复后由 replayLoop 重放
+func (q *ResultQueue) EnqueueJS(req *SaveJSFinderResultReq) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	files := q.listFilesLocked()
+	if len(files) >= q.maxSize {
+		if len(files) > 0 {
+			os.Remove(filepath.Join(q.dir, files[0]))
+			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
+		}
+	}
+
+	entry := queuedJSResult{
+		EnqueueTime: time.Now(),
+		Request:     req,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal queued js result: %w", err)
+	}
+
+	// 文件名:`{millisecond}_{seq}_js.json`，后缀 _js.json 供 replayOne 识别
+	suffix := req.MainTaskId
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	filename := fmt.Sprintf("%d_%d_%s_js.json", time.Now().UnixMilli(), q.nextSeq(), suffix)
+	path := filepath.Join(q.dir, filename)
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write queued js result: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename queued js result: %w", err)
+	}
+
+	q.log("INFO", "Queued JS result for task %s (%d findings) to %s", req.MainTaskId, len(req.Results), filename)
+	return nil
+}
+
+// EnqueueCert 将失败的证书采集结果入队到本地文件
+// 修复 P0：与资产/漏洞对称，API 不可用时本地持久化，恢复后由 replayLoop 重放
+func (q *ResultQueue) EnqueueCert(req *SaveCertResultReq) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	files := q.listFilesLocked()
+	if len(files) >= q.maxSize {
+		if len(files) > 0 {
+			os.Remove(filepath.Join(q.dir, files[0]))
+			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
+		}
+	}
+
+	entry := queuedCertResult{
+		EnqueueTime: time.Now(),
+		Request:     req,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal queued cert result: %w", err)
+	}
+
+	// 文件名:`{millisecond}_{seq}_cert.json`，后缀 _cert.json 供 replayOne 识别
+	suffix := req.MainTaskId
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	filename := fmt.Sprintf("%d_%d_%s_cert.json", time.Now().UnixMilli(), q.nextSeq(), suffix)
+	path := filepath.Join(q.dir, filename)
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write queued cert result: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename queued cert result: %w", err)
+	}
+
+	q.log("INFO", "Queued cert result for task %s (%d certs) to %s", req.MainTaskId, len(req.Results), filename)
+	return nil
+}
+
 // nextSeq 返回进程内单调递增序号,已持锁调用
 func (q *ResultQueue) nextSeq() uint64 {
 	q.seqCounter++
 	return q.seqCounter
+}
+
+// maxQueueAge 队列项最大存活时间。超过该时间的条目视为已无重试价值（如系统性故障
+// 导致长期无法写入），重放时直接丢弃并打印 WARN，避免队列无限堆积、挤掉新结果。
+const maxQueueAge = 24 * time.Hour
+
+// isExpired 判断入队时间是否已过期
+func (q *ResultQueue) isExpired(t time.Time) bool {
+	return !t.IsZero() && time.Since(t) > maxQueueAge
 }
 
 // secureRandInt 生成 [0,n) 随机数，n<=0 时返回 0
@@ -251,9 +374,10 @@ func (q *ResultQueue) replayAll(ctx context.Context) {
 		path := filepath.Join(q.dir, filename)
 		if err := q.replayOne(ctx, path); err != nil {
 			q.log("WARN", "Failed to replay %s: %v, will retry later", filename, err)
-			return // 保留剩余文件，下次重试
+			// 不阻塞其余文件：单条永久失败不应卡住整个队列，继续重放后续条目
+			continue
 		}
-		// 成功后删除文件
+		// 成功后删除文件（过期丢弃分支已在 replayOne 内 os.Remove）
 		os.Remove(path)
 		q.log("INFO", "Replayed and removed %s", filename)
 	}
@@ -280,6 +404,11 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 			q.log("WARN", "Corrupted vul queue file %s, keeping for investigation", filename)
 			return fmt.Errorf("unmarshal vul queue file: %w", err)
 		}
+		if q.isExpired(vulEntry.EnqueueTime) {
+			q.log("WARN", "Dropping expired vul queue file %s (enqueued %v)", filename, vulEntry.EnqueueTime)
+			os.Remove(path)
+			return nil
+		}
 		if q.replayVulFn == nil {
 			return fmt.Errorf("vul replay function not set")
 		}
@@ -288,11 +417,56 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 		return q.replayVulFn(replayCtx, vulEntry.Request)
 	}
 
+	// 修复 P0：JS 结果文件后缀 _js.json
+	if strings.HasSuffix(filename, "_js.json") {
+		var jsEntry queuedJSResult
+		if err := json.Unmarshal(data, &jsEntry); err != nil {
+			q.log("WARN", "Corrupted js queue file %s, keeping for investigation", filename)
+			return fmt.Errorf("unmarshal js queue file: %w", err)
+		}
+		if q.isExpired(jsEntry.EnqueueTime) {
+			q.log("WARN", "Dropping expired js queue file %s (enqueued %v)", filename, jsEntry.EnqueueTime)
+			os.Remove(path)
+			return nil
+		}
+		if q.replayJSFn == nil {
+			return fmt.Errorf("js replay function not set")
+		}
+		replayCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		defer cancel()
+		return q.replayJSFn(replayCtx, jsEntry.Request)
+	}
+
+	// 修复 P0：证书结果文件后缀 _cert.json
+	if strings.HasSuffix(filename, "_cert.json") {
+		var certEntry queuedCertResult
+		if err := json.Unmarshal(data, &certEntry); err != nil {
+			q.log("WARN", "Corrupted cert queue file %s, keeping for investigation", filename)
+			return fmt.Errorf("unmarshal cert queue file: %w", err)
+		}
+		if q.isExpired(certEntry.EnqueueTime) {
+			q.log("WARN", "Dropping expired cert queue file %s (enqueued %v)", filename, certEntry.EnqueueTime)
+			os.Remove(path)
+			return nil
+		}
+		if q.replayCertFn == nil {
+			return fmt.Errorf("cert replay function not set")
+		}
+		replayCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		defer cancel()
+		return q.replayCertFn(replayCtx, certEntry.Request)
+	}
+
 	var entry queuedResult
 	if err := json.Unmarshal(data, &entry); err != nil {
 		// 修复 RQ1：解析失败不返回 nil（会导致文件被删除），返回错误保留文件供排查
 		q.log("WARN", "Corrupted queue file %s, keeping for investigation", filename)
 		return fmt.Errorf("unmarshal queue file: %w", err)
+	}
+	if q.isExpired(entry.EnqueueTime) {
+		q.log("WARN", "Dropping expired queue file %s (enqueued %v)", filename, entry.EnqueueTime)
+		os.Remove(path)
+		return nil
 	}
 
 	replayCtx, cancel := context.WithTimeout(ctx, 120*time.Second)

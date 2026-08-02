@@ -109,11 +109,14 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 	clientOptions := options.Client().
 		ApplyURI(c.Mongo.Uri).
 		SetMaxPoolSize(100).                         // 最大连接数
-		SetMinPoolSize(10).                          // 最小连接数
+		SetMinPoolSize(5).                           // 最小连接数（修复 D2：原 10，避免小内存机器预占过多连接）
 		SetMaxConnIdleTime(30 * time.Second).        // 空闲连接超时
 		SetConnectTimeout(10 * time.Second).         // 连接超时
-		SetServerSelectionTimeout(10 * time.Second). // 服务器选择超时
-		SetSocketTimeout(30 * time.Second)           // Socket超时
+		SetServerSelectionTimeout(30 * time.Second). // 服务器选择超时（修复 D2：原 10s，DNS 抖动时易触发连接池被清空）
+		SetSocketTimeout(30 * time.Second).          // Socket超时
+		SetHeartbeatInterval(10 * time.Second).      // 心跳间隔（修复 D2：更快探测到死连接，及时重建连接）
+		SetRetryReads(true).                         // 瞬时故障自动重试（修复 D2）
+		SetRetryWrites(true)                         // 瞬时故障自动重试（修复 D2）
 
 	mongoClient, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
@@ -151,12 +154,17 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 
 	// 创建RPC客户端（增加消息大小限制到50MB，支持大量指纹数据传输）
 	logx.Infof("Connecting to RPC: %v", c.TaskRpc.Endpoints)
-	rpcClient := zrpc.MustNewClient(c.TaskRpc, zrpc.WithDialOption(
-		grpc.WithDefaultCallOptions(
+	rpcClient := zrpc.MustNewClient(c.TaskRpc,
+		zrpc.WithDialOption(grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(50*1024*1024), // 50MB
 			grpc.MaxCallSendMsgSize(50*1024*1024), // 50MB
-		),
-	))
+		)),
+		// 修复 D3：所有 RPC 调用默认 30s 上限。mongo/redis 抖动时
+		// 调用将快速失败而非无限阻塞（曾出现 CheckTask 阻塞 17 分钟并
+		// 触发 gRPC DeadlineExceeded，进而拖垮 WS 心跳、导致 worker 重启）。
+		// 该 deadline 会随 gRPC 上下文传播到 RPC 服务端，自动取消其底层 DB 操作。
+		zrpc.WithDialOption(grpc.WithTimeout(30*time.Second)),
+	)
 	taskRpcClient := pb.NewTaskServiceClient(rpcClient.Conn())
 
 	svcCtx := &ServiceContext{

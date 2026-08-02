@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"cscan/model"
@@ -51,6 +52,9 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 	seenTargets := make(map[string]struct{})
 
 	var totalAsset, newAsset, updateAsset int32
+	// 失败计数器：用于发现“服务端返回成功但数据库实际未写入”的静默丢数据问题
+	var failedWrites int
+	var firstWriteErr error
 	now := time.Now()
 
 	for _, pbAsset := range in.Assets {
@@ -232,20 +236,24 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 			asset.FirstSeenTaskId = in.MainTaskId // 记录首次发现的任务ID
 			asset.LastStatusChangeTime = now      // 记录状态变化时间
 
-		if err := assetModel.Insert(l.ctx, asset); err != nil {
-			l.Logger.Errorf("Insert asset failed: %v", err)
-			continue
-		}
-		newAsset++
-		// T1.1: 记录本次新增资产（唯一真源为落库时刻）
-		diffs = append(diffs, model.ScanDiff{
-			TaskId:      in.MainTaskId,
-			WorkspaceId: workspaceId,
-			DiffType:    model.ScanDiffTypeAsset,
-			ChangeType:  model.ScanDiffChangeAdded,
-			TargetKey:   asset.Authority,
-			Summary:     asset.Host,
-		})
+			if err := assetModel.Insert(l.ctx, asset); err != nil {
+				l.Logger.Errorf("Insert asset failed: %v", err)
+				failedWrites++
+				if firstWriteErr == nil {
+					firstWriteErr = err
+				}
+				continue
+			}
+			newAsset++
+			// T1.1: 记录本次新增资产（唯一真源为落库时刻）
+			diffs = append(diffs, model.ScanDiff{
+				TaskId:      in.MainTaskId,
+				WorkspaceId: workspaceId,
+				DiffType:    model.ScanDiffTypeAsset,
+				ChangeType:  model.ScanDiffChangeAdded,
+				TargetKey:   asset.Authority,
+				Summary:     asset.Host,
+			})
 		} else {
 			// 更新已存在的资产
 			// 判断是否是不同任务的更新
@@ -284,6 +292,10 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 
 			if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), update); err != nil {
 				l.Logger.Errorf("Update asset failed: %v", err)
+				failedWrites++
+				if firstWriteErr == nil {
+					firstWriteErr = err
+				}
 				continue
 			}
 			if isDifferentTask {
@@ -336,8 +348,14 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 		}
 	}
 
+	// 完全写入失败（总数>0 但新增与更新均为 0）视为服务端错误，返回 error，
+	// 使 API 层返回非 0 code，worker 才能触发重试/本地队列回退，避免数据静默丢失。
+	if totalAsset > 0 && newAsset == 0 && updateAsset == 0 {
+		return nil, fmt.Errorf("SaveTaskResult: %d assets all failed to persist (sample err: %v)", totalAsset, firstWriteErr)
+	}
+
 	return &pb.SaveTaskResultResp{
-		Success:     true,
+		Success:     failedWrites == 0,
 		Message:     "Assets saved successfully",
 		TotalAsset:  totalAsset,
 		NewAsset:    newAsset,

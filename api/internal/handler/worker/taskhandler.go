@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -74,7 +75,12 @@ func WorkerTaskCheckHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			MainTaskId: "",
 		}
 
-		rpcResp, err := svcCtx.TaskRpcClient.CheckTask(r.Context(), rpcReq)
+		// 修复 D1：显式 30s 超时，作为 gRPC 客户端默认超时的双保险。
+		// 防止 mongo 连接池清空时该调用无限阻塞，进而拖住 API 的 WS handler
+		// 与 worker 心跳，最终导致 worker 进程被重启（RestartCount 增长）。
+		checkCtx, checkCancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer checkCancel()
+		rpcResp, err := svcCtx.TaskRpcClient.CheckTask(checkCtx, rpcReq)
 		if err != nil {
 			// RPC 连接错误不输出日志，避免 Worker 轮询时产生大量日志
 			response.Error(w, err)

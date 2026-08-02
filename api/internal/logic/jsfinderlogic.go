@@ -200,9 +200,11 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 	_ = m.EnsureIndexes(l.ctx)
 
 	// 使用 UpsertMany 替代 InsertMany：重复扫描时更新 update_time，避免产生重复脏数据
+	// 修复：UpsertMany 失败时必须向上返回错误，使 API 返回非 0 code，
+	// 否则 worker 会误以为保存成功而静默丢数据。UpsertMany 为幂等操作，重试安全。
 	if err := m.UpsertMany(l.ctx, modelResults); err != nil {
 		l.Logger.Errorf("SaveJSFinderResult UpsertMany Error: %v", err)
-		// BulkWrite Ordered=false 时部分失败不影响其他条目，仅记录日志
+		return err
 	}
 
 	return nil

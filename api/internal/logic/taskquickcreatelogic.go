@@ -206,22 +206,13 @@ func recommendConfig(parsed []*scanner.Target, mode string, base map[string]inte
 		}
 	}
 
-	// base 已是从内置模板加载的配置，仅在其之上按目标类型智能启停模块
+	// base 已是按 mode 从内置模板(quick/standard)加载的配置，模板即“轻重”唯一真相源。
+	// 各扫描阶段在 worker 内自行判断输入是否适用（如子域名扫描仅对纯一级域名生效，
+	// IP/CIDR/子域名直接跳过；端口识别/指纹等阶段无资产时自动 skipped）。
+	// 编排层不再按目标类型或 mode 强制启停模块，避免与模板定义漂移。
 	cfg := base
 
-	// 模块启用策略
-	enableModule(cfg, "domainscan", hasDomain)
-	enableModule(cfg, "portscan", hasDomain || hasIP)
-	enableModule(cfg, "portidentify", (hasDomain || hasIP) && mode == "full")
-	enableModule(cfg, "fingerprint", true)
-	enableModule(cfg, "dirscan", (hasURL || hasDomain) && mode == "full")
-	enableModule(cfg, "pocscan", mode == "full")
-	enableModule(cfg, "brutescan", mode == "full")
-	enableModule(cfg, "jsfinder", hasDomain || hasURL)
-	// 内置模板无 certcheck 段，保持禁用以规避未知参数风险
-	enableModule(cfg, "certcheck", false)
-
-	// 推荐类型（前端展示用）
+	// 推荐类型（仅前端展示用）
 	var recType string
 	switch {
 	case hasURL && !hasDomain && !hasIP:
@@ -232,16 +223,6 @@ func recommendConfig(parsed []*scanner.Target, mode string, base map[string]inte
 		recType = "domain"
 	}
 	return cfg, recType
-}
-
-// enableModule 设置某扫描阶段的启用标志；段不存在则创建。
-func enableModule(cfg map[string]interface{}, key string, enable bool) {
-	section, ok := cfg[key].(map[string]interface{})
-	if !ok {
-		section = map[string]interface{}{}
-		cfg[key] = section
-	}
-	section["enable"] = enable
 }
 
 func recommendedTypeName(t string) string {

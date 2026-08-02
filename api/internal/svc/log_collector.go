@@ -34,6 +34,11 @@ type LogCollector struct {
 	writers map[string]*dayWriter // container -> current writer
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
+
+	// 修复 D8：docker.sock ContainerList 失败计数与节流时间，避免 daemon
+	// 抖动时 error 刷屏。仅由 discoverLoop 单一 goroutine 访问，无需加锁。
+	discoverFails   int
+	lastDiscoverErr time.Time
 }
 
 // dayWriter 单个容器当天的日志文件写入器
@@ -157,14 +162,28 @@ func (lc *LogCollector) discoverLoop() {
 }
 
 func (lc *LogCollector) discoverAndTail() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 修复 D8：超时由 5s 提到 20s。docker daemon 高负载时 ContainerList 偶发
+	// >5s，原超时会导致每次 15s 轮询都打一条 error，刷屏且无意义。
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	list, err := lc.cli.ContainerList(ctx, container.ListOptions{All: false})
 	if err != nil {
-		logx.Errorf("[LogCollector] list containers: %v", err)
+		// 修复 D8：对错误做节流 + 退避提示，连续失败时每 30s 仅记录一次，
+		// 避免 docker.sock 抖动时 error 刷屏。
+		lc.discoverFails++
+		if time.Since(lc.lastDiscoverErr) > 30*time.Second {
+			if lc.discoverFails > 3 {
+				logx.Errorf("[LogCollector] list containers failed %d times (throttled): %v", lc.discoverFails, err)
+			} else {
+				logx.Errorf("[LogCollector] list containers: %v", err)
+			}
+			lc.lastDiscoverErr = time.Now()
+		}
 		return
 	}
+	// 成功则重置失败计数
+	lc.discoverFails = 0
 
 	for _, c := range list {
 		name := ""
@@ -291,8 +310,10 @@ func (w *fileLineWriter) Write(p []byte) (int, error) {
 	for {
 		idx := strings.IndexByte(string(w.carry), '\n')
 		if idx < 0 {
-			// 防止单行过大
-			if len(w.carry) > 1<<20 {
+			// 修复 D5：单行超过 256KB 直接截断落盘，避免日志文件残留超大行，
+			// 导致 ReadLog 读回时 bufio.Scanner 报 "token too long" 并返回 500。
+			if len(w.carry) > 256*1024 {
+				w.carry = w.carry[:256*1024]
 				w.flushLine()
 			}
 			break
@@ -561,7 +582,9 @@ func (lc *LogCollector) ReadLog(date, name string, tail int) ([]string, int, err
 	// 逐行扫描,保留最后 tail 行
 	var lines []string
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
+	// 修复 D5：读缓冲上限由 1MB 提到 16MB，避免日志文件中残留的超大单行
+	//（如 base64 截图数据/大 JSON）触发 "bufio.Scanner: token too long"。
+	scanner.Buffer(make([]byte, 0, 4*1024*1024), 16*1024*1024)
 	total := 0
 	for scanner.Scan() {
 		total++

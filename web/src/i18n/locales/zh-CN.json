@@ -2131,7 +2131,8 @@
     "serverAddressRequired": "API服务地址（必需）",
     "installKeyRequired": "安装密钥（必需）",
     "workerNameDesc": "Worker名称（可选）",
-    "concurrencyDesc": "并发数（可选）"
+    "concurrencyDesc": "并发数（可选）",
+    "autoDerive": "自动（按本机内存）"
   },
   "settings": {
     "title": "系统配置",

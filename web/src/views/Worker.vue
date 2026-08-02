@@ -194,20 +194,20 @@
             <div class="command-section">
               <p class="command-title">1. {{ $t('worker.downloadConfig') }}</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.downloadUrl }}/static/docker-compose-worker.yaml</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/docker-compose-worker.yaml`)">{{ $t('common.copy') }}</el-button>
+                <code>curl -O {{ installInfo.downloadUrl }}/static/worker-tune.sh</code>
+                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/worker-tune.sh`)">{{ $t('common.copy') }}</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">2. {{ $t('worker.startProbe') }}</p>
               <div class="command-box">
-                <code>CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} docker-compose -f docker-compose-worker.yaml up -d</code>
-                <el-button size="small" @click="copyToClipboard(`CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} docker-compose -f docker-compose-worker.yaml up -d`)">{{ $t('common.copy') }}</el-button>
+                <code>CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} bash worker-tune.sh</code>
+                <el-button size="small" @click="copyToClipboard(`CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} bash worker-tune.sh`)">{{ $t('common.copy') }}</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">{{ $t('worker.oneKeyExecute') }}</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.downloadUrl }}/static/docker-compose-worker.yaml && CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} docker-compose -f docker-compose-worker.yaml up -d</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/docker-compose-worker.yaml && CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} docker-compose -f docker-compose-worker.yaml up -d`)">{{ $t('common.copy') }}</el-button>
+                <code>curl -O {{ installInfo.downloadUrl }}/static/worker-tune.sh && CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} bash worker-tune.sh</code>
+                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/worker-tune.sh && CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} bash worker-tune.sh`)">{{ $t('common.copy') }}</el-button>
               </div>
             </div>
           </el-tab-pane>
@@ -238,14 +238,14 @@
             <div class="command-section">
               <p class="command-title">1. {{ $t('worker.downloadConfig') }}</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.downloadUrl }}/static/docker-compose-worker.yaml</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/docker-compose-worker.yaml`)">{{ $t('common.copy') }}</el-button>
+                <code>curl -O {{ installInfo.downloadUrl }}/static/worker-tune.ps1</code>
+                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/worker-tune.ps1`)">{{ $t('common.copy') }}</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">2. {{ $t('worker.setEnvAndStart') }}</p>
               <div class="command-box">
-                <code>set CSCAN_SERVER={{ installInfo.serverAddr }} && set CSCAN_KEY={{ installInfo.installKey }} && docker-compose -f docker-compose-worker.yaml up -d</code>
-                <el-button size="small" @click="copyToClipboard(`set CSCAN_SERVER=${installInfo.serverAddr} && set CSCAN_KEY=${installInfo.installKey} && docker-compose -f docker-compose-worker.yaml up -d`)">{{ $t('common.copy') }}</el-button>
+                <code>set CSCAN_SERVER={{ installInfo.serverAddr }} && set CSCAN_KEY={{ installInfo.installKey }} && powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1</code>
+                <el-button size="small" @click="copyToClipboard(`set CSCAN_SERVER=${installInfo.serverAddr} && set CSCAN_KEY=${installInfo.installKey} && powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1`)">{{ $t('common.copy') }}</el-button>
               </div>
             </div>
           </el-tab-pane>
@@ -378,16 +378,16 @@ const paramTableData = computed(() => [
   { param: 'CSCAN_SERVER', desc: t('worker.serverAddressRequired'), default: t('common.no') },
   { param: 'CSCAN_KEY', desc: t('worker.installKeyRequired'), default: t('common.no') },
   { param: 'CSCAN_NAME', desc: t('worker.workerNameDesc'), default: t('worker.autoGenerate') },
-  { param: 'CSCAN_CONCURRENCY', desc: t('worker.concurrencyDesc'), default: '5' }
+  { param: 'CSCAN_CONCURRENCY', desc: t('worker.concurrencyDesc'), default: t('worker.autoDerive') }
 ])
 
 // PowerShell 命令计算属性
 const psDownloadCmd = computed(() => {
-  return `Invoke-WebRequest -Uri "${installInfo.downloadUrl}/static/docker-compose-worker.yaml" -OutFile "docker-compose-worker.yaml"`
+  return `Invoke-WebRequest -Uri "${installInfo.downloadUrl}/static/worker-tune.ps1" -OutFile "worker-tune.ps1"`
 })
 
 const psStartCmd = computed(() => {
-  return `$env:CSCAN_SERVER="${installInfo.serverAddr}"; $env:CSCAN_KEY="${installInfo.installKey}"; docker-compose -f docker-compose-worker.yaml up -d`
+  return `$env:CSCAN_SERVER="${installInfo.serverAddr}"; $env:CSCAN_KEY="${installInfo.installKey}"; powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1`
 })
 
 const psOneKeyCmd = computed(() => {

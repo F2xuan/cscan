@@ -2131,7 +2131,8 @@
     "serverAddressRequired": "API server address (required)",
     "installKeyRequired": "Install key (required)",
     "workerNameDesc": "Worker name (optional)",
-    "concurrencyDesc": "Concurrency (optional)"
+    "concurrencyDesc": "Concurrency (optional)",
+    "autoDerive": "auto (by host memory)"
   },
   "settings": {
     "title": "System Settings",

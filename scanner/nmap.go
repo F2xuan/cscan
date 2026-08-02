@@ -189,10 +189,16 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		opts.Concurrent = 5
 	}
 
-	// 限制单端口超时上限为 30s（端口识别不需要长时间等待）
-	if opts.Timeout > 30 {
-		logWarn("Nmap timeout %ds exceeds maximum 30s for port identification, limiting to 30s", opts.Timeout)
+	// 端口识别超时以用户配置为准（默认 30s，来源于 scheduler.PortIdentifyConfig.Timeout）。
+	// 仅对明显异常的值做上限保护，避免单端口超时设置过大导致任务长时间挂起；
+	// 用户显式设置的超时（如 60s）必须被原样尊重，否则日志与配置不一致。
+	const maxPortIdentifyTimeout = 600
+	if opts.Timeout <= 0 {
 		opts.Timeout = 30
+	}
+	if opts.Timeout > maxPortIdentifyTimeout {
+		logWarn("Nmap timeout %ds exceeds maximum %ds for port identification, limiting to %ds", opts.Timeout, maxPortIdentifyTimeout, maxPortIdentifyTimeout)
+		opts.Timeout = maxPortIdentifyTimeout
 	}
 
 	// P0-5: 校验额外参数 Args，防止参数注入（拒绝 --script、-i、-o、--data-dir 等危险参数）

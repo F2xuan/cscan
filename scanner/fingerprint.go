@@ -468,16 +468,29 @@ func GetHttpServiceChecker() HttpServiceChecker {
 	return globalHttpServiceChecker
 }
 
-// runAdditionalFingerprint 执行额外的指纹识别功能（httpx已执行后）
-func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{})) {
-	targetUrl := fmt.Sprintf("%s://%s:%d", asset.Service, asset.Host, asset.Port)
-	if asset.Service == "" {
-		if asset.Port == 443 || asset.Port == 8443 {
-			targetUrl = fmt.Sprintf("https://%s:%d", asset.Host, asset.Port)
+// buildTargetURL 构造指纹探测目标 URL。
+// 修复 D6：当 port <= 0 时回落到默认端口（不附加 :port），避免拼出形如
+// https://host:0 的非法 URL——Chrome 会拒绝 net::ERR_UNSAFE_PORT，HTTP client
+// 也会因连接 :0 失败。未指定协议时按端口推断 https/http（与原逻辑一致）。
+func buildTargetURL(service, host string, port int) string {
+	scheme := service
+	if scheme == "" {
+		if port == 443 || port == 8443 || port == 9443 {
+			scheme = "https"
 		} else {
-			targetUrl = fmt.Sprintf("http://%s:%d", asset.Host, asset.Port)
+			scheme = "http"
 		}
 	}
+	if port <= 0 {
+		return scheme + "://" + host
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}
+
+// runAdditionalFingerprint 执行额外的指纹识别功能（httpx已执行后）
+func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{})) {
+	// 修复 D6：统一 URL 构造，port<=0 时回落默认端口，避免 :0 非法 URL
+	targetUrl := buildTargetURL(asset.Service, asset.Host, asset.Port)
 
 	// 解析HTTP headers用于指纹识别
 	var headers http.Header
@@ -628,7 +641,8 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	}
 
 	// 截图功能：如果 httpx 没有获取到截图，使用内置方法补充
-	if opts.Screenshot && asset.Screenshot == "" {
+	// 修复 D6：port 未知(==0)时跳过截图，避免对默认端口做无意义 Chrome 启动
+	if opts.Screenshot && asset.Screenshot == "" && asset.Port > 0 {
 		screenshot := s.takeScreenshot(ctx, targetUrl)
 		if screenshot != "" {
 			asset.Screenshot = screenshot
@@ -797,7 +811,8 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 			return
 		}
 
-		targetUrl := fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
+		// 修复 D6：统一 URL 构造，port<=0 时回落默认端口
+		targetUrl := buildTargetURL(scheme, asset.Host, asset.Port)
 		resp, err := s.client.Get(targetUrl)
 		if err != nil {
 			continue
@@ -895,7 +910,8 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		}
 
 		// 截图
-		if opts.Screenshot {
+		// 修复 D6：port 未知(==0)时跳过截图
+		if opts.Screenshot && asset.Port > 0 {
 			screenshot := s.takeScreenshot(ctx, targetUrl)
 			if taskLog != nil {
 				taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)

@@ -255,7 +255,7 @@ func (v *ConfigValidator) applyPortScanDefaults(config *PortScanConfig) {
 		config.Rate = 1000
 	}
 	if config.Timeout == 0 {
-		config.Timeout = 5
+		config.Timeout = 60
 	}
 	if config.Tool == "" {
 		config.Tool = "naabu"

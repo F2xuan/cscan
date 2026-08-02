@@ -1078,7 +1078,7 @@ const form = reactive({
   // 端口识别
   portidentifyEnable: false,
   portidentifyTool: 'nmap',
-  portidentifyTimeout: 60,
+  portidentifyTimeout: 30,
   portidentifyConcurrency: 10,
   portidentifyArgs: '-sV -version-intensity 5',
   portidentifyUDP: false,
@@ -1092,7 +1092,7 @@ const form = reactive({
   fingerprintScreenshot: false,
   fingerprintActiveScan: false,
   fingerprintActiveTimeout: 10,
-  fingerprintTimeout: 90,
+  fingerprintTimeout: 30,
   fingerprintFilterMode: 'http_mapping', // 过滤模式: http_mapping(HTTP映射) 或 service_mapping(服务映射)
   fingerprintForceScan: false,
   // 弱口令扫描
@@ -1331,7 +1331,7 @@ function applyConfig(config) {
     // 端口识别
     portidentifyEnable: config.portidentify?.enable ?? false,
     portidentifyTool: config.portidentify?.tool || 'nmap',
-    portidentifyTimeout: config.portidentify?.timeout || 60,
+    portidentifyTimeout: config.portidentify?.timeout || 30,
     portidentifyConcurrency: config.portidentify?.concurrency || 10,
     portidentifyArgs: config.portidentify?.args || '',
     portidentifyUDP: config.portidentify?.udp ?? false,
@@ -1344,7 +1344,7 @@ function applyConfig(config) {
     fingerprintScreenshot: config.fingerprint?.screenshot ?? false,
     fingerprintActiveScan: config.fingerprint?.activeScan ?? false,
     fingerprintActiveTimeout: config.fingerprint?.activeTimeout || 10,
-    fingerprintTimeout: config.fingerprint?.targetTimeout || 90,
+    fingerprintTimeout: config.fingerprint?.targetTimeout || 30,
     fingerprintFilterMode: config.fingerprint?.filterMode || 'http_mapping',
     // 弱口令扫描
     brutescanEnable: config.brutescan?.enable ?? false,

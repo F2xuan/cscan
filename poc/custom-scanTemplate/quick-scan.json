@@ -10,7 +10,7 @@
   "target": "",
   "template": null,
   "domainscan": {
-    "enable": false,
+    "enable": true,
     "subfinder": true,
     "timeout": 300,
     "maxEnumerationTime": 10,

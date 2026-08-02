@@ -114,6 +114,10 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 			{Method: http.MethodGet, Path: "/api/v1/worker/ws", Handler: worker.WorkerWSEndpointHandler(svcCtx, WorkerWSHandlerInstance)},
 			// 静态文件 - docker-compose-worker.yaml
 			{Method: http.MethodGet, Path: "/static/docker-compose-worker.yaml", Handler: worker.DockerComposeWorkerHandler(svcCtx)},
+			// 静态文件 - worker-tune.sh（Worker 探针本地资源自适应，按目标机规格生成 override）
+			{Method: http.MethodGet, Path: "/static/worker-tune.sh", Handler: worker.WorkerTuneHandler(svcCtx)},
+			// 静态文件 - worker-tune.ps1（Windows / PowerShell 版，同上）
+			{Method: http.MethodGet, Path: "/static/worker-tune.ps1", Handler: worker.WorkerTunePsHandler(svcCtx)},
 			// 静态文件 - 用户头像 /static/avatars/<filename>
 			{Method: http.MethodGet, Path: "/static/avatars/:filename", Handler: user.AvatarStaticHandler(svcCtx)},
 		},

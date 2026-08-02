@@ -124,10 +124,10 @@ mb_to_compose() {
   fi
 }
 
-# CPU 预留 = 上限的一个小比例（避免小机过度预留），下限 0.5
-res_cpu() {
-  awk -v v="$1" 'BEGIN{ r=v/4; if(r<0.5)r=0.5; printf "%.2f", r }'
-}
+# CPU 预留(floor)与上限(ceiling)在 compute_alloc / load_preset 中按权重一并计算：
+#   - 预留合计 ≤ 0.7*核数（留 30% 突发空间，保证任何服务不被饿死）
+#   - 上限(天花板): worker 放开到 min(6, 核数)；其余 = min(核数, 预留*2.5)
+# 故不再需要 res_cpu() 这种「上限/4」近似。
 
 # 内存储备(OS+Docker 开销) 与预算
 host_reserve_mb() {
@@ -145,84 +145,62 @@ tier_for_ram() {
   fi
 }
 
-# 命名画像写全局变量 P_*
+# 命名画像写全局变量 P_*（仅极简 tiny 为硬编码，其余交给 compute_alloc 保证不超卖）
 load_preset() {
   case $1 in
     tiny)
-      P_REDIS_LIM=256;  P_REDIS_RES=64;   P_REDIS_CPU=1
-      P_MONGO_LIM=1024; P_MONGO_RES=256;  P_MONGO_CPU=1
-      P_API_LIM=512;    P_API_RES=128;    P_API_CPU=1
-      P_RPC_LIM=512;    P_RPC_RES=128;    P_RPC_CPU=1
-      P_WEB_LIM=256;    P_WEB_RES=64;     P_WEB_CPU=1
-      P_WORKER_LIM=1024;P_WORKER_RES=256; P_WORKER_CPU=1; P_WORKER_CONC=1
-      ;;
-    small)
-      P_REDIS_LIM=512;  P_REDIS_RES=128;  P_REDIS_CPU=2
-      P_MONGO_LIM=2048; P_MONGO_RES=512;  P_MONGO_CPU=2
-      P_API_LIM=1024;   P_API_RES=256;    P_API_CPU=2
-      P_RPC_LIM=1024;   P_RPC_RES=256;    P_RPC_CPU=2
-      P_WEB_LIM=512;    P_WEB_RES=128;    P_WEB_CPU=2
-      P_WORKER_LIM=2048;P_WORKER_RES=512; P_WORKER_CPU=2; P_WORKER_CONC=2
-      ;;
-    medium)
-      P_REDIS_LIM=512;  P_REDIS_RES=128;  P_REDIS_CPU=3
-      P_MONGO_LIM=3072; P_MONGO_RES=768;  P_MONGO_CPU=3
-      P_API_LIM=1536;   P_API_RES=384;    P_API_CPU=3
-      P_RPC_LIM=1536;   P_RPC_RES=384;    P_RPC_CPU=3
-      P_WEB_LIM=512;    P_WEB_RES=128;    P_WEB_CPU=3
-      P_WORKER_LIM=3072;P_WORKER_RES=768; P_WORKER_CPU=3; P_WORKER_CONC=4
-      ;;
-    large)
-      P_REDIS_LIM=1024; P_REDIS_RES=256;  P_REDIS_CPU=4
-      P_MONGO_LIM=5120; P_MONGO_RES=1280; P_MONGO_CPU=4
-      P_API_LIM=2048;   P_API_RES=512;    P_API_CPU=4
-      P_RPC_LIM=2048;   P_RPC_RES=512;    P_RPC_CPU=4
-      P_WEB_LIM=1024;   P_WEB_RES=256;    P_WEB_CPU=4
-      P_WORKER_LIM=4096;P_WORKER_RES=1024;P_WORKER_CPU=4; P_WORKER_CONC=6
-      ;;
-    xlarge)
-      P_REDIS_LIM=2048; P_REDIS_RES=512;  P_REDIS_CPU=6
-      P_MONGO_LIM=8192; P_MONGO_RES=2048; P_MONGO_CPU=6
-      P_API_LIM=3072;   P_API_RES=768;    P_API_CPU=6
-      P_RPC_LIM=3072;   P_RPC_RES=768;    P_RPC_CPU=6
-      P_WEB_LIM=1024;   P_WEB_RES=256;    P_WEB_CPU=6
-      P_WORKER_LIM=6144;P_WORKER_RES=1536;P_WORKER_CPU=6; P_WORKER_CONC=10
+      # 极简画像(≈2G 保底)：内存/CPU 均取最小可行值，不超卖
+      P_REDIS_LIM=128;  P_REDIS_RES=64;   P_REDIS_CPU=1; P_REDIS_CPURES=0.10
+      P_MONGO_LIM=512;  P_MONGO_RES=256;  P_MONGO_CPU=1; P_MONGO_CPURES=0.10
+      P_API_LIM=256;    P_API_RES=128;    P_API_CPU=1;   P_API_CPURES=0.10
+      P_RPC_LIM=256;    P_RPC_RES=128;    P_RPC_CPU=1;   P_RPC_CPURES=0.10
+      P_WEB_LIM=128;    P_WEB_RES=64;     P_WEB_CPU=1;   P_WEB_CPURES=0.10
+      P_WORKER_LIM=384; P_WORKER_RES=128; P_WORKER_CPU=1; P_WORKER_CPURES=0.10; P_WORKER_CONC=1
       ;;
     *) c_err "未知画像: $1 (可选: tiny/small/medium/large/xlarge)"; exit 1 ;;
   esac
 }
 
-# 精确计算：依据宿主机内存/CPU 推导各服务配额
+# 精确计算：依据宿主机内存/CPU 推导各服务配额（双档模型）
+#   - 内存: 按权重分配并整体缩放至预算内（保证不超卖，低配自动降级）
+#   - CPU : 预留(floor)按权重合计 ≤ 0.7*核数(留突发空间)；上限(ceiling) worker 放开到 min(6,核数)，其余 = min(核数, 预留*2.5)
 compute_alloc() {
   local mb=$1 cpus=$2
-  local reserve; reserve=$(host_reserve_mb "$mb")
-  # awk 输出 15 个值: 6 个内存(MB) + 6 个 CPU + 1 个并发
+  # awk 输出 19 个值: 6 内存上限 + 6 CPU上限(ceiling) + 6 CPU预留(floor) + 1 并发
   read -r P_REDIS_LIM P_MONGO_LIM P_API_LIM P_RPC_LIM P_WEB_LIM P_WORKER_LIM \
           P_REDIS_CPU P_MONGO_CPU P_API_CPU P_RPC_CPU P_WEB_CPU P_WORKER_CPU \
+          P_REDIS_CPURES P_MONGO_CPURES P_API_CPURES P_RPC_CPURES P_WEB_CPURES P_WORKER_CPURES \
           P_WORKER_CONC <<< "$(
     awk -v mb="$mb" -v cpus="$cpus" '
     BEGIN {
-      split("1 6 2.5 2.5 1 6", w, " ");
-      mins[1]=256; mins[2]=1024; mins[3]=512; mins[4]=512; mins[5]=256; mins[6]=1024;
+      split("1 6 2.5 2.5 1 6", w, " ");            # 内存权重
+      mins[1]=192; mins[2]=768; mins[3]=384; mins[4]=384; mins[5]=192; mins[6]=768;
       sum=19;
       r=mb*0.12; if(r<1024)r=1024; if(r>4096)r=4096; reserve=int(r);
-      budget=mb-reserve;
-      for(i=1;i<=6;i++){ a[i]=int(budget*0.9*w[i]/sum); if(a[i]<mins[i]) a[i]=mins[i]; }
-      total=a[1]+a[2]+a[3]+a[4]+a[5]+a[6];
-      if(total>budget){ scale=budget/total; for(i=1;i<=6;i++){ a[i]=int(a[i]*scale); if(a[i]<mins[i])a[i]=mins[i]; } }
-      for(i=1;i<=6;i++){ c[i]=a[i]/total*cpus; if(c[i]<0.5)c[i]=0.5; if(c[i]>cpus)c[i]=cpus; }
+      budget=mb-reserve; target=int(budget*0.95);
+      # 初步按权重分配 + 最小保底
+      for(i=1;i<=6;i++){ a[i]=int(target*w[i]/sum); if(a[i]<mins[i]) a[i]=mins[i]; }
+      # 若超预算整体等比缩放（允许低于 mins 以适配小内存，绝不超过预算）
+      tot=0; for(i=1;i<=6;i++) tot+=a[i];
+      if(tot>target){ s=target/tot; for(i=1;i<=6;i++) a[i]=int(a[i]*s); }
+      # 取整到 64MB，便于阅读
+      for(i=1;i<=6;i++){ a[i]=int(a[i]/64)*64; if(a[i]<64)a[i]=64; }
+      # CPU 预留(地板)权重，合计 ≤ 0.7*核数
+      split("0.5 1 1 1 0.5 1.5", rw, " ");
+      rsum=5.5; rbudget=cpus*0.7;
+      for(i=1;i<=6;i++){ cr[i]=rw[i]/rsum*rbudget; if(cr[i]<0.25)cr[i]=0.25; }
+      # CPU 上限(天花板): worker 放开到 min(6,核数)；其余 = min(核数, max(0.5, 预留*2.5))
+      for(i=1;i<=6;i++){
+        if(i==6){ cl[i]=cpus; if(cl[i]>6)cl[i]=6; }
+        else { cl[i]=cr[i]*2.5; if(cl[i]<0.5)cl[i]=0.5; if(cl[i]>cpus)cl[i]=cpus; }
+      }
       conc=int(a[6]*0.6/384); if(conc<1)conc=1; if(conc>16)conc=16;
-      printf "%d %d %d %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %d",
-             a[1],a[2],a[3],a[4],a[5],a[6], c[1],c[2],c[3],c[4],c[5],c[6], conc;
+      printf "%d %d %d %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %d",
+             a[1],a[2],a[3],a[4],a[5],a[6],
+             cl[1],cl[2],cl[3],cl[4],cl[5],cl[6],
+             cr[1],cr[2],cr[3],cr[4],cr[5],cr[6], conc;
     }')"
-  # 低配无法容纳保底值时回退到 small 画像
-  local total=$(( P_REDIS_LIM + P_MONGO_LIM + P_API_LIM + P_RPC_LIM + P_WEB_LIM + P_WORKER_LIM ))
-  local budget=$(( mb - reserve ))
-  if [ "$total" -gt "$budget" ]; then
-    c_warn "可用内存不足以承载自动计算配额，回退到 small 画像（建议宿主机 ≥4G）。"
-    load_preset small
-  fi
-  # 预留(Reservation) = 上限的一半，下限 64M
+  # 预留内存 = 上限的一半（下限 64M）
   P_REDIS_RES=$(( P_REDIS_LIM / 2  > 64 ? P_REDIS_LIM / 2  : 64 ))
   P_MONGO_RES=$(( P_MONGO_LIM / 2  > 64 ? P_MONGO_LIM / 2  : 64 ))
   P_API_RES=$(( P_API_LIM / 2     > 64 ? P_API_LIM / 2     : 64 ))
@@ -231,51 +209,57 @@ compute_alloc() {
   P_WORKER_RES=$(( P_WORKER_LIM / 2 > 64 ? P_WORKER_LIM / 2 : 64 ))
 }
 
-# 依据目标解析画像：auto/RAM -> 计算或分级；命名 -> 直接取
+# 依据目标解析画像：auto/RAM -> 计算；命名 -> 取对应规格(内存按 min(规格,宿主机) 适配，避免超卖)
 resolve_profile() {
   local target=${1:-auto}
-  local mb cpu
+  local mb cpu eff
   mb=$(host_ram_mb); cpu=$(host_cpus)
   P_SOURCE=""
   case "$target" in
     auto)
       P_SOURCE="auto(宿主机 ${mb}MB)"
-      if [ "$mb" -lt 5120 ]; then
-        load_preset "$(tier_for_ram "$mb")"
-        P_PROFILE="$(tier_for_ram "$mb")"
-        [ "$mb" -lt 3072 ] && c_warn "内存低于 3G，已采用最保守画像；强烈建议 ≥4G。"
+      if [ "$mb" -lt 2048 ]; then
+        c_warn "内存低于 2G，采用极简画像；强烈建议 ≥4G。"
+        load_preset tiny
+        P_PROFILE="tiny"
       else
         compute_alloc "$mb" "$cpu"
         P_PROFILE="computed"
       fi
       ;;
-    tiny|small|medium|large|xlarge)
-      load_preset "$target"
-      P_PROFILE="$target"
-      P_SOURCE="named($target)"
-      ;;
+    tiny)
+      load_preset tiny; P_PROFILE="tiny"; P_SOURCE="named(tiny)" ;;
+    small)
+      eff=$(( 4096 < mb ? 4096 : mb )); compute_alloc "$eff" "$cpu"
+      P_PROFILE="small"; P_SOURCE="named(small,4G)" ;;
+    medium)
+      eff=$(( 8192 < mb ? 8192 : mb )); compute_alloc "$eff" "$cpu"
+      P_PROFILE="medium"; P_SOURCE="named(medium,8G)" ;;
+    large)
+      eff=$(( 16384 < mb ? 16384 : mb )); compute_alloc "$eff" "$cpu"
+      P_PROFILE="large"; P_SOURCE="named(large,16G)" ;;
+    xlarge)
+      eff=$(( 32768 < mb ? 32768 : mb )); compute_alloc "$eff" "$cpu"
+      P_PROFILE="xlarge"; P_SOURCE="named(xlarge,32G)" ;;
     *)
       # 视为显式内存规格
       mb=$(to_mb "$target")
       if [ "$mb" -lt 512 ]; then c_err "内存规格过小: ${target}"; exit 1; fi
       P_SOURCE="ram(${target})"
-      if [ "$mb" -lt 5120 ]; then
-        load_preset "$(tier_for_ram "$mb")"
-        P_PROFILE="$(tier_for_ram "$mb")"
-      else
-        compute_alloc "$mb" "$cpu"
-        P_PROFILE="computed"
-      fi
+      if [ "$mb" -lt 2048 ]; then load_preset tiny; P_PROFILE="tiny";
+      else compute_alloc "$mb" "$cpu"; P_PROFILE="computed"; fi
       ;;
   esac
   HOST_MB=$mb; HOST_CPUS=$cpu
-  # CPU 上限不超过宿主机核数
+  # 单服务 CPU 上限不超过宿主机核数（worker 已在 compute_alloc 内放开到 min(6,核数)）
   P_REDIS_CPU=$(awk -v v="$P_REDIS_CPU" -v m="$cpu" 'BEGIN{print (v>m?m:v)}')
   P_MONGO_CPU=$(awk -v v="$P_MONGO_CPU" -v m="$cpu" 'BEGIN{print (v>m?m:v)}')
   P_API_CPU=$(awk -v v="$P_API_CPU" -v m="$cpu" 'BEGIN{print (v>m?m:v)}')
   P_RPC_CPU=$(awk -v v="$P_RPC_CPU" -v m="$cpu" 'BEGIN{print (v>m?m:v)}')
   P_WEB_CPU=$(awk -v v="$P_WEB_CPU" -v m="$cpu" 'BEGIN{print (v>m?m:v)}')
   P_WORKER_CPU=$(awk -v v="$P_WORKER_CPU" -v m="$cpu" 'BEGIN{print (v>m?m:v)}')
+  # 注意: 不再做“聚合 CPU 上限 ≤ 核数”的缩放——CPU 上限是天花板(ceiling)，
+  #       允许各服务上限之和超过核数；真正保证不饿死的是预留(floor)合计 ≤ 0.7*核数。
 }
 
 # ---------- 落盘: override + state ----------
@@ -292,16 +276,20 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '${P_REDIS_CPU}'
           memory: $(mb_to_compose "$P_REDIS_LIM")
         reservations:
+          cpus: '${P_REDIS_CPURES}'
           memory: $(mb_to_compose "$P_REDIS_RES")
 
   mongodb:
     deploy:
       resources:
         limits:
+          cpus: '${P_MONGO_CPU}'
           memory: $(mb_to_compose "$P_MONGO_LIM")
         reservations:
+          cpus: '${P_MONGO_CPURES}'
           memory: $(mb_to_compose "$P_MONGO_RES")
 
   cscan-api:
@@ -311,7 +299,7 @@ services:
           cpus: '${P_API_CPU}'
           memory: $(mb_to_compose "$P_API_LIM")
         reservations:
-          cpus: '$(res_cpu "$P_API_CPU")'
+          cpus: '${P_API_CPURES}'
           memory: $(mb_to_compose "$P_API_RES")
     environment:
       # 留空默认 -> Go 运行时按 cgroup 自动推导 GOMAXPROCS / GOMEMLIMIT（含运行时热更新后自适配）
@@ -327,7 +315,7 @@ services:
           cpus: '${P_RPC_CPU}'
           memory: $(mb_to_compose "$P_RPC_LIM")
         reservations:
-          cpus: '$(res_cpu "$P_RPC_CPU")'
+          cpus: '${P_RPC_CPURES}'
           memory: $(mb_to_compose "$P_RPC_RES")
     environment:
       - GOMAXPROCS=${DOL}{CSCAN_RPC_GOMAXPROCS:-}
@@ -340,7 +328,7 @@ services:
           cpus: '${P_WEB_CPU}'
           memory: $(mb_to_compose "$P_WEB_LIM")
         reservations:
-          cpus: '$(res_cpu "$P_WEB_CPU")'
+          cpus: '${P_WEB_CPURES}'
           memory: $(mb_to_compose "$P_WEB_RES")
 
   cscan-worker:
@@ -350,7 +338,7 @@ services:
           cpus: '${P_WORKER_CPU}'
           memory: $(mb_to_compose "$P_WORKER_LIM")
         reservations:
-          cpus: '$(res_cpu "$P_WORKER_CPU")'
+          cpus: '${P_WORKER_CPURES}'
           memory: $(mb_to_compose "$P_WORKER_RES")
     environment:
       - GOMAXPROCS=${DOL}{CSCAN_WORKER_GOMAXPROCS:-}
@@ -370,26 +358,32 @@ REDIS_CONTAINER=cscan_redis
 REDIS_LIMIT_MB=${P_REDIS_LIM}
 REDIS_RES_MB=${P_REDIS_RES}
 REDIS_CPU=${P_REDIS_CPU}
+REDIS_CPURES=${P_REDIS_CPURES}
 MONGO_CONTAINER=cscan_mongodb
 MONGO_LIMIT_MB=${P_MONGO_LIM}
 MONGO_RES_MB=${P_MONGO_RES}
 MONGO_CPU=${P_MONGO_CPU}
+MONGO_CPURES=${P_MONGO_CPURES}
 API_CONTAINER=cscan_api
 API_LIMIT_MB=${P_API_LIM}
 API_RES_MB=${P_API_RES}
 API_CPU=${P_API_CPU}
+API_CPURES=${P_API_CPURES}
 RPC_CONTAINER=cscan_rpc
 RPC_LIMIT_MB=${P_RPC_LIM}
 RPC_RES_MB=${P_RPC_RES}
 RPC_CPU=${P_RPC_CPU}
+RPC_CPURES=${P_RPC_CPURES}
 WEB_CONTAINER=cscan_web
 WEB_LIMIT_MB=${P_WEB_LIM}
 WEB_RES_MB=${P_WEB_RES}
 WEB_CPU=${P_WEB_CPU}
+WEB_CPURES=${P_WEB_CPURES}
 WORKER_CONTAINER=cscan_worker
 WORKER_LIMIT_MB=${P_WORKER_LIM}
 WORKER_RES_MB=${P_WORKER_RES}
 WORKER_CPU=${P_WORKER_CPU}
+WORKER_CPURES=${P_WORKER_CPURES}
 WORKER_CONCURRENCY=${P_WORKER_CONC}
 EOF
 }
@@ -399,12 +393,12 @@ regen_override_from_state() {
   # shellcheck disable=SC1090
   source "$STATE"
   P_PROFILE=$PROFILE; P_SOURCE=$SOURCE; HOST_MB=$HOST_MB; HOST_CPUS=$HOST_CPUS
-  P_REDIS_LIM=$REDIS_LIMIT_MB;   P_REDIS_RES=$REDIS_RES_MB;   P_REDIS_CPU=$REDIS_CPU
-  P_MONGO_LIM=$MONGO_LIMIT_MB;   P_MONGO_RES=$MONGO_RES_MB;   P_MONGO_CPU=$MONGO_CPU
-  P_API_LIM=$API_LIMIT_MB;       P_API_RES=$API_RES_MB;       P_API_CPU=$API_CPU
-  P_RPC_LIM=$RPC_LIMIT_MB;       P_RPC_RES=$RPC_RES_MB;       P_RPC_CPU=$RPC_CPU
-  P_WEB_LIM=$WEB_LIMIT_MB;       P_WEB_RES=$WEB_RES_MB;       P_WEB_CPU=$WEB_CPU
-  P_WORKER_LIM=$WORKER_LIMIT_MB; P_WORKER_RES=$WORKER_RES_MB; P_WORKER_CPU=$WORKER_CPU
+  P_REDIS_LIM=$REDIS_LIMIT_MB;   P_REDIS_RES=$REDIS_RES_MB;   P_REDIS_CPU=$REDIS_CPU;     P_REDIS_CPURES=$REDIS_CPURES
+  P_MONGO_LIM=$MONGO_LIMIT_MB;   P_MONGO_RES=$MONGO_RES_MB;   P_MONGO_CPU=$MONGO_CPU;     P_MONGO_CPURES=$MONGO_CPURES
+  P_API_LIM=$API_LIMIT_MB;       P_API_RES=$API_RES_MB;       P_API_CPU=$API_CPU;         P_API_CPURES=$API_CPURES
+  P_RPC_LIM=$RPC_LIMIT_MB;       P_RPC_RES=$RPC_RES_MB;       P_RPC_CPU=$RPC_CPU;         P_RPC_CPURES=$RPC_CPURES
+  P_WEB_LIM=$WEB_LIMIT_MB;       P_WEB_RES=$WEB_RES_MB;       P_WEB_CPU=$WEB_CPU;         P_WEB_CPURES=$WEB_CPURES
+  P_WORKER_LIM=$WORKER_LIMIT_MB; P_WORKER_RES=$WORKER_RES_MB; P_WORKER_CPU=$WORKER_CPU;   P_WORKER_CPURES=$WORKER_CPURES
   P_WORKER_CONC=$WORKER_CONCURRENCY
   write_override
 }
@@ -413,14 +407,14 @@ regen_override_from_state() {
 show_plan() {
   c_step "内存画像: ${P_PROFILE}  (来源: ${P_SOURCE})"
   c_step "宿主机: ${HOST_MB}MB RAM / ${HOST_CPUS} CPU"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "服务" "上限" "预留" "CPU" "并发"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "----" "----" "----" "---" "----"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "redis"   "$(mb_to_compose "$P_REDIS_LIM")"  "$(mb_to_compose "$P_REDIS_RES")"  "$P_REDIS_CPU"  "-"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "mongodb" "$(mb_to_compose "$P_MONGO_LIM")" "$(mb_to_compose "$P_MONGO_RES")" "$P_MONGO_CPU" "-"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "api"     "$(mb_to_compose "$P_API_LIM")"   "$(mb_to_compose "$P_API_RES")"   "$P_API_CPU"   "-"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "rpc"     "$(mb_to_compose "$P_RPC_LIM")"   "$(mb_to_compose "$P_RPC_RES")"   "$P_RPC_CPU"   "-"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "web"     "$(mb_to_compose "$P_WEB_LIM")"   "$(mb_to_compose "$P_WEB_RES")"   "$P_WEB_CPU"   "-"
-  printf "%-10s %-10s %-10s %-8s %-8s\n" "worker"  "$(mb_to_compose "$P_WORKER_LIM")" "$(mb_to_compose "$P_WORKER_RES")" "$P_WORKER_CPU" "$P_WORKER_CONC"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "服务" "上限" "预留" "CPU(上限/预留)" "并发"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "----" "----" "----" "------------" "----"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "redis"   "$(mb_to_compose "$P_REDIS_LIM")"  "$(mb_to_compose "$P_REDIS_RES")"  "${P_REDIS_CPU}/${P_REDIS_CPURES}"  "-"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "mongodb" "$(mb_to_compose "$P_MONGO_LIM")" "$(mb_to_compose "$P_MONGO_RES")" "${P_MONGO_CPU}/${P_MONGO_CPURES}" "-"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "api"     "$(mb_to_compose "$P_API_LIM")"   "$(mb_to_compose "$P_API_RES")"   "${P_API_CPU}/${P_API_CPURES}"   "-"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "rpc"     "$(mb_to_compose "$P_RPC_LIM")"   "$(mb_to_compose "$P_RPC_RES")"   "${P_RPC_CPU}/${P_RPC_CPURES}"   "-"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "web"     "$(mb_to_compose "$P_WEB_LIM")"   "$(mb_to_compose "$P_WEB_RES")"   "${P_WEB_CPU}/${P_WEB_CPURES}"   "-"
+  printf "%-10s %-10s %-10s %-14s %-8s\n" "worker"  "$(mb_to_compose "$P_WORKER_LIM")" "$(mb_to_compose "$P_WORKER_RES")" "${P_WORKER_CPU}/${P_WORKER_CPURES}" "$P_WORKER_CONC"
 }
 
 # ---------- 子命令 ----------

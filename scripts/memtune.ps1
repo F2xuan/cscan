@@ -86,53 +86,78 @@ $P = @{}
 
 function LoadPreset($tier) {
   switch ($tier) {
-    'tiny'   { $P = @{ redis_lim=256;  redis_res=64;  redis_cpu=1; mongo_lim=1024; mongo_res=256; mongo_cpu=1; api_lim=512;  api_res=128; api_cpu=1; rpc_lim=512;  rpc_res=128; rpc_cpu=1; web_lim=256;  web_res=64;  web_cpu=1; worker_lim=1024; worker_res=256; worker_cpu=1; worker_conc=1 } }
-    'small'  { $P = @{ redis_lim=512;  redis_res=128; redis_cpu=2; mongo_lim=2048; mongo_res=512; mongo_cpu=2; api_lim=1024; api_res=256; api_cpu=2; rpc_lim=1024; rpc_res=256; rpc_cpu=2; web_lim=512;  web_res=128; web_cpu=2; worker_lim=2048; worker_res=512; worker_cpu=2; worker_conc=2 } }
-    'medium' { $P = @{ redis_lim=512;  redis_res=128; redis_cpu=3; mongo_lim=3072; mongo_res=768; mongo_cpu=3; api_lim=1536; api_res=384; api_cpu=3; rpc_lim=1536; rpc_res=384; rpc_cpu=3; web_lim=512;  web_res=128; web_cpu=3; worker_lim=3072; worker_res=768; worker_cpu=3; worker_conc=4 } }
-    'large'  { $P = @{ redis_lim=1024; redis_res=256; redis_cpu=4; mongo_lim=5120; mongo_res=1280;mongo_cpu=4; api_lim=2048; api_res=512; api_cpu=4; rpc_lim=2048; rpc_res=512; rpc_cpu=4; web_lim=1024; web_res=256; web_cpu=4; worker_lim=4096; worker_res=1024;worker_cpu=4; worker_conc=6 } }
-    'xlarge' { $P = @{ redis_lim=2048; redis_res=512; redis_cpu=6; mongo_lim=8192; mongo_res=2048;mongo_cpu=6; api_lim=3072; api_res=768; api_cpu=6; rpc_lim=3072; rpc_res=768; rpc_cpu=6; web_lim=1024; web_res=256; web_cpu=6; worker_lim=6144; worker_res=1536;worker_cpu=6; worker_conc=10 } }
+    'tiny'   { $P = @{
+        redis_lim=128;  redis_res=64;  redis_cpu=1; redis_cpus=0.10;
+        mongo_lim=512;  mongo_res=256; mongo_cpu=1; mongo_cpus=0.10;
+        api_lim=256;    api_res=128;   api_cpu=1;   api_cpus=0.10;
+        rpc_lim=256;    rpc_res=128;   rpc_cpu=1;   rpc_cpus=0.10;
+        web_lim=128;    web_res=64;    web_cpu=1;   web_cpus=0.10;
+        worker_lim=384; worker_res=128; worker_cpu=1; worker_cpus=0.10; worker_conc=1 } }
     default  { Err "未知画像: $tier"; exit 1 }
   }
 }
 
 function ComputeAlloc($mb, $cpus) {
+  # ---------- 内存: 按权重分配并整体缩放至预算内（保证不超卖，低配自动降级）----------
   $reserve = [math]::Max(1024, [math]::Min(4096, [int]($mb * 0.12)))
   $budget = $mb - $reserve
+  $target = [int]($budget * 0.95)
   $w = @(1, 6, 2.5, 2.5, 1, 6)
-  $mins = @(256, 1024, 512, 512, 256, 1024)
+  $mins = @(192, 768, 384, 384, 192, 768)
   $sum = 19
   $a = @(0)*6
   for ($i=0; $i -lt 6; $i++) {
-    $a[$i] = [int]($budget * 0.9 * $w[$i] / $sum)
+    $a[$i] = [int]($target * $w[$i] / $sum)
     if ($a[$i] -lt $mins[$i]) { $a[$i] = $mins[$i] }
   }
-  $total = ($a | Measure-Object -Sum).Sum
-  if ($total -gt $budget) {
-    $scale = $budget / $total
+  $tot = ($a | Measure-Object -Sum).Sum
+  if ($tot -gt $target) {
+    $scale = $target / $tot
     for ($i=0; $i -lt 6; $i++) {
       $a[$i] = [int]($a[$i] * $scale)
       if ($a[$i] -lt $mins[$i]) { $a[$i] = $mins[$i] }
     }
   }
-  $c = @(0)*6
+  # 取整到 64MB，便于阅读
   for ($i=0; $i -lt 6; $i++) {
-    $cv = $a[$i] / $total * $cpus
-    if ($cv -lt 0.5) { $cv = 0.5 }
-    if ($cv -gt $cpus) { $cv = $cpus }
-    $c[$i] = [math]::Max(1, [int]($cv + 0.5))
+    $a[$i] = [int]($a[$i] / 64) * 64
+    if ($a[$i] -lt 64) { $a[$i] = 64 }
+  }
+  # ---------- CPU 预留(floor) 权重，合计 ≤ 0.7*核数 ----------
+  $rw = @(0.5, 1, 1, 1, 0.5, 1.5)
+  $rsum = 5.5
+  $rbudget = $cpus * 0.7
+  $cr = @(0)*6
+  for ($i=0; $i -lt 6; $i++) {
+    $cv = $rw[$i] / $rsum * $rbudget
+    if ($cv -lt 0.25) { $cv = 0.25 }
+    $cr[$i] = $cv
+  }
+  # ---------- CPU 上限(ceiling): worker 放开到 min(6,核数); 其余 = min(核数, max(0.5, 预留*2.5)) ----------
+  $cl = @(0)*6
+  for ($i=0; $i -lt 6; $i++) {
+    if ($i -eq 5) {
+      $cv = $cpus; if ($cv -gt 6) { $cv = 6 }
+    } else {
+      $cv = $cr[$i] * 2.5
+      if ($cv -lt 0.5) { $cv = 0.5 }
+      if ($cv -gt $cpus) { $cv = $cpus }
+    }
+    $cl[$i] = $cv
+  }
+  for ($i=0; $i -lt 6; $i++) {
+    $cl[$i] = [math]::Round($cl[$i], 2)
+    $cr[$i] = [math]::Round($cr[$i], 2)
   }
   $conc = [math]::Max(1, [math]::Min(16, [int]($a[5] * 0.6 / 384)))
   $P = @{
-    redis_lim=$a[0]; redis_res=[int]($a[0]/2); redis_cpu=$c[0];
-    mongo_lim=$a[1]; mongo_res=[int]($a[1]/2); mongo_cpu=$c[1];
-    api_lim=$a[2];   api_res=[int]($a[2]/2);   api_cpu=$c[2];
-    rpc_lim=$a[3];   rpc_res=[int]($a[3]/2);   rpc_cpu=$c[3];
-    web_lim=$a[4];   web_res=[int]($a[4]/2);   web_cpu=$c[4];
-    worker_lim=$a[5];worker_res=[int]($a[5]/2);worker_cpu=$c[5]; worker_conc=$conc
+    redis_lim=$a[0];  redis_res=[int]($a[0]/2);  redis_cpu=$cl[0];  redis_cpus=$cr[0];
+    mongo_lim=$a[1];  mongo_res=[int]($a[1]/2);  mongo_cpu=$cl[1];  mongo_cpus=$cr[1];
+    api_lim=$a[2];    api_res=[int]($a[2]/2);    api_cpu=$cl[2];    api_cpus=$cr[2];
+    rpc_lim=$a[3];    rpc_res=[int]($a[3]/2);    rpc_cpu=$cl[3];    rpc_cpus=$cr[3];
+    web_lim=$a[4];    web_res=[int]($a[4]/2);    web_cpu=$cl[4];    web_cpus=$cr[4];
+    worker_lim=$a[5]; worker_res=[int]($a[5]/2); worker_cpu=$cl[5]; worker_cpus=$cr[5]; worker_conc=$conc
   }
-  # 低配无法容纳时回退 small
-  $tt = $a[0]+$a[1]+$a[2]+$a[3]+$a[4]+$a[5]
-  if ($tt -gt $budget) { Warn '可用内存不足以承载自动计算配额，回退到 small 画像（建议宿主机 ≥4G）。'; LoadPreset 'small' }
 }
 
 function ResolveProfile($target) {
@@ -140,21 +165,35 @@ function ResolveProfile($target) {
   $global:HostMb = $mb; $global:HostCpus = $cpus
   if (-not $target -or $target -eq 'auto') {
     $global:ProfileSource = "auto(宿主机 ${mb}MB)"
-    if ($mb -lt 5120) { $t = TierForRam $mb; LoadPreset $t; $global:ProfileName = $t; if ($mb -lt 3072) { Warn '内存低于 3G，已采用最保守画像；强烈建议 ≥4G。' } }
-    else { ComputeAlloc $mb $cpus; $global:ProfileName = 'computed' }
-  } elseif (@('tiny','small','medium','large','xlarge') -contains $target) {
-    LoadPreset $target; $global:ProfileName = $target; $global:ProfileSource = "named($target)"
+    if ($mb -lt 2048) {
+      Warn '内存低于 2G，采用极简画像；强烈建议 ≥4G。'
+      LoadPreset 'tiny'; $global:ProfileName = 'tiny'
+    } else {
+      ComputeAlloc $mb $cpus; $global:ProfileName = 'computed'
+    }
+  } elseif ($target -eq 'tiny') {
+    LoadPreset 'tiny'; $global:ProfileName = 'tiny'; $global:ProfileSource = 'named(tiny)'
+  } elseif ($target -eq 'small') {
+    $eff = [math]::Min(4096, $mb); ComputeAlloc $eff $cpus; $global:ProfileName = 'small'; $global:ProfileSource = 'named(small,4G)'
+  } elseif ($target -eq 'medium') {
+    $eff = [math]::Min(8192, $mb); ComputeAlloc $eff $cpus; $global:ProfileName = 'medium'; $global:ProfileSource = 'named(medium,8G)'
+  } elseif ($target -eq 'large') {
+    $eff = [math]::Min(16384, $mb); ComputeAlloc $eff $cpus; $global:ProfileName = 'large'; $global:ProfileSource = 'named(large,16G)'
+  } elseif ($target -eq 'xlarge') {
+    $eff = [math]::Min(32768, $mb); ComputeAlloc $eff $cpus; $global:ProfileName = 'xlarge'; $global:ProfileSource = 'named(xlarge,32G)'
   } else {
     $m = ToMb $target
     if ($m -lt 512) { Err "内存规格过小: $target"; exit 1 }
     $global:ProfileSource = "ram($target)"
-    if ($m -lt 5120) { $t = TierForRam $m; LoadPreset $t; $global:ProfileName = $t }
+    if ($m -lt 2048) { LoadPreset 'tiny'; $global:ProfileName = 'tiny' }
     else { ComputeAlloc $m $cpus; $global:ProfileName = 'computed' }
   }
-  # CPU 不超过宿主机核数
+  # 单服务 CPU 上限不超过宿主机核数（worker 已在 ComputeAlloc 内放开到 min(6,核数)）
   foreach ($k in @('redis_cpu','mongo_cpu','api_cpu','rpc_cpu','web_cpu','worker_cpu')) {
     if ($P[$k] -gt $cpus) { $P[$k] = $cpus }
   }
+  # 注意: 不做"聚合 CPU 上限 ≤ 核数"缩放——CPU 上限是天花板(ceiling)，
+  #       允许各服务上限之和超过核数；真正保证不饿死的是预留(floor)合计 ≤ 0.7*核数。
 }
 
 function WriteOverride {
@@ -164,22 +203,27 @@ function WriteOverride {
 # 当前内存画像: $($global:ProfileName) (来源: $($global:ProfileSource))
 # 宿主机内存: $($global:HostMb)MB / CPU: $($global:HostCpus)   生成时间: $ts
 # 说明: 本文件被 docker compose 自动合并，覆盖 docker-compose.yaml 中的默认上限。
+#       CPU 模型: limits.cpus = 天花板(ceiling，突发可借核); reservations.cpus = 地板(floor，保底不被饿死)。
 
 services:
   redis:
     deploy:
       resources:
         limits:
+          cpus: '$($P['redis_cpu'])'
           memory: $(MbToCompose $P['redis_lim'])
         reservations:
+          cpus: '$($P['redis_cpus'])'
           memory: $(MbToCompose $P['redis_res'])
 
   mongodb:
     deploy:
       resources:
         limits:
+          cpus: '$($P['mongo_cpu'])'
           memory: $(MbToCompose $P['mongo_lim'])
         reservations:
+          cpus: '$($P['mongo_cpus'])'
           memory: $(MbToCompose $P['mongo_res'])
 
   cscan-api:
@@ -189,7 +233,7 @@ services:
           cpus: '$($P['api_cpu'])'
           memory: $(MbToCompose $P['api_lim'])
         reservations:
-          cpus: '$(([math]::Max(0.5, [double]$P['api_cpu']/4)).ToString('0.00'))'
+          cpus: '$($P['api_cpus'])'
           memory: $(MbToCompose $P['api_res'])
     environment:
       - GOMAXPROCS=`${CSCAN_API_GOMAXPROCS:-}
@@ -202,7 +246,7 @@ services:
           cpus: '$($P['rpc_cpu'])'
           memory: $(MbToCompose $P['rpc_lim'])
         reservations:
-          cpus: '$(([math]::Max(0.5, [double]$P['rpc_cpu']/4)).ToString('0.00'))'
+          cpus: '$($P['rpc_cpus'])'
           memory: $(MbToCompose $P['rpc_res'])
     environment:
       - GOMAXPROCS=`${CSCAN_RPC_GOMAXPROCS:-}
@@ -215,7 +259,7 @@ services:
           cpus: '$($P['web_cpu'])'
           memory: $(MbToCompose $P['web_lim'])
         reservations:
-          cpus: '$(([math]::Max(0.5, [double]$P['web_cpu']/4)).ToString('0.00'))'
+          cpus: '$($P['web_cpus'])'
           memory: $(MbToCompose $P['web_res'])
 
   cscan-worker:
@@ -225,7 +269,7 @@ services:
           cpus: '$($P['worker_cpu'])'
           memory: $(MbToCompose $P['worker_lim'])
         reservations:
-          cpus: '$(([math]::Max(0.5, [double]$P['worker_cpu']/4)).ToString('0.00'))'
+          cpus: '$($P['worker_cpus'])'
           memory: $(MbToCompose $P['worker_res'])
     environment:
       - GOMAXPROCS=`${CSCAN_WORKER_GOMAXPROCS:-}
@@ -242,17 +286,17 @@ function WriteState {
     "HOST_MB=$($global:HostMb)",
     "HOST_CPUS=$($global:HostCpus)",
     "REDIS_CONTAINER=cscan_redis",
-    "REDIS_LIMIT_MB=$($P['redis_lim'])", "REDIS_RES_MB=$($P['redis_res'])", "REDIS_CPU=$($P['redis_cpu'])",
+    "REDIS_LIMIT_MB=$($P['redis_lim'])", "REDIS_RES_MB=$($P['redis_res'])", "REDIS_CPU=$($P['redis_cpu'])", "REDIS_CPURES=$($P['redis_cpus'])",
     "MONGO_CONTAINER=cscan_mongodb",
-    "MONGO_LIMIT_MB=$($P['mongo_lim'])", "MONGO_RES_MB=$($P['mongo_res'])", "MONGO_CPU=$($P['mongo_cpu'])",
+    "MONGO_LIMIT_MB=$($P['mongo_lim'])", "MONGO_RES_MB=$($P['mongo_res'])", "MONGO_CPU=$($P['mongo_cpu'])", "MONGO_CPURES=$($P['mongo_cpus'])",
     "API_CONTAINER=cscan_api",
-    "API_LIMIT_MB=$($P['api_lim'])", "API_RES_MB=$($P['api_res'])", "API_CPU=$($P['api_cpu'])",
+    "API_LIMIT_MB=$($P['api_lim'])", "API_RES_MB=$($P['api_res'])", "API_CPU=$($P['api_cpu'])", "API_CPURES=$($P['api_cpus'])",
     "RPC_CONTAINER=cscan_rpc",
-    "RPC_LIMIT_MB=$($P['rpc_lim'])", "RPC_RES_MB=$($P['rpc_res'])", "RPC_CPU=$($P['rpc_cpu'])",
+    "RPC_LIMIT_MB=$($P['rpc_lim'])", "RPC_RES_MB=$($P['rpc_res'])", "RPC_CPU=$($P['rpc_cpu'])", "RPC_CPURES=$($P['rpc_cpus'])",
     "WEB_CONTAINER=cscan_web",
-    "WEB_LIMIT_MB=$($P['web_lim'])", "WEB_RES_MB=$($P['web_res'])", "WEB_CPU=$($P['web_cpu'])",
+    "WEB_LIMIT_MB=$($P['web_lim'])", "WEB_RES_MB=$($P['web_res'])", "WEB_CPU=$($P['web_cpu'])", "WEB_CPURES=$($P['web_cpus'])",
     "WORKER_CONTAINER=cscan_worker",
-    "WORKER_LIMIT_MB=$($P['worker_lim'])", "WORKER_RES_MB=$($P['worker_res'])", "WORKER_CPU=$($P['worker_cpu'])",
+    "WORKER_LIMIT_MB=$($P['worker_lim'])", "WORKER_RES_MB=$($P['worker_res'])", "WORKER_CPU=$($P['worker_cpu'])", "WORKER_CPURES=$($P['worker_cpus'])",
     "WORKER_CONCURRENCY=$($P['worker_conc'])"
   )
   Set-Content -Path $State -Value $lines -Encoding ascii
@@ -270,14 +314,14 @@ function LoadState {
 function ShowPlan {
   Step "内存画像: $($global:ProfileName)  (来源: $($global:ProfileSource))"
   Step "宿主机: $($global:HostMb)MB RAM / $($global:HostCpus) CPU"
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f '服务','上限','预留','CPU','并发'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f '----','----','----','---','----'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f 'redis',  (MbToCompose $P['redis_lim']),  (MbToCompose $P['redis_res']),  $P['redis_cpu'],  '-'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f 'mongodb',(MbToCompose $P['mongo_lim']), (MbToCompose $P['mongo_res']), $P['mongo_cpu'], '-'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f 'api',    (MbToCompose $P['api_lim']),    (MbToCompose $P['api_res']),    $P['api_cpu'],    '-'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f 'rpc',    (MbToCompose $P['rpc_lim']),    (MbToCompose $P['rpc_res']),    $P['rpc_cpu'],    '-'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f 'web',    (MbToCompose $P['web_lim']),    (MbToCompose $P['web_res']),    $P['web_cpu'],    '-'
-  '{0,-10}{1,-10}{2,-10}{3,-8}{4,-8}' -f 'worker', (MbToCompose $P['worker_lim']), (MbToCompose $P['worker_res']), $P['worker_cpu'], $P['worker_conc']
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f '服务','上限','预留','CPU(上限/预留)','并发'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f '----','----','----','--------------','----'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f 'redis',  (MbToCompose $P['redis_lim']),  (MbToCompose $P['redis_res']),  "$($P['redis_cpu'])/$($P['redis_cpus'])",  '-'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f 'mongodb',(MbToCompose $P['mongo_lim']), (MbToCompose $P['mongo_res']), "$($P['mongo_cpu'])/$($P['mongo_cpus'])", '-'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f 'api',    (MbToCompose $P['api_lim']),    (MbToCompose $P['api_res']),    "$($P['api_cpu'])/$($P['api_cpus'])",    '-'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f 'rpc',    (MbToCompose $P['rpc_lim']),    (MbToCompose $P['rpc_res']),    "$($P['rpc_cpu'])/$($P['rpc_cpus'])",    '-'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f 'web',    (MbToCompose $P['web_lim']),    (MbToCompose $P['web_res']),    "$($P['web_cpu'])/$($P['web_cpus'])",    '-'
+  '{0,-10}{1,-10}{2,-10}{3,-16}{4,-8}' -f 'worker', (MbToCompose $P['worker_lim']), (MbToCompose $P['worker_res']), "$($P['worker_cpu'])/$($P['worker_cpus'])", $P['worker_conc']
 }
 
 function Cmd-Detect {
@@ -385,12 +429,12 @@ function Protect-Worker($h) {
 
 function WriteOverrideFromState($h) {
   $P2 = @{
-    redis_lim=[int]$h['REDIS_LIMIT_MB']; redis_res=[int]$h['REDIS_RES_MB']; redis_cpu=$h['REDIS_CPU'];
-    mongo_lim=[int]$h['MONGO_LIMIT_MB']; mongo_res=[int]$h['MONGO_RES_MB']; mongo_cpu=$h['MONGO_CPU'];
-    api_lim=[int]$h['API_LIMIT_MB']; api_res=[int]$h['API_RES_MB']; api_cpu=$h['API_CPU'];
-    rpc_lim=[int]$h['RPC_LIMIT_MB']; rpc_res=[int]$h['RPC_RES_MB']; rpc_cpu=$h['RPC_CPU'];
-    web_lim=[int]$h['WEB_LIMIT_MB']; web_res=[int]$h['WEB_RES_MB']; web_cpu=$h['WEB_CPU'];
-    worker_lim=[int]$h['WORKER_LIMIT_MB']; worker_res=[int]$h['WORKER_RES_MB']; worker_cpu=$h['WORKER_CPU']; worker_conc=$h['WORKER_CONCURRENCY']
+    redis_lim=[int]$h['REDIS_LIMIT_MB']; redis_res=[int]$h['REDIS_RES_MB']; redis_cpu=$h['REDIS_CPU']; redis_cpus=$h['REDIS_CPURES'];
+    mongo_lim=[int]$h['MONGO_LIMIT_MB']; mongo_res=[int]$h['MONGO_RES_MB']; mongo_cpu=$h['MONGO_CPU']; mongo_cpus=$h['MONGO_CPURES'];
+    api_lim=[int]$h['API_LIMIT_MB']; api_res=[int]$h['API_RES_MB']; api_cpu=$h['API_CPU']; api_cpus=$h['API_CPURES'];
+    rpc_lim=[int]$h['RPC_LIMIT_MB']; rpc_res=[int]$h['RPC_RES_MB']; rpc_cpu=$h['RPC_CPU']; rpc_cpus=$h['RPC_CPURES'];
+    web_lim=[int]$h['WEB_LIMIT_MB']; web_res=[int]$h['WEB_RES_MB']; web_cpu=$h['WEB_CPU']; web_cpus=$h['WEB_CPURES'];
+    worker_lim=[int]$h['WORKER_LIMIT_MB']; worker_res=[int]$h['WORKER_RES_MB']; worker_cpu=$h['WORKER_CPU']; worker_cpus=$h['WORKER_CPURES']; worker_conc=$h['WORKER_CONCURRENCY']
   }
   $global:ProfileName = $h['PROFILE']; $global:ProfileSource = $h['SOURCE']
   $global:HostMb = $h['HOST_MB']; $global:HostCpus = $h['HOST_CPUS']

@@ -2,11 +2,16 @@ package logic
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"unicode"
 
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -36,6 +41,7 @@ func (l *OrganizationListLogic) OrganizationList(req *types.PageReq) (resp *type
 		return &types.OrganizationListResp{Code: 500, Msg: "查询失败"}, nil
 	}
 
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	orgs, err := l.svcCtx.OrganizationModel.Find(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
 		return &types.OrganizationListResp{Code: 500, Msg: "查询失败"}, nil
@@ -75,11 +81,40 @@ func NewOrganizationSaveLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 	}
 }
 
+// validateOrgName 组织名称白名单校验（修复存储型 XSS / 空名 / 超长名）
+// 仅允许：Unicode 字母、数字、空格，以及有限标点 _ - . / @ ( ) （ ） 。
+// 其余字符（含 < > " ' ; \ 等）一律拒绝，从根本上杜绝脚本注入。
+func validateOrgName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", errors.New("组织名称不能为空")
+	}
+	if len([]rune(trimmed)) > 64 {
+		return "", errors.New("组织名称长度不能超过 64 个字符")
+	}
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			continue
+		}
+		switch r {
+		case ' ', '_', '-', '.', '/', '@', '(', ')', '（', '）':
+			continue
+		}
+		return "", xerr.NewParamError(fmt.Sprintf("组织名称含有非法字符: %q", r))
+	}
+	return trimmed, nil
+}
+
 func (l *OrganizationSaveLogic) OrganizationSave(req *types.OrganizationSaveReq) (resp *types.BaseResp, err error) {
+	validName, verr := validateOrgName(req.Name)
+	if verr != nil {
+		return &types.BaseResp{Code: 400, Msg: verr.Error()}, nil
+	}
+
 	if req.Id != "" {
 		// 更新
 		update := bson.M{
-			"name":        req.Name,
+			"name":        validName,
 			"description": req.Description,
 		}
 		if req.Status != "" {
@@ -95,7 +130,7 @@ func (l *OrganizationSaveLogic) OrganizationSave(req *types.OrganizationSaveReq)
 
 	// 新增
 	org := &model.Organization{
-		Name:        req.Name,
+		Name:        validName,
 		Description: req.Description,
 	}
 	if err = l.svcCtx.OrganizationModel.Insert(l.ctx, org); err != nil {

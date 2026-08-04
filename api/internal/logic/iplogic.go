@@ -243,6 +243,7 @@ func (l *IPLogic) IPList(req *types.IPListReq, workspaceId string) (*types.IPLis
 
 	// 分页
 	total := len(allIPs)
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	start := (req.Page - 1) * req.PageSize
 	end := start + req.PageSize
 	if start > total {

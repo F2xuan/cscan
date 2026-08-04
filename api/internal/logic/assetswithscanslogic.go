@@ -1,4 +1,5 @@
 package logic
+import "cscan/model"
 
 import (
 	"context"
@@ -44,6 +45,8 @@ func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq, wo
 	// Create asset service and fetch assets with scan summaries
 	assetService := svc.NewAssetService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
 
+	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	assetReq := &svc.GetAssetListReq{
 		WorkspaceId: workspaceId,
 		Filter:      filter,

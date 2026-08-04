@@ -9,11 +9,12 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
+	"cscan/pkg/xerr"
 
 	"github.com/xuri/excelize/v2"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // ReportDetailLogic 报告详情
@@ -35,48 +36,21 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	l.Logger.Infof("ReportDetail: taskId=%s, workspaceId=%s", req.TaskId, workspaceId)
 
 	// 获取任务信息
-	// 当 workspaceId 为 "all" 或空时，需要遍历所有工作空间查找任务
-	var task *model.MainTask
-	var err error
-	var actualWorkspaceId string
+	// M-1 修复：非法 taskId 直接返回 400，避免下游 ObjectIDFromHex 失败导致 500
+	if _, perr := primitive.ObjectIDFromHex(req.TaskId); perr != nil {
+		return &types.ReportDetailResp{Code: 400, Msg: "无效的任务ID"}, nil
+	}
 
-	if workspaceId == "" || workspaceId == "all" {
-		// 获取所有工作空间
-		wsModel := model.NewWorkspaceModel(l.svcCtx.MongoDB)
-		workspaces, _ := wsModel.FindAll(l.ctx)
-
-		// 先尝试 default 工作空间
-		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
-		}
-
-		// 遍历所有工作空间查找任务
-		for _, wsId := range wsIds {
-			taskModel := l.svcCtx.GetMainTaskModel(wsId)
-			task, err = taskModel.FindById(l.ctx, req.TaskId)
-			if err == nil && task != nil {
-				actualWorkspaceId = wsId
-				l.Logger.Infof("Found task in workspace: %s", wsId)
-				break
-			}
-		}
-
-		if task == nil {
-			l.Logger.Errorf("FindById failed in all workspaces: %v", err)
-			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
-		}
-	} else {
-		actualWorkspaceId = workspaceId
-		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
-		task, err = taskModel.FindById(l.ctx, req.TaskId)
-		if err != nil {
-			l.Logger.Errorf("FindById failed: %v", err)
-			return &types.ReportDetailResp{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		if task == nil {
-			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
-		}
+	// 单租户：所有任务保存在默认全局集合中
+	actualWorkspaceId := "default"
+	taskModel := l.svcCtx.GetMainTaskModel("default")
+	task, err := taskModel.FindById(l.ctx, req.TaskId)
+	if err != nil {
+		l.Logger.Errorf("FindById failed: %v", err)
+		return &types.ReportDetailResp{Code: 500, Msg: "查询任务失败"}, nil
+	}
+	if task == nil {
+		return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
 	}
 
 	// 资产保存时使用的是 task.Id.Hex() (ObjectID) 作为 taskId
@@ -272,45 +246,15 @@ func NewReportExportLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Repo
 
 func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId string) ([]byte, string, error) {
 	// 获取任务信息
-	// 当 workspaceId 为 "all" 或空时，需要遍历所有工作空间查找任务
-	var task *model.MainTask
-	var err error
-	var actualWorkspaceId string
-
-	if workspaceId == "" || workspaceId == "all" {
-		// 获取所有工作空间
-		wsModel := model.NewWorkspaceModel(l.svcCtx.MongoDB)
-		workspaces, _ := wsModel.FindAll(l.ctx)
-
-		// 先尝试 default 工作空间
-		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
-		}
-
-		// 遍历所有工作空间查找任务
-		for _, wsId := range wsIds {
-			taskModel := l.svcCtx.GetMainTaskModel(wsId)
-			task, err = taskModel.FindById(l.ctx, req.TaskId)
-			if err == nil && task != nil {
-				actualWorkspaceId = wsId
-				break
-			}
-		}
-
-		if task == nil {
-			return nil, "", fmt.Errorf("任务不存在")
-		}
-	} else {
-		actualWorkspaceId = workspaceId
-		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
-		task, err = taskModel.FindById(l.ctx, req.TaskId)
-		if err != nil {
-			return nil, "", fmt.Errorf("查询任务失败: %v", err)
-		}
-		if task == nil {
-			return nil, "", fmt.Errorf("任务不存在")
-		}
+	// 单租户：所有任务保存在默认全局集合中
+	actualWorkspaceId := "default"
+	taskModel := l.svcCtx.GetMainTaskModel("default")
+	task, err := taskModel.FindById(l.ctx, req.TaskId)
+	if err != nil {
+		return nil, "", fmt.Errorf("查询任务失败: %v", err)
+	}
+	if task == nil {
+		return nil, "", xerr.NewNotFoundError("任务不存在")
 	}
 
 	// 资产保存时使用的是 task.Id.Hex() (ObjectID) 作为 taskId

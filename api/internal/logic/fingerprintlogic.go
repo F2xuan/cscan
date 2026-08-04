@@ -108,6 +108,7 @@ func (l *FingerprintListLogic) FingerprintList(req *types.FingerprintListReq) (*
 	}
 
 	total, _ := l.svcCtx.FingerprintModel.Count(l.ctx, filter)
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	docs, err := l.svcCtx.FingerprintModel.Find(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
 		return &types.FingerprintListResp{Code: 500, Msg: "查询失败"}, nil
@@ -118,6 +119,7 @@ func (l *FingerprintListLogic) FingerprintList(req *types.FingerprintListReq) (*
 		list = append(list, types.Fingerprint{
 			Id:          doc.Id.Hex(),
 			Name:        doc.Name,
+			Category:    doc.Category,
 			Website:     doc.Website,
 			Icon:        doc.Icon,
 			Description: doc.Description,
@@ -294,10 +296,10 @@ func (l *FingerprintCategoriesLogic) FingerprintCategories() (*types.Fingerprint
 	categories, _ := l.svcCtx.FingerprintModel.GetCategories(l.ctx)
 	stats, _ := l.svcCtx.FingerprintModel.GetStats(l.ctx)
 
-	// 从 ActiveFingerprintModel 获取主动指纹数量
+	// 从 ActiveFingerprintModel 获取主动探测指纹数量（独立指标，不覆盖 Fingerprint 集合的 active 统计）
 	activeStats, _ := l.svcCtx.ActiveFingerprintModel.GetStats(l.ctx)
 	if activeStats != nil {
-		stats["active"] = activeStats["total"]
+		stats["activeDetected"] = activeStats["total"]
 	}
 
 	return &types.FingerprintCategoriesResp{

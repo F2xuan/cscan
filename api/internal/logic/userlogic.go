@@ -38,6 +38,7 @@ func (l *UserListLogic) UserList(req *types.PageReq) (resp *types.UserListResp, 
 		return nil, fmt.Errorf("查询用户数量失败: %w", err)
 	}
 
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	users, err := l.svcCtx.UserModel.Find(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
 		logx.Errorf("查询用户列表失败: %v", err)

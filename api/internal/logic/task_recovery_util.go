@@ -81,14 +81,12 @@ func requeueTask(ctx context.Context, svcCtx *svc.ServiceContext, task *model.Ma
 	}, nil
 }
 
-// findStartedTask 在所有 workspace 中查找指定 taskId 且状态为 STARTED 的任务
-func findStartedTask(ctx context.Context, svcCtx *svc.ServiceContext, taskId string, workspaces []model.Workspace) (*model.MainTask, string) {
-	for _, ws := range workspaces {
-		taskModel := svcCtx.GetMainTaskModel(ws.Name)
-		task, err := taskModel.FindByTaskId(ctx, taskId)
-		if err == nil && task != nil && task.Status == "STARTED" {
-			return task, ws.Name
-		}
+// findStartedTask 查找指定 taskId 且状态为 STARTED 的任务（单租户：default）
+func findStartedTask(ctx context.Context, svcCtx *svc.ServiceContext, taskId string) (*model.MainTask, string) {
+	taskModel := svcCtx.GetMainTaskModel("default")
+	task, err := taskModel.FindByTaskId(ctx, taskId)
+	if err == nil && task != nil && task.Status == "STARTED" {
+		return task, "default"
 	}
 	return nil, ""
 }
@@ -106,12 +104,6 @@ func RecoverOrphanedByHeartbeat(ctx context.Context, svcCtx *svc.ServiceContext)
 
 	if len(taskIds) == 0 {
 		return nil, nil
-	}
-
-	workspaces, err := svcCtx.WorkspaceModel.FindAll(ctx)
-	if err != nil {
-		logx.Errorf("[OrphanedTaskRecovery] Failed to get workspaces: %v", err)
-		return nil, err
 	}
 
 	var recoveredTasks []RecoveredTaskInfo
@@ -138,7 +130,7 @@ func RecoverOrphanedByHeartbeat(ctx context.Context, svcCtx *svc.ServiceContext)
 
 		svcCtx.RedisClient.SRem(ctx, processingKey, taskId)
 
-		foundTask, workspaceId := findStartedTask(ctx, svcCtx, taskId, workspaces)
+		foundTask, workspaceId := findStartedTask(ctx, svcCtx, taskId)
 		if foundTask == nil {
 			continue
 		}
@@ -158,41 +150,34 @@ func RecoverOrphanedByHeartbeat(ctx context.Context, svcCtx *svc.ServiceContext)
 
 // RecoverOrphanedTasks 查找并恢复卡住的任务
 func RecoverOrphanedTasks(ctx context.Context, svcCtx *svc.ServiceContext, timeout time.Duration) ([]RecoveredTaskInfo, error) {
-	workspaces, err := svcCtx.WorkspaceModel.FindAll(ctx)
-	if err != nil {
-		logx.Errorf("[OrphanedTaskRecovery] Failed to get workspaces: %v", err)
-		return nil, err
-	}
-
 	cutoffTime := time.Now().Add(-timeout)
 	var recoveredTasks []RecoveredTaskInfo
 
-	for _, ws := range workspaces {
-		taskModel := svcCtx.GetMainTaskModel(ws.Name)
+	taskModel := svcCtx.GetMainTaskModel("default")
 
-		filter := bson.M{
-			"status": "STARTED",
-			"update_time": bson.M{
-				"$lt": cutoffTime,
-			},
-		}
+	filter := bson.M{
+		"status": "STARTED",
+		"update_time": bson.M{
+			"$lt": cutoffTime,
+		},
+	}
 
-		tasks, err := taskModel.Find(ctx, filter, 0, 50)
+	tasks, err := taskModel.Find(ctx, filter, 0, 50)
+	if err != nil {
+		logx.Errorf("[OrphanedTaskRecovery] Failed to find tasks: %v", err)
+		return nil, err
+	}
+
+	for i := range tasks {
+		task := tasks[i]
+		info, err := requeueTask(ctx, svcCtx, &task, "default")
 		if err != nil {
-			logx.Errorf("[OrphanedTaskRecovery] Failed to find tasks for workspace %s: %v", ws.Name, err)
+			logx.Errorf("[OrphanedTaskRecovery] Failed to requeue task %s: %v", task.TaskId, err)
 			continue
 		}
 
-		for _, task := range tasks {
-			info, err := requeueTask(ctx, svcCtx, &task, ws.Name)
-			if err != nil {
-				logx.Errorf("[OrphanedTaskRecovery] Failed to requeue task %s: %v", task.TaskId, err)
-				continue
-			}
-
-			recoveredTasks = append(recoveredTasks, *info)
-			logx.Infof("[OrphanedTaskRecovery] Recovered task %s for workspace %s", task.TaskId, ws.Name)
-		}
+		recoveredTasks = append(recoveredTasks, *info)
+		logx.Infof("[OrphanedTaskRecovery] Recovered task %s", task.TaskId)
 	}
 
 	return recoveredTasks, nil
@@ -210,12 +195,6 @@ func RecoverWorkerTasks(ctx context.Context, svcCtx *svc.ServiceContext, workerN
 
 	if len(taskIds) == 0 {
 		return nil, nil
-	}
-
-	workspaces, err := svcCtx.WorkspaceModel.FindAll(ctx)
-	if err != nil {
-		logx.Errorf("[WorkerOffline] Failed to get workspaces: %v", err)
-		return nil, err
 	}
 
 	var recoveredTasks []RecoveredTaskInfo
@@ -238,7 +217,7 @@ func RecoverWorkerTasks(ctx context.Context, svcCtx *svc.ServiceContext, workerN
 		svcCtx.RedisClient.Del(ctx, execKey)
 		svcCtx.RedisClient.Del(ctx, "cscan:task:status:"+taskId)
 
-		foundTask, workspaceId := findStartedTask(ctx, svcCtx, taskId, workspaces)
+		foundTask, workspaceId := findStartedTask(ctx, svcCtx, taskId)
 		if foundTask == nil {
 			continue
 		}
@@ -294,68 +273,61 @@ func CleanupStaleProcessingTasks(ctx context.Context, svcCtx *svc.ServiceContext
 // RecoverStaleMongoTasks 从 MongoDB 直接查找卡住的 STARTED 任务并恢复
 // 作为 Redis 检测的兜底机制，处理 Worker 异常退出（OOM/SIGKILL）导致 Redis 状态不一致的情况
 func RecoverStaleMongoTasks(ctx context.Context, svcCtx *svc.ServiceContext, timeout time.Duration) ([]RecoveredTaskInfo, error) {
-	workspaces, err := svcCtx.WorkspaceModel.FindAll(ctx)
-	if err != nil {
-		logx.Errorf("[StaleTaskRecovery] Failed to get workspaces: %v", err)
-		return nil, err
-	}
-
 	cutoffTime := time.Now().Add(-timeout)
 	var recoveredTasks []RecoveredTaskInfo
 
-	for _, ws := range workspaces {
-		taskModel := svcCtx.GetMainTaskModel(ws.Name)
+	taskModel := svcCtx.GetMainTaskModel("default")
 
-		// 查找 STARTED 状态且 update_time 超时的任务
-		filter := bson.M{
-			"status": "STARTED",
-			"update_time": bson.M{
-				"$lt": cutoffTime,
-			},
+	// 查找 STARTED 状态且 update_time 超时的任务
+	filter := bson.M{
+		"status": "STARTED",
+		"update_time": bson.M{
+			"$lt": cutoffTime,
+		},
+	}
+
+	tasks, err := taskModel.Find(ctx, filter, 0, 50)
+	if err != nil {
+		logx.Errorf("[StaleTaskRecovery] Failed to find tasks: %v", err)
+		return nil, err
+	}
+
+	for i := range tasks {
+		task := tasks[i]
+		// 检查是否已在 Redis 处理集合中（避免重复恢复）
+		processingKey := "cscan:task:processing"
+		isMember, _ := svcCtx.RedisClient.SIsMember(ctx, processingKey, task.TaskId).Result()
+		if isMember {
+			// 在处理集合中，检查 Worker 是否在线
+			execKey := "cscan:task:execution:" + task.TaskId
+			execData, err := svcCtx.RedisClient.Get(ctx, execKey).Result()
+			if err == nil {
+				var execInfo struct {
+					WorkerName string `json:"workerName"`
+				}
+				if json.Unmarshal([]byte(execData), &execInfo) == nil && execInfo.WorkerName != "" {
+					workerKey := "cscan:worker:" + execInfo.WorkerName
+					exists, _ := svcCtx.RedisClient.Exists(ctx, workerKey).Result()
+					if exists > 0 {
+						// Worker 在线，跳过
+						continue
+					}
+				}
+			}
+			// Worker 离线，清理 Redis 状态
+			svcCtx.RedisClient.SRem(ctx, processingKey, task.TaskId)
+			svcCtx.RedisClient.Del(ctx, execKey)
 		}
 
-		tasks, err := taskModel.Find(ctx, filter, 0, 50)
+		info, err := requeueTask(ctx, svcCtx, &task, "default")
 		if err != nil {
-			logx.Errorf("[StaleTaskRecovery] Failed to find tasks for workspace %s: %v", ws.Name, err)
+			logx.Errorf("[StaleTaskRecovery] Failed to requeue task %s: %v", task.TaskId, err)
 			continue
 		}
 
-		for _, task := range tasks {
-			// 检查是否已在 Redis 处理集合中（避免重复恢复）
-			processingKey := "cscan:task:processing"
-			isMember, _ := svcCtx.RedisClient.SIsMember(ctx, processingKey, task.TaskId).Result()
-			if isMember {
-				// 在处理集合中，检查 Worker 是否在线
-				execKey := "cscan:task:execution:" + task.TaskId
-				execData, err := svcCtx.RedisClient.Get(ctx, execKey).Result()
-				if err == nil {
-					var execInfo struct {
-						WorkerName string `json:"workerName"`
-					}
-					if json.Unmarshal([]byte(execData), &execInfo) == nil && execInfo.WorkerName != "" {
-						workerKey := "cscan:worker:" + execInfo.WorkerName
-						exists, _ := svcCtx.RedisClient.Exists(ctx, workerKey).Result()
-						if exists > 0 {
-							// Worker 在线，跳过
-							continue
-						}
-					}
-				}
-				// Worker 离线，清理 Redis 状态
-				svcCtx.RedisClient.SRem(ctx, processingKey, task.TaskId)
-				svcCtx.RedisClient.Del(ctx, execKey)
-			}
-
-			info, err := requeueTask(ctx, svcCtx, &task, ws.Name)
-			if err != nil {
-				logx.Errorf("[StaleTaskRecovery] Failed to requeue task %s: %v", task.TaskId, err)
-				continue
-			}
-
-			recoveredTasks = append(recoveredTasks, *info)
-			logx.Infof("[StaleTaskRecovery] Recovered stale task %s for workspace %s (last update: %v)",
-				task.TaskId, ws.Name, task.UpdateTime)
-		}
+		recoveredTasks = append(recoveredTasks, *info)
+		logx.Infof("[StaleTaskRecovery] Recovered stale task %s (last update: %v)",
+			task.TaskId, task.UpdateTime)
 	}
 
 	return recoveredTasks, nil

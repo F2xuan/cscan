@@ -34,6 +34,7 @@ func (l *AssetDiffListLogic) AssetDiffList(req *types.AssetDiffListReq, workspac
 	if page <= 0 {
 		page = 1
 	}
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	pageSize := int64(req.PageSize)
 	if pageSize <= 0 {
 		pageSize = 20

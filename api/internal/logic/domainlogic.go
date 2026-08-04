@@ -184,6 +184,7 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq, workspaceId string) (
 
 	// 分页
 	total := len(allDomains)
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	start := (req.Page - 1) * req.PageSize
 	end := start + req.PageSize
 	if start > total {

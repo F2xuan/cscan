@@ -9,6 +9,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -45,7 +46,7 @@ func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteR
 	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	owningWs := locateOwningWsMeta(l.ctx, l.svcCtx, wsIds, targetId)
 	if owningWs == "" {
-		return nil, fmt.Errorf("target %s not found", targetId)
+		return nil, xerr.NewNotFoundError(fmt.Sprintf("target %s not found", targetId))
 	}
 
 	var deletedAssets int64

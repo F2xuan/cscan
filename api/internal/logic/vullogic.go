@@ -124,6 +124,7 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 		// 优化点：原实现 Find(filter, 0, 0) 把每个 ws 全部漏洞加载到内存，多 ws 时易 OOM
 		// 现改为只拉取覆盖到当前页末尾的数据量（needTotal = page * pageSize），
 		// 全局合并 + 排序 + 分页，既保证跨 ws 分页正确性又控制内存
+		req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 		needTotal := req.Page * req.PageSize
 		// 安全上限：避免用户翻到极深页时拉取过多数据
 		if needTotal > 50000 {

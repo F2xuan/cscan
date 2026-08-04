@@ -237,6 +237,7 @@ func NewAssetListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetLi
 
 func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) (resp *types.AssetListResp, err error) {
 	// 添加调试日志
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	l.Logger.Infof("AssetList查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
 
 	// 构建查询条件
@@ -985,73 +986,6 @@ func (l *ScreenshotsClearLogic) ScreenshotsClear(workspaceId string) (resp *type
 	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalUpdated, 10) + " 条截图"}, nil
 }
 
-// AssetHistoryLogic 资产历史记录
-type AssetHistoryLogic struct {
-	logx.Logger
-	ctx    context.Context
-	svcCtx *svc.ServiceContext
-}
-
-func NewAssetHistoryLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetHistoryLogic {
-	return &AssetHistoryLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
-}
-
-func (l *AssetHistoryLogic) AssetHistory(req *types.AssetHistoryReq, workspaceId string) (resp *types.AssetHistoryResp, err error) {
-	historyModel := l.svcCtx.GetAssetHistoryModel(workspaceId)
-
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-
-	histories, err := historyModel.FindByAssetId(l.ctx, req.AssetId, limit)
-	if err != nil {
-		return &types.AssetHistoryResp{Code: 500, Msg: "查询失败"}, nil
-	}
-
-	list := make([]types.AssetHistoryItem, 0, len(histories))
-	for _, h := range histories {
-		// 转换变更详情
-		var changes []types.FieldChange
-		for _, c := range h.Changes {
-			changes = append(changes, types.FieldChange{
-				Field:    c.Field,
-				OldValue: c.OldValue,
-				NewValue: c.NewValue,
-			})
-		}
-
-		list = append(list, types.AssetHistoryItem{
-			Id:         h.Id.Hex(),
-			Authority:  h.Authority,
-			Host:       h.Host,
-			Port:       h.Port,
-			Service:    h.Service,
-			Title:      h.Title,
-			App:        h.App,
-			HttpStatus: h.HttpStatus,
-			HttpHeader: h.HttpHeader,
-			HttpBody:   h.HttpBody,
-			Banner:     h.Banner,
-			IconHash:   h.IconHash,
-			Screenshot: h.Screenshot,
-			TaskId:     h.TaskId,
-			CreateTime: h.CreateTime.Local().Format("2006-01-02 15:04:05"),
-			Changes:    changes,
-		})
-	}
-
-	return &types.AssetHistoryResp{
-		Code: 0,
-		Msg:  "success",
-		List: list,
-	}, nil
-}
-
 // AssetImportLogic 导入资产
 type AssetImportLogic struct {
 	logx.Logger
@@ -1252,7 +1186,7 @@ func parseTarget(target string) (host string, port int, scheme string, err error
 	target = strings.TrimSpace(target)
 
 	if target == "" {
-		return "", 0, "", fmt.Errorf("目标不能为空")
+		return "", 0, "", xerr.NewParamError("目标不能为空")
 	}
 
 	// 处理 URL 格式

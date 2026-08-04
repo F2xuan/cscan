@@ -146,6 +146,8 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		if pageSize <= 0 {
 			pageSize = 20
 		}
+		// L-2 修复：补充 pageSize 上限（100），防止超大页导致全量返回或 OOM
+		page, pageSize = model.NormalizePage(page, pageSize)
 
 		// 分页
 		start := (page - 1) * pageSize
@@ -470,13 +472,13 @@ func NewMainTaskCreateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 }
 
 func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, workspaceId string) (resp *types.BaseRespWithId, err error) {
-	// 优先使用请求体中的 workspaceId
+	// 优先使用请求体中的 workspaceId；单租户化后为空时回退到默认工作空间
 	wsId := req.WorkspaceId
 	if wsId == "" {
 		wsId = workspaceId
 	}
 	if wsId == "" {
-		return &types.BaseRespWithId{Code: 400, Msg: "workspaceId不能为空"}, nil
+		wsId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, wsId)
 	}
 
 	l.Logger.Infof("MainTaskCreate: name=%s, reqWorkspaceId=%s, headerWorkspaceId=%s, using=%s",
@@ -831,26 +833,18 @@ func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq, workspac
 	var actualWorkspaceId string
 
 	if workspaceId == "" || workspaceId == "all" {
-		// 获取所有工作空间
-		workspaces, _ := l.svcCtx.WorkspaceModel.FindAll(l.ctx)
-		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
+		// 单租户：直接在默认全局集合中查找任务
+		taskModel := l.svcCtx.GetMainTaskModel("default")
+		found, findErr := taskModel.FindById(l.ctx, req.Id)
+		if findErr != nil {
+			l.Logger.Errorf("MainTaskRetry: find task failed, id=%s, error=%v", req.Id, findErr)
+			return &types.BaseRespWithId{Code: 500, Msg: "查询任务失败"}, nil
 		}
-
-		// 遍历所有工作空间查找任务
-		for _, wsId := range wsIds {
-			taskModel := l.svcCtx.GetMainTaskModel(wsId)
-			task, err := taskModel.FindById(l.ctx, req.Id)
-			if err == nil && task != nil {
-				oldTask = task
-				actualWorkspaceId = wsId
-				break
-			}
-		}
+		oldTask = found
 		if oldTask == nil {
 			return &types.BaseRespWithId{Code: 400, Msg: "任务不存在"}, nil
 		}
+		actualWorkspaceId = "default"
 	} else {
 		actualWorkspaceId = workspaceId
 		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
@@ -968,11 +962,7 @@ func (l *MainTaskStartLogic) MainTaskStart(req *types.MainTaskControlReq, worksp
 	var task *model.MainTask
 	var taskModel *model.MainTaskModel
 	if wsId == "" || wsId == "all" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.FindAll(l.ctx)
 		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
-		}
 		for _, ws := range wsIds {
 			tm := l.svcCtx.GetMainTaskModel(ws)
 			t, err := tm.FindById(l.ctx, req.Id)
@@ -1064,11 +1054,7 @@ func (l *MainTaskPauseLogic) MainTaskPause(req *types.MainTaskControlReq, worksp
 	var task *model.MainTask
 	var taskModel *model.MainTaskModel
 	if wsId == "" || wsId == "all" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.FindAll(l.ctx)
 		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
-		}
 		for _, ws := range wsIds {
 			tm := l.svcCtx.GetMainTaskModel(ws)
 			t, err := tm.FindById(l.ctx, req.Id)
@@ -1166,11 +1152,7 @@ func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq, work
 	var task *model.MainTask
 	var taskModel *model.MainTaskModel
 	if wsId == "" || wsId == "all" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.FindAll(l.ctx)
 		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
-		}
 		for _, ws := range wsIds {
 			tm := l.svcCtx.GetMainTaskModel(ws)
 			t, err := tm.FindById(l.ctx, req.Id)
@@ -1344,11 +1326,7 @@ func (l *MainTaskStopLogic) MainTaskStop(req *types.MainTaskControlReq, workspac
 	var task *model.MainTask
 	var taskModel *model.MainTaskModel
 	if wsId == "" || wsId == "all" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.FindAll(l.ctx)
 		wsIds := []string{"default"}
-		for _, ws := range workspaces {
-			wsIds = append(wsIds, ws.Id.Hex())
-		}
 		for _, ws := range wsIds {
 			tm := l.svcCtx.GetMainTaskModel(ws)
 			t, err := tm.FindById(l.ctx, req.Id)

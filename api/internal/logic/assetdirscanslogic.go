@@ -7,6 +7,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 )
 
 type AssetDirScansLogic struct {
@@ -25,7 +26,7 @@ func NewAssetDirScansLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ass
 func (l *AssetDirScansLogic) AssetDirScans(req *types.AssetDirScansReq, workspaceId string) (*types.AssetDirScansResp, error) {
 	// Validate asset ID
 	if req.AssetId == "" {
-		return nil, fmt.Errorf("asset_id is required")
+		return nil, xerr.NewParamError("asset_id is required")
 	}
 
 	// Fetch asset to get authority, host, port
@@ -35,7 +36,7 @@ func (l *AssetDirScansLogic) AssetDirScans(req *types.AssetDirScansReq, workspac
 		return nil, fmt.Errorf("查询资产失败: %w", err)
 	}
 	if asset == nil {
-		return nil, fmt.Errorf("asset not found")
+		return nil, xerr.NewNotFoundError("asset not found")
 	}
 
 	// Create scan result service and fetch directory scan results

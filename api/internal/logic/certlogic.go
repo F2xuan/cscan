@@ -89,6 +89,7 @@ func (l *CertLogic) GetCertList(req *types.CertListReq) (*types.CertListResp, er
 	if req.Page < 1 {
 		req.Page = 1
 	}
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	if req.PageSize < 1 {
 		req.PageSize = 10
 	}

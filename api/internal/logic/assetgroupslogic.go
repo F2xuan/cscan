@@ -1,4 +1,5 @@
 package logic
+import "cscan/model"
 
 import (
 	"context"
@@ -39,6 +40,7 @@ func NewAssetGroupsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Asset
 
 // AssetGroups 获取按域名分组的资产统计
 func (l *AssetGroupsLogic) AssetGroups(req *types.AssetGroupsReq, workspaceId string) (resp *types.AssetGroupsResp, err error) {
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	cacheKey := fmt.Sprintf("asset_groups:%s:%d:%d:%s", workspaceId, req.Page, req.PageSize, req.Query)
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, assetGroupsCacheTTL, func() (interface{}, error) {
 		return l.buildAssetGroups(req, workspaceId)

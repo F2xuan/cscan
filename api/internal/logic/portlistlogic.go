@@ -1,4 +1,5 @@
 package logic
+import "cscan/model"
 
 import (
 	"context"
@@ -31,6 +32,7 @@ func (l *PortListLogic) PortList(req *types.PortListReq) (*types.PortListResp, e
 	if req.Page <= 0 {
 		req.Page = 1
 	}
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	if req.PageSize <= 0 {
 		req.PageSize = 10
 	}

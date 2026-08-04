@@ -36,6 +36,7 @@ func (l *IconListLogic) IconList(req *types.IconListReq) (*types.IconListResp, e
 	if req.Page <= 0 {
 		req.Page = 1
 	}
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	if req.PageSize <= 0 {
 		req.PageSize = 10
 	}

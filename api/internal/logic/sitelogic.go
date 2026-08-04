@@ -138,6 +138,7 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 		totalCount += int(count)
 
 		// 查询数据（保留 icon_hash_bytes 用于展示 favicon）
+		req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 		assets, err := assetModel.FindForSite(l.ctx, filter, req.Page, req.PageSize)
 		if err != nil {
 			continue

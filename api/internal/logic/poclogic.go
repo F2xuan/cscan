@@ -158,6 +158,7 @@ func (l *CustomPocListLogic) CustomPocList(req *types.CustomPocListReq) (resp *t
 		filter["enabled"] = *req.Enabled
 	}
 
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	docs, err := l.svcCtx.CustomPocModel.FindWithFilter(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
 		return &types.CustomPocListResp{Code: 500, Msg: "查询失败"}, nil

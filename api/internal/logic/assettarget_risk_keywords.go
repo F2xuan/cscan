@@ -38,22 +38,6 @@ var sensitiveDirKeywords = []string{
 	"exposed",
 }
 
-// sensitivePathKeywords 用于在 dirscan_result 集合的 path 字段上做正则匹配，
-// 视为敏感目录扫描命中。Phase 3 初始集保守取常见敏感路径段。
-var sensitivePathKeywords = []string{
-	`\.git`,
-	`\.svn`,
-	`\.env`,
-	"backup",
-	"dump",
-	"config",
-	"admin",
-	"phpinfo",
-	"test",
-	"debug",
-	`\.bak`,
-}
-
 // keywordOrClause 把关键字数组转为 MongoDB $or 子句，匹配 vul_name 或 tags（大小写不敏感）。
 // 返回 []interface{} 以便直接放入 bson.M 的 "$or" 字段。
 func keywordOrClause(keywords []string) []interface{} {
@@ -63,15 +47,6 @@ func keywordOrClause(keywords []string) []interface{} {
 			bson.M{"vul_name": bson.M{"$regex": kw, "$options": "i"}},
 			bson.M{"tags": kw},
 		)
-	}
-	return clause
-}
-
-// pathKeywordOrClause 把关键字数组转为匹配 path 字段的 $or 子句（大小写不敏感）。
-func pathKeywordOrClause(keywords []string) []interface{} {
-	clause := make([]interface{}, 0, len(keywords))
-	for _, kw := range keywords {
-		clause = append(clause, bson.M{"path": bson.M{"$regex": kw, "$options": "i"}})
 	}
 	return clause
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -43,6 +43,7 @@ func (l *AssetTargetListLogic) AssetTargetList(req *types.AssetTargetListReq, wo
 	if req.Page <= 0 {
 		req.Page = 1
 	}
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	if req.PageSize <= 0 || req.PageSize > 200 {
 		req.PageSize = 20
 	}
@@ -67,48 +68,59 @@ func (l *AssetTargetListLogic) buildList(req *types.AssetTargetListReq, wsIds []
 	query := strings.TrimSpace(req.Query)
 	targetType := strings.TrimSpace(req.TargetType)
 	if targetType != "" && targetType != string(model.AssetTargetTypeIP) && targetType != string(model.AssetTargetTypeDomain) {
-		return nil, fmt.Errorf("invalid targetType %q", targetType)
+		return nil, xerr.NewParamError(fmt.Sprintf("invalid targetType %q", targetType))
 	}
 
+	detailLogic := NewAssetTargetDetailLogic(l.ctx, l.svcCtx)
+
+	// 单工作空间（常见路径）：分页和排序下推到 MongoDB
+	if len(wsIds) == 1 {
+		wsId := wsIds[0]
+		metaModel := l.svcCtx.GetAssetTargetMetaModel(wsId)
+		docs, total, err := metaModel.FindPage(l.ctx, targetType, query, req.Labels, req.Page, req.PageSize, "last_scan_time")
+		if err != nil {
+			return nil, err
+		}
+		list := make([]types.AssetTargetListItem, 0, len(docs))
+		for i := range docs {
+			d := &docs[i]
+			if model.NeedsRefresh(d, assetTargetDenormMaxAge) {
+				l.refreshDenormalized(detailLogic, wsId, d)
+			}
+			list = append(list, metaToItem(*d))
+		}
+		return &types.AssetTargetListResp{Code: 0, Msg: "success", Total: total, List: list}, nil
+	}
+
+	// 多工作空间：每 ws 拉取覆盖到当前页的数据量，内存合并后分页
 	type metaWithWs struct {
-		doc   model.AssetTargetMeta
-		wsId  string
-		stamp int64
+		doc  model.AssetTargetMeta
+		wsId string
+	}
+	needTotal := req.Page * req.PageSize
+	if needTotal > 50000 {
+		needTotal = 50000
 	}
 	merged := make([]metaWithWs, 0, 64)
+	var total int64
 
 	for _, wsId := range wsIds {
 		metaModel := l.svcCtx.GetAssetTargetMetaModel(wsId)
-		docs, _, err := metaModel.FindAll(l.ctx, targetType, query, req.Labels, 0, 0)
+		docs, wsTotal, err := metaModel.FindPage(l.ctx, targetType, query, req.Labels, 1, needTotal, "last_scan_time")
 		if err != nil {
-			l.Logger.Errorf("[AssetTargetList] FindAll ws=%s fail: %v", wsId, err)
+			l.Logger.Errorf("[AssetTargetList] FindPage ws=%s fail: %v", wsId, err)
 			continue
 		}
+		total += wsTotal
 		for _, d := range docs {
-			merged = append(merged, metaWithWs{
-				doc:   d,
-				wsId:  wsId,
-				stamp: lastScanTs(d),
-			})
+			merged = append(merged, metaWithWs{doc: d, wsId: wsId})
 		}
 	}
 
-	sort.SliceStable(merged, func(i, j int) bool {
-		if merged[i].stamp != merged[j].stamp {
-			return merged[i].stamp > merged[j].stamp
-		}
-		return merged[i].doc.Id < merged[j].doc.Id
-	})
-
-	total := int64(len(merged))
+	// last_scan_time 已在 DB 层降序，跨 ws 合并后保持稳定排序
 	start := (req.Page - 1) * req.PageSize
 	if start >= len(merged) {
-		return &types.AssetTargetListResp{
-			Code:  0,
-			Msg:   "success",
-			Total: total,
-			List:  []types.AssetTargetListItem{},
-		}, nil
+		return &types.AssetTargetListResp{Code: 0, Msg: "success", Total: total, List: []types.AssetTargetListItem{}}, nil
 	}
 	end := start + req.PageSize
 	if end > len(merged) {
@@ -116,8 +128,6 @@ func (l *AssetTargetListLogic) buildList(req *types.AssetTargetListReq, wsIds []
 	}
 	pageDocs := merged[start:end]
 
-	// 懒回填：仅对当前页需要刷新的 meta 触发实时计算 + 回写，避免全量 N+1
-	detailLogic := NewAssetTargetDetailLogic(l.ctx, l.svcCtx)
 	list := make([]types.AssetTargetListItem, 0, len(pageDocs))
 	for _, mw := range pageDocs {
 		d := mw.doc
@@ -126,13 +136,7 @@ func (l *AssetTargetListLogic) buildList(req *types.AssetTargetListReq, wsIds []
 		}
 		list = append(list, metaToItem(d))
 	}
-
-	return &types.AssetTargetListResp{
-		Code:  0,
-		Msg:   "success",
-		Total: total,
-		List:  list,
-	}, nil
+	return &types.AssetTargetListResp{Code: 0, Msg: "success", Total: total, List: list}, nil
 }
 
 // refreshDenormalized 复用 detail logic 的 computeExposure/computeRisk 重新算,
@@ -209,13 +213,6 @@ func metaToItem(m model.AssetTargetMeta) types.AssetTargetListItem {
 		RiskVulnHigh:       m.RiskVulnHigh,
 		RiskVulnTotal:      m.RiskVulnTotal,
 	}
-}
-
-func lastScanTs(m model.AssetTargetMeta) int64 {
-	if !m.LastScanTime.IsZero() {
-		return m.LastScanTime.UnixMilli()
-	}
-	return m.UpdateTime.UnixMilli()
 }
 
 func tsMilli(t time.Time) int64 {

@@ -76,12 +76,8 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 		return nil, err
 	}
 
-	// 获取默认工作空间 - 如果用户没有分配工作空间，使用空字符串（对应 default 工作空间）
-	workspaceId := ""
-	if len(user.WorkspaceIds) > 0 {
-		workspaceId = user.WorkspaceIds[0]
-	}
-	// 注意：workspaceId 为空时，后端会使用 "default" 工作空间
+	// 单租户：统一返回 "default" 工作空间，确保前端 X-Workspace-Id 头非空
+	workspaceId := "default"
 
 	return &types.LoginResp{
 		Code:          0,

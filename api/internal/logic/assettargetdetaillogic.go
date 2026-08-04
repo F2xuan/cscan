@@ -11,6 +11,7 @@ import (
 	"cscan/api/internal/types"
 	"cscan/model"
 	"cscan/pkg/utils"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -38,7 +39,7 @@ func NewAssetTargetDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 func (l *AssetTargetDetailLogic) AssetTargetDetail(req *types.AssetTargetDetailReq, workspaceId string) (*types.AssetTargetDetailResp, error) {
 	targetId := strings.TrimSpace(req.TargetId)
 	if targetId == "" {
-		return nil, fmt.Errorf("targetId is empty")
+		return nil, xerr.NewParamError("targetId is empty")
 	}
 	tType, tValue, err := model.DecodeTargetID(targetId)
 	if err != nil {
@@ -71,7 +72,7 @@ func (l *AssetTargetDetailLogic) AssetTargetDetail(req *types.AssetTargetDetailR
 		owningWs = wsIds[0]
 		meta = rebuildMetaFromAssets(l, owningWs, targetId, tType, tValue)
 		if meta == nil {
-			return nil, fmt.Errorf("target %s not found", targetId)
+			return nil, xerr.NewNotFoundError(fmt.Sprintf("target %s not found", targetId))
 		}
 	}
 
@@ -287,7 +288,8 @@ func (l *AssetTargetDetailLogic) countRiskByKeyword(vulModel *model.VulModel, ho
 	return int(n)
 }
 
-// countSensitiveDirFromScanResult 在全局 dirscan_result 集合按 workspace_id + host 后缀 + path 关键字计数。
+// countSensitiveDirFromScanResult 在全局 dirscan_result 集合按 workspace_id + host 后缀 + AI研判为风险计数。
+// 与敏感目录页面口径一致：只统计 AI 判定为 risk 的目录扫描结果，不再用 path 关键字正则匹配。
 func (l *AssetTargetDetailLogic) countSensitiveDirFromScanResult(wsId string, hostFilter interface{}) int {
 	dirModel := l.svcCtx.GetDirScanResultModel()
 	if dirModel == nil {
@@ -296,7 +298,7 @@ func (l *AssetTargetDetailLogic) countSensitiveDirFromScanResult(wsId string, ho
 	filter := bson.M{
 		"workspace_id": wsId,
 		"host":         hostFilter,
-		"$or":          pathKeywordOrClause(sensitivePathKeywords),
+		"ai_result":    "risk",
 	}
 	n, err := dirModel.CountByFilter(l.ctx, filter)
 	if err != nil {
@@ -344,7 +346,8 @@ func (l *AssetTargetDetailLogic) listRiskByKeyword(vulModel *model.VulModel, hos
 	return items
 }
 
-// listSensitivePathFromScanResult 在全局 dirscan_result 集合按 workspace_id + host 后缀 + path 关键字取 top-N 条目。
+// listSensitivePathFromScanResult 在全局 dirscan_result 集合按 workspace_id + host 后缀 + AI研判为风险取 top-N 条目。
+// 与敏感目录页面口径一致：只取 AI 判定为 risk 的目录扫描结果。
 func (l *AssetTargetDetailLogic) listSensitivePathFromScanResult(wsId string, hostFilter interface{}, limit int) []types.AssetTargetSensitiveDirItem {
 	dirModel := l.svcCtx.GetDirScanResultModel()
 	if dirModel == nil || limit <= 0 {
@@ -353,7 +356,7 @@ func (l *AssetTargetDetailLogic) listSensitivePathFromScanResult(wsId string, ho
 	filter := bson.M{
 		"workspace_id": wsId,
 		"host":         hostFilter,
-		"$or":          pathKeywordOrClause(sensitivePathKeywords),
+		"ai_result":    "risk",
 	}
 	docs, err := dirModel.FindByFilterWithSort(l.ctx, filter, 1, limit, "", "")
 	if err != nil {

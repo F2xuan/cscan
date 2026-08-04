@@ -28,6 +28,8 @@ func NewScanTemplateListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 }
 
 func (l *ScanTemplateListLogic) ScanTemplateList(req *types.ScanTemplateListReq, userId string) (*types.ScanTemplateListResp, error) {
+	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	templates, total, err := l.svcCtx.ScanTemplateModel.SearchTemplates(
 		l.ctx,
 		req.Keyword,

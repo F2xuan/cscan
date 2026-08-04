@@ -216,6 +216,8 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 	if wsKey == "" {
 		wsKey = "all"
 	}
+	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s:%s:%v",
 		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.TagsAny)
 
@@ -823,31 +825,6 @@ func (l *JSFinderLogic) loadAIConfigWithCtx(ctx context.Context, workspaceId str
 		doc, err := cfgModel.FindByPlatform(ctx, "ai")
 		if err == nil && doc != nil {
 			return doc, nil
-		}
-	}
-
-	// 2. 列出所有数据库集合，查找包含ai配置的workspace
-	listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	db := l.svcCtx.MongoDB
-	collections, err := db.ListCollectionNames(listCtx, bson.M{"name": bson.M{"$regex": "_api_config$"}})
-	if err == nil {
-		tried := map[string]bool{}
-		for _, ws := range tryWorkspaces {
-			tried[ws] = true
-		}
-		for _, collName := range collections {
-			// 从集合名提取workspaceId: {ws}_api_config -> ws
-			wsId := collName[:len(collName)-len("_api_config")]
-			if tried[wsId] {
-				continue // 已经尝试过了
-			}
-			tempModel := model.NewAPIConfigModel(db, wsId)
-			doc, err := tempModel.FindByPlatform(ctx, "ai")
-			if err == nil && doc != nil {
-				return doc, nil
-			}
 		}
 	}
 

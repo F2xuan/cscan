@@ -1,4 +1,5 @@
 package logic
+import "cscan/model"
 
 import (
 	"context"
@@ -38,6 +39,7 @@ func (l *ActiveFingerprintListLogic) ActiveFingerprintList(req *types.ActiveFing
 	}
 
 	// 查询列表
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	docs, err := l.svcCtx.ActiveFingerprintModel.Find(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
 		return nil, err

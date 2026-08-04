@@ -12,7 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
@@ -416,6 +415,7 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 	if req.Page < 1 {
 		req.Page = 1
 	}
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	if req.PageSize < 1 {
 		req.PageSize = 20
 	}
@@ -560,28 +560,6 @@ func (l *DirScanLogic) loadDirScanAIConfigWithCtx(ctx context.Context, workspace
 		}
 	}
 
-	listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	db := l.svcCtx.MongoDB
-	collections, err := db.ListCollectionNames(listCtx, bson.M{"name": bson.M{"$regex": "_api_config$"}})
-	if err == nil {
-		tried := map[string]bool{}
-		for _, ws := range tryWorkspaces {
-			tried[ws] = true
-		}
-		for _, collName := range collections {
-			wsId := collName[:len(collName)-len("_api_config")]
-			if tried[wsId] {
-				continue
-			}
-			tempModel := model.NewAPIConfigModel(db, wsId)
-			doc, err := tempModel.FindByPlatform(ctx, "ai")
-			if err == nil && doc != nil {
-				return doc, nil
-			}
-		}
-	}
 	return nil, fmt.Errorf("未配置AI服务，请先在系统设置中配置AI")
 }
 
@@ -630,5 +608,3 @@ func buildDirScanAnalysisPrompt(doc *model.DirScanResult) string {
 	return sb.String()
 }
 
-// 确保引用 common 包以避免 unused 报错（workspace 列表可能用到）
-var _ = common.GetWorkspaceIds

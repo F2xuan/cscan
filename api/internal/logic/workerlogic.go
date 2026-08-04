@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	workerQueryTimeout    = 500 * time.Millisecond
 	workerOnlineThreshold = 45 * time.Second
 )
 
@@ -52,17 +51,10 @@ type WorkerStatus struct {
 func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 	rdb := l.svcCtx.RedisClient
 
-	// 发送查询请求，通知所有Worker立即上报状态
-	rdb.Publish(l.ctx, "cscan:worker:query", "refresh")
+	// 异步通知所有Worker上报最新状态（fire-and-forget，不阻塞响应）
+	go rdb.Publish(context.Background(), "cscan:worker:query", "refresh")
 
-	// 等待Worker响应
-	select {
-	case <-time.After(workerQueryTimeout):
-	case <-l.ctx.Done():
-		return &types.WorkerListResp{Code: 400, Msg: "请求已取消"}, nil
-	}
-
-	// 从Redis获取Worker状态（使用 SCAN 避免 KEYS 阻塞 Redis 单线程）
+	// 直接从Redis获取Worker状态（使用 SCAN 避免 KEYS 阻塞 Redis 单线程）
 	var keys []string
 	var cursor uint64
 	for {

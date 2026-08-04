@@ -58,12 +58,14 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	// prewriteInitialAssets 等函数保留但不再调用，待后续清理。
 
 	// 3. Calculate SubTask Count
-	// subTaskCount = 批次数 × 启用模块数
-	// worker 端每完成一个模块递增 1（包括"完成"阶段），进度 = done / total × 100
-	// 无任何模块启用时，subTaskCount = 0，worker 不会调用 incrSubTaskDone
+	// subTaskCount = 批次数 × (启用模块数 + 1)
+	// 与 worker 端单任务应发增量口径一致：worker 每完成一个扫描模块递增 1 次，
+	// 加上最终"完成"阶段递增 1 次（见 worker.go expectedTaskIncr = CountEnabledModules + 1）。
+	// 进度 = done / subTaskCount × 100。两侧口径必须保持一致，否则会出现 done > count 倒挂。
+	// 无任何模块启用时，subTaskCount = 批次数（仅"完成"阶段递增）。
 	enabledModules := utils.CountEnabledModules(taskConfig)
-	subTaskCount := len(batches) * enabledModules
-	if subTaskCount == 0 {
+	subTaskCount := len(batches) * (enabledModules + 1)
+	if enabledModules == 0 {
 		subTaskCount = len(batches)
 	}
 

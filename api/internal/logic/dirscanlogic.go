@@ -31,6 +31,7 @@ func (l *DirScanDictListLogic) DirScanDictList(req *types.DirScanDictListReq) (*
 	dictModel := model.NewDirScanDictModel(l.svcCtx.MongoDB)
 
 	// 获取列表
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	dicts, err := dictModel.FindAll(l.ctx, req.Page, req.PageSize)
 	if err != nil {
 		return nil, err

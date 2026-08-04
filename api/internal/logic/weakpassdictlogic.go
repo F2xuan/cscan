@@ -32,6 +32,7 @@ func (l *WeakpassDictListLogic) WeakpassDictList(req *types.WeakpassDictListReq)
 	dictModel := model.NewWeakpassDictModel(l.svcCtx.MongoDB)
 
 	// 获取列表
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	dicts, err := dictModel.FindAll(l.ctx, req.Page, req.PageSize, req.Service, req.Name)
 	if err != nil {
 		return nil, err

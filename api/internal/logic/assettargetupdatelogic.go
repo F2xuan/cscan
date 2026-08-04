@@ -9,6 +9,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -42,7 +43,7 @@ func (l *AssetTargetUpdateLogic) AssetTargetUpdate(req *types.AssetTargetUpdateR
 	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	owningWs := locateOwningWsMeta(l.ctx, l.svcCtx, wsIds, targetId)
 	if owningWs == "" {
-		return fmt.Errorf("target %s not found", targetId)
+		return xerr.NewNotFoundError(fmt.Sprintf("target %s not found", targetId))
 	}
 
 	metaModel := l.svcCtx.GetAssetTargetMetaModel(owningWs)

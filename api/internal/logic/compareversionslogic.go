@@ -6,6 +6,7 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/pkg/xerr"
 )
 
 type CompareVersionsLogic struct {
@@ -24,7 +25,7 @@ func NewCompareVersionsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *C
 func (l *CompareVersionsLogic) CompareVersions(req *types.CompareVersionsReq, workspaceId string) (*types.CompareVersionsResp, error) {
 	// Validate version IDs
 	if req.VersionId1 == "" || req.VersionId2 == "" {
-		return nil, fmt.Errorf("both version IDs are required")
+		return nil, xerr.NewParamError("both version IDs are required")
 	}
 
 	// Call HistoryService to compare versions

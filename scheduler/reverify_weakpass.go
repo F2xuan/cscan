@@ -47,14 +47,11 @@ func (r *WeakPassReverifier) Run(ctx context.Context) error {
 		return err
 	}
 	if len(configs) == 0 {
-		logx.Infof("[WeakPassReverifier] no enabled workspace config, skip")
+		logx.Infof("[WeakPassReverifier] no enabled reverify config, skip")
 		return nil
 	}
 
 	for _, cfg := range configs {
-		if cfg.WorkspaceId == "" {
-			continue
-		}
 		r.reverifyWorkspace(ctx, cfg)
 	}
 	return nil
@@ -71,14 +68,11 @@ func (r *WeakPassReverifier) RunDue(ctx context.Context) {
 	}
 	now := time.Now()
 	for _, cfg := range configs {
-		if cfg.WorkspaceId == "" {
-			continue
-		}
 		// NextRunTime 为零值（首次）或已到期时执行
 		if !cfg.NextRunTime.IsZero() && cfg.NextRunTime.After(now) {
 			continue
 		}
-		logx.Infof("[WeakPassReverifier] workspace=%s due (next_run=%v), running", cfg.WorkspaceId, cfg.NextRunTime)
+		logx.Infof("[WeakPassReverifier] reverify config due (next_run=%v), running", cfg.NextRunTime)
 		r.reverifyWorkspace(ctx, cfg)
 	}
 }
@@ -100,7 +94,7 @@ func (r *WeakPassReverifier) RunWorkspace(ctx context.Context, workspaceId strin
 
 // reverifyWorkspace 复验单个工作空间的弱口令漏洞
 func (r *WeakPassReverifier) reverifyWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
-	wsId := cfg.WorkspaceId
+	wsId := "default"
 	now := time.Now()
 	vulModel := model.NewVulModel(r.db, wsId)
 

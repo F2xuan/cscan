@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
@@ -39,6 +40,8 @@ func NewReverifyConfigGetLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 
 // ReverifyConfigGet 返回当前工作空间的复验配置；无配置时返回默认值（weakPassEnabled=false）。
 func (l *ReverifyConfigGetLogic) ReverifyConfigGet(req *types.ReverifyConfigGetReq) (*types.ReverifyConfigGetResp, error) {
+	// 单租户化：workspaceId 为空时回退到默认工作空间
+	req.WorkspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, req.WorkspaceId)
 	cfg, err := l.svcCtx.GetReverifyConfigModel().GetByWorkspace(l.ctx, req.WorkspaceId)
 	if err != nil {
 		return &types.ReverifyConfigGetResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
@@ -77,6 +80,8 @@ func NewReverifyConfigSaveLogic(ctx context.Context, svcCtx *svc.ServiceContext)
 
 // ReverifyConfigSave 保存复验配置（空值回退默认值；不触碰运行状态字段）。
 func (l *ReverifyConfigSaveLogic) ReverifyConfigSave(req *types.ReverifyConfigSaveReq) (*types.ReverifyConfigSaveResp, error) {
+	// 单租户化：workspaceId 为空时回退到默认工作空间
+	req.WorkspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, req.WorkspaceId)
 	cronSpec := req.CronSpec
 	if cronSpec == "" {
 		cronSpec = defaultReverifyCronSpec
@@ -91,7 +96,6 @@ func (l *ReverifyConfigSaveLogic) ReverifyConfigSave(req *types.ReverifyConfigSa
 	}
 
 	doc := &model.ReverifyConfig{
-		WorkspaceId:      req.WorkspaceId,
 		WeakPassEnabled:  req.WeakPassEnabled,
 		ExposureEnabled:  req.ExposureEnabled,
 		CronSpec:         cronSpec,
@@ -148,7 +152,7 @@ func toReverifyConfigType(c *model.ReverifyConfig) *types.ReverifyConfig {
 	}
 	return &types.ReverifyConfig{
 		Id:               objectIDHex(c.Id),
-		WorkspaceId:      c.WorkspaceId,
+		WorkspaceId:      "default",
 		WeakPassEnabled:  c.WeakPassEnabled,
 		ExposureEnabled:  c.ExposureEnabled,
 		CronSpec:         c.CronSpec,

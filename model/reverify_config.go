@@ -4,17 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// ReverifyConfig 复验配置（T3.3 弱口令 / T3.4 敏感信息持续复验共用，单集合 + workspace_id 隔离）。
-// 与 cert_monitor_config 同范式：全局单集合，按 workspace_id 唯一。
+// ReverifyConfig 复验配置（T3.3 弱口令 / T3.4 敏感信息持续复验共用，单集合）。
+// 系统已移除多租户，全局仅一份复验配置。
 type ReverifyConfig struct {
 	Id               interface{} `bson:"_id,omitempty" json:"id"`
-	WorkspaceId      string      `bson:"workspace_id" json:"workspaceId"`
 	WeakPassEnabled  bool        `bson:"weakpass_enabled" json:"weakPassEnabled"`     // 弱口令复验启用
 	ExposureEnabled  bool        `bson:"exposure_enabled" json:"exposureEnabled"`     // 敏感信息复验启用（T3.4）
 	CronSpec         string      `bson:"cron_spec" json:"cronSpec"`                   // 周期（默认每日）
@@ -34,22 +32,17 @@ type ReverifyConfigModel struct {
 	coll *mongo.Collection
 }
 
-// NewReverifyConfigModel 创建复验配置模型（集合 reverify_config，workspace_id 唯一索引）
+// NewReverifyConfigModel 创建复验配置模型（集合 reverify_config，全局仅一份配置）
 func NewReverifyConfigModel(db *mongo.Database) *ReverifyConfigModel {
 	coll := db.Collection("reverify_config")
-	indexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "workspace_id", Value: 1}}, Options: options.Index().SetUnique(true).SetBackground(true)},
-	}
-	if err := ensureIndexes(coll, indexes); err != nil {
-		logx.Errorf("[ReverifyConfigModel] ensureIndexes failed: %v", err)
-	}
+	// 系统已移除多租户，全局仅一份配置，无需唯一索引
 	return &ReverifyConfigModel{coll: coll}
 }
 
 // GetByWorkspace 按工作空间获取复验配置（不存在返回 nil, nil）
 func (m *ReverifyConfigModel) GetByWorkspace(ctx context.Context, workspaceId string) (*ReverifyConfig, error) {
 	var cfg ReverifyConfig
-	err := m.coll.FindOne(ctx, bson.M{"workspace_id": workspaceId}).Decode(&cfg)
+	err := m.coll.FindOne(ctx, bson.M{}).Decode(&cfg)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, nil
@@ -69,7 +62,6 @@ func (m *ReverifyConfigModel) Upsert(ctx context.Context, cfg *ReverifyConfig) e
 
 	// 可变字段（每次更新都写入）
 	setFields := bson.M{
-		"workspace_id":        cfg.WorkspaceId,
 		"weakpass_enabled":    cfg.WeakPassEnabled,
 		"exposure_enabled":    cfg.ExposureEnabled,
 		"cron_spec":           cfg.CronSpec,
@@ -105,7 +97,7 @@ func (m *ReverifyConfigModel) Upsert(ctx context.Context, cfg *ReverifyConfig) e
 	}
 
 	_, err := m.coll.UpdateOne(ctx,
-		bson.M{"workspace_id": cfg.WorkspaceId},
+		bson.M{},
 		bson.M{
 			"$set":         setFields,
 			"$setOnInsert": setOnInsert,
@@ -146,7 +138,7 @@ func (m *ReverifyConfigModel) FindEnabledExposure(ctx context.Context) ([]Reveri
 // UpdateRunState 回写复验运行状态（不触碰配置字段与密钥，满足隔离约束）
 func (m *ReverifyConfigModel) UpdateRunState(ctx context.Context, workspaceId string, lastRunTime time.Time, status string, count int, runErr string, nextRunTime time.Time) error {
 	_, err := m.coll.UpdateOne(ctx,
-		bson.M{"workspace_id": workspaceId},
+		bson.M{},
 		bson.M{"$set": bson.M{
 			"last_run_time":   lastRunTime,
 			"last_run_status": status,

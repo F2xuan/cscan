@@ -48,13 +48,10 @@ func (r *ExposureReverifier) Run(ctx context.Context) error {
 		return err
 	}
 	if len(configs) == 0 {
-		logx.Infof("[ExposureReverifier] no enabled workspace config, skip")
+		logx.Infof("[ExposureReverifier] no enabled reverify config, skip")
 		return nil
 	}
 	for _, cfg := range configs {
-		if cfg.WorkspaceId == "" {
-			continue
-		}
 		r.reverifyWorkspace(ctx, cfg)
 	}
 	return nil
@@ -70,13 +67,10 @@ func (r *ExposureReverifier) RunDue(ctx context.Context) {
 	}
 	now := time.Now()
 	for _, cfg := range configs {
-		if cfg.WorkspaceId == "" {
-			continue
-		}
 		if !cfg.NextRunTime.IsZero() && cfg.NextRunTime.After(now) {
 			continue
 		}
-		logx.Infof("[ExposureReverifier] workspace=%s due (next_run=%v), running", cfg.WorkspaceId, cfg.NextRunTime)
+		logx.Infof("[ExposureReverifier] reverify config due (next_run=%v), running", cfg.NextRunTime)
 		r.reverifyWorkspace(ctx, cfg)
 	}
 }
@@ -115,7 +109,7 @@ type exposureTarget struct {
 
 // reverifyWorkspace 复验单个工作空间的敏感信息泄露
 func (r *ExposureReverifier) reverifyWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
-	wsId := cfg.WorkspaceId
+	wsId := "default"
 	now := time.Now()
 
 	targets := r.collectTargets(ctx, wsId)

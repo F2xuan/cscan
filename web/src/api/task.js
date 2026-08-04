@@ -23,18 +23,6 @@ export function batchDeleteTask(data) {
   return request.post('/task/batchDelete', data)
 }
 
-export function getTaskProfileList() {
-  return request.post('/task/profile/list')
-}
-
-export function saveTaskProfile(data) {
-  return request.post('/task/profile/save', data)
-}
-
-export function deleteTaskProfile(data) {
-  return request.post('/task/profile/delete', data)
-}
-
 export function retryTask(data) {
   return request.post('/task/retry', data)
 }
@@ -100,16 +88,6 @@ export function deleteScanTemplate(data) {
 // 获取模板详情
 export function getScanTemplateDetail(data) {
   return request.post('/task/template/detail', data)
-}
-
-// 从任务创建模板
-export function createTemplateFromTask(data) {
-  return request.post('/task/template/fromTask', data)
-}
-
-// 获取模板分类和标签
-export function getScanTemplateCategories() {
-  return request.post('/task/template/categories')
 }
 
 // 导出模板

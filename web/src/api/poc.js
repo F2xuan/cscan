@@ -66,11 +66,6 @@ export function clearNucleiTemplates() {
   return request.post('/poc/nuclei/clear')
 }
 
-// 更新模板启用状态
-export function updateTemplateEnabled(data) {
-  return request.post('/poc/nuclei/updateEnabled', data)
-}
-
 // 获取模板详情
 export function getNucleiTemplateDetail(data) {
   return request.post('/poc/nuclei/detail', data)

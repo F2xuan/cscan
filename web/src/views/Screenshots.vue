@@ -126,7 +126,7 @@
 
     <!-- 空状态 -->
     <div v-if="!loading && screenshots.length === 0" class="empty-state">
-      <el-empty description="暂无截图数据" />
+      <el-empty :description="t('asset.screenshotsTab.noScreenshotData')" />
     </div>
 
     <!-- 分页 -->

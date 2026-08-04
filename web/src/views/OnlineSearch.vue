@@ -222,16 +222,13 @@
         <el-form-item :label="$t('onlineSearch.cronDialog.queryStatement')">
           <el-input v-model="cronForm.query" type="textarea" :rows="2" disabled />
         </el-form-item>
-        <el-form-item :label="$t('onlineSearch.cronDialog.maxResults')" prop="maxResults">
-          <el-input-number v-model="cronForm.maxResults" :min="1" :max="10000" :step="100" />
-        </el-form-item>
         <el-form-item :label="$t('onlineSearch.cronDialog.scheduleType')" prop="scheduleType">
           <el-radio-group v-model="cronForm.scheduleType">
-            <el-radio value="cycle">{{ $t('onlineSearch.cronDialog.cycleExec') }}</el-radio>
+            <el-radio value="cron">{{ $t('onlineSearch.cronDialog.cycleExec') }}</el-radio>
             <el-radio value="once">{{ $t('onlineSearch.cronDialog.onceExec') }}</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="cronForm.scheduleType === 'cycle'" :label="$t('onlineSearch.cronDialog.cronExpression')" prop="cronSpec">
+        <el-form-item v-if="cronForm.scheduleType === 'cron'" :label="$t('onlineSearch.cronDialog.cronExpression')" prop="cronSpec">
           <el-input v-model="cronForm.cronSpec" :placeholder="$t('onlineSearch.cronDialog.cronPlaceholder')" />
           <div class="cron-presets">
             <el-tag
@@ -447,21 +444,19 @@ function buildDefaultTaskName() {
 const cronForm = reactive({
   name: '',
   query: '',
-  maxResults: 100,
-  scheduleType: 'cycle',
+  scheduleType: 'cron',
   cronSpec: '0 0 3 * * ?',
   scheduleTime: null,
 })
 
 const cronRules = {
   name: [{ required: true, message: t('onlineSearch.cronDialog.enterTaskName'), trigger: 'blur' }],
-  maxResults: [{ required: true, message: t('onlineSearch.cronDialog.enterMaxResults'), trigger: 'blur' }],
   scheduleType: [{ required: true, message: t('onlineSearch.cronDialog.selectScheduleType'), trigger: 'change' }],
   cronSpec: [
     {
       required: true,
       validator: (_rule, value, callback) => {
-        if (cronForm.scheduleType !== 'cycle') return callback()
+        if (cronForm.scheduleType !== 'cron') return callback()
         if (!value) return callback(new Error(t('onlineSearch.cronDialog.enterCronSpec')))
         const parts = value.trim().split(/\s+/)
         if (parts.length < 6 || parts.length > 7) {
@@ -492,8 +487,7 @@ function openCronDialog() {
   }
   cronForm.name = buildDefaultTaskName()
   cronForm.query = store.searchForm.query
-  cronForm.maxResults = 100
-  cronForm.scheduleType = 'cycle'
+  cronForm.scheduleType = 'cron'
   cronForm.cronSpec = '0 0 3 * * ?'
   cronForm.scheduleTime = null
   cronDialogVisible.value = true
@@ -513,9 +507,9 @@ async function handleCronSubmit() {
         name: cronForm.name,
         platform: store.searchForm.source,
         query: store.searchForm.query,
-        maxResults: cronForm.maxResults,
+        maxResults: store.searchForm.size,
         scheduleType: cronForm.scheduleType,
-        cronSpec: cronForm.scheduleType === 'cycle' ? cronForm.cronSpec : undefined,
+        cronSpec: cronForm.scheduleType === 'cron' ? cronForm.cronSpec : undefined,
         scheduleTime: cronForm.scheduleType === 'once' ? cronForm.scheduleTime : undefined,
       }
       const res = await saveSpaceEngineCronTask(payload)

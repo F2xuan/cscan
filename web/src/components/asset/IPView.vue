@@ -309,18 +309,9 @@ function refresh() {
   proTableRef.value?.loadData()
 }
 
-function handleWorkspaceChanged() {
-  loadOrganizations()
-}
-
 onMounted(() => {
   loadOrganizations()
   loadFilterOptions()
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
 })
 
 defineExpose({ refresh })

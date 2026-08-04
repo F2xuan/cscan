@@ -10,6 +10,7 @@
         <el-radio-button value="medium">{{ t('vul.medium') }}</el-radio-button>
         <el-radio-button value="open">{{ t('vul.statusOpen') }}</el-radio-button>
         <el-radio-button value="fixed">{{ t('vul.filterFixed') }}</el-radio-button>
+        <el-radio-button value="pending">{{ t('vul.pending') }}</el-radio-button>
         <el-radio-button value="ignored">{{ t('vul.statusIgnored') }}</el-radio-button>
       </el-radio-group>
     </div>
@@ -259,6 +260,8 @@ const filterParams = computed(() => {
       return { status: 'open' }
     case 'fixed':
       return { status: 'fixed' }
+    case 'pending':
+      return { verifyPending: true }
     case 'ignored':
       return { status: 'ignored' }
     default:
@@ -305,6 +308,7 @@ const vulColumns = computed(() => [
   { label: t('vul.vulName'), prop: 'vulName', slot: 'vulName', minWidth: 220, showOverflowTooltip: false },
   { label: t('vul.severity'), prop: 'severity', slot: 'severity', width: 90 },
   { label: t('vul.status'), prop: 'status', slot: 'status', width: 90 },
+  { label: t('vul.firstSeen'), prop: 'firstSeenTime', width: 160, showOverflowTooltip: false },
   { label: t('vul.target'), prop: 'authority', minWidth: 150 },
   { label: 'URL', prop: 'url', minWidth: 250, showOverflowTooltip: false },
   { label: t('vul.discoveryTime'), prop: 'createTime', width: 160, showOverflowTooltip: false },

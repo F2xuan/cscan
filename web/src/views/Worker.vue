@@ -410,12 +410,16 @@ const concurrencyForm = reactive({
   concurrency: 5
 })
 
+let isComponentAlive = false
+
 onMounted(() => {
+  isComponentAlive = true
   loadData()
   startWorkerRefresh()
 })
 
 onUnmounted(() => {
+  isComponentAlive = false
   stopWorkerRefresh()
 })
 
@@ -423,9 +427,10 @@ async function loadData() {
   loading.value = true
   try {
     const res = await request.post('/worker/list')
+    if (!isComponentAlive) return
     if (res.code === 0) tableData.value = res.list || []
   } finally {
-    loading.value = false
+    if (isComponentAlive) loading.value = false
   }
 }
 

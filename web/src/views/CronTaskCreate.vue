@@ -16,15 +16,15 @@
         </el-form-item>
         
         <!-- 目标选择区域 -->
-        <el-form-item :label="'扫描目标'" required>
+        <el-form-item :label="$t('cronTask.scanTarget')" required>
           <el-radio-group v-model="form.targetMode" class="target-mode-switch">
-            <el-radio-button label="manual">手动输入</el-radio-button>
-            <el-radio-button label="asset">选择资产</el-radio-button>
+            <el-radio-button label="manual">{{ $t('cronTask.targetSourceManual') }}</el-radio-button>
+            <el-radio-button label="asset">{{ $t('cronTask.targetSourceAsset') }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
 
         <!-- 手动输入模式 -->
-        <el-form-item v-if="form.targetMode === 'manual'" :label="'目标内容'" prop="target">
+        <el-form-item v-if="form.targetMode === 'manual'" :label="$t('cronTask.targetContent')" prop="target">
           <el-input 
             v-model="form.target" 
             type="textarea" 
@@ -35,13 +35,13 @@
         </el-form-item>
 
         <!-- 选择资产模式 -->
-        <el-form-item v-if="form.targetMode === 'asset'" :label="'资产选择'">
+        <el-form-item v-if="form.targetMode === 'asset'" :label="$t('cronTask.targetSourceAsset')">
           <div class="asset-selector">
             <!-- 组织筛选 + 全选按钮 -->
             <div class="asset-selector-toolbar">
               <el-select 
                 v-model="form.orgId" 
-                placeholder="全部组织" 
+                :placeholder="$t('cronTask.allOrgs')" 
                 clearable 
                 filterable
                 style="width: 240px"
@@ -56,19 +56,19 @@
               </el-select>
               <el-input 
                 v-model="assetTargetFilter.keyword" 
-                placeholder="搜索 IP/域名/标签" 
+                :placeholder="$t('cronTask.searchIpDomainTag')" 
                 clearable
                 style="width: 240px; margin-left: 10px"
                 @keyup.enter="loadAssetTargets"
                 @clear="loadAssetTargets"
               >
                 <template #append>
-                  <el-button @click="loadAssetTargets">搜索</el-button>
+                  <el-button @click="loadAssetTargets">{{ $t('common.search') }}</el-button>
                 </template>
               </el-input>
-              <el-button type="primary" link style="margin-left: 10px" @click="selectAllAssets">全选</el-button>
-              <el-button type="warning" link @click="clearAssetSelection" v-if="form.assetIds.length > 0">清空选择</el-button>
-              <span class="selected-count-hint">已选 {{ form.assetIds.length }} 项</span>
+              <el-button type="primary" link style="margin-left: 10px" @click="selectAllAssets">{{ $t('cronTask.selectAll') }}</el-button>
+              <el-button type="warning" link @click="clearAssetSelection" v-if="form.assetIds.length > 0">{{ $t('cronTask.clearSelection') }}</el-button>
+              <span class="selected-count-hint">{{ $t('cronTask.selectedCount', { count: form.assetIds.length }) }}</span>
             </div>
             <!-- 资产列表表格 -->
             <el-table 
@@ -82,15 +82,15 @@
               row-key="id"
             >
               <el-table-column type="selection" width="45" :reserve-selection="true" />
-              <el-table-column prop="type" label="类型" width="80">
+              <el-table-column prop="type" :label="$t('cronTask.type')" width="80">
                 <template #default="{ row }">
                   <el-tag :type="row.type === 'domain' ? 'success' : 'primary'" size="small">
-                    {{ row.type === 'domain' ? '域名' : 'IP' }}
+                    {{ row.type === 'domain' ? $t('cronTask.domain') : $t('cronTask.ip') }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="value" label="值" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="labels" label="标签" min-width="160" show-overflow-tooltip>
+              <el-table-column prop="value" :label="$t('cronTask.value')" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="labels" :label="$t('cronTask.tag')" min-width="160" show-overflow-tooltip>
                 <template #default="{ row }">
                   <el-tag v-for="(label, idx) in (row.labels || []).slice(0, 3)" :key="idx" size="small" type="info" class="asset-label-tag">
                     {{ label }}
@@ -98,7 +98,7 @@
                   <span v-if="row.labels && row.labels.length > 3" class="secondary-hint">+{{ row.labels.length - 3 }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="lastScanTime" label="最后扫描时间" width="170">
+              <el-table-column prop="lastScanTime" :label="$t('cronTask.lastScanTime')" width="170">
                 <template #default="{ row }">
                   {{ formatAssetTimestamp(row.lastScanTime) }}
                 </template>
@@ -120,9 +120,9 @@
         </el-form-item>
 
         <!-- 同步拉取所有子域名 -->
-        <el-form-item v-if="form.targetMode === 'asset'" :label="'子域名同步'">
-          <el-checkbox v-model="form.enableSubdomainPull">同步拉取所有子域名</el-checkbox>
-          <div class="form-hint">启用后将在任务执行时自动同步并拉取该资产下的所有子域名作为扫描目标</div>
+        <el-form-item v-if="form.targetMode === 'asset'" :label="$t('cronTask.subdomainSync')">
+          <el-checkbox v-model="form.enableSubdomainPull">{{ $t('cronTask.syncAllSubdomains') }}</el-checkbox>
+          <div class="form-hint">{{ $t('cronTask.subdomainSyncHint') }}</div>
         </el-form-item>
 
         <el-form-item :label="$t('cronTask.scheduleType')" prop="scheduleType">
@@ -180,18 +180,18 @@
         </el-form-item>
 
         <!-- 扫描配置来源 -->
-        <el-form-item :label="'扫描配置'" required>
+        <el-form-item :label="$t('cronTask.scanConfig')" required>
           <el-radio-group v-model="form.configSource" class="config-source-switch">
-            <el-radio-button label="template">扫描模板</el-radio-button>
-            <el-radio-button label="custom">自定义配置</el-radio-button>
+            <el-radio-button label="template">{{ $t('cronTask.scanTemplate') }}</el-radio-button>
+            <el-radio-button label="custom">{{ $t('cronTask.customConfig') }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
 
         <!-- 扫描模板选择 -->
-        <el-form-item v-if="form.configSource === 'template'" :label="'选择模板'" prop="templateId">
+        <el-form-item v-if="form.configSource === 'template'" :label="$t('cronTask.selectTemplate')" prop="templateId">
           <el-select 
             v-model="form.templateId" 
-            placeholder="请选择扫描模板" 
+            :placeholder="$t('cronTask.selectTemplatePlaceholder')" 
             style="width: 100%" 
             filterable
             @change="onTemplateSelect"
@@ -209,8 +209,8 @@
             </el-option>
           </el-select>
           <div class="form-hint" v-if="form.templateId">
-            已选择模板，执行时将使用该模板的扫描配置
-            <el-button type="primary" link size="small" @click="previewTemplateConfig" v-if="selectedTemplateConfig">查看配置</el-button>
+            {{ $t('cronTask.templateSelectedHint') }}
+            <el-button type="primary" link size="small" @click="previewTemplateConfig" v-if="selectedTemplateConfig">{{ $t('cronTask.viewConfig') }}</el-button>
           </div>
         </el-form-item>
 
@@ -491,6 +491,7 @@
                 <el-checkbox v-model="form.fingerprintIconHash">{{ $t('task.iconHash') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintCustomEngine">{{ $t('task.customFingerprint') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintScreenshot">{{ $t('task.screenshot') }}</el-checkbox>
+                <el-checkbox v-model="form.fingerprintCert">{{ $t('task.cert') }}</el-checkbox>
               </el-form-item>
               <el-form-item :label="$t('task.filterMode')">
                 <el-radio-group v-model="form.fingerprintFilterMode">
@@ -753,10 +754,10 @@
                   <el-checkbox label="unknown">Unknown</el-checkbox>
                 </el-checkbox-group>
               </el-form-item>
-              <el-form-item label="请求速率(Rate/s)">
+              <el-form-item :label="$t('cronTask.requestRate')">
                 <el-input-number v-model="form.pocscanRateLimit" :min="1" :max="2000" />
               </el-form-item>
-              <el-form-item label="模板并发">
+              <el-form-item :label="$t('cronTask.templateConcurrency')">
                 <el-input-number v-model="form.pocscanConcurrency" :min="1" :max="500" />
               </el-form-item>
               <el-form-item :label="$t('task.targetTimeout')">
@@ -1176,6 +1177,7 @@ function getDefaultForm() {
     fingerprintIconHash: true,
     fingerprintCustomEngine: false,
     fingerprintScreenshot: false,
+    fingerprintCert: false,
     fingerprintActiveScan: false,
     fingerprintActiveTimeout: 10,
     fingerprintTimeout: 90,
@@ -1336,7 +1338,7 @@ const rules = {
     required: true,
     validator: (rule, value, callback) => {
       if (form.configSource === 'template' && !value) {
-        callback(new Error('请选择扫描模板'))
+        callback(new Error(t('cronTask.selectTemplatePlaceholder')))
       } else {
         callback()
       }
@@ -1415,10 +1417,8 @@ const scanTemplateList = ref([])
 const scanTemplateLoading = ref(false)
 const selectedTemplateConfig = ref(null)
 
-// Mock: 获取资产目标列表（后续替换为 /asset-target-meta/list 接口）
+// 获取资产目标列表
 async function fetchAssetTargetList(params) {
-  // TODO: 替换为真实接口 /asset-target-meta/list
-  // 临时 mock：先调用现有 getAssetTargetList 兜底
   try {
     const res = await request({
       url: '/asset/target/list',
@@ -1532,7 +1532,8 @@ async function selectAllAssets() {
       ElMessage.warning('没有可选择的资产')
       return
     }
-    const pageSize = 5000
+    // 后端 NormalizePage 将 pageSize 上限截断为 100，按 100 逐页拉取当前筛选条件下的全部资产
+    const pageSize = 100
     const totalPages = Math.ceil(total / pageSize)
     const allRows = []
     for (let p = 1; p <= totalPages; p++) {
@@ -1543,18 +1544,21 @@ async function selectAllAssets() {
     }
     // 合并去重
     const existingIds = new Set(form.assetIds)
+    let addedCount = 0
     allRows.forEach(row => {
       const mapped = mapAssetItem(row)
       if (!existingIds.has(mapped.id)) {
         form.assetIds.push(mapped.id)
         selectedAssetRows.value.push(mapped)
+        existingIds.add(mapped.id)
+        addedCount++
       }
     })
     await nextTick()
     if (assetTargetTableRef.value) {
       assetTargetList.value.forEach(row => assetTargetTableRef.value.toggleRowSelection(row, true))
     }
-    ElMessage.success(`已选择 ${allRows.length} 个资产`)
+    ElMessage.success(`已选择 ${form.assetIds.length} 个资产（新增 ${addedCount} 个）`)
   } catch (e) {
     console.error('selectAllAssetsFailed:', e)
     ElMessage.error('全选失败')
@@ -1730,6 +1734,7 @@ function buildConfig() {
       iconHash: form.fingerprintIconHash,
       customEngine: form.fingerprintCustomEngine,
       screenshot: form.fingerprintScreenshot,
+      cert: form.fingerprintCert,
       activeScan: form.fingerprintActiveScan,
       activeTimeout: form.fingerprintActiveTimeout,
       targetTimeout: form.fingerprintTimeout,
@@ -1861,6 +1866,7 @@ function applyConfig(config) {
     form.fingerprintIconHash = config.fingerprint.iconHash ?? true
     form.fingerprintCustomEngine = config.fingerprint.customEngine ?? false
     form.fingerprintScreenshot = config.fingerprint.screenshot ?? false
+    form.fingerprintCert = config.fingerprint.cert ?? false
     form.fingerprintActiveScan = config.fingerprint.activeScan ?? false
     form.fingerprintActiveTimeout = config.fingerprint.activeTimeout ?? 10
     form.fingerprintTimeout = config.fingerprint.targetTimeout ?? 90
@@ -2613,6 +2619,7 @@ onMounted(async () => {
 
 <style scoped>
 .cron-task-create-page {
+  width: 100%;
 }
 
 .page-header {
@@ -2631,6 +2638,11 @@ onMounted(async () => {
 
 .create-card {
   margin-bottom: 20px;
+  width: 100%;
+}
+
+.create-card :deep(.el-card__body) {
+  width: 100%;
 }
 
 .cron-task-form {

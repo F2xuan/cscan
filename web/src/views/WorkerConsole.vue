@@ -462,17 +462,14 @@ function connectTerminalWS() {
   
   const wsUrl = `${protocol}//${window.location.host}/api/v1/worker/console/terminal?name=${workerName.value}&sessionId=${terminalSessionId.value}&token=${encodeURIComponent(token)}`
   
-  console.log('[Terminal] Connecting to:', wsUrl)
   terminalWs = new WebSocket(wsUrl)
-  
+
   terminalWs.onopen = () => {
-    console.log('[Terminal] WebSocket connected')
     terminalConnected.value = true
     appendTerminalOutput(t('workerConsole.terminalConnected') + '\n', 'info')
   }
-  
+
   terminalWs.onmessage = (event) => {
-    console.log('[Terminal] Received:', event.data)
     try {
       const data = JSON.parse(event.data)
       if (data.type === 'output') {
@@ -480,16 +477,15 @@ function connectTerminalWS() {
       } else if (data.type === 'error') {
         appendTerminalOutput(data.error || data.data, 'error')
       } else if (data.type === 'pong') {
-        // 心跳响应，忽?
+        // 心跳响应，忽略
       }
     } catch (e) {
-      // ?JSON 数据，直接显?
+      // 非 JSON 数据，直接显示
       appendTerminalOutput(event.data)
     }
   }
-  
+
   terminalWs.onclose = (event) => {
-    console.log('[Terminal] WebSocket closed:', event.code, event.reason)
     terminalConnected.value = false
     appendTerminalOutput('\n' + t('workerConsole.terminalDisconnected') + '\n', 'info')
   }

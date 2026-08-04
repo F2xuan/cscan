@@ -147,7 +147,7 @@
               </el-icon>
               <template #title>{{ $t('navigation.cronTask') }}</template>
             </el-menu-item>
-            <el-menu-item index="/settings?tab=subfinder">
+            <el-menu-item index="/settings-subfinder">
               <el-icon>
                 <Search />
               </el-icon>
@@ -159,7 +159,7 @@
               </el-icon>
               <template #title>{{ $t('navigation.pocManagement') }}</template>
             </el-menu-item>
-            <el-menu-item index="/fingerprint">
+            <el-menu-item index="/fingerprint" :title="$t('navigation.fingerprintManagement')">
               <el-icon>
                 <Stamp />
               </el-icon>
@@ -204,13 +204,13 @@
               </el-icon>
               <span>{{ $t('navigation.advancedConfig') }}</span>
             </template>
-            <el-menu-item index="/settings?tab=notify">
+            <el-menu-item index="/settings-notify">
               <el-icon>
                 <Bell />
               </el-icon>
               <template #title>{{ $t('navigation.notifyConfig') }}</template>
             </el-menu-item>
-            <el-menu-item index="/settings?tab=reverify">
+            <el-menu-item index="/settings-reverify" :title="$t('navigation.reverifyConfig')">
               <el-icon>
                 <Timer />
               </el-icon>
@@ -233,20 +233,20 @@
               <span>{{ $t('navigation.systemManagement') }}</span>
             </template>
             <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="/settings?tab=user">
+              index="/user">
               <el-icon>
                 <User />
               </el-icon>
               <template #title>{{ $t('navigation.userManagement') }}</template>
             </el-menu-item>
-            <el-menu-item index="/settings?tab=organization">
+            <el-menu-item index="/organization" :title="$t('navigation.organizationManagement')">
               <el-icon>
                 <OfficeBuilding />
               </el-icon>
               <template #title>{{ $t('navigation.organizationManagement') }}</template>
             </el-menu-item>
             <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="/settings?tab=branding">
+              index="/settings-branding">
               <el-icon>
                 <Picture />
               </el-icon>
@@ -257,12 +257,6 @@
                 <Document />
               </el-icon>
               <template #title>{{ $t('navigation.apiDocs') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/settings?tab=workspace">
-              <el-icon>
-                <Folder />
-              </el-icon>
-              <template #title>{{ $t('navigation.workspaceManagement') }}</template>
             </el-menu-item>
           </el-sub-menu>
 
@@ -279,15 +273,9 @@
             <Fold v-if="!isCollapse" />
             <Expand v-else />
           </el-icon>
-          <!-- 工作空间选择 -->
-          <el-select v-model="workspaceStore.currentWorkspaceId" :placeholder="$t('common.allWorkspaces')"
-            style="width: 160px; margin-right: 16px;" @change="handleWorkspaceChange">
-            <el-option :label="$t('common.allWorkspaces')" value="all" />
-            <el-option v-for="ws in workspaceStore.workspaces" :key="ws.id" :label="ws.name" :value="ws.id" />
-          </el-select>
           <el-breadcrumb separator="/">
             <el-breadcrumb-item :to="{ path: '/' }">{{ $t('common.home') }}</el-breadcrumb-item>
-            <el-breadcrumb-item>{{ $route.meta.title }}</el-breadcrumb-item>
+            <el-breadcrumb-item>{{ $t($route.meta.title) }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
         <div class="header-right">
@@ -319,17 +307,18 @@
       </el-header>
 
       <!-- 主内容区 -->
-      <el-main class="main" v-loading.fullscreen.lock="isSwitchingWorkspace"
-        :element-loading-text="$t('common.switchingWorkspace', '正在切换工作空间...')">
+      <el-main class="main">
         <router-view v-slot="{ Component }">
           <transition name="fade-transform" mode="out-in">
-            <component :is="Component" :key="workspaceStore.currentWorkspaceId + $route.path" />
+            <component :is="Component" :key="$route.path" />
           </transition>
         </router-view>
       </el-main>
 
       <!-- 扫描引导弹窗（首次登录自动弹出 + 顶栏按钮手动唤起）-->
       <OnboardingGuide v-if="showOnboarding" @finished="showOnboarding = false" />
+      <!-- 首次登录进入系统后提示修改密码 -->
+      <FirstLoginResetDialog />
     </el-container>
   </el-container>
 </template>
@@ -341,23 +330,22 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
-import { useWorkspaceStore } from '@/stores/workspace'
 import { useBrandingStore } from '@/stores/branding'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
+import FirstLoginResetDialog from '@/components/FirstLoginResetDialog.vue'
 import { getOnboardingStatus } from '@/api/auth'
 import { shouldShowOnboarding } from '@/utils/onboarding'
-import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, Folder, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick, Operation } from '@element-plus/icons-vue'
+import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick, Operation } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const { t } = useI18n()
 const userStore = useUserStore()
 const themeStore = useThemeStore()
-const workspaceStore = useWorkspaceStore()
 const brandingStore = useBrandingStore()
 const isCollapse = ref(false)
-const defaultOpeneds = ref(['scan-group', 'system-group'])
+const defaultOpeneds = ref(['scan-config-menu', 'system-management'])
 
 // === 扫描引导：首次登录自动弹出，顶栏按钮可手动唤起 ===
 const showOnboarding = ref(false)
@@ -373,22 +361,11 @@ async function checkOnboarding() {
 }
 
 onMounted(() => {
-  workspaceStore.loadWorkspaces()
   // 刷新当前登录用户信息（头像、邮箱等可能在其他会话中已变更）
   userStore.refreshProfile()
   // 首次登录自动弹出扫描引导
   checkOnboarding()
 })
-
-const isSwitchingWorkspace = ref(false)
-
-function handleWorkspaceChange(val) {
-  isSwitchingWorkspace.value = true
-  workspaceStore.setCurrentWorkspace(val)
-  setTimeout(() => {
-    isSwitchingWorkspace.value = false
-  }, 400)
-}
 
 function handleCommand(command) {
   if (command === 'logout') {
@@ -515,8 +492,9 @@ function handleCommand(command) {
       }
 
       &.is-active {
-        background: hsl(var(--sidebar-primary) / 0.15) !important;
+        background: hsl(var(--sidebar-primary) / 0.18) !important;
         color: hsl(var(--sidebar-primary)) !important;
+        font-weight: 600;
         box-shadow: none;
       }
     }
@@ -567,11 +545,15 @@ function handleCommand(command) {
         background: transparent !important;
 
         .el-menu-item {
-          padding-left: 50px !important;
+          padding-left: 44px !important;
           min-width: auto;
           height: 36px;
           line-height: 36px;
           font-size: 13px;
+
+          .el-icon {
+            margin-right: 8px;
+          }
         }
       }
     }

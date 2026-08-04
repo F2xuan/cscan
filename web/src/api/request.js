@@ -1,8 +1,11 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import { useWorkspaceStore } from '@/stores/workspace'
 import router from '@/router'
+import { i18n } from '@/i18n'
+
+// 在拦截器中（非组件上下文）通过全局 i18n 实例进行翻译
+const t = (key) => i18n.global.t(key)
 
 const request = axios.create({
   baseURL: '/api/v1',
@@ -13,18 +16,12 @@ const request = axios.create({
 request.interceptors.request.use(
   config => {
     const userStore = useUserStore()
-    const workspaceStore = useWorkspaceStore()
     if (userStore.token) {
       config.headers['Authorization'] = `Bearer ${userStore.token}`
     }
-    
-    // 设置工作空间ID header
-    // 确保工作空间ID的正确处理
-    const currentWsId = workspaceStore.currentWorkspaceId
-    if (!currentWsId || currentWsId === 'undefined' || currentWsId === 'null' || currentWsId === 'all') {
-      config.headers['X-Workspace-Id'] = 'all'
-    } else {
-      config.headers['X-Workspace-Id'] = currentWsId
+    // 按 CLAUDE.md §3.7：请求拦截器自动注入 X-Workspace-Id，供后端鉴权中间件解析工作空间
+    if (userStore.workspaceId) {
+      config.headers['X-Workspace-Id'] = userStore.workspaceId
     }
     return config
   },
@@ -34,6 +31,9 @@ request.interceptors.request.use(
 )
 
 // 响应拦截器
+// isRelogin 防重入标志：密码修改或 token 过期后，并发的 401 响应会集中涌入，
+// 只处理第一个 401（logout + 跳转登录页），其余直接 reject 不重复弹窗。
+// 标志在跳转完成后才重置，避免短时间窗口内重复触发。
 let isRelogin = false
 
 const isLoginRequest = (config) => {
@@ -53,12 +53,10 @@ request.interceptors.response.use(
         const userStore = useUserStore()
         userStore.logout()
         router.push('/login').catch(() => {}).finally(() => {
-          setTimeout(() => {
-            isRelogin = false
-          }, 1000)
+          isRelogin = false
         })
         ElMessage({
-          message: '登录已过期，请重新登录',
+          message: t('error.sessionExpired'),
           type: 'error',
           grouping: true
         })
@@ -81,12 +79,10 @@ request.interceptors.response.use(
         const userStore = useUserStore()
         userStore.logout()
         router.push('/login').catch(() => {}).finally(() => {
-          setTimeout(() => {
-            isRelogin = false
-          }, 1000)
+          isRelogin = false
         })
         ElMessage({
-          message: '登录已过期，请重新登录',
+          message: t('error.sessionExpired'),
           type: 'error',
           grouping: true
         })
@@ -104,7 +100,7 @@ request.interceptors.response.use(
       const errorMsg = error.message || '请求失败'
       if (errorMsg === 'Network Error' || error.code === 'ECONNABORTED' || errorMsg.includes('timeout')) {
         ElMessage({
-          message: '网络错误或后端服务未启动，请检查连接',
+          message: t('error.networkError'),
           type: 'error',
           grouping: true
         })

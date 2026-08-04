@@ -25,28 +25,19 @@ app.use(router)
 // 设置国际化
 setupI18n(app)
 
-// 根据当前语言设置 Element Plus 语言
+// 根据当前语言设置 Element Plus 语言（初始值）
 const currentLocale = i18n.global.locale.value
 const elementLocale = currentLocale === 'zh-CN' ? zhCn : enUs
 app.use(ElementPlus, { locale: elementLocale })
 
-// 监听语言变化，更新 Element Plus 语言
-import { watch } from 'vue'
-watch(() => i18n.global.locale.value, (newLocale) => {
-  // 这里可以动态更新 Element Plus 的语言，但需要重新创建应用实例
-  // 简单的方式是刷新页面或者在组件中处理
-})
+// Element Plus 语言包的运行时切换由 App.vue 中的 <el-config-provider> 负责，
+// 它会根据 i18n.global.locale 动态切换，无需刷新页面。
 
 // 初始化主题
 import { useThemeStore } from './stores/theme'
 const themeStore = useThemeStore()
 themeStore.initTheme()
 themeStore.watchSystemTheme()
-
-// 初始化工作空间状态
-import { useWorkspaceStore } from './stores/workspace'
-const workspaceStore = useWorkspaceStore()
-workspaceStore.initialize()
 
 // 初始化品牌配置（Logo / 标题）
 import { useBrandingStore } from './stores/branding'

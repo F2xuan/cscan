@@ -209,12 +209,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Picture, Search, Filter } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { clearSites } from '@/api/asset'
-import { useWorkspaceStore } from '@/stores/workspace'
 import { formatScreenshotUrl } from '@/utils/screenshot'
 import { getIconDataUrl, handleIconError } from '@/utils/icon'
 
 const { t } = useI18n()
-const workspaceStore = useWorkspaceStore()
 const loading = ref(false)
 const tableData = ref([])
 const selectedRows = ref([])
@@ -244,21 +242,10 @@ const stat = reactive({
   newCount: 0
 })
 
-function handleWorkspaceChanged() {
-  pagination.page = 1
-  loadData()
-  loadStat()
-}
-
 onMounted(() => {
   loadData()
   loadStat()
   loadOrganizations()
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
 })
 
 async function loadData() {

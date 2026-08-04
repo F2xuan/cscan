@@ -130,10 +130,8 @@ import { ElMessage } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { getCertList, getCertDetail } from '@/api/cert'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
-const workspaceStore = useWorkspaceStore()
 
 // 到期状态阈值（天）
 const EXPIRING_DAYS = 30
@@ -187,9 +185,7 @@ const statusTagType = (row) => {
 async function loadData() {
   loading.value = true
   try {
-    const wsId = workspaceStore.effectiveWorkspaceId
     const res = await getCertList({
-      workspaceId: wsId,
       query: query.value,
       issuer: issuer.value,
       validity: validity.value,
@@ -221,9 +217,8 @@ function handleReset() {
 }
 
 async function showDetail(row) {
-  const wsId = workspaceStore.effectiveWorkspaceId
   try {
-    const res = await getCertDetail({ workspaceId: wsId, id: row.id })
+    const res = await getCertDetail({ id: row.id })
     if (res.code === 0 && res.data) {
       currentCert.value = res.data
       detailVisible.value = true

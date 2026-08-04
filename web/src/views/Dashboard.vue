@@ -4,7 +4,6 @@
     <div class="greeting-bar">
       <div class="greeting-left">
         <h1 class="greeting-title">Hello, {{ username }}!</h1>
-        <span class="greeting-badge">{{ workspaceName }}</span>
       </div>
       <div class="greeting-right">
         <div class="security-score" @click="$router.push('/asset-management/risk/vuln')">
@@ -296,7 +295,12 @@
         <div class="panel-header">
           <h2 class="panel-title">{{ t('dashboard.portTop10') }}</h2>
         </div>
-        <div ref="portBarChartRef" class="chart-body port-chart-bottom"></div>
+        <div class="chart-body port-chart-bottom">
+          <div v-if="stats.topPorts.length === 0" class="empty-hint">
+            {{ t('dashboard.noPortData') }}
+          </div>
+          <div v-else ref="portBarChartRef" style="width:100%;height:100%;"></div>
+        </div>
       </div>
 
       <div class="panel chart-panel">
@@ -326,6 +330,11 @@
   </div>
 </template>
 
+<script>
+// 模块级变量：防止组件快速重挂载时重复拉取数据
+let _dashboardLastLoadTime = 0
+</script>
+
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
@@ -335,16 +344,13 @@ import request from '@/api/request'
 import { getDashboardChanges } from '@/api/dashboard'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const router = useRouter()
 const themeStore = useThemeStore()
 const userStore = useUserStore()
-const workspaceStore = useWorkspaceStore()
 const { t } = useI18n()
 
 const username = computed(() => userStore.username || 'Admin')
-const workspaceName = computed(() => workspaceStore.getCurrentWorkspaceName())
 
 // === 安全评分（加权风险密度 + 资产归一化 + 修复率加成）===
 const securityScore = computed(() => {
@@ -445,20 +451,32 @@ function updateAnchors() {
   anchorsReady.value = true
 }
 
+// 当起点与中心点纵向重合时，贝塞尔曲线会退化为水平直线，叠加 line-glow 高斯模糊
+// 后被 dilute 到几乎不可见，且右半段落入 core 实心背景被遮盖。此处注入一个微偏移 yTilt，
+// 强制保留可见曲率，确保连线（含流动光点轨迹）始终可见。i 为偶数向下偏，奇数向上偏，
+// 使多条线呈对称扇形而非重叠。
+const CONN_Y_TILT = 14
+
 function leftCurvePath(i) {
   const s = sourceAnchors.value[i]
   const c = centerAnchor.value
   if (!s || !c) return ''
+  const tilt = Math.abs(s.y - c.y) < 2 ? (i % 2 === 0 ? CONN_Y_TILT : -CONN_Y_TILT) : 0
   const midX = (s.x + c.x) / 2
-  return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} C ${midX.toFixed(1)} ${s.y.toFixed(1)}, ${midX.toFixed(1)} ${c.y.toFixed(1)}, ${c.x.toFixed(1)} ${c.y.toFixed(1)}`
+  const ctlY = s.y + tilt
+  const endY = c.y + tilt
+  return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} C ${midX.toFixed(1)} ${ctlY.toFixed(1)}, ${midX.toFixed(1)} ${endY.toFixed(1)}, ${c.x.toFixed(1)} ${c.y.toFixed(1)}`
 }
 
 function rightCurvePath(i) {
   const r = ringAnchors.value[i]
   const c = centerAnchor.value
   if (!r || !c) return ''
+  const tilt = Math.abs(r.y - c.y) < 2 ? (i % 2 === 0 ? -CONN_Y_TILT : CONN_Y_TILT) : 0
   const midX = (c.x + r.x) / 2
-  return `M ${c.x.toFixed(1)} ${c.y.toFixed(1)} C ${midX.toFixed(1)} ${c.y.toFixed(1)}, ${midX.toFixed(1)} ${r.y.toFixed(1)}, ${r.x.toFixed(1)} ${r.y.toFixed(1)}`
+  const ctlY = c.y + tilt
+  const startY = r.y + tilt
+  return `M ${c.x.toFixed(1)} ${c.y.toFixed(1)} C ${midX.toFixed(1)} ${ctlY.toFixed(1)}, ${midX.toFixed(1)} ${startY.toFixed(1)}, ${r.x.toFixed(1)} ${r.y.toFixed(1)}`
 }
 
 // === 暴露面总览数据 ===
@@ -574,23 +592,37 @@ async function silentFetch(apiRoute, params = {}) {
   }
 }
 
+let isLoadingData = false
+let isComponentAlive = false
+
 async function loadAllData() {
-  await Promise.all([
-    fetchAssetStat(),
-    fetchGroupsStat(),
-    fetchIpStat(),
-    fetchDomainStat(),
-    fetchSiteStat(),
-    fetchDirScanStat(),
-    fetchVulnStat(),
-    fetchTaskStat(),
-    fetchWorkerStat(),
-    fetchDashboardChanges()
-  ])
-  // 暴露面总数动画
-  animateValue('exposureTotal', stats.ports + stats.sites + stats.dirScans)
-  await nextTick()
-  initAllCharts()
+  if (isLoadingData) return
+  const now = Date.now()
+  if (now - _dashboardLastLoadTime < 3000) return
+  _dashboardLastLoadTime = now
+  isLoadingData = true
+  try {
+    await Promise.all([
+      fetchAssetStat(),
+      fetchGroupsStat(),
+      fetchIpStat(),
+      fetchDomainStat(),
+      fetchSiteStat(),
+      fetchDirScanStat(),
+      fetchVulnStat(),
+      fetchTaskStat(),
+      fetchWorkerStat(),
+      fetchDashboardChanges()
+    ])
+    if (!isComponentAlive) return
+    // 暴露面总数动画
+    animateValue('exposureTotal', stats.ports + stats.sites + stats.dirScans)
+    await nextTick()
+    if (!isComponentAlive) return
+    initAllCharts()
+  } finally {
+    isLoadingData = false
+  }
 }
 
 async function fetchAssetStat() {
@@ -683,6 +715,7 @@ async function fetchTaskStat() {
 
 async function fetchWorkerStat() {
   const res = await silentFetch('/worker/list')
+  if (!isComponentAlive) return
   if (res && res.list) {
     workerStats.online = res.list.filter(w => w.status === 'running').length
     workerStats.offline = res.list.filter(w => w.status !== 'running').length
@@ -811,9 +844,6 @@ function initAppRoseChart() {
 function handleResize() {
   Object.values(charts).forEach(chart => chart?.resize())
 }
-function handleWorkspaceChanged() {
-  loadAllData()
-}
 
 watch(() => themeStore.isDark, () => {
   nextTick(() => {
@@ -824,8 +854,8 @@ watch(() => themeStore.isDark, () => {
 })
 
 onMounted(() => {
+  isComponentAlive = true
   window.addEventListener('resize', handleResize)
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
 
   // 1) 挂载后立刻同步测量一次锚点：此时 DOM 已就绪，getBoundingClientRect()
   //    会强制同步布局，拿到 exposure-body 的真实尺寸。这一步「不」依赖任何 await，
@@ -845,16 +875,20 @@ onMounted(() => {
   // 3) 最后异步加载数据。数据返回后若发生过 0 尺寸跳变（导致第 1 步提前 return、
   //    anchorsReady 仍为 false），这里补一次测量，确保连线覆盖层最终能正确渲染。
   loadAllData().then(() => {
+    if (!isComponentAlive) return
     updateAnchors()
-    refreshInterval = setInterval(loadAllData, 60000)
+    refreshInterval = setInterval(() => {
+      if (isComponentAlive) loadAllData()
+    }, 60000)
   })
 })
 
 onUnmounted(() => {
+  isComponentAlive = false
   clearInterval(refreshInterval)
+  refreshInterval = null
   Object.values(charts).forEach(chart => chart?.dispose())
   window.removeEventListener('resize', handleResize)
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
   lineResizeObserver?.disconnect()
 })
 </script>

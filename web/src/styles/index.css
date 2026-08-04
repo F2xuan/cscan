@@ -2522,6 +2522,24 @@ html[class*='style-'] .el-dialog {
 }
 
 /* 标签主题色 */
+
+/* 路由切换顶部加载进度条（修复 BUG #4：懒加载 chunk 首次加载空白） */
+html.app-route-loading::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 40%;
+  z-index: 9999;
+  background: linear-gradient(90deg, transparent, var(--el-color-primary));
+  animation: app-route-loading-bar 0.9s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes app-route-loading-bar {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
 .el-tag--primary {
   --el-tag-bg-color: var(--el-color-primary-light-9);
   --el-tag-border-color: var(--el-color-primary-light-8);

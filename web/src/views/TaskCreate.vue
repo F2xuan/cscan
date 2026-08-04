@@ -19,13 +19,6 @@
         </el-form-item>
         <el-row :gutter="20">
           <el-col :span="12">
-            <el-form-item :label="$t('task.workspace')">
-              <el-select v-model="form.workspaceId" :placeholder="$t('task.selectWorkspace')" clearable style="width: 100%">
-                <el-option v-for="ws in workspaces" :key="ws.id" :label="ws.name" :value="ws.id" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
             <el-form-item :label="$t('task.organization')">
               <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable style="width: 100%">
                 <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
@@ -329,6 +322,7 @@
                 <el-checkbox v-model="form.fingerprintIconHash">{{ $t('task.iconHash') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintCustomEngine">{{ $t('task.customFingerprint') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintScreenshot">{{ $t('task.screenshot') }}</el-checkbox>
+                <el-checkbox v-model="form.fingerprintCert">{{ $t('task.cert') }}</el-checkbox>
               </el-form-item>
               <el-form-item :label="$t('task.filterMode')">
                 <el-radio-group v-model="form.fingerprintFilterMode">
@@ -590,13 +584,6 @@
               </el-form-item>
             </template>
           </el-collapse-item>
-
-          <!-- 高级设置 -->
-          <!-- <el-collapse-item name="advanced">
-            <template #title>
-              <span class="collapse-title">{{ $t('task.advancedSettings') }}</span>
-            </template>
-          </el-collapse-item> -->
         </el-collapse>
 
         <!-- 操作按钮 -->
@@ -907,7 +894,6 @@ import { createTask, updateTask, getTaskDetail, startTask, getWorkerList, getSca
 import { getNucleiTemplateList, getCustomPocList, getNucleiTemplateDetail } from '@/api/poc'
 import { getDirScanDictEnabledList } from '@/api/dirscan'
 import { getSubdomainDictEnabledList } from '@/api/subdomain'
-import { useWorkspaceStore } from '@/stores/workspace'
 import ScanTemplateSelect from '@/components/ScanTemplateSelect.vue'
 import request from '@/api/request'
 import { validateTargets, formatValidationErrors } from '@/utils/target'
@@ -915,10 +901,8 @@ import { validateTargets, formatValidationErrors } from '@/utils/target'
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
-const workspaceStore = useWorkspaceStore()
 const formRef = ref()
 const submitting = ref(false)
-const workspaces = ref([])
 const organizations = ref([])
 const workers = ref([])
 const commonTags = ref([]) // 常用标签列表
@@ -1036,7 +1020,6 @@ const form = reactive({
   id: '',
   name: '',
   target: '',
-  workspaceId: '',
   orgId: '',
   tags: [], // 任务标签
   workers: [],
@@ -1090,6 +1073,7 @@ const form = reactive({
   fingerprintIconHash: true,
   fingerprintCustomEngine: false,
   fingerprintScreenshot: false,
+  fingerprintCert: false,
   fingerprintActiveScan: false,
   fingerprintActiveTimeout: 10,
   fingerprintTimeout: 30,
@@ -1155,7 +1139,6 @@ const rules = {
 }
 
 onMounted(async () => {
-  await loadWorkspaces()
   await loadOrganizations()
   await loadWorkers()
   await loadCommonTags()
@@ -1173,14 +1156,6 @@ onMounted(async () => {
         applyConfig(config)
       }
     } catch (e) { console.error('Load scan config failed:', e) }
-    
-    // 设置默认工作空间
-    let wsId = workspaceStore.currentWorkspaceId
-    if (wsId === 'all' || !wsId) {
-      const defaultWs = workspaces.value.find(ws => ws.name === '默认工作空间')
-      wsId = defaultWs ? defaultWs.id : (workspaces.value.length > 0 ? workspaces.value[0].id : '')
-    }
-    form.workspaceId = wsId
   }
 })
 
@@ -1235,13 +1210,6 @@ watch(
     }
   }
 )
-
-async function loadWorkspaces() {
-  try {
-    const res = await request.post('/workspace/list', { page: 1, pageSize: 100 })
-    if (res.code === 0) workspaces.value = res.list || []
-  } catch (e) { console.error(e) }
-}
 
 async function loadOrganizations() {
   try {
@@ -1342,6 +1310,7 @@ function applyConfig(config) {
     fingerprintIconHash: config.fingerprint?.iconHash ?? true,
     fingerprintCustomEngine: config.fingerprint?.customEngine ?? false,
     fingerprintScreenshot: config.fingerprint?.screenshot ?? false,
+    fingerprintCert: config.fingerprint?.cert ?? false,
     fingerprintActiveScan: config.fingerprint?.activeScan ?? false,
     fingerprintActiveTimeout: config.fingerprint?.activeTimeout || 10,
     fingerprintTimeout: config.fingerprint?.targetTimeout || 30,
@@ -1464,6 +1433,7 @@ watch(
     fingerprintIconHash: form.fingerprintIconHash,
     fingerprintCustomEngine: form.fingerprintCustomEngine,
     fingerprintScreenshot: form.fingerprintScreenshot,
+    fingerprintCert: form.fingerprintCert,
     fingerprintActiveScan: form.fingerprintActiveScan,
     fingerprintActiveTimeout: form.fingerprintActiveTimeout,
     fingerprintTimeout: form.fingerprintTimeout,
@@ -1584,6 +1554,7 @@ function buildConfig() {
       iconHash: form.fingerprintIconHash,
       customEngine: form.fingerprintCustomEngine,
       screenshot: form.fingerprintScreenshot,
+      cert: form.fingerprintCert,
       activeScan: form.fingerprintActiveScan,
       activeTimeout: form.fingerprintActiveTimeout,
       targetTimeout: form.fingerprintTimeout,
@@ -1695,7 +1666,6 @@ async function handleSubmit() {
     const params = {
       name: form.name,
       target: form.target,
-      workspaceId: form.workspaceId,
       orgId: form.orgId,
       workers: form.workers,
       config: JSON.stringify(config)
@@ -1712,7 +1682,7 @@ async function handleSubmit() {
     if (res.code === 0) {
       ElMessage.success(isEdit.value ? t('task.taskUpdateSuccess') : t('task.taskCreateSuccess'))
       if (!isEdit.value && res.id) {
-        await startTask({ id: res.id, workspaceId: form.workspaceId })
+        await startTask({ id: res.id })
         ElMessage.success(t('task.taskStarted'))
       }
       // 跳转回任务列表并带上新建任务 id，触发列表延迟刷新以更新任务状态

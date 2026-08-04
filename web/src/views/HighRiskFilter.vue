@@ -16,7 +16,7 @@
         </template>
       </el-alert>
 
-      <el-form label-width="120px">
+      <el-form label-width="160px">
         <el-form-item :label="$t('highRiskFilter.enableFilter')">
           <el-switch v-model="filterConfig.enabled" />
           <span class="hint-secondary" style="margin-left: 10px">
@@ -108,6 +108,9 @@
             </div>
           </el-form-item>
         </template>
+
+        <!-- 空状态提示：当过滤器未启用时显示 -->
+        <el-empty v-if="!filterConfig.enabled" :description="$t('highRiskFilter.disabledHint') || 'High-risk filter is currently disabled. Enable it to configure notification rules.'" style="padding: 40px 0" />
       </el-form>
     </el-card>
 

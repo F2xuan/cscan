@@ -211,11 +211,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Filter } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { clearIPs } from '@/api/asset'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
 const route = useRoute()
-const workspaceStore = useWorkspaceStore()
 const loading = ref(false)
 const tableData = ref([])
 const selectedRows = ref([])
@@ -245,12 +243,6 @@ const pagination = reactive({
   total: 0
 })
 
-function handleWorkspaceChanged() {
-  pagination.page = 1
-  loadData()
-  loadStat()
-}
-
 onMounted(() => {
   if (route.query.ip) {
     searchForm.ip = String(route.query.ip)
@@ -258,11 +250,6 @@ onMounted(() => {
   loadData()
   loadStat()
   loadOrganizations()
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
 })
 
 async function loadData() {

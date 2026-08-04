@@ -335,17 +335,8 @@ function escapeCsvField(field) {
   return str
 }
 
-function handleWorkspaceChanged() {
-  loadOrganizations()
-}
-
 onMounted(() => {
   loadOrganizations()
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
 })
 
 function refresh() {

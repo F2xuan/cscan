@@ -96,6 +96,7 @@
             <el-tag size="small">Medium: {{ templateStats.medium || 0 }}</el-tag>
             <el-tag type="info" size="small">Low: {{ templateStats.low || 0 }}</el-tag>
             <el-tag type="success" size="small">Info: {{ templateStats.info || 0 }}</el-tag>
+            <el-tag v-if="templateStats.unknown" type="info" size="small" effect="plain">Unknown: {{ templateStats.unknown }}</el-tag>
             <el-button 
               v-if="selectedTemplates.length > 0" 
               type="success" 
@@ -117,7 +118,7 @@
             <el-table-column type="selection" width="45" />
             <el-table-column prop="id" :label="$t('poc.templateId')" width="200" show-overflow-tooltip />
             <el-table-column prop="name" :label="$t('poc.name')" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="severity" :label="$t('poc.level')" width="90">
+            <el-table-column prop="severity" :label="$t('poc.level')" width="90" sortable :sort-method="sortBySeverity">
               <template #default="{ row }">
                 <el-tag :type="getSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
               </template>
@@ -2803,6 +2804,11 @@ function getSeverityType(severity) {
     info: 'success'
   }
   return map[severity] || 'info'
+}
+
+const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4, unknown: 5 }
+function sortBySeverity(a, b) {
+  return (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99)
 }
 
 function getNucleiTemplate() {

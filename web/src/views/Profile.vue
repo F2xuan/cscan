@@ -400,10 +400,9 @@ async function handleChangePassword() {
     })
     if (res.code === 0) {
       ElMessage.success(res.msg || t('profile.passwordChanged', '密码修改成功，请重新登录'))
-      setTimeout(() => {
-        userStore.logout()
-        router.push('/login')
-      }, 1200)
+      // 立即清除 token，防止旧 token 继续发请求触发大量 401
+      userStore.logout()
+      router.push('/login')
     } else {
       ElMessage.error(res.msg || t('user.passwordResetFailed'))
     }

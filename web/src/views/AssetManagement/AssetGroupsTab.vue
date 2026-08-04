@@ -164,13 +164,6 @@
               class="bubble clickable"
               @click="goRisk(row, 'sensitive-info')"
             >{{ t('asset.assetGroupsTab.riskSensitiveInfo') }} {{ row.riskSensitiveInfo }}</el-tag>
-            <el-tag
-              v-if="row.riskSensitiveDir"
-              size="small"
-              type="warning"
-              class="bubble clickable"
-              @click="goRisk(row, 'sensitive-dir')"
-            >{{ t('asset.assetGroupsTab.riskSensitiveDir') }} {{ row.riskSensitiveDir }}</el-tag>
             <span v-if="!hasAnyRisk(row)" class="bubble-empty">-</span>
           </div>
         </template>
@@ -267,7 +260,7 @@ const hasAnyExposure = (row) =>
 
 const hasAnyRisk = (row) =>
   (row.riskVulnTotal || 0) + (row.riskVulnHigh || 0) +
-  (row.riskSensitiveInfo || 0) + (row.riskSensitiveDir || 0) > 0
+  (row.riskSensitiveInfo || 0) > 0
 
 const formatTimestamp = (ms) => {
   if (!ms) return '-'

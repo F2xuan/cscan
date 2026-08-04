@@ -68,9 +68,6 @@
               <span v-if="task.profileName" class="meta-item">
                 <el-icon><Document /></el-icon>{{ task.profileName }}
               </span>
-              <span v-if="task.workspaceId" class="meta-item">
-                <el-icon><Operation /></el-icon>{{ task.workspaceId }}
-              </span>
             </div>
           </div>
           <div class="progress-circle-wrapper">

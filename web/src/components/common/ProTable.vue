@@ -727,20 +727,12 @@ function escapeCsvField(field) {
   return str
 }
 
-// Handle workspace changes (reset page, reload data)
-function handleWorkspaceChanged() {
-  pagination.page = 1
-  loadData()
-}
-
 onMounted(() => {
   initQueryFromUrl()
   loadData()
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
 })
 
 // Expose methods and state to parent component

@@ -38,7 +38,6 @@ export const useUserStore = defineStore('user', () => {
       localStorage.setItem('username', res.username)
       localStorage.setItem('role', res.role)
       localStorage.setItem('workspaceId', res.workspaceId || '')
-      localStorage.removeItem('currentWorkspaceId')
 
       await refreshProfile()
     }
@@ -70,7 +69,7 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  // 旧入口保留：仅刷新头像（向后兼容 Settings.vue 等调用点）
+  // 旧入口保留：仅刷新头像（向后兼容 UserManagement.vue 等调用点）
   async function refreshAvatar() {
     return refreshProfile()
   }
@@ -111,11 +110,6 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('avatar')
   }
 
-  function setWorkspace(id) {
-    workspaceId.value = id
-    localStorage.setItem('workspaceId', id)
-  }
-
   return {
     token,
     userId,
@@ -129,7 +123,6 @@ export const useUserStore = defineStore('user', () => {
     isAdmin,
     login,
     logout,
-    setWorkspace,
     setAvatar,
     setUsername,
     setProfile,

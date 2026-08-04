@@ -1,11 +1,5 @@
 import request from './request'
 
-// 任务类型常量
-export const TASK_TYPE = {
-  ASSET_SCAN: 'asset_scan',   // 资产扫描定时任务
-  SPACE_ENGINE: 'space_engine' // 空间引擎定时任务
-}
-
 // 获取定时任务列表
 // 可选字段：data.taskType 用于按类型过滤 ('asset_scan' | 'space_engine')
 export function getCronTaskList(data) {
@@ -19,7 +13,6 @@ export function getCronTaskList(data) {
 //   - query: 空间引擎查询语句
 //   - cronSpec: cron 表达式
 //   - enabled: 是否启用
-//   - workspaceId: 工作空间 ID
 export function saveCronTask(data) {
   return request.post('/task/cron/save', data)
 }
@@ -58,15 +51,10 @@ export function getCronTaskDetail(data) {
 
 // 获取空间引擎定时任务列表
 export function getSpaceEngineCronTaskList(data = {}) {
-  return getCronTaskList({ ...data, taskType: TASK_TYPE.SPACE_ENGINE })
+  return getCronTaskList({ ...data, taskType: 'space_engine' })
 }
 
 // 保存空间引擎定时任务
 export function saveSpaceEngineCronTask(data) {
-  return saveCronTask({ ...data, taskType: TASK_TYPE.SPACE_ENGINE })
-}
-
-// 获取资产扫描定时任务列表（向后兼容）
-export function getAssetScanCronTaskList(data = {}) {
-  return getCronTaskList({ ...data, taskType: TASK_TYPE.ASSET_SCAN })
+  return saveCronTask({ ...data, taskType: 'space_engine' })
 }

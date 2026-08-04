@@ -70,10 +70,6 @@ export function execCommand(workerName, sessionId, command) {
   )
 }
 
-export function getTerminalHistory(workerName, limit = 100) {
-  return request.get('/worker/console/terminal/history', { params: { name: workerName, limit } })
-}
-
 // 审计日志
 export function getAuditLogs(workerName, page = 1, pageSize = 20) {
   return request.get('/worker/console/audit', { params: { workerName, page, pageSize } })

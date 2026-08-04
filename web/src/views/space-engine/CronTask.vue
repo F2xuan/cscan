@@ -174,17 +174,6 @@
           </div>
         </el-form-item>
 
-        <el-form-item :label="$t('spaceEngineCronTask.maxResults') || '单次拉取数量'" prop="maxResults">
-          <el-input-number
-            v-model="form.maxResults"
-            :min="1"
-            :max="form.platform === 'fofa' ? 10000 : 100"
-            :step="100"
-            style="width: 200px"
-          />
-          <span class="form-hint-inline">{{ $t('spaceEngineCronTask.maxResultsHint') || '每次执行时从空间引擎拉取的最大结果数量' }}</span>
-        </el-form-item>
-
         <el-form-item :label="$t('spaceEngineCronTask.scheduleType') || '调度类型'" prop="scheduleType">
           <el-radio-group v-model="form.scheduleType">
             <el-radio label="cron">{{ $t('spaceEngineCronTask.cronExec') || '周期执行' }}</el-radio>
@@ -314,10 +303,8 @@ import {
   runCronTaskNow,
   validateCronSpec
 } from '@/api/crontask'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const { t } = useI18n()
-const workspaceStore = useWorkspaceStore()
 
 const loading = ref(false)
 const tableData = ref([])
@@ -344,7 +331,6 @@ function getDefaultForm() {
     name: '',
     platform: 'fofa',
     query: '',
-    maxResults: 100,
     scheduleType: 'cron',
     cronSpec: '0 0 2 * * *',
     scheduleTime: '',
@@ -363,9 +349,6 @@ const rules = {
   ],
   query: [
     { required: true, message: t('spaceEngineCronTask.enterQuery') || '请输入查询语句', trigger: 'blur' }
-  ],
-  maxResults: [
-    { required: true, message: t('spaceEngineCronTask.enterMaxResults') || '请输入拉取数量', trigger: 'blur' }
   ],
   scheduleType: [
     { required: true, message: t('common.pleaseSelect') || '请选择', trigger: 'change' }
@@ -633,7 +616,6 @@ function handleEdit(row) {
     name: row.name,
     platform: row.platform || 'fofa',
     query: row.query || '',
-    maxResults: row.maxResults || 100,
     scheduleType: row.scheduleType || 'cron',
     cronSpec: row.cronSpec || '0 0 2 * * *',
     scheduleTime: row.scheduleTime || '',
@@ -669,11 +651,10 @@ async function handleSubmit() {
         name: form.name,
         platform: form.platform,
         query: form.query,
-        maxResults: form.maxResults,
+        maxResults: 100,
         scheduleType: form.scheduleType,
         cronSpec: form.scheduleType === 'cron' ? form.cronSpec : '',
-        scheduleTime: form.scheduleType === 'once' ? form.scheduleTime : '',
-        workspaceId: workspaceStore.effectiveWorkspaceId
+        scheduleTime: form.scheduleType === 'once' ? form.scheduleTime : ''
       }
 
       const res = await saveSpaceEngineCronTask(submitData)

@@ -674,22 +674,11 @@
             <el-form-item :label="$t('task.scanTarget')" prop="target">
               <el-input v-model="form.target" type="textarea" :rows="6" :placeholder="$t('task.targetPlaceholder')" />
             </el-form-item>
-            <el-row :gutter="20">
-              <el-col :span="12">
-                <el-form-item :label="$t('task.workspace')">
-                  <el-select v-model="form.workspaceId" :placeholder="$t('task.selectWorkspace')" clearable style="width: 100%">
-                    <el-option v-for="ws in workspaceStore.workspaces" :key="ws.id" :label="ws.name" :value="ws.id" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
-                <el-form-item :label="$t('task.organization')">
-                  <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable style="width: 100%">
-                    <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-            </el-row>
+            <el-form-item :label="$t('task.organization')">
+              <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable style="width: 100%">
+                <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
+              </el-select>
+            </el-form-item>
             <el-form-item :label="$t('task.specifyWorker')">
               <el-select v-model="form.workers" multiple :placeholder="$t('task.anyWorkerExecute')" clearable style="width: 100%">
                 <el-option v-for="w in workers" :key="w.name" :label="`${w.name} (${w.ip})`" :value="w.name" />
@@ -887,6 +876,7 @@
                 <el-checkbox v-model="form.fingerprintIconHash">{{ $t('task.iconHash') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintCustomEngine">{{ $t('task.customFingerprint') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintScreenshot">{{ $t('task.screenshot') }}</el-checkbox>
+                <el-checkbox v-model="form.fingerprintCert">{{ $t('task.cert') }}</el-checkbox>
               </el-form-item>
               <el-row :gutter="20">
                 <el-col :span="12">
@@ -939,16 +929,6 @@
             </template>
           </el-form>
         </el-tab-pane>
-
-        <!-- 高级设置 Tab -->
-        <!-- <el-tab-pane :label="$t('task.advancedSettings')" name="advanced">
-          <el-form label-width="100px" class="tab-form">
-            <el-form-item :label="$t('task.taskSplit')">
-              <el-input-number v-model="form.batchSize" :min="0" :max="1000" :step="10" />
-              <span class="form-hint">{{ $t('task.batchTargetCount') }}</span>
-            </el-form-item>
-          </el-form>
-        </el-tab-pane> -->
       </el-tabs>
       <template #footer>
         <div class="dialog-footer">
@@ -1010,14 +990,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Search, Clock, VideoPlay, CircleCheck, Document, Setting, Connection, Monitor, Stamp, WarnTriangleFilled, FolderOpened, Grid, Aim, Operation, Key, Refresh } from '@element-plus/icons-vue'
 import ScanWorkflow from '@/components/ScanWorkflow.vue'
 import { getTaskList, createTask, deleteTask, batchDeleteTask, retryTask, startTask, pauseTask, resumeTask, stopTask, updateTask, getTaskLogs, getWorkerList, saveScanConfig, getScanConfig } from '@/api/task'
-import { useWorkspaceStore } from '@/stores/workspace'
 import { validateTargets, formatValidationErrors } from '@/utils/target'
 import request from '@/api/request'
 
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
-const workspaceStore = useWorkspaceStore()
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
@@ -1051,7 +1029,6 @@ const form = reactive({
   id: '',
   name: '',
   target: '',
-  workspaceId: '',
   orgId: '',
   workers: [],
   batchSize: 50,
@@ -1090,6 +1067,7 @@ const form = reactive({
   fingerprintIconHash: true,
   fingerprintCustomEngine: false,
   fingerprintScreenshot: false,
+  fingerprintCert: false,
   fingerprintForceScan: false,
   fingerprintTimeout: 30,
   pocscanEnable: false,
@@ -1176,7 +1154,6 @@ onMounted(() => {
   loadOrganizations()
   loadWorkers()
   if (autoRefresh.value) startAutoRefresh()
-  window.addEventListener('workspace-changed', () => { pagination.page = 1; loadData() })
   // 从新建任务页跳转回来时，Worker 拉取任务需要短暂时间，
   // 立即刷新只能看到 PENDING（等待执行）状态，延迟再刷新一次让状态更新为执行中
   if (route.query.created) {
@@ -1199,8 +1176,7 @@ async function loadData() {
   try {
     const params = { 
       page: pagination.page, 
-      pageSize: pagination.pageSize, 
-      workspaceId: workspaceStore.currentWorkspaceId || '' 
+      pageSize: pagination.pageSize
     }
     if (filterTags.value && filterTags.value.length > 0) {
       params.tags = filterTags.value
@@ -1346,7 +1322,7 @@ const enabledModulesCount = computed(() => {
 
 function resetForm() {
   Object.assign(form, {
-    id: '', name: '', target: '', workspaceId: '', orgId: '', workers: [],
+    id: '', name: '', target: '', orgId: '', workers: [],
     batchSize: 50,
     // 子域名扫描
     domainscanEnable: false, domainscanSubfinder: true, domainscanTimeout: 300, domainscanMaxEnumTime: 10,
@@ -1356,7 +1332,7 @@ function resetForm() {
     portscanEnable: true, portscanTool: 'naabu', portscanRate: 1000, ports: 'top100',
     portThreshold: 50, scanType: 'c', portscanTimeout: 60, skipHostDiscovery: false, portidentifyEnable: false, portidentifyTimeout: 60,
     portidentifyArgs: '', fingerprintEnable: true, fingerprintTool: 'httpx', fingerprintIconHash: true,
-    fingerprintCustomEngine: false, fingerprintScreenshot: false,
+    fingerprintCustomEngine: false, fingerprintScreenshot: false, fingerprintCert: false,
     fingerprintTimeout: 30, pocscanEnable: false, pocscanAutoScan: true,
     pocscanAutomaticScan: true, pocscanCustomOnly: false, pocscanSeverity: ['critical', 'high', 'medium'],
     pocscanTargetTimeout: 600
@@ -1390,12 +1366,6 @@ async function showCreateDialog() {
       applyConfig(config)
     }
   } catch (e) { console.error('加载扫描配置失败:', e) }
-  let wsId = workspaceStore.currentWorkspaceId
-  if (wsId === 'all' || !wsId) {
-    const defaultWs = workspaceStore.workspaces.find(ws => ws.name === '默认工作空间')
-    wsId = defaultWs ? defaultWs.id : (workspaceStore.workspaces.length > 0 ? workspaceStore.workspaces[0].id : '')
-  }
-  form.workspaceId = wsId
   activeTab.value = 'basic'
   dialogVisible.value = true
 }
@@ -1439,6 +1409,7 @@ function applyConfig(config) {
     fingerprintIconHash: config.fingerprint?.iconHash ?? true,
     fingerprintCustomEngine: config.fingerprint?.customEngine ?? false,
     fingerprintScreenshot: config.fingerprint?.screenshot ?? false,
+    fingerprintCert: config.fingerprint?.cert ?? false,
     fingerprintTimeout: config.fingerprint?.targetTimeout || 30,
     pocscanEnable: config.pocscan?.enable ?? false,
     pocscanAutoScan: config.pocscan?.autoScan ?? true,
@@ -1473,7 +1444,7 @@ function buildConfig() {
     domainscan: { enable: form.domainscanEnable, subfinder: form.domainscanSubfinder, timeout: form.domainscanTimeout, maxEnumerationTime: form.domainscanMaxEnumTime, threads: form.domainscanThreads, rateLimit: form.domainscanRateLimit, all: form.domainscanAll, recursive: form.domainscanRecursive, removeWildcard: form.domainscanRemoveWildcard, resolveDNS: form.domainscanResolveDNS, concurrent: form.domainscanConcurrent },
     portscan: { enable: form.portscanEnable, tool: form.portscanTool, rate: form.portscanRate, ports: form.ports, portThreshold: form.portThreshold, scanType: form.scanType, timeout: form.portscanTimeout, skipHostDiscovery: form.skipHostDiscovery, excludeCDN: form.excludeCDN, excludeHosts: form.excludeHosts },
     portidentify: { enable: form.portidentifyEnable, tool: form.portidentifyTool, timeout: form.portidentifyTimeout, concurrency: form.portidentifyConcurrency, args: form.portidentifyArgs, udp: form.portidentifyUDP, fastMode: form.portidentifyFastMode, forceScan: form.portidentifyForceScan && !form.portscanEnable },
-    fingerprint: { enable: form.fingerprintEnable, tool: form.fingerprintTool, iconHash: form.fingerprintIconHash, customEngine: form.fingerprintCustomEngine, screenshot: form.fingerprintScreenshot, targetTimeout: form.fingerprintTimeout, forceScan: form.fingerprintForceScan && !form.portscanEnable && !form.portidentifyEnable },
+    fingerprint: { enable: form.fingerprintEnable, tool: form.fingerprintTool, iconHash: form.fingerprintIconHash, customEngine: form.fingerprintCustomEngine, screenshot: form.fingerprintScreenshot, cert: form.fingerprintCert, targetTimeout: form.fingerprintTimeout, forceScan: form.fingerprintForceScan && !form.portscanEnable && !form.portidentifyEnable },
     pocscan: { enable: form.pocscanEnable, useNuclei: true, forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value, autoScan: form.pocscanAutoScan, automaticScan: form.pocscanAutomaticScan, customPocOnly: form.pocscanCustomOnly, severity: form.pocscanSeverity.join(','), targetTimeout: form.pocscanTargetTimeout }
   }
 }
@@ -1484,7 +1455,7 @@ const scanConfigFields = [
   'domainscanEnable', 'domainscanSubfinder', 'domainscanTimeout', 'domainscanMaxEnumTime', 'domainscanThreads', 'domainscanRateLimit', 'domainscanAll', 'domainscanRecursive', 'domainscanRemoveWildcard', 'domainscanResolveDNS', 'domainscanConcurrent',
   'portscanEnable', 'portscanTool', 'portscanRate', 'ports', 'portThreshold', 'scanType', 'portscanTimeout', 'skipHostDiscovery', 'excludeCDN', 'excludeHosts',
   'portidentifyEnable', 'portidentifyTool', 'portidentifyTimeout', 'portidentifyConcurrency', 'portidentifyArgs', 'portidentifyUDP', 'portidentifyFastMode', 'portidentifyForceScan',
-  'fingerprintEnable', 'fingerprintTool', 'fingerprintIconHash', 'fingerprintCustomEngine', 'fingerprintScreenshot', 'fingerprintTimeout', 'fingerprintForceScan',
+  'fingerprintEnable', 'fingerprintTool', 'fingerprintIconHash', 'fingerprintCustomEngine', 'fingerprintScreenshot', 'fingerprintCert', 'fingerprintTimeout', 'fingerprintForceScan',
   'pocscanEnable', 'pocscanAutoScan', 'pocscanAutomaticScan', 'pocscanCustomOnly', 'pocscanSeverity', 'pocscanTargetTimeout', 'pocscanForceScan'
 ]
 
@@ -1515,7 +1486,7 @@ async function handleSubmit() {
   try {
     const config = buildConfig()
     const configStr = JSON.stringify(config)
-    const data = { name: form.name, target: form.target, workspaceId: form.workspaceId, orgId: form.orgId, workers: form.workers, config: configStr }
+    const data = { name: form.name, target: form.target, orgId: form.orgId, workers: form.workers, config: configStr }
     let res
     if (isEdit.value) {
       res = await updateTask({ id: form.id, ...data })

@@ -110,8 +110,7 @@
     "statusSuccess": "Success",
     "statusFailed": "Failed",
     "statusPartial": "Partial",
-    "statusEmpty": "Not run",
-    "pleaseSelectWorkspace": "Please select a workspace first"
+    "statusEmpty": "Not run"
   },
   "common": {
     "exportAll": "Export All",
@@ -139,7 +138,6 @@
     "warning": "Warning",
     "info": "Info",
     "home": "Home",
-    "allWorkspaces": "All Workspaces",
     "refresh": "Refresh",
     "export": "Export",
     "exportSelected": "Export Selected",
@@ -192,14 +190,18 @@
     "yes": "Yes",
     "no": "No",
     "exportCsv": "Export CSV (All Fields)",
-    "switchingWorkspace": "Switching workspace...",
     "saveSuccess": "Saved successfully",
     "exportSuccess": "Exported successfully",
     "addFilters": "Add Filters",
     "on": "On",
     "off": "Off",
     "optional": "Optional",
-    "searchByName": "Search by name/query"
+    "searchByName": "Search by name/query",
+    "action": "Action",
+    "getDataFailed": "Failed to get data",
+    "gettingAllData": "Getting all data...",
+    "noDataToExport": "No data to export",
+    "saveFailed": "Save failed"
   },
   "navigation": {
     "dashboard": "Dashboard",
@@ -217,7 +219,6 @@
     "about": "About",
     "userManagement": "User Management",
     "organizationManagement": "Organization Management",
-    "workspaceManagement": "Workspace Management",
     "reportManagement": "Report Management",
     "groupDashboard": "Dashboard",
     "groupScan": "Scan",
@@ -261,7 +262,8 @@
     "brandingConfig": "Appearance",
     "aiConfig": "AI Config",
     "certAsset": "Certificates",
-    "scanConfig": "Scan Config"
+    "scanConfig": "Scan Config",
+    "workspaceManagement": "Workspace Management"
   },
   "aiConfig": {
     "alertDescription": "Configure the platform-wide AI service used by AI-assisted features such as POC generation. Settings are scoped to the current workspace.",
@@ -403,7 +405,6 @@
     "cardDir": "Dirs & Sensitive Files",
     "cardVuln": "Risks & Vulnerabilities",
     "compareYesterday": "vs yesterday",
-    "workspaceIsolation": "Workspace logical isolation",
     "queuedTasks": "Queued tasks",
     "exposureMonitor": "Exposure file & backup monitoring",
     "lifecycleThreat": "Full lifecycle threat monitoring",
@@ -416,6 +417,7 @@
     "fingerprintPerspective": "Fingerprint Composition",
     "noFingerprintData": "No fingerprint data",
     "noServiceData": "No service data",
+    "noPortData": "No port data",
     "noRisk": "No Risk",
     "noChartData": "No data",
     "successTask": "Successful",
@@ -803,6 +805,7 @@
       "apply": "Apply",
       "reset": "Reset",
       "noScreenshot": "No screenshot",
+      "noScreenshotData": "No screenshot data",
       "noTitle": "No title",
       "refreshSuccess": "Refreshed successfully",
       "loadFailed": "Load failed"
@@ -1059,6 +1062,7 @@
     "iconHash": "Icon Hash",
     "customFingerprint": "Custom Fingerprint",
     "screenshot": "Screenshot",
+    "cert": "Cert Collection",
     "filterMode": "Filter Mode",
     "httpMappingMode": "HTTP Mapping Mode",
     "serviceMappingMode": "Service Mapping Mode",
@@ -1143,8 +1147,6 @@
     "tagsPlaceholder": "Enter tags, support creating new tags",
     "tagsHint": "Used for task classification and filtering, support custom tags",
     "filterByTags": "Filter by tags",
-    "workspace": "Workspace",
-    "selectWorkspace": "Select Workspace",
     "organization": "Organization",
     "selectOrganization": "Select Organization",
     "specifyWorker": "Specify Worker",
@@ -1364,7 +1366,10 @@
     "configJsonPlaceholder": "Please enter JSON format scan config",
     "public": "Public",
     "templateData": "Template Data",
-    "importOption": "Import Option"
+    "importOption": "Import Option",
+    "fileExtensions": "File Extensions",
+    "pocTypes": "POC Types",
+    "scanAll": "Scan All"
   },
   "onboarding": {
     "title": "Welcome to CSCAN",
@@ -1807,6 +1812,8 @@
     "passive": "Passive",
     "active": "Active",
     "total": "Total",
+    "builtinTotal": "Builtin",
+    "customTotal": "Custom",
     "website": "Website",
     "matchRules": "Match Rules",
     "status": "Status",
@@ -2008,7 +2015,9 @@
     "noDataToExport": "No data to export",
     "pleaseEnterTargetUrl": "Please enter target URL",
     "validateSuccess": "Validate successful",
-    "validateFailed": "Validate failed"
+    "validateFailed": "Validate failed",
+    "noFileSelected": "No file selected",
+    "pleaseInputContent": "Please input content"
   },
   "blacklist": {
     "globalBlacklist": "Global Blacklist",
@@ -2132,7 +2141,8 @@
     "installKeyRequired": "Install key (required)",
     "workerNameDesc": "Worker name (optional)",
     "concurrencyDesc": "Concurrency (optional)",
-    "autoDerive": "auto (by host memory)"
+    "autoDerive": "auto (by host memory)",
+    "copyFailed": "Copy failed"
   },
   "settings": {
     "title": "System Settings",
@@ -2237,7 +2247,7 @@
     "styleVercelDesc": "Flat and sharp, minimalist black-white style",
     "styleApple": "Apple",
     "styleAppleDesc": "Rounded and soft, refined shadow texture",
-    "style21th": "21th",
+    "style21th": "21st",
     "style21thDesc": "Square corners and hard shadows, code terminal style",
     "styleClaude": "Claude",
     "styleClaudeDesc": "Warm editorial, paper-like reading texture",
@@ -2258,20 +2268,6 @@
     "switchToLight": "Switch to Light Theme",
     "switchToDark": "Switch to Dark Theme"
   },
-  "workspace": {
-    "title": "Workspace",
-    "workspaceName": "Workspace Name",
-    "workspaceDescription": "Workspace Description",
-    "createWorkspace": "Create Workspace",
-    "newWorkspace": "New Workspace",
-    "editWorkspace": "Edit Workspace",
-    "switchWorkspace": "Switch Workspace",
-    "currentWorkspace": "Current Workspace",
-    "allWorkspaces": "All Workspaces",
-    "pleaseEnterName": "Please enter name",
-    "pleaseEnterDescription": "Please enter description",
-    "confirmDeleteWorkspace": "Are you sure to delete this workspace?"
-  },
   "user": {
     "title": "User Management",
     "userName": "Username",
@@ -2280,6 +2276,7 @@
     "lastLogin": "Last Login",
     "createUser": "Create User",
     "newUser": "New User",
+    "searchPlaceholder": "Search username",
     "editUser": "Edit User",
     "admin": "Admin",
     "user": "User",
@@ -2452,7 +2449,13 @@
     "siteAddress": "Site Address",
     "confirmDeleteSite": "Are you sure to delete this site?",
     "confirmBatchDelete": "Are you sure to delete the selected {count} sites?",
-    "pleaseSelectSites": "Please select sites to export first"
+    "pleaseSelectSites": "Please select sites to export first",
+    "pageTitle": "Page Title",
+    "port": "Port",
+    "responseHeader": "Response Header",
+    "service": "Service",
+    "siteUrl": "Site URL",
+    "url": "URL"
   },
   "workerConsole": {
     "title": "Worker Console",
@@ -2585,7 +2588,31 @@
     "targetSourceAsset": "Asset Selection",
     "targetSourceSpaceEngine": "Space Engine",
     "targetSourceManual": "Manual Input",
-    "selectedAssets": "{count} asset(s) selected"
+    "selectedAssets": "{count} asset(s) selected",
+    "targetContent": "Target Content",
+    "scanConfig": "Scan Config",
+    "scanTemplate": "Scan Template",
+    "customConfig": "Custom Config",
+    "subdomainSyncHint": "When enabled, all subdomains under the asset will be synced and pulled as scan targets at task execution",
+    "templateSelectedHint": "Template selected; its scan config will be used at execution",
+    "selectTemplatePlaceholder": "Please select a scan template",
+    "allOrgs": "All Organizations",
+    "searchIpDomainTag": "Search IP/Domain/Tag",
+    "selectAll": "Select All",
+    "clearSelection": "Clear Selection",
+    "selectedCount": "Selected {count} item(s)",
+    "type": "Type",
+    "domain": "Domain",
+    "ip": "IP",
+    "value": "Value",
+    "tag": "Tag",
+    "lastScanTime": "Last Scan Time",
+    "subdomainSync": "Subdomain Sync",
+    "syncAllSubdomains": "Sync all subdomains under the asset",
+    "selectTemplate": "Select Template",
+    "viewConfig": "View Config",
+    "requestRate": "Request Rate (Rate/s)",
+    "templateConcurrency": "Template Concurrency"
   },
   "onlineSearch": {
     "title": "Online Search",
@@ -2693,7 +2720,8 @@
     "low": "Low",
     "severityHint": "Select vulnerability severity levels that trigger notifications",
     "configPreview": "Current Config Preview",
-    "notConfigured": "Not Configured"
+    "notConfigured": "Not Configured",
+    "disabledHint": "High-risk filter is currently disabled. Enable it to configure notification rules."
   },
   "dirscan": {
     "total": "Total",
@@ -2849,7 +2877,8 @@
     "matcherUnauth": "Probe API Unauthorized Access",
     "matcherSensitive": "Detect Sensitive Keywords",
     "matcherUrlList": "Extract URL Lists from JS",
-    "matcherAbsurlList": "Extract Absolute URL Lists from JS"
+    "matcherAbsurlList": "Extract Absolute URL Lists from JS",
+    "pending": "Pending"
   },
   "jsfinder": {
     "searchPlaceholder": "Search target/URL/vuln name...",
@@ -3090,5 +3119,63 @@
     "syntaxHunterIcpNumber": "Search by ICP number",
     "syntaxQuakeService": "Search by service type",
     "syntaxQuakeCountry": "Search by country"
+  },
+  "workspace": {
+    "confirmDeleteWorkspace": "Are you sure you want to delete this workspace?",
+    "editWorkspace": "Edit Workspace",
+    "newWorkspace": "New Workspace",
+    "pleaseEnterDescription": "Please enter description",
+    "pleaseEnterName": "Please enter name"
+  },
+  "error": {
+    "sessionExpired": "Session expired, please log in again",
+    "networkError": "Network error or backend service not started, please check the connection"
+  },
+  "menu": {
+    "Dashboard": "Workbench",
+    "AssetManagement": "Asset Overview",
+    "AssetSpaceSearch": "Asset Space Search",
+    "ExposureScreenshot": "Screenshots",
+    "ExposureSubdomain": "Subdomains",
+    "ExposureIp": "IP",
+    "ExposurePort": "Ports",
+    "ExposureSite": "Sites",
+    "ExposureIcon": "Icons",
+    "ExposureApp": "Applications",
+    "ExposureDir": "Directories",
+    "ExposureJs": "JS",
+    "RiskSensitiveDir": "Sensitive Files",
+    "RiskSensitiveInfo": "Sensitive Info",
+    "RiskVuln": "Vulnerabilities",
+    "CertAsset": "Certificates",
+    "TaskCreate": "New Task",
+    "TaskEdit": "Edit Task",
+    "TaskDetail": "Task Detail",
+    "Task": "Task Management",
+    "ScanTemplate": "Scan Template",
+    "CronTask": "Scheduled Scan",
+    "CronTaskCreate": "New Scheduled Scan",
+    "CronTaskEdit": "Edit Scheduled Scan",
+    "SpaceEngineOnlineSearch": "Online Search",
+    "SpaceEngineApiConfig": "API Key Config",
+    "SpaceEngineCronTask": "Space Engine Cron",
+    "Worker": "Worker Nodes",
+    "WorkerLogs": "Container Logs",
+    "Blacklist": "Global Blacklist",
+    "HighRiskFilter": "High-Risk Filter",
+    "WorkerConsole": "Worker Console",
+    "Poc": "POC Management",
+    "Fingerprint": "Fingerprint Management",
+    "Report": "Scan Report",
+    "User": "User Management",
+    "Organization": "Organization Management",
+    "Settings": "System Settings",
+    "Profile": "Profile",
+    "ApiDocs": "API Docs",
+    "AIConfig": "AI Config",
+    "subdomainConfig": "Subdomain Config",
+    "notifyConfig": "Notification",
+    "reverifyConfig": "Continuous Re-verification",
+    "brandingConfig": "Appearance"
   }
 }

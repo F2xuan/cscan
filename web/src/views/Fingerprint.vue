@@ -95,7 +95,8 @@
             <el-tag type="success" size="small">{{ $t('fingerprint.enabled') }}: {{ stats.enabled || 0 }}</el-tag>
             <el-tag type="info" size="small">{{ $t('fingerprint.passive') }}: {{ stats.passive || 0 }}</el-tag>
             <el-tag type="warning" size="small">{{ $t('fingerprint.active') }}: {{ stats.active || 0 }}</el-tag>
-            <el-tag size="small">{{ $t('fingerprint.total') }}: {{ stats.total || 0 }}</el-tag>
+            <el-tag size="small">{{ $t('fingerprint.builtinTotal') }}: {{ stats.builtin || 0 }}</el-tag>
+            <el-tag type="info" size="small" effect="plain">{{ $t('fingerprint.customTotal') }}: {{ stats.custom || 0 }}</el-tag>
           </div>
           <!-- 指纹列表 -->
           <el-table :data="builtinFingerprints" stripe v-loading="builtinLoading" max-height="500">

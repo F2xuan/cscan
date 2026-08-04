@@ -25,7 +25,6 @@ type ServiceContext struct {
 	FingerprintModel        *model.FingerprintModel
 	CustomPocModel          *model.CustomPocModel
 	HttpServiceMappingModel *model.HttpServiceMappingModel
-	WorkspaceModel          *model.WorkspaceModel
 	SubfinderProviderModel  *model.SubfinderProviderModel
 	NotifyConfigModel       *model.NotifyConfigModel
 	TaskRecoveryManager     *scheduler.TaskRecoveryManager // 任务恢复管理器
@@ -94,7 +93,6 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		FingerprintModel:        model.NewFingerprintModel(mongoDB),
 		CustomPocModel:          model.NewCustomPocModel(mongoDB),
 		HttpServiceMappingModel: model.NewHttpServiceMappingModel(mongoDB),
-		WorkspaceModel:          model.NewWorkspaceModel(mongoDB),
 		SubfinderProviderModel:  model.NewSubfinderProviderModel(mongoDB),
 		NotifyConfigModel:       model.NewNotifyConfigModel(mongoDB),
 		TaskRecoveryManager:     recoveryManager,

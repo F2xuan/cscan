@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +93,18 @@ func (s *DockerService) isCscanContainer(name string, image string) bool {
 	return false
 }
 
+// swarmReplicaSuffix 匹配 Docker Swarm 任务容器名后缀：.<replica>.<task_id>
+// 例如 cscan_api.1.a1b2c3d4e5f6 -> 匹配 ".1.a1b2c3d4e5f6"
+// 非 swarm 普通容器名（如 cscan_api）不匹配，保持原样。
+var swarmReplicaSuffix = regexp.MustCompile(`\.\d+\.[0-9a-f]{8,}$`)
+
+// normalizeContainerName 剥离 Docker Swarm 任务容器名中的副本后缀，
+// 将 cscan_api.1.a1b2c3d4e5f6 归一化为 cscan_api，方便日志聚合与展示。
+// 普通容器名原样返回。
+func normalizeContainerName(name string) string {
+	return swarmReplicaSuffix.ReplaceAllString(name, "")
+}
+
 // ListCscanContainers 列出所有 cscan 相关容器(含已停止)
 func (s *DockerService) ListCscanContainers(ctx context.Context) ([]ContainerInfo, error) {
 	list, err := s.cli.ContainerList(ctx, container.ListOptions{All: true})
@@ -104,6 +117,7 @@ func (s *DockerService) ListCscanContainers(ctx context.Context) ([]ContainerInf
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
+		name = normalizeContainerName(name)
 		if !s.isCscanContainer(name, c.Image) {
 			continue
 		}

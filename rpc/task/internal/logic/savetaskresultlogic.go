@@ -55,6 +55,11 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 	// 失败计数器：用于发现“服务端返回成功但数据库实际未写入”的静默丢数据问题
 	var failedWrites int
 	var firstWriteErr error
+	// attemptedWrites：真实发起的资产写入（Insert/UpdateWithRaw）次数。
+	// 用于替代原先基于 newAsset/updateAsset 的守卫——同一任务重复提交时资产已存在、
+	// updateAsset 不会自增，原守卫会误判“全部写入失败”。改为比较“实际尝试的写次数”与
+	// “失败的写次数”：仅当全部尝试均失败时才视为服务端错误。
+	var attemptedWrites int32
 	now := time.Now()
 
 	for _, pbAsset := range in.Assets {
@@ -236,7 +241,8 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 			asset.FirstSeenTaskId = in.MainTaskId // 记录首次发现的任务ID
 			asset.LastStatusChangeTime = now      // 记录状态变化时间
 
-			if err := assetModel.Insert(l.ctx, asset); err != nil {
+			attemptedWrites++
+		if err := assetModel.Insert(l.ctx, asset); err != nil {
 				l.Logger.Errorf("Insert asset failed: %v", err)
 				failedWrites++
 				if firstWriteErr == nil {
@@ -290,7 +296,8 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				}
 			}
 
-			if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), update); err != nil {
+			attemptedWrites++
+		if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), update); err != nil {
 				l.Logger.Errorf("Update asset failed: %v", err)
 				failedWrites++
 				if firstWriteErr == nil {
@@ -337,7 +344,7 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 		}
 	}
 
-	l.Logger.Infof("SaveTaskResult: total=%d, new=%d, update=%d", totalAsset, newAsset, updateAsset)
+	l.Logger.Infof("SaveTaskResult: total=%d, new=%d, update=%d, attemptedWrites=%d, failedWrites=%d", totalAsset, newAsset, updateAsset, attemptedWrites, failedWrites)
 
 	// T1.1: 批量写入本次扫描的变化快照（新增/更新）。失败仅记录日志，不阻断主流程。
 	if len(diffs) > 0 {
@@ -348,10 +355,14 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 		}
 	}
 
-	// 完全写入失败（总数>0 但新增与更新均为 0）视为服务端错误，返回 error，
-	// 使 API 层返回非 0 code，worker 才能触发重试/本地队列回退，避免数据静默丢失。
-	if totalAsset > 0 && newAsset == 0 && updateAsset == 0 {
-		return nil, fmt.Errorf("SaveTaskResult: %d assets all failed to persist (sample err: %v)", totalAsset, firstWriteErr)
+	// 全部写入失败判定：仅当“实际发起的资产写入次数>0 且全部失败”时才视为服务端错误，
+	// 返回 error 使 API 层返回非 0 code，worker 才能触发重试/本地队列回退，避免数据静默丢失。
+	// 注意：原判定 totalAsset>0 && newAsset==0 && updateAsset==0 存在误报——同一任务重复提交时
+	// 资产已存在、updateAsset 不会自增（只有 isDifferentTask 时才自增），会导致已成功更新的资产
+	// 被误判为“全部写入失败”，进而引发 worker 落盘本地队列 + 30s 重放毒队列 + 日志膨胀级联。
+	// 改用 attemptedWrites（真实写尝试次数）与 failedWrites 比较，可正确区分“真失败”与“重复提交已落库”。
+	if attemptedWrites > 0 && failedWrites == int(attemptedWrites) {
+		return nil, fmt.Errorf("SaveTaskResult: %d/%d asset writes failed (sample err: %v)", failedWrites, attemptedWrites, firstWriteErr)
 	}
 
 	return &pb.SaveTaskResultResp{

@@ -190,6 +190,7 @@ func (lc *LogCollector) discoverAndTail() {
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
+		name = normalizeContainerName(name)
 		if name == "" || !lc.isCscanContainer(name, c.Image) {
 			continue
 		}
@@ -510,6 +511,7 @@ func (lc *LogCollector) ListContainersForDate(date string) []LogFileInfo {
 		return nil
 	}
 	var files []LogFileInfo
+	seen := make(map[string]bool)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
 			continue
@@ -519,6 +521,11 @@ func (lc *LogCollector) ListContainersForDate(date string) []LogFileInfo {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".log")
+		name = normalizeContainerName(name)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 		files = append(files, LogFileInfo{
 			Name:    name,
 			Date:    date,

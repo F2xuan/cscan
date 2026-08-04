@@ -36,7 +36,6 @@ type ServiceContext struct {
 	TaskRpcClient           pb.TaskServiceClient
 	UserModel               *model.UserModel
 	UserTokenModel          *model.UserTokenModel
-	WorkspaceModel          *model.WorkspaceModel
 	OrganizationModel       *model.OrganizationModel
 	ProfileModel            *model.TaskProfileModel
 	TagMappingModel         *model.TagMappingModel
@@ -176,7 +175,6 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		TaskRpcClient:           taskRpcClient,
 		UserModel:               model.NewUserModel(mongoDB),
 		UserTokenModel:          model.NewUserTokenModel(mongoDB),
-		WorkspaceModel:          model.NewWorkspaceModel(mongoDB),
 		OrganizationModel:       model.NewOrganizationModel(mongoDB),
 		ProfileModel:            model.NewTaskProfileModel(mongoDB),
 		TagMappingModel:         model.NewTagMappingModel(mongoDB),
@@ -380,11 +378,17 @@ func (s *ServiceContext) ImportCustomPocAndFingerprints() {
 }
 
 func (s *ServiceContext) GetJSFinderResultModel(workspaceId string) *model.JSFinderResultModel {
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
 	return model.NewJSFinderResultModel(s.MongoDB, workspaceId)
 }
 
 // GetCertModel 返回指定工作空间的证书多租户模型（ARL 风格，集合 {workspaceId}_cert）
 func (s *ServiceContext) GetCertModel(workspaceId string) *model.CertModel {
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
 	return model.NewCertModel(s.MongoDB, workspaceId)
 }
 

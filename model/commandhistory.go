@@ -74,6 +74,7 @@ func (m *CommandHistoryModel) RecordCommand(ctx context.Context, history *Comman
 
 // GetByWorker 获取Worker的命令历史
 func (m *CommandHistoryModel) GetByWorker(ctx context.Context, workerName string, page, pageSize int) ([]CommandHistory, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{"worker_name": workerName}
 
 	total, err := m.Count(ctx, filter)

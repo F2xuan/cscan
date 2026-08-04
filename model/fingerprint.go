@@ -344,6 +344,7 @@ func (m *FingerprintModel) Upsert(ctx context.Context, doc *Fingerprint) error {
 }
 
 func (m *FingerprintModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Fingerprint, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -398,6 +399,7 @@ func (m *FingerprintModel) FindActiveEnabled(ctx context.Context) ([]Fingerprint
 
 // FindByType 按类型查询指纹
 func (m *FingerprintModel) FindByType(ctx context.Context, fpType FingerprintType, page, pageSize int) ([]Fingerprint, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	var filter bson.M
 	if fpType == FingerprintTypePassive || fpType == "" {
 		// 被动指纹：type为空或为passive
@@ -733,6 +735,7 @@ func (m *ActiveFingerprintModel) Upsert(ctx context.Context, doc *ActiveFingerpr
 }
 
 func (m *ActiveFingerprintModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]ActiveFingerprint, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

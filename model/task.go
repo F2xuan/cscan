@@ -82,7 +82,7 @@ type MainTaskModel struct {
 }
 
 func NewMainTaskModel(db *mongo.Database, workspaceId string) *MainTaskModel {
-	coll := db.Collection(workspaceId + "_maintask")
+	coll := db.Collection("maintask")
 
 	// 创建索引
 	indexes := []mongo.IndexModel{
@@ -145,6 +145,7 @@ func (m *MainTaskModel) FindByTaskId(ctx context.Context, taskId string) (*MainT
 }
 
 func (m *MainTaskModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]MainTask, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -314,8 +315,11 @@ func (m *MainTaskModel) IncrSubTaskDoneAtomic(ctx context.Context, id string, in
 
 	now := time.Now()
 
-	// 使用 $expr 条件确保只有 sub_task_done < sub_task_count 时才递增
-	// 这样可以防止并发情况下计数超过上限
+	// 使用聚合管道执行 FindOneAndUpdate：把 sub_task_done 钳制到 [当前值, sub_task_count]。
+	// 关键修正：旧实现仅过滤 done < count 再 $inc incrAmount，当 incrAmount > (count - done)
+	// 时（如黑名单一次性补齐 expectedIncr - incrSent）会让 done 一次越过 count，
+	// 产生 done > count 的倒挂（实测出现「3/2」）。这里用 $min(done+incr, count) 确保递增后 done <= count，
+	// 既补齐到上限，又绝不越界。filter 的 done < count 仍保留以契合「未到上限才动」语义。
 	filter := bson.M{
 		"_id": oid,
 		"$expr": bson.M{
@@ -323,15 +327,25 @@ func (m *MainTaskModel) IncrSubTaskDoneAtomic(ctx context.Context, id string, in
 		},
 	}
 
-	update := bson.M{
-		"$inc": bson.M{"sub_task_done": incrAmount},
-		"$set": bson.M{"update_time": now},
+	// 聚合管道更新：sub_task_done = min(当前done + incrAmount, sub_task_count)
+	pipeline := []bson.M{
+		{
+			"$set": bson.M{
+				"sub_task_done": bson.M{
+					"$min": bson.A{
+						bson.M{"$add": bson.A{"$sub_task_done", incrAmount}},
+						"$sub_task_count",
+					},
+				},
+				"update_time": now,
+			},
+		},
 	}
 
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var task MainTask
-	err = m.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&task)
+	err = m.coll.FindOneAndUpdate(ctx, filter, pipeline, opts).Decode(&task)
 
 	if err == mongo.ErrNoDocuments {
 		// 没有匹配的文档，可能是已达上限或文档不存在
@@ -395,7 +409,7 @@ type ExecutorTaskModel struct {
 
 func NewExecutorTaskModel(db *mongo.Database, workspaceId string) *ExecutorTaskModel {
 	return &ExecutorTaskModel{
-		coll: db.Collection(workspaceId + "_executor_task"),
+		coll: db.Collection("executor_task"),
 	}
 }
 
@@ -410,6 +424,7 @@ func (m *ExecutorTaskModel) Insert(ctx context.Context, doc *ExecutorTask) error
 }
 
 func (m *ExecutorTaskModel) FindByMainTaskId(ctx context.Context, mainTaskId string, page, pageSize int) ([]ExecutorTask, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

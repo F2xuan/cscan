@@ -54,7 +54,7 @@ type CertModel struct {
 
 // NewCertModel 多租户模型实例化
 func NewCertModel(db *mongo.Database, workspaceId string) *CertModel {
-	return &CertModel{coll: db.Collection(workspaceId + "_cert")}
+	return &CertModel{coll: db.Collection("cert")}
 }
 
 // UpsertMany 批量 upsert：按 host+port+serial_number 去重，重复扫描刷新 updateTime。

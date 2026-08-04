@@ -164,6 +164,7 @@ func (m *CustomPocModel) Insert(ctx context.Context, doc *CustomPoc) error {
 }
 
 func (m *CustomPocModel) FindAll(ctx context.Context, page, pageSize int) ([]CustomPoc, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -186,6 +187,7 @@ func (m *CustomPocModel) FindAll(ctx context.Context, page, pageSize int) ([]Cus
 
 // FindWithFilter 带筛选条件的查询
 func (m *CustomPocModel) FindWithFilter(ctx context.Context, filter bson.M, page, pageSize int) ([]CustomPoc, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -481,6 +483,7 @@ func (m *NucleiTemplateModel) BulkUpsert(ctx context.Context, docs []*NucleiTemp
 }
 
 func (m *NucleiTemplateModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]NucleiTemplate, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

@@ -14,7 +14,7 @@ type ScanResultModel struct {
 
 // NewScanResultModel creates a new ScanResultModel
 func NewScanResultModel(db *mongo.Database, workspaceId string) *ScanResultModel {
-	coll := db.Collection(workspaceId + "_scanresult")
+	coll := db.Collection("scanresult")
 
 	// Create indexes
 	ctx := context.Background()

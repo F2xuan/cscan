@@ -26,6 +26,23 @@ type Timestamped interface {
 
 // ==================== 分页参数 ====================
 
+// NormalizePage 分页上下限校验（L-2 修复）：
+//   - page 下限为 1（负数/0 归一位 1）
+//   - pageSize 小于 1 时回退默认 20，大于 100 时截断为 100，防止 pageSize 过大导致全量返回或 OOM
+//
+// 同时支持 int 与 int64（不同 model 方法的参数类型不同），通过泛型约束自动推导。
+func NormalizePage[T int | int64](page, pageSize T) (T, T) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	} else if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+
 // PageParams 分页参数
 type PageParams struct {
 	Page     int    // 页码（从1开始）
@@ -48,6 +65,7 @@ func DefaultPageParams() PageParams {
 func (p PageParams) ToFindOptions() *options.FindOptions {
 	opts := options.Find()
 	if p.Page > 0 && p.PageSize > 0 {
+		p.Page, p.PageSize = NormalizePage(p.Page, p.PageSize)
 		opts.SetSkip(int64((p.Page - 1) * p.PageSize))
 		opts.SetLimit(int64(p.PageSize))
 	}
@@ -160,6 +178,7 @@ func (m *BaseModel[T]) Find(ctx context.Context, filter bson.M, page, pageSize i
 func (m *BaseModel[T]) FindWithSort(ctx context.Context, filter bson.M, page, pageSize int, sortField string, sortOrder int) ([]T, error) {
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
+		page, pageSize = NormalizePage(page, pageSize)
 		opts.SetSkip(int64((page - 1) * pageSize))
 		opts.SetLimit(int64(pageSize))
 	}

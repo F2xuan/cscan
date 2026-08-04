@@ -72,7 +72,7 @@ func NewDirScanResultModelWithWorkspace(db *mongo.Database, workspaceId string) 
 		workspaceId = "default"
 	}
 	return &DirScanResultModel{
-		coll: db.Collection(workspaceId + "_dirscan"),
+		coll: db.Collection("dirscan"),
 	}
 }
 
@@ -281,16 +281,19 @@ func (m *DirScanResultModel) UpsertMany(ctx context.Context, docs []*DirScanResu
 
 // FindByFilter 根据条件查询
 func (m *DirScanResultModel) FindByFilter(ctx context.Context, filter bson.M, page, pageSize int) ([]DirScanResult, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	return m.FindByFilterWithSort(ctx, filter, page, pageSize, "", "")
 }
 
 // FindByFilterWithSort 根据条件查询并支持排序
 func (m *DirScanResultModel) FindByFilterWithSort(ctx context.Context, filter bson.M, page, pageSize int, sortField string, sortOrder string) ([]DirScanResult, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	return m.FindByFilterWithSortAndProjection(ctx, filter, page, pageSize, sortField, sortOrder, nil)
 }
 
 // FindByFilterWithSortAndProjection 支持投影的查询（列表页排除大字段时使用）
 func (m *DirScanResultModel) FindByFilterWithSortAndProjection(ctx context.Context, filter bson.M, page, pageSize int, sortField string, sortOrder string, projection bson.M) ([]DirScanResult, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -357,6 +360,7 @@ func (m *DirScanResultModel) EstimatedCount(ctx context.Context) (int64, error) 
 
 // FindByWorkspace 根据工作空间查询
 func (m *DirScanResultModel) FindByWorkspace(ctx context.Context, workspaceId string, page, pageSize int) ([]DirScanResult, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{}
 	if workspaceId != "" && workspaceId != "all" {
 		filter["workspace_id"] = workspaceId

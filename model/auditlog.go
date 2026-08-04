@@ -101,6 +101,7 @@ func (m *AuditLogModel) RecordAudit(ctx context.Context, log *AuditLog) error {
 
 // GetByWorker 获取Worker的审计日志
 func (m *AuditLogModel) GetByWorker(ctx context.Context, workerName string, page, pageSize int) ([]AuditLog, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{"worker_name": workerName}
 
 	total, err := m.Count(ctx, filter)
@@ -118,6 +119,7 @@ func (m *AuditLogModel) GetByWorker(ctx context.Context, workerName string, page
 
 // GetByUser 获取用户的审计日志
 func (m *AuditLogModel) GetByUser(ctx context.Context, userId string, page, pageSize int) ([]AuditLog, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{"user_id": userId}
 
 	total, err := m.Count(ctx, filter)
@@ -135,6 +137,7 @@ func (m *AuditLogModel) GetByUser(ctx context.Context, userId string, page, page
 
 // GetByType 获取指定类型的审计日志
 func (m *AuditLogModel) GetByType(ctx context.Context, logType AuditLogType, page, pageSize int) ([]AuditLog, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{"type": logType}
 
 	total, err := m.Count(ctx, filter)
@@ -171,6 +174,7 @@ func (m *AuditLogModel) GetRecent(ctx context.Context, limit int) ([]AuditLog, e
 
 // Search 搜索审计日志
 func (m *AuditLogModel) Search(ctx context.Context, filter AuditLogFilter, page, pageSize int) ([]AuditLog, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	query := bson.M{}
 
 	if filter.Type != "" {

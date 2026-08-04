@@ -26,7 +26,6 @@ type User struct {
 	Avatar             string             `bson:"avatar,omitempty" json:"avatar"`
 	Email              string             `bson:"email,omitempty" json:"email,omitempty"`
 	Phone              string             `bson:"phone,omitempty" json:"phone,omitempty"`
-	WorkspaceIds       []string           `bson:"workspace_ids" json:"workspaceIds"`
 	ScanConfig         string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
 	LastLoginTime      *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
 	CreateTime         time.Time          `bson:"create_time" json:"createTime"`
@@ -102,6 +101,7 @@ func (m *UserModel) FindByObjectId(ctx context.Context, oid primitive.ObjectID) 
 }
 
 func (m *UserModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]User, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

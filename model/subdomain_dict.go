@@ -46,6 +46,7 @@ func (m *SubdomainDictModel) Insert(ctx context.Context, doc *SubdomainDict) err
 }
 
 func (m *SubdomainDictModel) FindAll(ctx context.Context, page, pageSize int) ([]SubdomainDict, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

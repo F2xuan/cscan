@@ -52,7 +52,7 @@ type JSFinderResultModel struct {
 
 // NewJSFinderResultModel 多租户模型实例化
 func NewJSFinderResultModel(db *mongo.Database, workspaceId string) *JSFinderResultModel {
-	coll := db.Collection(workspaceId + "_jsfinder")
+	coll := db.Collection("jsfinder")
 	return &JSFinderResultModel{coll: coll}
 }
 

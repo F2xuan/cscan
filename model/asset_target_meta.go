@@ -82,7 +82,7 @@ type AssetTargetMetaModel struct {
 }
 
 func NewAssetTargetMetaModel(db *mongo.Database, workspaceId string) *AssetTargetMetaModel {
-	collName := workspaceId + "_asset_target_meta"
+	collName := "asset_target_meta"
 	coll := db.Collection(collName)
 
 	indexes := []mongo.IndexModel{
@@ -259,7 +259,7 @@ func (m *AssetTargetMetaModel) UpdateDenormalized(ctx context.Context, id string
 }
 
 // NeedsRefresh 判断 meta 文档是否需要重新算 denormalize 字段。
-// 触发条件：risk_updated_at 零值、超过 maxAge、或任意关键计数字段为 0（说明未初始化）。
+// 触发条件：risk_updated_at 零值（从未计算）或超过 maxAge（过期）。
 func NeedsRefresh(d *AssetTargetMeta, maxAge time.Duration) bool {
 	if d == nil {
 		return true
@@ -267,11 +267,7 @@ func NeedsRefresh(d *AssetTargetMeta, maxAge time.Duration) bool {
 	if d.RiskUpdatedAt.IsZero() {
 		return true
 	}
-	if time.Since(d.RiskUpdatedAt) > maxAge {
-		return true
-	}
-	// 字段缺失（未初始化）也视为需要刷新
-	return d.ExposureSites == 0 && d.ExposurePorts == 0 && d.RiskVulnTotal == 0
+	return time.Since(d.RiskUpdatedAt) > maxAge
 }
 
 func (m *AssetTargetMetaModel) Delete(ctx context.Context, id string) error {
@@ -287,8 +283,12 @@ func (m *AssetTargetMetaModel) DeleteByFilter(ctx context.Context, filter bson.M
 	return res.DeletedCount, nil
 }
 
-// FindAll 分页查询，支持按 type/labels/关键字过滤
-func (m *AssetTargetMetaModel) FindAll(ctx context.Context, targetType, query string, labels []string, page, pageSize int) ([]AssetTargetMeta, int64, error) {
+// FindPage 分页查询，支持按 type/labels/关键字过滤，按指定字段降序排序。
+// sortField 为空时默认 "last_scan_time"。
+func (m *AssetTargetMetaModel) FindPage(ctx context.Context, targetType, query string, labels []string, page, pageSize int, sortField string) ([]AssetTargetMeta, int64, error) {
+	if sortField == "" {
+		sortField = "last_scan_time"
+	}
 	filter := bson.M{}
 	if targetType != "" {
 		filter["target_type"] = targetType
@@ -305,7 +305,7 @@ func (m *AssetTargetMetaModel) FindAll(ctx context.Context, targetType, query st
 		return nil, 0, err
 	}
 
-	opts := options.Find().SetSort(bson.D{{Key: "update_time", Value: -1}})
+	opts := options.Find().SetSort(bson.D{{Key: sortField, Value: -1}})
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
 		opts.SetLimit(int64(pageSize))

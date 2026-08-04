@@ -74,6 +74,7 @@ func NewScanTemplateModel(db *mongo.Database) *ScanTemplateModel {
 
 // FindByCategory 按分类查找模板
 func (m *ScanTemplateModel) FindByCategory(ctx context.Context, category string, page, pageSize int) ([]ScanTemplate, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{"category": category}
 	return m.FindWithSort(ctx, filter, page, pageSize, "sort_number", 1)
 }
@@ -86,6 +87,7 @@ func (m *ScanTemplateModel) FindBuiltinTemplates(ctx context.Context) ([]ScanTem
 
 // SearchTemplates 搜索模板（内部平台，所有模板对所有用户可见）
 func (m *ScanTemplateModel) SearchTemplates(ctx context.Context, keyword, category string, tags []string, page, pageSize int) ([]ScanTemplate, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{}
 
 	if keyword != "" {

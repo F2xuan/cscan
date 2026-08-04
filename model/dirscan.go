@@ -46,6 +46,7 @@ func (m *DirScanDictModel) Insert(ctx context.Context, doc *DirScanDict) error {
 }
 
 func (m *DirScanDictModel) FindAll(ctx context.Context, page, pageSize int) ([]DirScanDict, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

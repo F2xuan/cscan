@@ -61,6 +61,7 @@ func (m *OrganizationModel) FindById(ctx context.Context, id string) (*Organizat
 }
 
 func (m *OrganizationModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Organization, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))

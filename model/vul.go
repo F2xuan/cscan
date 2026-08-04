@@ -134,7 +134,7 @@ type VulModel struct {
 }
 
 func NewVulModel(db *mongo.Database, workspaceId string) *VulModel {
-	coll := db.Collection(workspaceId + "_vul")
+	coll := db.Collection("vul")
 	// T1.3: 新增 status / risk_source 维度索引，支撑漏洞状态机统计与复验查询（T3.3/T3.4）。
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "severity", Value: 1}}},
@@ -177,6 +177,7 @@ func (m *VulModel) FindById(ctx context.Context, id string) (*Vul, error) {
 }
 
 func (m *VulModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Vul, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -211,6 +212,7 @@ func (m *VulModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 // FindBySeveritySort 按"严重度等级降序 + first_seen_time 降序 + create_time 降序"分页查询（T4.3）。
 // 严重度为字符串，无法直接排序，故用 $addFields 计算 severity_rank（critical=5..info=1, 其他=0）后排序。
 func (m *VulModel) FindBySeveritySort(ctx context.Context, filter bson.M, page, pageSize int) ([]Vul, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	severityRankStage := bson.D{
 		{Key: "$switch", Value: bson.D{
 			{Key: "branches", Value: bson.A{

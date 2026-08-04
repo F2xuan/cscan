@@ -14,7 +14,7 @@ type ScanTargetModel struct {
 
 // NewScanTargetModel creates a new ScanTargetModel
 func NewScanTargetModel(db *mongo.Database, workspaceId string) *ScanTargetModel {
-	coll := db.Collection(workspaceId + "_scantarget")
+	coll := db.Collection("scantarget")
 
 	// Create indexes
 	ctx := context.Background()

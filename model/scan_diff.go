@@ -57,7 +57,7 @@ func NewScanDiffModel(db *mongo.Database, workspaceId string) *ScanDiffModel {
 	if workspaceId == "" {
 		workspaceId = "default"
 	}
-	coll := db.Collection(workspaceId + "_scan_diff")
+	coll := db.Collection("scan_diff")
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "task_id", Value: 1}}},
 		{Keys: bson.D{{Key: "workspace_id", Value: 1}, {Key: "create_time", Value: -1}}},
@@ -103,6 +103,7 @@ func (m *ScanDiffModel) BatchInsert(ctx context.Context, docs []ScanDiff) error 
 
 // FindByTaskId 按任务查询变化明细，支持按 diff_type / change_type 过滤与分页
 func (m *ScanDiffModel) FindByTaskId(ctx context.Context, workspaceId, taskId, diffType, changeType string, page, pageSize int64) ([]ScanDiff, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{"workspace_id": workspaceId, "task_id": taskId}
 	if diffType != "" {
 		filter["diff_type"] = diffType
@@ -116,7 +117,7 @@ func (m *ScanDiffModel) FindByTaskId(ctx context.Context, workspaceId, taskId, d
 	}
 	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}})
 	if page > 0 && pageSize > 0 {
-		opts.SetSkip((page - 1) * pageSize).SetLimit(pageSize)
+		opts.SetSkip(int64((page - 1) * pageSize)).SetLimit(int64(pageSize))
 	}
 	cur, err := m.coll.Find(ctx, filter, opts)
 	if err != nil {

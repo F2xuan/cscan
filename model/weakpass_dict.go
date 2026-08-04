@@ -200,6 +200,7 @@ func (m *WeakpassDictModel) Insert(ctx context.Context, doc *WeakpassDict) error
 }
 
 func (m *WeakpassDictModel) FindAll(ctx context.Context, page, pageSize int, service, name string) ([]WeakpassDict, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{}
 	if service != "" {
 		filter["service"] = service

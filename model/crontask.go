@@ -45,7 +45,6 @@ type CronTask struct {
 	ScheduleType string             `bson:"schedule_type" json:"scheduleType"` // cron / once
 	CronSpec     string             `bson:"cron_spec" json:"cronSpec"`
 	ScheduleTime string             `bson:"schedule_time" json:"scheduleTime"`
-	WorkspaceId  string             `bson:"workspace_id" json:"workspaceId"`
 	Status       string             `bson:"status" json:"status"` // enable / disable
 	LastRunTime  string             `bson:"last_run_time" json:"lastRunTime"`
 	NextRunTime  string             `bson:"next_run_time" json:"nextRunTime"`
@@ -83,7 +82,6 @@ func NewCronTaskModel(db *mongo.Database) *CronTaskModel {
 	// 创建索引
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "cron_task_id", Value: 1}}, Options: options.Index().SetUnique(true)},
-		{Keys: bson.D{{Key: "workspace_id", Value: 1}}},
 		{Keys: bson.D{{Key: "task_type", Value: 1}}},
 		{Keys: bson.D{{Key: "status", Value: 1}}},
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
@@ -120,12 +118,10 @@ func (m *CronTaskModel) FindByCronTaskId(ctx context.Context, cronTaskId string)
 	return &doc, nil
 }
 
-// FindByWorkspaceId 根据工作空间查找（支持关键字过滤和任务类型过滤）
-func (m *CronTaskModel) FindByWorkspaceId(ctx context.Context, workspaceId string, keyword string, taskType string, page, pageSize int) ([]CronTask, int64, error) {
+// FindTasks 查找定时任务（支持关键字过滤和任务类型过滤）
+func (m *CronTaskModel) FindTasks(ctx context.Context, keyword string, taskType string, page, pageSize int) ([]CronTask, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	filter := bson.M{}
-	if workspaceId != "" && workspaceId != "all" {
-		filter["workspace_id"] = workspaceId
-	}
 	if taskType != "" {
 		filter["task_type"] = taskType
 	}

@@ -120,6 +120,7 @@ type FingerprintOptions struct {
 	Wappalyzer    bool   `json:"wappalyzer"`
 	CustomEngine  bool   `json:"customEngine"`  // 使用自定义指纹引擎
 	ActiveScan    bool   `json:"activeScan"`    // 启用主动指纹扫描
+	Cert          bool   `json:"cert"`          // 启用证书抓取（ARL 风格附加功能），默认关闭
 	ActiveTimeout int    `json:"activeTimeout"` // 主动指纹单个请求超时时间(秒)，默认10秒
 	Timeout       int    `json:"timeout"`       // 总超时时间(秒)，默认300秒
 	TargetTimeout int    `json:"targetTimeout"` // 单个目标超时时间(秒)，默认30秒
@@ -294,10 +295,12 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	taskLog("INFO", "Fingerprint: completed passive scan, scanned %d assets", len(httpAssets))
 
 	// 证书抓取（ARL 风格附加功能）：对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，
-	// 采集结果经 worker.handleResult 落入 {workspaceId}_cert 集合。无开关，默认开启。
-	certFetched := s.fetchCertsForAssets(ctx, httpAssets, result, taskLog)
-	if certFetched > 0 {
-		taskLog("INFO", "Fingerprint: cert fetch completed, collected %d certificates", certFetched)
+	// 采集结果经 worker.handleResult 落入 {workspaceId}_cert 集合。受 opts.Cert 开关控制，默认关闭。
+	if opts.Cert {
+		certFetched := s.fetchCertsForAssets(ctx, httpAssets, result, taskLog)
+		if certFetched > 0 {
+			taskLog("INFO", "Fingerprint: cert fetch completed, collected %d certificates", certFetched)
+		}
 	}
 
 	// 执行主动指纹扫描（如果启用）
@@ -511,15 +514,16 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			bodyBytes = body
+			ct := resp.Header.Get("Content-Type")
 			if asset.HttpBody == "" {
 				if len(body) > 50*1024 {
-					asset.HttpBody = string(body[:50*1024]) + "\n...[truncated]"
+					asset.HttpBody = ToUTF8(body[:50*1024], ct) + "\n...[truncated]"
 				} else {
-					asset.HttpBody = string(body)
+					asset.HttpBody = ToUTF8(body, ct)
 				}
 			}
 			if asset.Title == "" {
-				asset.Title = extractTitle(string(body))
+				asset.Title = extractTitle(ToUTF8(body, ct))
 			}
 			if asset.Server == "" {
 				asset.Server = resp.Header.Get("Server")
@@ -653,7 +657,7 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 
 // FingerprintScanner 的证书抓取能力在 fetchCertsForAssets 中实现，
 // 对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，结果汇总到 ScanResult.CertResults。
-// 证书抓取作为指纹识别的附加功能（ARL 风格），无开关，默认开启。
+// 证书抓取作为指纹识别的附加功能（ARL 风格），由 FingerprintOptions.Cert 控制，默认关闭。
 
 // fetchCertsForAssets 对资产列表中符合证书抓取条件的资产执行 TLS 握手并解析证书。
 // 返回成功采集的证书数量；失败的目标静默跳过（不影响整体指纹识别）。
@@ -1877,9 +1881,9 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 
 					// 构建指纹匹配数据
 					fpData := &FingerprintData{
-						Title:        extractTitle(string(body)),
-						Body:         string(body),
-						BodyBytes:    body,
+					Title:        extractTitle(ToUTF8(body, "")),
+					Body:         ToUTF8(body, ""),
+					BodyBytes:    body,
 						Headers:      resp.Header,
 						HeaderString: formatHeaders(resp.Header),
 						Server:       resp.Header.Get("Server"),

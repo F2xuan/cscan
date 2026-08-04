@@ -12,7 +12,6 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/model"
 	"cscan/pkg/response"
-	"cscan/pkg/xerr"
 	"cscan/scheduler"
 
 	"github.com/google/uuid"
@@ -132,7 +131,7 @@ func syncCronTaskToRedis(ctx context.Context, svcCtx *svc.ServiceContext, cronTa
 		ScheduleType:        cronTask.ScheduleType,
 		CronSpec:            cronTask.CronSpec,
 		ScheduleTime:        cronTask.ScheduleTime,
-		WorkspaceId:         cronTask.WorkspaceId,
+		WorkspaceId:         "default",
 		Status:              cronTask.Status,
 		LastRunTime:         cronTask.LastRunTime,
 		NextRunTime:         cronTask.NextRunTime,
@@ -213,11 +212,10 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		ctx := r.Context()
 
 		// 从MongoDB读取定时任务（关键字和任务类型过滤在MongoDB层完成）
-		tasks, total, err := svcCtx.CronTaskModel.FindByWorkspaceId(ctx, workspaceId, req.Keyword, req.TaskType, req.Page, req.PageSize)
+		tasks, total, err := svcCtx.CronTaskModel.FindTasks(ctx, req.Keyword, req.TaskType, req.Page, req.PageSize)
 		if err != nil {
 			response.Error(w, fmt.Errorf("获取定时任务失败: %v", err))
 			return
@@ -235,9 +233,9 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				TaskType:            task.TaskType,
 				ScheduleType:        task.ScheduleType,
 				CronSpec:            task.CronSpec,
-				ScheduleTime:        task.ScheduleTime,
-				WorkspaceId:         task.WorkspaceId,
-				Status:              task.Status,
+			ScheduleTime:        task.ScheduleTime,
+			WorkspaceId:         "default",
+			Status:              task.Status,
 				LastRunTime:         task.LastRunTime,
 				NextRunTime:         task.NextRunTime,
 				RunCount:            runCount,
@@ -301,7 +299,6 @@ func CronTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 
 		ctx := r.Context()
-		workspaceId := middleware.GetWorkspaceId(ctx)
 		cronTask, err := svcCtx.CronTaskModel.FindByCronTaskId(ctx, req.Id)
 		if err != nil {
 			response.Error(w, fmt.Errorf("查询定时任务失败: %v", err))
@@ -309,11 +306,6 @@ func CronTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 		if cronTask == nil {
 			response.ParamError(w, "定时任务不存在")
-			return
-		}
-		// 工作空间隔离：防止越权查看其他工作空间的定时任务
-		if cronTask.WorkspaceId != workspaceId {
-			response.ErrorWithCode(w, xerr.Forbidden, "无权访问该定时任务")
 			return
 		}
 
@@ -328,7 +320,7 @@ func CronTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			ScheduleType:        cronTask.ScheduleType,
 			CronSpec:            cronTask.CronSpec,
 			ScheduleTime:        cronTask.ScheduleTime,
-			WorkspaceId:         cronTask.WorkspaceId,
+			WorkspaceId:         "default",
 			Status:              cronTask.Status,
 			LastRunTime:         cronTask.LastRunTime,
 			NextRunTime:         cronTask.NextRunTime,
@@ -434,9 +426,8 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			TaskType:     req.TaskType,
 			ScheduleType: req.ScheduleType,
 			CronSpec:     req.CronSpec,
-			ScheduleTime: req.ScheduleTime,
-			WorkspaceId:  workspaceId,
-			Status:       "enable",
+		ScheduleTime: req.ScheduleTime,
+		Status:       "enable",
 			NextRunTime:  nextRunTime,
 		}
 
@@ -561,9 +552,8 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				"task_type":      req.TaskType,
 				"schedule_type":  req.ScheduleType,
 				"cron_spec":      req.CronSpec,
-				"schedule_time":  req.ScheduleTime,
-				"workspace_id":   workspaceId,
-				"next_run_time":  nextRunTime,
+			"schedule_time":  req.ScheduleTime,
+			"next_run_time":  nextRunTime,
 				"status":         "enable",
 				// scan 字段
 				"target_mode":            cronTask.TargetMode,

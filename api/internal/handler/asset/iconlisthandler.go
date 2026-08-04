@@ -41,24 +41,6 @@ func IconStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-func IconDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req types.IconDeleteReq
-		if err := httpx.Parse(r, &req); err != nil {
-			response.ParamError(w, err.Error())
-			return
-		}
-
-		l := logic.NewIconListLogic(r.Context(), svcCtx)
-		resp, err := l.IconDelete(&req)
-		if err != nil {
-			response.Error(w, err)
-			return
-		}
-		httpx.OkJson(w, resp)
-	}
-}
-
 func IconBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.IconBatchDeleteReq

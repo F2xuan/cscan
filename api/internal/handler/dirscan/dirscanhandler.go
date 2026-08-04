@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -85,7 +84,6 @@ func DirScanDictClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // DirScanDictEnabledListHandler 获取启用的目录扫描字典列表（用于任务创建时选择）
 func DirScanDictEnabledListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		_ = middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDirScanDictEnabledListLogic(r.Context(), svcCtx)
 		resp, err := l.DirScanDictEnabledList()
 		if err != nil {

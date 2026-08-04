@@ -15,7 +15,8 @@ func PortListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.PortListReq
 		if err := httpx.Parse(r, &req); err != nil {
-			httpx.Error(w, err)
+			// 统一使用业务信封返回错误，与项目其它 handler 保持一致
+			httpx.OkJson(w, &types.PortListResp{Code: 400, Msg: err.Error()})
 			return
 		}
 

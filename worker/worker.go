@@ -462,18 +462,18 @@ func (w *Worker) handleWorkerControl(action, param string) {
 
 	switch action {
 	case "stop":
-		w.logger.Info("Stopping worker via WebSocket command...")
+		w.logger.Info("Stopping worker via WebSocket command (draining in-flight tasks)...")
 		// 在新 goroutine 中执行停止，避免死锁（因为当前在 WebSocket 读取 goroutine 中）
+		// 缺陷 5 修复：改为“排空”式停止——停止拉取新任务并等待在途任务完成，
+		// 不再跳过在途任务（原 StopImmediate 会直接退出导致结果丢失）。
 		go func() {
-			w.StopImmediate()
-			os.Exit(0)
+			w.drainAndExit(60*time.Second, func() { os.Exit(0) })
 		}()
 	case "restart":
-		w.logger.Info("Restarting worker via WebSocket command...")
+		w.logger.Info("Restarting worker via WebSocket command (draining in-flight tasks)...")
 		// 在新 goroutine 中执行重启
 		go func() {
-			w.StopImmediate()
-			w.restartSelf()
+			w.drainAndExit(60*time.Second, w.restartSelf)
 		}()
 	case "rename":
 		w.logger.Info("Renaming worker to: %s", param)
@@ -1082,6 +1082,28 @@ func (w *Worker) StopImmediate() {
 
 	// 不等待 wg.Wait()，立即返回，跳过当前正在执行的任务
 	w.logger.Info("Worker %s stopped immediately (tasks skipped)", w.config.Name)
+}
+
+// drainAndExit 优雅停止 Worker：先停止拉取新任务（关闭 stopChan），
+// 再等待在途任务执行完成（受 timeout 约束），超时后强制退出，避免任务永久挂起
+// 导致进程无法退出。修复缺陷 5：替代 StopImmediate 的“跳过在途任务”行为。
+func (w *Worker) drainAndExit(timeout time.Duration, after func()) {
+	done := make(chan struct{})
+	go func() {
+		// Stop() 内部会 wg.Wait()，等待当前 executeTask 及其子 goroutine 完成
+		w.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+		w.logger.Info("Worker %s drained and stopped", w.config.Name)
+	case <-time.After(timeout):
+		w.logger.Warn("Worker %s graceful stop timed out after %s, forcing exit (in-flight tasks may be interrupted)",
+			w.config.Name, timeout)
+	}
+	if after != nil {
+		after()
+	}
 }
 
 // notifyOffline 通知服务器Worker即将离线

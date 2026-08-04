@@ -41,24 +41,6 @@ func AppStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-func AppDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req types.AppDeleteReq
-		if err := httpx.Parse(r, &req); err != nil {
-			response.ParamError(w, err.Error())
-			return
-		}
-
-		l := logic.NewAppListLogic(r.Context(), svcCtx)
-		resp, err := l.AppDelete(&req)
-		if err != nil {
-			response.Error(w, err)
-			return
-		}
-		httpx.OkJson(w, resp)
-	}
-}
-
 func AppBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.AppBatchDeleteReq

@@ -58,6 +58,7 @@
     "customEngine": true,
     "screenshot": true,
     "activeScan": false,
+    "cert": true,
     "activeTimeout": 10,
     "targetTimeout": 30,
     "filterMode": "http_mapping",

@@ -115,6 +115,68 @@ func (q *ResultQueue) Stop() {
 	})
 }
 
+// 缺陷 2 防御：入队落盘前对超大字段做截断，避免队列文件（含完整 httpBody / screenshot /
+// iconData base64）撑爆磁盘。截断仅在落盘副本上进行，不修改调用方的原始 req。
+const maxQueuedFieldSize = 4 * 1024
+
+func truncateStr(s string) string {
+	if len(s) > maxQueuedFieldSize {
+		return s[:maxQueuedFieldSize] + fmt.Sprintf("...[truncated %d bytes]", len(s)-maxQueuedFieldSize)
+	}
+	return s
+}
+
+func truncateBytes(b []byte) []byte {
+	if len(b) > maxQueuedFieldSize {
+		return b[:maxQueuedFieldSize]
+	}
+	return b
+}
+
+// truncateTaskReqForQueue 返回 req 的浅克隆，截断资产中的超大字段；不修改原始 req。
+// 注意：Assets 是值切片（[]AssetDocument），这里新建切片并逐元素复制，避免改动调用方的底层数组。
+func truncateTaskReqForQueue(req *TaskResultReq) *TaskResultReq {
+	if req == nil {
+		return nil
+	}
+	clone := *req
+	if len(req.Assets) > 0 {
+		clone.Assets = make([]AssetDocument, len(req.Assets))
+		for i := range req.Assets {
+			c := req.Assets[i]
+			c.HttpBody = truncateStr(c.HttpBody)
+			c.Screenshot = truncateStr(c.Screenshot)
+			c.IconData = truncateBytes(c.IconData)
+			clone.Assets[i] = c
+		}
+	}
+	return &clone
+}
+
+// truncateVulSlice 返回 vuls 的浅克隆，截断漏洞结果中的大字段（Result/Extra/Request/Response）。
+// Vuls 是值切片（[]VulDocument），同样新建切片避免改动调用方数据。
+func truncateVulSlice(vuls []VulDocument) []VulDocument {
+	if len(vuls) == 0 {
+		return vuls
+	}
+	out := make([]VulDocument, len(vuls))
+	for i := range vuls {
+		c := vuls[i]
+		c.Result = truncateStr(c.Result)
+		c.Extra = truncateStr(c.Extra)
+		if c.Request != nil {
+			t := truncateStr(*c.Request)
+			c.Request = &t
+		}
+		if c.Response != nil {
+			t := truncateStr(*c.Response)
+			c.Response = &t
+		}
+		out[i] = c
+	}
+	return out
+}
+
 // Enqueue 将失败的结果入队到本地文件
 func (q *ResultQueue) Enqueue(req *TaskResultReq) error {
 	q.mu.Lock()
@@ -131,7 +193,7 @@ func (q *ResultQueue) Enqueue(req *TaskResultReq) error {
 
 	entry := queuedResult{
 		EnqueueTime: time.Now(),
-		Request:     req,
+		Request:     truncateTaskReqForQueue(req),
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -181,6 +243,7 @@ func (q *ResultQueue) EnqueueVul(req *TaskResultReq, vuls []VulDocument) error {
 		MainTaskId:  req.MainTaskId,
 		Vuls:        vuls,
 	}
+	vulReq.Vuls = truncateVulSlice(vulReq.Vuls)
 	entry := queuedVulResult{
 		EnqueueTime: time.Now(),
 		Request:     vulReq,

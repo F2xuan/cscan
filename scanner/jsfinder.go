@@ -766,11 +766,13 @@ func runUnauthChecks(ctx context.Context, client *http.Client, urls []string, op
 					logInfo("[JSFinder] [!] 跳过高危路由: %s", u)
 					continue
 				}
-				body, status, err := jsFinderHTTPGet(ctx, client, u, opts.UserAgent, 256*1024, "")
-				if err != nil {
-					continue
-				}
-				low := strings.ToLower(string(body))
+			body, status, err := jsFinderHTTPGet(ctx, client, u, opts.UserAgent, 256*1024, "")
+			if err != nil {
+				continue
+			}
+			// 将响应体规范化为 UTF-8，消除 GBK 页面被当 UTF-8 记录造成的乱码（mojibake）
+			bodyStr := ToUTF8(body, "")
+			low := strings.ToLower(bodyStr)
 				if status == 401 || status == 403 || containsKeyword(low, opts.AuthRequiredKeywords) {
 					// 限流输出：前N条正常输出，之后采样输出
 					n := atomic.AddInt64(&negativeCount, 1)
@@ -786,14 +788,14 @@ func runUnauthChecks(ctx context.Context, client *http.Client, urls []string, op
 				if status >= 200 && status < 300 {
 					reqRaw := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nAccept: */*\r\n",
 						u, extractHostFromURL(u), opts.UserAgent)
-					respBody := string(body)
+					respBody := bodyStr
 					if len(respBody) > 4096 {
 						respBody = respBody[:4096]
 					}
 					respRaw := fmt.Sprintf("HTTP/1.1 %d\r\nContent-Length: %d\r\n\r\n%s", status, len(body), respBody)
 
 					if matched := firstKeywordMatch(low, opts.SensitiveKeywords); matched != "" {
-						snippet := extractSnippet(string(body), matched, 80)
+						snippet := extractSnippet(bodyStr, matched, 80)
 						mu.Lock()
 						results = append(results, &jsFinderUnauthResult{
 							URL: u, Status: status, Reason: "sensitive_leak",

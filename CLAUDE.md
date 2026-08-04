@@ -28,7 +28,7 @@
 ### 1.3 系统架构图
 
 ```
-[Browser] → [Vue 3 Frontend (web/) :3000]
+[Browser] → [Vue 3 Frontend (web/) :7777]
                   │
             [Vite Proxy /api → :8888]
                   │
@@ -255,7 +255,6 @@ import (
 ```js
 import request from '@/api/request'
 import { useUserStore } from '@/stores/user'
-import { useWorkspaceStore } from '@/stores/workspace'
 ```
 
 ### 3.4 依赖注入
@@ -480,7 +479,7 @@ go run cmd/worker/main.go -k <install_key> -s http://localhost:8888  # 3. 启动
 
 **前端启动**：
 ```bash
-cd web && npm install && npm run dev    # 开发服务器 (:3000)，代理 /api → :8888
+cd web && npm install && npm run dev    # 开发服务器 (:7777)，代理 /api → :8888
 ```
 
 **关键配置文件**：
@@ -546,6 +545,48 @@ docker-compose -f docker-compose-worker.yaml up -d
 ```
 
 访问 `https://ip:7777`，默认账号 `admin / 123456`
+
+### 5.5 本地编译与浏览器/接口验证
+
+> 本节为开发自测速查；所有命令均在仓库根目录执行。
+
+#### 5.5.1 编译验证（关键陷阱）
+
+**Windows + PowerShell 下，`go` 的 stderr 会被管道吞掉**：`go build ./... | Out-File` 或 `| Select-Object` 后 PowerShell 自身仍返回 exit 0，**即使有编译错误也显示成功**。判断编译成败**必须把 stderr 写入文件再读**：
+
+```powershell
+go build ./... 2>&1 | Out-File -Encoding ascii build.log
+# 随后用编辑器/Read 打开 build.log，确认无 "# ..." 错误行
+```
+
+#### 5.5.2 本地起服务（Mongo + Redis）
+
+```powershell
+docker-compose -f docker-compose.dev.yaml up -d
+```
+
+> 确认上一步的编译没有问题之后，可以通过脚本进行启动
+
+一键启动服务脚本：
+```powershell
+./scripts/dev.ps1
+```
+健康检查：`curl http://127.0.0.1:8888/health` → `OK`。前端如需浏览器验证：`cd web && npm run dev`（:7777，代理 /api → :8888）。
+
+#### 5.5.3 接口冒烟（免登录）
+
+**业务码约定**：本项目 HTTP 状态恒为 200，业务结果放在响应体 `code` 字段（`0`=成功、`400/500`=业务错误）。冒烟断言**必须解析 body 的 `code`**，不能只看 HTTP 状态。
+
+全新 MongoDB 的 `admin` 密码与文档 `123456` 不符（见 `docker/mongo-init.js` 的 bcrypt hash）。自测可两种方式之一：
+1. **自签 JWT**（推荐，免改库）：用 `CSCAN_JWT_SECRET` 以 HS256 签发含 `userId/username/role` 的 token，`Authorization: Bearer <token>` 调用鉴权路由；
+2. **重置 admin 密码为123456**：`docker exec -i cscan_mongo mongosh cscan` 执行 `db.user.updateOne({username:"admin"},{$set:{password:"$2a$10$Y/T1J1j6tEB9KQI2FlpyNOK3DY2eT54Ml1ukG.dMrbCjMt5Ic7MwK",must_change_password:false}})`。
+
+#### 5.5.4 浏览器验证（路由遍历 / i18n）
+
+前端国际化检查用 Headless Chrome 遍历 `web/src/router/index.js` 全路由，切英文 locale 采集硬编码中文：
+- 遍历脚本预注入 console/network/JS error + `overflowX` 采集钩子，期望 `netErr=0 / jsErr=0 / overflowX=0`；
+- i18n 遍历切 `en-US`，命中未翻译中文即定位到源码 `$t()` 缺失处；
+- 文案接入规范：模板 `{{ $t('section.key') }}`、`<script setup>` 内 `const { t } = useI18n()` 后 `t('section.key')`；语言文件 `web/src/i18n/locales/{zh-CN,en-US}.json` 按 section 嵌套，改完用 `python scripts/verify_json.py` 校验 JSON 合法性。
 
 ---
 

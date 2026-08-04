@@ -71,6 +71,12 @@ bash cscan.sh
 ## Local Development
 
 ```bash
+# Tip: the RPC / API / Web steps below can be launched with a single command
+# (one-click start and unified stop, see scripts/dev.*):
+#   Linux/macOS / Git Bash: ./scripts/dev.sh
+#   Windows PowerShell:     ./scripts/dev.ps1
+#   Windows CMD:            scripts\dev.bat
+
 # 1. Start dependencies
 docker-compose -f docker-compose.dev.yaml up -d
 
@@ -78,14 +84,13 @@ docker-compose -f docker-compose.dev.yaml up -d
 go run rpc/task/task.go -f rpc/task/etc/task.yaml
 
 
-# 3. Dev mode bypass (auto-generates random secret, local debug only)
-# Windows powershell
-$env:CSCAN_DEV=1
-# Windows cmd
-# set CSCAN_DEV=1
-# linux & mac
-# export CSCAN_DEV=1
+# 3. Start the API (local dev auto-bypasses the JWT secret, no env var needed)
+# Running via `go run` is automatically detected as dev mode and uses a random secret:
 go run api/cscan.go -f api/etc/cscan.yaml
+# Notes: if you run a compiled binary locally (not via go run), bypass with any of:
+#   - set env CSCAN_DEV=1
+#   - set Mode: dev in api/etc/cscan.yaml
+#   - set CSCAN_JWT_SECRET to a fixed secret (recommended: tokens survive restarts)
 
 # 4. Start frontend
 cd web ; npm install ; npm run dev

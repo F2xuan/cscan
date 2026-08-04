@@ -70,27 +70,25 @@ bash cscan.sh
 ## 本地开发
 
 ```bash
+# 提示：以下 RPC / API / Web 三步可用一条命令全部拉起（一键启动并统一停止，见 scripts/dev.*）：
+#   Linux/macOS / Git Bash: ./scripts/dev.sh
+#   Windows PowerShell:     ./scripts/dev.ps1
+#   Windows CMD:            scripts\dev.bat
+
 # 1. 启动依赖
 docker-compose -f docker-compose.dev.yaml up -d
 
 # 2. 启动服务
 go run rpc/task/task.go -f rpc/task/etc/task.yaml
 
-
-# 3. 开发模式豁免（自动生成随机 secret，仅限本地调试）
-# Windows powershell
-$env:CSCAN_DEV=1
-# Windows cmd
-# set CSCAN_DEV=1
-# linux & mac
-# export CSCAN_DEV=1
+# 3. 启动 API
 go run api/cscan.go -f api/etc/cscan.yaml
 
 # 4. 启动前端
 cd web ; npm install ; npm run dev
 
 # 5. 启动 Worker
-go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
+go run cmd/worker/main.go -s http://localhost:8888 -k <install_key> 
 ```
 ---
 

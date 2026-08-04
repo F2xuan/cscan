@@ -10,6 +10,9 @@ services:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/redis:7-alpine
     container_name: cscan_redis
     command: redis-server --appendonly yes
+    # 缺陷 9（运维，需宿主机配合，compose 无法直接设置）：
+    #   在宿主机执行 `sysctl vm.overcommit_memory=1` 并写入 /etc/sysctl.conf，
+    #   消除 "WARNING Memory overcommit must be enabled" 告警，避免 BGSAVE/fork 失败。
     logging: *default-logging
     volumes:
       - cscan_redis_data:/data
@@ -41,6 +44,21 @@ services:
       - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     environment:
       - TZ=Asia/Shanghai
+      # 缺陷 8（安全，分阶段启用，避免未改应用连接串就中断服务）：
+      # 1) 先用以下变量创建 root 账号（镜像会自动建库）；
+      # 2) 再把应用侧 Mongo.Uri 改为 mongodb://<user>:<pwd>@mongodb:27017/... 后，
+      #    将下方 command 改为 `mongod --auth` 强制鉴权。
+      # - MONGO_INITDB_ROOT_USERNAME=${CSCAN_MONGO_ROOT_USER:-}
+      # - MONGO_INITDB_ROOT_PASSWORD=${CSCAN_MONGO_ROOT_PASSWORD:-}
+    # 缺陷 8（运维）：提高文件描述符上限，消除
+    # "Soft rlimits for open file descriptors too low (currentValue:1024, recommendedMinimum:64000)" 告警
+    ulimits:
+      nofile:
+        soft: 64000
+        hard: 64000
+    # 缺陷 8（运维，需宿主机配合，compose 无法直接设置）：
+    #   THP：宿主机执行 `echo never > /sys/kernel/mm/transparent_hugepage/enabled`
+    #        并写入 /etc/rc.local 或 systemd 持久化。
     restart: unless-stopped
     networks:
       - cscan_network

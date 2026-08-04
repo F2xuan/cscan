@@ -1,25 +1,13 @@
 // MongoDB初始化脚本
 db = db.getSiblingDB('cscan');
 
-// 创建默认工作空间
-var workspaceResult = db.workspace.insertOne({
-    name: "默认工作空间",
-    description: "系统默认工作空间",
-    status: "enable",
-    create_time: new Date(),
-    update_time: new Date()
-});
-
-var defaultWorkspaceId = workspaceResult.insertedId.toString();
-
-// 创建用户集合并插入默认管理员，关联默认工作空间
+// 创建用户集合并插入默认管理员
 db.user.insertOne({
     username: "admin",
     password: "$2a$10$Y/T1J1j6tEB9KQI2FlpyNOK3DY2eT54Ml1ukG.dMrbCjMt5Ic7MwK", // 首次登录强制修改
     must_change_password: true, // 新增标记，首次登录强制改密
     role: "superadmin",
     status: "enable",
-    workspace_ids: [defaultWorkspaceId],
     create_time: new Date(),
     update_time: new Date()
 });
@@ -43,7 +31,6 @@ db.task_profile.insertOne({
 
 // 创建索引
 db.user.createIndex({ username: 1 }, { unique: true });
-db.workspace.createIndex({ name: 1 });
 db.task_profile.createIndex({ sort_number: 1 });
 
 // 创建HTTP服务映射集合和索引（数据通过启动时自动导入）

@@ -34,7 +34,7 @@ type ScanResultHistoryModel struct {
 
 // NewScanResultHistoryModel creates a new ScanResultHistoryModel
 func NewScanResultHistoryModel(db *mongo.Database, workspaceId string) *ScanResultHistoryModel {
-	coll := db.Collection(workspaceId + "_asset_history")
+	coll := db.Collection("asset_history")
 
 	// Create indexes
 	ctx := context.Background()

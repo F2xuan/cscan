@@ -1,27 +1,5 @@
 import request from '@/api/request'
 
-/**
- * 资产分组API
- */
-
-// 获取资产分组列表
-export function getAssetGroups(data) {
-  return request({
-    url: '/asset/groups',
-    method: 'post',
-    data
-  })
-}
-
-// 删除资产分组
-export function deleteAssetGroup(data) {
-  return request({
-    url: '/asset/groups/delete',
-    method: 'post',
-    data
-  })
-}
-
 // 获取资产清单
 export function getAssetInventory(data) {
   return request({
@@ -31,19 +9,19 @@ export function getAssetInventory(data) {
   })
 }
 
-// 获取截图清单
-export function getScreenshots(data) {
+// 获取资产详情（按需加载完整资产，含 body/header/banner 等大字段）
+export function getAssetDetail(data) {
   return request({
-    url: '/asset/screenshots',
+    url: '/asset/detail',
     method: 'post',
     data
   })
 }
 
-// 获取资产列表（原有接口）
-export function getAssetList(data) {
+// 获取截图清单
+export function getScreenshots(data) {
   return request({
-    url: '/asset/list',
+    url: '/asset/screenshots',
     method: 'post',
     data
   })
@@ -61,15 +39,6 @@ export function getAssetStat() {
 export function deleteAsset(data) {
   return request({
     url: '/asset/delete',
-    method: 'post',
-    data
-  })
-}
-
-// 批量删除资产
-export function batchDeleteAssets(data) {
-  return request({
-    url: '/asset/batchDelete',
     method: 'post',
     data
   })
@@ -132,19 +101,10 @@ export function getAssetHistory(data) {
   })
 }
 
-// 比较两个历史版本
-export function compareVersions(data) {
-  return request({
-    url: '/assets/compareVersions',
-    method: 'post',
-    data
-  })
-}
-
-// T4.3: 资产变更时间线数据源（V1 /asset/history，返回 AssetHistoryItem 含 changes）
+// 资产变更时间线数据源（已合并到 V2 /assets/history，返回 versions + list）
 export function getAssetChangeHistory(data) {
   return request({
-    url: '/asset/history',
+    url: '/assets/history',
     method: 'post',
     data
   })
@@ -159,47 +119,10 @@ export function importAssets(data) {
   })
 }
 
-// 手动添加资产
-export function saveAsset(data) {
-  return request({
-    url: '/asset/save',
-    method: 'post',
-    data
-  })
-}
-
-// 导出资产
-export function exportAssets(data) {
-  return request({
-    url: '/asset/export',
-    method: 'post',
-    data,
-    responseType: 'blob'
-  })
-}
-
 // 更新资产标签
 export function updateAssetLabels(data) {
   return request({
     url: '/asset/updateLabels',
-    method: 'post',
-    data
-  })
-}
-
-// 添加资产标签
-export function addAssetLabel(data) {
-  return request({
-    url: '/asset/addLabel',
-    method: 'post',
-    data
-  })
-}
-
-// 删除资产标签
-export function removeAssetLabel(data) {
-  return request({
-    url: '/asset/removeLabel',
     method: 'post',
     data
   })
@@ -223,24 +146,6 @@ export function getAssetExposures(data) {
   })
 }
 
-// 获取资产目录扫描结果（支持分页）
-export function getAssetDirScans(data) {
-  return request({
-    url: '/assets/dirscans',
-    method: 'post',
-    data
-  })
-}
-
-// 获取资产漏洞扫描结果（支持分页）
-export function getAssetVulnScans(data) {
-  return request({
-    url: '/assets/vulnscans',
-    method: 'post',
-    data
-  })
-}
-
 // T1.3：批量更新漏洞生命周期状态（open / fixed / ignored）
 export function updateVulStatus(data) {
   return request({
@@ -259,24 +164,6 @@ export function updateVulStatus(data) {
 export function getAssetTargetList(data) {
   return request({
     url: '/asset/target/list',
-    method: 'post',
-    data
-  })
-}
-
-// 顶层资产详情（实时 exposure + risk + sensitive top-N）
-export function getAssetTargetDetail(data) {
-  return request({
-    url: '/asset/target/detail',
-    method: 'post',
-    data
-  })
-}
-
-// 更新顶层资产元信息（labels / memo / colorTag）
-export function updateAssetTarget(data) {
-  return request({
-    url: '/asset/target/update',
     method: 'post',
     data
   })

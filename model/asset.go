@@ -81,7 +81,7 @@ type AssetModel struct {
 }
 
 func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
-	coll := db.Collection(workspaceId + "_asset")
+	coll := db.Collection("asset")
 
 	// 创建索引
 	indexes := []mongo.IndexModel{
@@ -94,6 +94,9 @@ func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
 		{Keys: bson.D{{Key: "risk_score", Value: -1}}},
 		// 新增索引 - 支持"较昨日"时间窗口统计
 		{Keys: bson.D{{Key: "first_seen_time", Value: -1}}},
+		// 新增索引 - 支持按状态码/端口过滤的精确匹配（避免全表扫描）
+		{Keys: bson.D{{Key: "status", Value: 1}}},
+		{Keys: bson.D{{Key: "port", Value: 1}}},
 	}
 	if err := ensureIndexes(coll, indexes); err != nil {
 		logx.Errorf("[AssetModel] create indexes failed for %s: %v", coll.Name(), err)
@@ -211,10 +214,12 @@ func (m *AssetModel) FindByHostPort(ctx context.Context, host string, port int) 
 }
 
 func (m *AssetModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	return m.FindWithSort(ctx, filter, page, pageSize, "update_time")
 }
 
 func (m *AssetModel) FindWithSort(ctx context.Context, filter bson.M, page, pageSize int, sortField string) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -332,6 +337,7 @@ func (m *AssetModel) AggregateGroupByDomain(ctx context.Context) ([]AssetGroupAg
 
 // findPagedWithProjection 按 update_time 降序的分页查询公共实现，projection 决定返回字段集合
 func (m *AssetModel) findPagedWithProjection(ctx context.Context, filter bson.M, page, pageSize int, projection bson.M) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -360,16 +366,19 @@ func (m *AssetModel) findPagedWithProjection(ctx context.Context, filter bson.M,
 // FindForFingerprint 按指纹匹配所需字段查询（排除 screenshot/cert/banner 三个二进制大字段）
 // 仅用于指纹匹配场景；如需全字段文档，请使用 FindWithSort 或 FindById。
 func (m *AssetModel) FindForFingerprint(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	return m.findPagedWithProjection(ctx, filter, page, pageSize, AssetFingerprintProjection)
 }
 
 // FindWithScreenshot 截图查询专用，包含 screenshot 字段
 func (m *AssetModel) FindWithScreenshot(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	return m.findPagedWithProjection(ctx, filter, page, pageSize, AssetScreenshotProjection)
 }
 
 // FindForSite 站点列表专用，保留 icon_hash_bytes 用于展示 favicon
 func (m *AssetModel) FindForSite(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	return m.findPagedWithProjection(ctx, filter, page, pageSize, AssetSiteProjection)
 }
 
@@ -414,6 +423,7 @@ func (m *AssetModel) FindWithOffset(ctx context.Context, filter bson.M, skip, li
 
 // FindByRiskScore 按风险评分排序查询资产
 func (m *AssetModel) FindByRiskScore(ctx context.Context, filter bson.M, page, pageSize int, ascending bool) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
 		opts.SetSkip(int64((page - 1) * pageSize))
@@ -510,13 +520,15 @@ func (m *AssetModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 	return m.coll.CountDocuments(ctx, filter)
 }
 
-// AggregateInventoryPaged 跨多工作空间集合的分页查询。
-// 通过 $unionWith 在服务端合并所有 ws 集合，再做全局 $sort + $facet：
-//   - total: 全局命中总数
-//   - list:  经 $skip/$limit 切片后的当前页资产
+// AggregateInventoryPaged 跨工作空间集合的分页查询（单租户塌缩后 wsIds 通常为单元素）。
+//
+// 优化点（替代原 $unionWith + $facet 方案）：
+//   - total：空 filter 时走 O(1) 的 EstimatedDocumentCount，否则走 CountDocuments；
+//     不再依赖 $facet 把全局 $sort 结果全量物化，避免大数据量触发 MongoDB 100MB 内存上限。
+//   - list：使用 Find + 索引排序（默认按 update_time 降序，复用索引）+ skip/limit，
+//     仅将当前页所需文档拉回，避免整表排序后切片。
 //
 // sortField 以 "-" 前缀表示降序（如 "-update_time"），无前缀表示升序。
-// 返回的 Asset 列表已按 sortBy 排序并完成分页。
 func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, wsIds []string, filter bson.M, skip, limit int64, sortField string) (int64, []AssetWithWs, error) {
 	if len(wsIds) == 0 {
 		return 0, nil, nil
@@ -529,63 +541,43 @@ func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, wsIds []string
 		sortOrder = -1
 	}
 
-	// 管道：对主集合先打 wsId 标签 + $match filter，再依次 $unionWith 其它 ws（每个分支内部同样打标签 + $match）
-	pipeline := mongo.Pipeline{
-		{{Key: "$addFields", Value: bson.D{{Key: "ws_id", Value: wsIds[0]}}}},
-		{{Key: "$match", Value: filter}},
+	// 总数：空过滤走估算（O(1)），带过滤走精确计数
+	var total int64
+	var err error
+	if len(filter) == 0 {
+		total, err = m.coll.EstimatedDocumentCount(ctx)
+	} else {
+		total, err = m.coll.CountDocuments(ctx, filter)
 	}
-	for i := 1; i < len(wsIds); i++ {
-		pipeline = append(pipeline, bson.D{
-			{Key: "$unionWith", Value: bson.D{
-				{Key: "coll", Value: wsIds[i] + "_asset"},
-				{Key: "pipeline", Value: mongo.Pipeline{
-					{{Key: "$addFields", Value: bson.D{{Key: "ws_id", Value: wsIds[i]}}}},
-					{{Key: "$match", Value: filter}},
-				}},
-			}},
-		})
+	if err != nil {
+		return 0, nil, err
+	}
+	if total == 0 {
+		return 0, []AssetWithWs{}, nil
 	}
 
-	// 全局排序
-	pipeline = append(pipeline, bson.D{{Key: "$sort", Value: bson.D{{Key: sortKey, Value: sortOrder}}}})
+	opts := options.Find().
+		SetProjection(AssetInventoryProjection).
+		SetSort(bson.D{{Key: sortKey, Value: sortOrder}}).
+		SetSkip(skip).
+		SetLimit(limit)
 
-	// $facet 同时拿 total 与 list
-	pipeline = append(pipeline, bson.D{
-		{Key: "$facet", Value: bson.D{
-			{Key: "total", Value: mongo.Pipeline{
-				{{Key: "$count", Value: "n"}},
-			}},
-			{Key: "list", Value: mongo.Pipeline{
-				{{Key: "$skip", Value: skip}},
-				{{Key: "$limit", Value: limit}},
-				{{Key: "$project", Value: AssetScreenshotProjection}},
-			}},
-		}},
-	})
-
-	cursor, err := m.coll.Aggregate(ctx, pipeline)
+	cursor, err := m.coll.Find(ctx, filter, opts)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer cursor.Close(ctx)
 
-	var facetResult []struct {
-		Total []struct {
-			N int64 `bson:"n"`
-		} `bson:"total"`
-		List []AssetWithWs `bson:"list"`
-	}
-	if err := cursor.All(ctx, &facetResult); err != nil {
+	var assets []Asset
+	if err := cursor.All(ctx, &assets); err != nil {
 		return 0, nil, err
 	}
-	if len(facetResult) == 0 {
-		return 0, []AssetWithWs{}, nil
+
+	result := make([]AssetWithWs, 0, len(assets))
+	for i := range assets {
+		result = append(result, AssetWithWs{Asset: assets[i], WsId: wsIds[0]})
 	}
-	var total int64
-	if len(facetResult[0].Total) > 0 {
-		total = facetResult[0].Total[0].N
-	}
-	return total, facetResult[0].List, nil
+	return total, result, nil
 }
 
 // AssetWithWs 在 Asset 基础上额外携带来源工作空间 ID（ws_id），用于跨 ws 聚合场景
@@ -1153,7 +1145,7 @@ type AssetHistoryModel struct {
 
 func NewAssetHistoryModel(db *mongo.Database, workspaceId string) *AssetHistoryModel {
 	return &AssetHistoryModel{
-		coll: db.Collection(workspaceId + "_asset_history"),
+		coll: db.Collection("asset_history"),
 	}
 }
 

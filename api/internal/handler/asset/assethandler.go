@@ -100,26 +100,6 @@ func AssetClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// AssetHistoryHandler 资产历史
-func AssetHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req types.AssetHistoryReq
-		if err := httpx.Parse(r, &req); err != nil {
-			response.ParamError(w, err.Error())
-			return
-		}
-
-		workspaceId := middleware.GetWorkspaceId(r.Context())
-		l := logic.NewAssetHistoryLogic(r.Context(), svcCtx)
-		resp, err := l.AssetHistory(&req, workspaceId)
-		if err != nil {
-			response.Error(w, err)
-			return
-		}
-		httpx.OkJson(w, resp)
-	}
-}
-
 // AssetImportHandler 导入资产
 func AssetImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +304,26 @@ func AssetFilterOptionsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetFilterOptionsLogic(r.Context(), svcCtx)
 		resp, err := l.AssetFilterOptions(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetDetailHandler 资产详情（按需加载完整资产，含 body/header/banner）
+func AssetDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetDetailReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetDetailLogic(r.Context(), svcCtx)
+		resp, err := l.AssetDetail(&req, workspaceId)
 		if err != nil {
 			response.Error(w, err)
 			return

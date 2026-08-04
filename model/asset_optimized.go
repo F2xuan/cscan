@@ -21,9 +21,21 @@ var AssetListProjection = bson.M{
 }
 
 // AssetScreenshotProjection 资产清单/截图清单专用投影，保留 screenshot、icon_hash_bytes、header、body
+//
+// 已弃用：清单分页改用 AssetInventoryProjection（见下），以排除 body/header/banner 等大字段。
 var AssetScreenshotProjection = bson.M{
 	"cert":   0,
 	"banner": 0,
+}
+
+// AssetInventoryProjection 资产清单分页专用投影：
+// 保留卡片展示所需的 screenshot 与 icon_hash_bytes，排除 body/header/banner/cert 等大字段，
+// 降低列表 payload（body/header 仅在资产详情抽屉按需加载）。
+var AssetInventoryProjection = bson.M{
+	"body":      0,
+	"header":    0,
+	"banner":    0,
+	"cert":      0,
 }
 
 // AssetSiteProjection 站点列表专用投影，在列表投影基础上保留 icon_hash_bytes 用于展示 favicon
@@ -91,6 +103,7 @@ type AssetListItem struct {
 
 // FindListOptimized 优化的列表查询（使用投影减少数据传输）
 func (m *AssetModel) FindListOptimized(ctx context.Context, filter bson.M, page, pageSize int) ([]*AssetListItem, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find().
 		SetProjection(AssetListProjection).
 		SetSkip(int64((page - 1) * pageSize)).
@@ -151,6 +164,7 @@ func (m *AssetModel) FindListOptimized(ctx context.Context, filter bson.M, page,
 
 // FindListOptimizedWithSort 优化的列表查询（带自定义排序）
 func (m *AssetModel) FindListOptimizedWithSort(ctx context.Context, filter bson.M, page, pageSize int, sortField string, sortOrder int) ([]*AssetListItem, int64, error) {
+	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find().
 		SetProjection(AssetListProjection).
 		SetSkip(int64((page - 1) * pageSize)).

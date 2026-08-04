@@ -9,6 +9,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
+	"cscan/pkg/xerr"
 )
 
 type AssetHistoryV2Logic struct {
@@ -27,7 +28,7 @@ func NewAssetHistoryV2Logic(ctx context.Context, svcCtx *svc.ServiceContext) *As
 func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, workspaceId string) (*types.AssetScanHistoryResp, error) {
 	// Validate asset ID
 	if req.AssetId == "" {
-		return nil, fmt.Errorf("asset_id is required")
+		return nil, xerr.NewParamError("asset_id is required")
 	}
 
 	// Fetch asset - 当 workspaceId 为 "all" 时，需要遍历所有工作空间查找资产
@@ -46,7 +47,7 @@ func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, wor
 	}
 
 	if asset == nil {
-		return nil, fmt.Errorf("asset not found: assetId=%s, searched workspaces=%v", req.AssetId, workspaceIds)
+		return nil, xerr.NewNotFoundError(fmt.Sprintf("asset not found: %s", req.AssetId))
 	}
 
 	// Parse time range if provided
@@ -61,7 +62,7 @@ func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, wor
 	if req.EndTime != "" {
 		endTime, err = time.Parse(time.RFC3339, req.EndTime)
 		if err != nil {
-			return nil, fmt.Errorf("invalid end_time format: %w", err)
+			return nil, xerr.NewParamError(fmt.Sprintf("invalid end_time format: %v", err))
 		}
 	}
 
@@ -94,9 +95,39 @@ func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, wor
 		}
 	}
 
+	// 同时查询字段级变更历史（原 V1 功能），供时间线组件使用
+	historyModel := l.svcCtx.GetAssetHistoryModel(actualWorkspaceId)
+	histories, _ := historyModel.FindByAssetId(l.ctx, req.AssetId, 20)
+
+	historyList := make([]types.AssetHistoryItem, 0, len(histories))
+	for _, h := range histories {
+		var changes []types.FieldChange
+		for _, c := range h.Changes {
+			changes = append(changes, types.FieldChange{
+				Field:    c.Field,
+				OldValue: c.OldValue,
+				NewValue: c.NewValue,
+			})
+		}
+		historyList = append(historyList, types.AssetHistoryItem{
+			Id:         h.Id.Hex(),
+			Authority:  h.Authority,
+			Host:       h.Host,
+			Port:       h.Port,
+			Service:    h.Service,
+			Title:      h.Title,
+			App:        h.App,
+			HttpStatus: h.HttpStatus,
+			TaskId:     h.TaskId,
+			CreateTime: h.CreateTime.Local().Format("2006-01-02 15:04:05"),
+			Changes:    changes,
+		})
+	}
+
 	return &types.AssetScanHistoryResp{
 		Code:     0,
 		Msg:      "success",
 		Versions: versions,
+		List:     historyList,
 	}, nil
 }

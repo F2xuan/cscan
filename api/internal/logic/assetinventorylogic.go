@@ -123,6 +123,16 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 		}
 	}
 
+	// 仅显示已识别（有指纹/技术栈）或已截图（有截图/图标）的资产
+	if req.RequireRecognitionOrShot {
+		appendAndFilter(bson.M{"$or": []bson.M{
+			{"screenshot": bson.M{"$ne": ""}},
+			{"icon_hash": bson.M{"$ne": ""}},
+			{"fingerprints": bson.M{"$exists": true, "$ne": bson.M{}}},
+			{"app": bson.M{"$exists": true, "$ne": bson.M{}}},
+		}})
+	}
+
 	return filter
 }
 
@@ -180,6 +190,7 @@ func convertAssetToInventoryItem(asset model.Asset, wsId string) types.AssetInve
 
 // AssetInventory 获取资产清单
 func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq, workspaceId string) (resp *types.AssetInventoryResp, err error) {
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	l.Logger.Infof("AssetInventory查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
 
 	// 获取需要查询的工作空间列表

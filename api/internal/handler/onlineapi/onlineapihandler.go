@@ -237,16 +237,3 @@ func OnlineImportAllHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// OnlinePullStatusHandler 在线API自动拉取状态（T3.1）
-func OnlinePullStatusHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
-		l := logic.NewOnlineAPILogic(r.Context(), svcCtx)
-		resp, err := l.PullStatus(workspaceId)
-		if err != nil {
-			response.Error(w, err)
-			return
-		}
-		httpx.OkJson(w, resp)
-	}
-}

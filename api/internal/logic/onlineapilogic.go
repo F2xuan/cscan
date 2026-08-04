@@ -89,6 +89,7 @@ func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq, workspaceId string) 
 	switch req.Platform {
 	case "fofa":
 		client := onlineapi.NewFofaClient(config.Key, config.Version)
+		req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 		result, err := client.Search(l.ctx, req.Query, req.Page, req.PageSize)
 		if err != nil {
 			return &types.OnlineSearchResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
@@ -561,11 +562,6 @@ func (l *OnlineAPILogic) ConfigList(workspaceId string) (*types.APIConfigListRes
 	}
 
 	return &types.APIConfigListResp{Code: 0, Msg: "success", List: list}, nil
-}
-
-// PullStatus 返回本工作空间各平台的自动拉取运行状态（已废弃：自动拉取迁移至空间引擎定时任务，返回空列表）。
-func (l *OnlineAPILogic) PullStatus(workspaceId string) (*types.OnlinePullStatusResp, error) {
-	return &types.OnlinePullStatusResp{Code: 0, Msg: "success", List: []types.OnlinePullStatusItem{}}, nil
 }
 
 func (l *OnlineAPILogic) ConfigSave(req *types.APIConfigSaveReq, workspaceId string) (*types.BaseResp, error) {

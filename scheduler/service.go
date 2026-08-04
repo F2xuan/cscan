@@ -23,10 +23,6 @@ type SchedulerService struct {
 	rdb               *redis.Client
 	syncMethods       SyncInterface
 
-	// puller 自动拉取功能已废弃（T-空间引擎定时），保留字段以避免破坏外部调用
-	// puller          *OnlineAPIPuller
-	// pullerSweepSpec string
-
 	reverifier         *WeakPassReverifier
 	reverifierCronSpec string
 
@@ -44,13 +40,6 @@ func NewSchedulerService(sched *Scheduler, rdb *redis.Client, syncMethods SyncIn
 		rdb:         rdb,
 		syncMethods: syncMethods,
 	}
-}
-
-// SetOnlineAPIPuller 已废弃：自动拉取功能迁移到 Redis 订阅的空间引擎拉取任务（cscan:cron:execute_space）。
-// 保留空实现以避免调用方编译错误，实际不再注册任何定时扫描。
-func (s *SchedulerService) SetOnlineAPIPuller(puller *OnlineAPIPuller, sweepSpec string) {
-	// 自动拉取功能已废弃，不再注册 cron 任务。
-	logx.Infof("[SchedulerService] SetOnlineAPIPuller called but auto-pull is deprecated; ignored.")
 }
 
 // SetWeakPassReverifier 注入弱口令持续复验器与周期（T3.3）。
@@ -86,26 +75,6 @@ func (s *SchedulerService) Start() {
 
 	// 启动定时任务消息订阅
 	s.cronManager.StartMessageSubscriber(ctx)
-
-	// 在线 API 定时拉取扫描已废弃（T-空间引擎定时）：由 Redis 订阅 cscan:cron:execute_space 处理，
-	// 不再注册 puller sweep cron 任务。
-	// if s.puller != nil {
-	// 	spec := s.pullerSweepSpec
-	// 	if spec == "" {
-	// 		spec = "0 * * * * *"
-	// 	}
-	// 	if _, err := s.scheduler.AddCronTask(spec, func() {
-	// 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	// 		defer cancel()
-	// 		if err := s.puller.Run(ctx); err != nil {
-	// 			logx.Errorf("[SchedulerService] online api puller run failed: %v", err)
-	// 		}
-	// 	}); err != nil {
-	// 		logx.Errorf("[SchedulerService] register online api puller sweep failed: %v", err)
-	// 	} else {
-	// 		logx.Infof("[SchedulerService] online api puller sweep registered with cron spec=%q", spec)
-	// 	}
-	// }
 
 	// 修复 H-8：原实现用全局固定 cron 触发，忽略每个 workspace 的 CronSpec/NextRunTime。
 	// 改为 sweep 模式：每分钟扫描所有启用配置，仅原子执行 NextRunTime <= now 的 workspace，

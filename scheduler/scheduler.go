@@ -1161,6 +1161,7 @@ type FingerprintConfig struct {
 	CustomEngine  bool   `json:"customEngine"` // 使用自定义指纹引擎（ARL格式）
 	Screenshot    bool   `json:"screenshot"`
 	ActiveScan    bool   `json:"activeScan"`    // 启用主动指纹扫描
+	Cert          bool   `json:"cert"`          // 启用证书抓取（ARL 风格附加功能），默认关闭
 	ActiveTimeout int    `json:"activeTimeout"` // 主动指纹单个请求超时时间(秒)，默认10秒
 	Timeout       int    `json:"timeout"`       // 总超时时间(秒)，默认300秒
 	TargetTimeout int    `json:"targetTimeout"` // 单个目标超时时间(秒)，默认30秒

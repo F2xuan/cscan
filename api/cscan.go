@@ -58,16 +58,19 @@ func main() {
 	// 从环境变量加载 JWT secret（优先级高于配置文件）
 	c.LoadSecretFromEnv()
 	if c.Auth.AccessSecret == "" {
-		// 允许显式声明开发环境（CSCAN_DEV=1）时使用随机 secret，方便本地调试。
-		// 生产环境若未配置 CSCAN_JWT_SECRET，直接拒绝启动：
-		// 历史事故表明，随机 secret 会导致 API 重启后所有已登录用户 token 失效，
+		// 开发模式豁免：以下任一条件成立时，允许使用随机 secret，方便本地调试：
+		//   1) 显式声明 CSCAN_DEV=1
+		//   2) 配置文件 Mode: dev
+		//   3) 通过 `go run` 启动（本地开发最常见方式，自动豁免，无需手动设置环境变量）
+		// 生产环境（Docker 镜像内以编译二进制运行，且已注入 CSCAN_JWT_SECRET）不满足上述条件，
+		// 若未配置 secret 则拒绝启动——历史事故表明，随机 secret 会导致 API 重启后所有 token 失效，
 		// 且每次重启 secret 不同，多副本部署时 token 互相不认。
-		if os.Getenv("CSCAN_DEV") == "1" {
+		if isLocalDev(c) {
 			c.Auth.AccessSecret = uuid.New().String()
-			logx.Error("WARNING: CSCAN_DEV=1, using auto-generated JWT secret (NOT suitable for production)")
+			logx.Info("WARNING: running in DEV mode, using auto-generated JWT secret (NOT suitable for production)")
 		} else {
 			logx.Error("JWT secret not configured. Set CSCAN_JWT_SECRET environment variable.")
-			logx.Error("For local development only, set CSCAN_DEV=1 to allow auto-generated secret.")
+			logx.Error("For local development, either set CSCAN_DEV=1, set Mode: dev, or run via `go run` to allow auto-generated secret.")
 			os.Exit(1)
 		}
 	}
@@ -103,34 +106,6 @@ func main() {
 	// 创建任务调度器服务（复用svcCtx中已有的Scheduler实例，避免创建重复实例）
 	schedulerSvc := scheduler.NewSchedulerService(svcCtx.Scheduler, svcCtx.RedisClient, svcCtx.SyncMethods, &cronTaskSourceAdapter{model: svcCtx.CronTaskModel})
 	go schedulerSvc.Start()
-
-	// T3.1：注入在线 API 定时拉取器（主侧周期任务 + 新资产通知）。
-	// sender 复用 NotifyManager，按工作空间已启用通道发送。
-	pullerSender := func(ctx context.Context, result *notify.NotifyResult) error {
-		mgr := notify.NewNotifyManager()
-		configs, err := svcCtx.NotifyConfigModel.FindEnabled(ctx)
-		if err != nil {
-			return err
-		}
-		items := make([]notify.ConfigItem, 0, len(configs))
-		for _, cfg := range configs {
-			items = append(items, notify.ConfigItem{
-				Provider:        cfg.Provider,
-				Config:          cfg.Config,
-				Status:          cfg.Status,
-				MessageTemplate: cfg.MessageTemplate,
-				WebURL:          cfg.WebURL,
-			})
-		}
-		if len(items) == 0 {
-			return nil // 无可用告警通道，静默跳过
-		}
-		if err := mgr.LoadConfigs(items); err != nil {
-			return err
-		}
-		return mgr.Send(ctx, result)
-	}
-	schedulerSvc.SetOnlineAPIPuller(scheduler.NewOnlineAPIPuller(svcCtx.MongoDB, svcCtx.WorkspaceModel, pullerSender), "")
 
 	// T3.3：注入弱口令持续复验器（主侧周期任务 + 修复确认通知）。
 	// sender 复用 NotifyManager，按工作空间已启用通道发送。
@@ -501,11 +476,12 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 		batches = []string{finalTarget}
 	}
 
-	// subTaskCount = 批次数 × 启用模块数
-	// worker 端每完成一个模块递增 1（包括"完成"阶段），进度 = done / total × 100
-	// 无任何模块启用时，subTaskCount = 0，worker 不会调用 incrSubTaskDone
-	subTaskCount := len(batches) * enabledModules
-	if subTaskCount == 0 {
+	// subTaskCount = 批次数 × (启用模块数 + 1)
+	// 与 worker 端 expectedTaskIncr = CountEnabledModules + 1 口径一致（每模块 1 次 + 最终"完成" 1 次）。
+	// 进度 = done / subTaskCount × 100。两侧口径必须一致，否则会出现 done > count 倒挂。
+	// 无任何模块启用时，subTaskCount = 批次数。
+	subTaskCount := len(batches) * (enabledModules + 1)
+	if enabledModules == 0 {
 		subTaskCount = len(batches)
 	}
 
@@ -843,6 +819,38 @@ func isIPAddress(s string) bool {
 	return net.ParseIP(s) != nil
 }
 
+// isLocalDev 判断是否处于本地开发模式，可豁免 JWT secret 强校验。
+// 触发条件（满足任一即可）：
+//   - 显式设置环境变量 CSCAN_DEV=1
+//   - 配置文件 Mode: dev
+//   - 进程由 `go run` 启动（临时二进制路径包含 "go-build"）
+//
+// 该判定仅用于开发期随机 secret 豁免，不影响任何业务逻辑；生产环境以 Docker
+// 镜像中的编译二进制运行，路径不含 "go-build" 且已注入 CSCAN_JWT_SECRET，不会误判。
+func isLocalDev(c config.Config) bool {
+	if os.Getenv("CSCAN_DEV") == "1" {
+		return true
+	}
+	if c.Mode == "dev" {
+		return true
+	}
+	if isGoRun() {
+		return true
+	}
+	return false
+}
+
+// isGoRun 通过可执行文件路径判断进程是否由 `go run` 启动。
+// go run 会在系统临时目录下生成 go-build*/bNNN/exe/<name> 临时二进制并立即执行，
+// 其路径恒定包含 "go-build"，可作为本地开发（而非生产编译二进制）的可靠信号。
+func isGoRun() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(exe), "go-build")
+}
+
 // extractRootDomain 从域名中提取根域名（简单实现：取最后两段）
 func extractRootDomain(domain string) string {
 	domain = strings.TrimSpace(domain)
@@ -914,7 +922,7 @@ func (a *cronTaskSourceAdapter) FindAllCronTasks(ctx context.Context) ([]schedul
 			ScheduleType:        t.ScheduleType,
 			CronSpec:            t.CronSpec,
 			ScheduleTime:        t.ScheduleTime,
-			WorkspaceId:         t.WorkspaceId,
+			WorkspaceId:         "default",
 			Status:              t.Status,
 			LastRunTime:         t.LastRunTime,
 			NextRunTime:         t.NextRunTime,
@@ -949,7 +957,7 @@ func (a *cronTaskSourceAdapter) FindCronTaskByCronTaskId(ctx context.Context, cr
 		ScheduleType:        t.ScheduleType,
 		CronSpec:            t.CronSpec,
 		ScheduleTime:        t.ScheduleTime,
-		WorkspaceId:         t.WorkspaceId,
+		WorkspaceId:         "default",
 		Status:              t.Status,
 		LastRunTime:         t.LastRunTime,
 		NextRunTime:         t.NextRunTime,

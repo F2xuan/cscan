@@ -27,7 +27,6 @@ import (
 	"cscan/api/internal/handler/vul"
 	"cscan/api/internal/handler/weakpass"
 	"cscan/api/internal/handler/worker"
-	"cscan/api/internal/handler/workspace"
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/swagger"
@@ -228,14 +227,11 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/logs/export", Handler: worker.WorkerLogsExportHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/logs/clear", Handler: worker.WorkerLogsClearHandler(svcCtx)},
 
-		// 工作空间
-		{Method: http.MethodPost, Path: "/api/v1/workspace/list", Handler: workspace.WorkspaceListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/workspace/save", Handler: workspace.WorkspaceSaveHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/workspace/delete", Handler: workspace.WorkspaceDeleteHandler(svcCtx)},
-
 		// 组织管理
 		{Method: http.MethodPost, Path: "/api/v1/organization/list", Handler: organization.OrganizationListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/organization/save", Handler: organization.OrganizationSaveHandler(svcCtx)},
+		// M-4 接口契约兼容别名：文档中的 /organization/create 映射到同一个保存处理器
+		{Method: http.MethodPost, Path: "/api/v1/organization/create", Handler: organization.OrganizationSaveHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/organization/delete", Handler: organization.OrganizationDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/organization/updateStatus", Handler: organization.OrganizationUpdateStatusHandler(svcCtx)},
 
@@ -249,6 +245,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/inventory", Handler: asset.AssetInventoryHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/screenshots", Handler: asset.ScreenshotsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/filterOptions", Handler: asset.AssetFilterOptionsHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/detail", Handler: asset.AssetDetailHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/exposures", Handler: asset.AssetExposuresHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/list", Handler: asset.AssetTargetListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/detail", Handler: asset.AssetTargetDetailHandler(svcCtx)},
@@ -260,7 +257,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/delete", Handler: asset.AssetDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/batchDelete", Handler: asset.AssetBatchDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/clear", Handler: asset.AssetClearHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/asset/history", Handler: asset.AssetHistoryHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/history", Handler: asset.AssetHistoryV2Handler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/import", Handler: asset.AssetImportHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/save", Handler: asset.AssetSaveHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/diff/list", Handler: asset.AssetDiffListHandler(svcCtx)},
@@ -339,6 +336,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/list", Handler: task.CronTaskListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/detail", Handler: task.CronTaskDetailHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/save", Handler: task.CronTaskSaveHandler(svcCtx)},
+		// M-4 接口契约兼容别名：文档中的 /task/cron/create 映射到同一个保存处理器
+		{Method: http.MethodPost, Path: "/api/v1/task/cron/create", Handler: task.CronTaskSaveHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/toggle", Handler: task.CronTaskToggleHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/delete", Handler: task.CronTaskDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/batchDelete", Handler: task.CronTaskBatchDeleteHandler(svcCtx)},
@@ -374,7 +373,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/onlineapi/import/result", Handler: onlineapi.OnlineImportResultHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/onlineapi/config/list", Handler: onlineapi.APIConfigListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/onlineapi/config/save", Handler: onlineapi.APIConfigSaveHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/onlineapi/pull/status", Handler: onlineapi.OnlinePullStatusHandler(svcCtx)},
 
 		// POC标签映射
 		{Method: http.MethodPost, Path: "/api/v1/poc/tagmapping/list", Handler: poc.TagMappingListHandler(svcCtx)},
@@ -398,6 +396,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/clear", Handler: poc.NucleiTemplateClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/updateEnabled", Handler: poc.NucleiTemplateUpdateEnabledHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/detail", Handler: poc.NucleiTemplateDetailHandler(svcCtx)},
+		// M-4 接口契约兼容别名：文档中的 /poc/detail 映射到同一个详情处理器
+		{Method: http.MethodPost, Path: "/api/v1/poc/detail", Handler: poc.NucleiTemplateDetailHandler(svcCtx)},
 
 		// 指纹管理
 		{Method: http.MethodPost, Path: "/api/v1/fingerprint/list", Handler: fingerprint.FingerprintListHandler(svcCtx)},
@@ -517,6 +517,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// 全局黑名单
 		{Method: http.MethodPost, Path: "/api/v1/blacklist/config/get", Handler: blacklist.BlacklistConfigGetHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/blacklist/config/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
+		// M-4 接口契约兼容别名：文档中的 /blacklist/save 映射到同一个保存处理器
+		{Method: http.MethodPost, Path: "/api/v1/blacklist/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
 
 		// JSFinder 全局配置
 		{Method: http.MethodPost, Path: "/api/v1/jsfinder/config/get", Handler: jsfinder.JSFinderConfigGetHandler(svcCtx)},

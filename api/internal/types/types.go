@@ -196,32 +196,6 @@ type UserTokenScopeListResp struct {
 	Actions []string              `json:"actions"` // ["read","create","update","delete"]
 }
 
-// ==================== 工作空间 ====================
-type Workspace struct {
-	Id          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	CreateTime  string `json:"createTime"`
-}
-
-type WorkspaceListResp struct {
-	Code  int         `json:"code"`
-	Msg   string      `json:"msg"`
-	Total int         `json:"total"`
-	List  []Workspace `json:"list"`
-}
-
-type WorkspaceSaveReq struct {
-	Id          string `json:"id,optional"`
-	Name        string `json:"name"`
-	Description string `json:"description,optional"`
-}
-
-type WorkspaceDeleteReq struct {
-	Id string `json:"id"`
-}
-
 // ==================== 组织管理 ====================
 type Organization struct {
 	Id          string `json:"id"`
@@ -451,11 +425,6 @@ type AssetSaveResp struct {
 	Msg  string `json:"msg"`
 }
 
-type AssetHistoryReq struct {
-	AssetId string `json:"assetId"`
-	Limit   int    `json:"limit,default=20"`
-}
-
 // FieldChange 字段变更记录
 type FieldChange struct {
 	Field    string `json:"field"`    // 变更的字段名
@@ -480,12 +449,6 @@ type AssetHistoryItem struct {
 	TaskId     string        `json:"taskId"`
 	CreateTime string        `json:"createTime"`
 	Changes    []FieldChange `json:"changes,omitempty"` // 变更详情
-}
-
-type AssetHistoryResp struct {
-	Code int                `json:"code"`
-	Msg  string             `json:"msg"`
-	List []AssetHistoryItem `json:"list"`
 }
 
 // ==================== 站点管理 ====================
@@ -678,6 +641,17 @@ type AssetInventoryResp struct {
 	Msg   string               `json:"msg"`
 	Total int                  `json:"total"`
 	List  []AssetInventoryItem `json:"list"`
+}
+
+// ==================== 资产详情（按需加载，含 body/header/banner 等大字段） ====================
+type AssetDetailReq struct {
+	Id string `json:"id"`
+}
+
+type AssetDetailResp struct {
+	Code int                `json:"code"`
+	Msg  string             `json:"msg"`
+	Data AssetInventoryItem `json:"data"`
 }
 
 // ==================== 截图清单管理 ====================
@@ -1378,28 +1352,6 @@ type APIConfigSaveReq struct {
 	DailyCallLimit    int      `json:"dailyCallLimit,optional"`
 }
 
-// OnlinePullStatusItem 单个平台的自动拉取运行状态（T3.1）
-type OnlinePullStatusItem struct {
-	Platform        string `json:"platform"`
-	AutoPullEnabled bool   `json:"autoPullEnabled"`
-	CronSpec        string `json:"cronSpec"`
-	LastPullTime    string `json:"lastPullTime"`
-	LastPullCount   int    `json:"lastPullCount"`
-	LastPullStatus  string `json:"lastPullStatus"`
-	LastPullError   string `json:"lastPullError"`
-	DailyCallUsed   int    `json:"dailyCallUsed"`
-	DailyCallLimit  int    `json:"dailyCallLimit"`
-	DailyCallDate   string `json:"dailyCallDate"`
-	NextRunTime     string `json:"nextRunTime"`
-}
-
-// OnlinePullStatusResp 自动拉取状态响应（T3.1）
-type OnlinePullStatusResp struct {
-	Code int                    `json:"code"`
-	Msg  string                 `json:"msg"`
-	List []OnlinePullStatusItem `json:"list"`
-}
-
 // ==================== POC标签映射 ====================
 type TagMapping struct {
 	Id          string   `json:"id"`
@@ -1677,6 +1629,7 @@ type NucleiTemplateWithContent struct {
 type Fingerprint struct {
 	Id          string            `json:"id"`
 	Name        string            `json:"name"`
+	Category    string            `json:"category"`
 	Website     string            `json:"website"`
 	Icon        string            `json:"icon"`
 	Description string            `json:"description"`
@@ -3175,11 +3128,12 @@ type AssetScanHistoryReq struct {
 
 // HistoricalVersion 历史扫描版本
 type HistoricalVersion struct {
-	VersionId      string `json:"versionId"`
-	ScanTimestamp  string `json:"scanTimestamp"`
-	DirScanCount   int64  `json:"dirScanCount"`
-	VulnScanCount  int64  `json:"vulnScanCount"`
-	ChangesSummary string `json:"changesSummary"`
+	VersionId      string        `json:"versionId"`
+	ScanTimestamp  string        `json:"scanTimestamp"`
+	DirScanCount   int64         `json:"dirScanCount"`
+	VulnScanCount  int64         `json:"vulnScanCount"`
+	ChangesSummary string        `json:"changesSummary"`
+	Changes        []FieldChange `json:"changes,omitempty"` // 字段级变更详情（原 V1 功能）
 }
 
 // AssetScanHistoryResp 获取资产历史扫描版本响应
@@ -3187,6 +3141,7 @@ type AssetScanHistoryResp struct {
 	Code     int                 `json:"code"`
 	Msg      string              `json:"msg"`
 	Versions []HistoricalVersion `json:"versions"`
+	List     []AssetHistoryItem  `json:"list,omitempty"` // 字段级变更历史（原 V1 功能）
 }
 
 // CompareVersionsReq 比较两个历史版本请求
@@ -3264,19 +3219,6 @@ type ChunkPreviewResp struct {
 	RecommendedSize  int     `json:"recommendedSize"`  // 推荐分片大小
 	MaxMemoryUsage   float64 `json:"maxMemoryUsage"`   // 最大内存使用量（字节）
 	ParallelCapacity int     `json:"parallelCapacity"` // 并行处理能力
-}
-
-// ==================== 任务恢复统计 ====================
-
-// TaskRecoveryStatsResp 任务恢复统计响应
-type TaskRecoveryStatsResp struct {
-	Code            int    `json:"code"`
-	Msg             string `json:"msg"`
-	ProcessingTasks int    `json:"processingTasks"` // 正在处理的任务数
-	OnlineWorkers   int    `json:"onlineWorkers"`   // 在线Worker数
-	TotalWorkers    int    `json:"totalWorkers"`    // 总Worker数
-	CheckInterval   string `json:"checkInterval"`   // 检查间隔
-	TaskTimeout     string `json:"taskTimeout"`     // 任务超时时间
 }
 
 // ==================== 应用管理 ====================

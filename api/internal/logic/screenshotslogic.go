@@ -1,4 +1,5 @@
 package logic
+import "cscan/model"
 
 import (
 	"context"
@@ -30,6 +31,7 @@ func NewScreenshotsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Scree
 
 // Screenshots 获取截图清单
 func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq, workspaceId string) (resp *types.ScreenshotsResp, err error) {
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	l.Logger.Infof("Screenshots查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
 
 	// 获取需要查询的工作空间列表

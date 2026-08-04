@@ -27,14 +27,6 @@ func init() {
 		Security:    TierAuth,
 		Errors:      []int{400, 500},
 	})
-	// /api/v1/container/logs/stream 是 GET 长连接流式接口，不走默认 POST body fallback
-	register(http.MethodGet, "/api/v1/container/logs/stream", Meta{
-		Tag: tag, TagDesc: tagDesc,
-		Summary:     "容器日志流",
-		Description: "以 SSE 流式输出容器实时日志。Query：container / since / follow。",
-		Security:    TierContainer,
-	})
-
 	RegisterTypes(
 		types.ContainerInfo{},
 		types.ContainerPort{},

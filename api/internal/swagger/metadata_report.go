@@ -31,6 +31,25 @@ func init() {
 		Errors:      []int{400, 500},
 	})
 
+	register(http.MethodPost, "/api/v1/report/periodic/generate", Meta{
+		Tag: tag, TagDesc: tagDesc,
+		Summary:     "生成周期性报告",
+		Description: "按 `period`（daily/weekly/monthly）生成周期性扫描报告，包含新增资产、新增漏洞、修复漏洞等统计及与上一周期的环比数据。\n\n**字段说明**\n\n- `period`：`daily`、`weekly` 或 `monthly`，缺省 `weekly`。\n- `end`：截止日期（2006-01-02），默认今天。\n\n**典型错误码**\n\n- 500 服务器错误",
+		ReqType:     "ReportPeriodicGenerateReq",
+		RespType:    "ReportPeriodicGenerateResp",
+		Security:    TierAuth,
+		Errors:      []int{500},
+	})
+
+	register(http.MethodPost, "/api/v1/report/periodic/export", Meta{
+		Tag: tag, TagDesc: tagDesc,
+		Summary:     "导出周期性报告",
+		Description: "按 `period` 导出周期性扫描报告为 Excel 文件，响应为二进制流，前端需以 `Content-Disposition: attachment` 触发下载。\n\n**字段说明**\n\n- `period`：`daily`、`weekly` 或 `monthly`，缺省 `weekly`。\n- `end`：截止日期（2006-01-02），默认今天。\n- `format`：`excel`（默认）。\n\n**典型错误码**\n\n- 500 服务器错误",
+		ReqType:     "ReportPeriodicExportReq",
+		Security:    TierAuth,
+		Errors:      []int{500},
+	})
+
 	RegisterTypes(
 		types.ReportDetailReq{},
 		types.ReportDetailResp{},
@@ -40,5 +59,9 @@ func init() {
 		types.ReportDirScan{},
 		types.ReportDirScanStat{},
 		types.ReportExportReq{},
+		types.ReportPeriodicGenerateReq{},
+		types.ReportPeriodicGenerateResp{},
+		types.ReportPeriodicData{},
+		types.ReportPeriodicExportReq{},
 	)
 }

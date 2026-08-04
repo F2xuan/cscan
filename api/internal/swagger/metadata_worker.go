@@ -69,8 +69,7 @@ func init() {
  register(http.MethodPost, "/api/v1/worker/rename", Meta{Tag: tag, TagDesc: tagDesc, Summary: "重命名 Worker", Description: "重命名 Worker。", ReqType: "WorkerRenameReq", RespType: "WorkerRenameResp", Security: TierAuth, Errors: []int{400, 500}})
  register(http.MethodPost, "/api/v1/worker/restart", Meta{Tag: tag, TagDesc: tagDesc, Summary: "重启 Worker", Description: "触发 Worker 远程重启。", ReqType: "WorkerRestartReq", RespType: "WorkerRestartResp", Security: TierAuth, Errors: []int{400, 500}})
  register(http.MethodPost, "/api/v1/worker/concurrency", Meta{Tag: tag, TagDesc: tagDesc, Summary: "更新并发数", Description: "更新 Worker 最大并发任务数。", ReqType: "WorkerSetConcurrencyReq", RespType: "WorkerSetConcurrencyResp", Security: TierAuth, Errors: []int{400, 500}})
- register(http.MethodGet, "/api/v1/worker/logs/stream", Meta{Tag: tag, TagDesc: tagDesc, Summary: "Worker 日志流", Description: "SSE 流式输出 Worker 实时日志。Query：workerId / since / follow。", Security: TierAuth})
- register(http.MethodPost, "/api/v1/worker/logs/history", Meta{Tag: tag, TagDesc: tagDesc, Summary: "Worker 历史日志", Description: "按 workerId / since / until / level 过滤历史日志。", Security: TierAuth, Errors: []int{400, 500}})
+register(http.MethodPost, "/api/v1/worker/logs/history", Meta{Tag: tag, TagDesc: tagDesc, Summary: "Worker 历史日志", Description: "按 workerId / since / until / level 过滤历史日志。", Security: TierAuth, Errors: []int{400, 500}})
  register(http.MethodPost, "/api/v1/worker/logs/export", Meta{Tag: tag, TagDesc: tagDesc, Summary: "导出 Worker 日志", Description: "导出 Worker 历史日志为文本。", Security: TierAuth, Errors: []int{400, 500}})
  register(http.MethodPost, "/api/v1/worker/logs/clear", Meta{Tag: tag, TagDesc: tagDesc, Summary: "清空 Worker 日志", Description: "按 workerId 清空历史日志。", Security: TierAuth, Errors: []int{400, 500}})
 

@@ -517,6 +517,32 @@ const SwaggerUIHTML = `<!DOCTYPE html>
             childList: true,
             subtree: true
           });
+
+          // 本地化 Swagger UI 内置英文标签
+          function localizeLabels() {
+            var filterInput = document.querySelector('.swagger-ui .filter-container .operation-filter-input');
+            if (filterInput && filterInput.placeholder === 'Filter by tag') {
+              filterInput.placeholder = '按标签筛选';
+            }
+            var authorizeBtn = document.querySelector('.swagger-ui .auth-wrapper .authorize');
+            if (authorizeBtn && authorizeBtn.textContent.trim() === 'Authorize') {
+              authorizeBtn.innerHTML = authorizeBtn.innerHTML.replace('Authorize', '授权');
+            }
+            var logoutBtn = document.querySelector('.swagger-ui .auth-wrapper .logout');
+            if (logoutBtn && logoutBtn.textContent.trim() === 'Logout') {
+              logoutBtn.innerHTML = logoutBtn.innerHTML.replace('Logout', '退出');
+            }
+            var tryItOutBtn = document.querySelector('.swagger-ui .try-out__btn');
+            if (tryItOutBtn && tryItOutBtn.textContent.trim() === 'Try it out') {
+              tryItOutBtn.textContent = '试一下';
+            }
+          }
+          localizeLabels();
+          var localizeObserver = new MutationObserver(localizeLabels);
+          localizeObserver.observe(document.getElementById('swagger-ui'), {
+            childList: true,
+            subtree: true
+          });
         }
       });
     };

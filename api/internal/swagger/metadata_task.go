@@ -153,13 +153,6 @@ func init() {
 		Errors:      []int{10101, 500},
 	})
 
-	register(http.MethodGet, "/api/v1/task/logs/stream", Meta{
-		Tag: tag, TagDesc: tagDesc,
-		Summary:     "实时任务日志流（SSE）",
-		Description: "以 Server-Sent Events 推送某 `taskId` 的实时日志。前端用 `EventSource` 连接，禁止设置 `Authorization` 头，token 通过 query 参数 `token=` 传递。",
-		Security:    TierAuth,
-	})
-
 	// ===== 任务分片 =====
 	register(http.MethodPost, "/api/v1/task/chunk/progress", Meta{
 		Tag: tag, TagDesc: tagDesc,

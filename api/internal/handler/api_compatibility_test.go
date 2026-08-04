@@ -1057,7 +1057,6 @@ func TestResponseCodeField(t *testing.T) {
 		types.BaseResp{},
 		types.LoginResp{},
 		types.UserListResp{},
-		types.WorkspaceListResp{},
 		types.AssetListResp{},
 		types.VulListResp{},
 		types.WorkerListResp{},

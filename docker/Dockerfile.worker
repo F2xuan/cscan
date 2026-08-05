@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 复制依赖文件并下载
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # 复制源代码
 COPY . .
@@ -24,11 +25,15 @@ RUN mkdir -p /app/data && \
     curl -sL "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v6.xdb" -o /app/data/ip2region_v6.xdb
 
 # 编译 worker（纯 Go 静态二进制）
-RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${VERSION}" \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${VERSION}" \
         -o /cscan-worker ./worker/main.go
 
 # 安装 ksubdomain（需要 CGO+libpcap，与运行时同 libc）
-RUN CGO_ENABLED=1 go install -v github.com/boy-hack/ksubdomain/v2/cmd/ksubdomain@latest
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go install -v github.com/boy-hack/ksubdomain/v2/cmd/ksubdomain@latest
 
 # ============ 运行阶段 ============
 FROM debian:bookworm-slim
@@ -37,11 +42,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         tzdata \
-        unzip \
         nmap \
         masscan \
-        curl \
-        dnsutils \
         chromium \
         fonts-noto-cjk \
         util-linux \

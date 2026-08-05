@@ -252,12 +252,6 @@
               </el-icon>
               <template #title>{{ $t('navigation.brandingConfig') }}</template>
             </el-menu-item>
-            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'" index="/api-docs">
-              <el-icon>
-                <Document />
-              </el-icon>
-              <template #title>{{ $t('navigation.apiDocs') }}</template>
-            </el-menu-item>
           </el-sub-menu>
 
         </el-menu>

@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
-	"sort"
-	"strings"
 	"time"
 
 	"cscan/api/internal/logic/common"
@@ -240,38 +238,6 @@ func inventorySortField(sortBy string) string {
 		return "port"
 	default: // "time", "time-desc", ""
 		return "-update_time"
-	}
-}
-
-// sortAssets 对资产进行排序
-// 优化点：原 O(n²) 冒泡排序在数据量大时 CPU 飙升；改用 sort.Slice O(n log n)
-func sortAssets(assets []types.AssetInventoryItem, sortBy string) {
-	switch sortBy {
-	case "name", "name-asc":
-		// 按主机名升序
-		sort.Slice(assets, func(i, j int) bool {
-			return strings.ToLower(assets[i].Host) < strings.ToLower(assets[j].Host)
-		})
-	case "name-desc":
-		// 按主机名降序
-		sort.Slice(assets, func(i, j int) bool {
-			return strings.ToLower(assets[i].Host) > strings.ToLower(assets[j].Host)
-		})
-	case "port":
-		// 按端口升序
-		sort.Slice(assets, func(i, j int) bool {
-			return assets[i].Port < assets[j].Port
-		})
-	case "time-asc":
-		// 按时间升序（最旧的在前）
-		sort.Slice(assets, func(i, j int) bool {
-			return assets[i].LastUpdatedFull < assets[j].LastUpdatedFull
-		})
-	case "time", "time-desc", "":
-		// 按时间降序（最新在前）
-		sort.Slice(assets, func(i, j int) bool {
-			return assets[i].LastUpdatedFull > assets[j].LastUpdatedFull
-		})
 	}
 }
 

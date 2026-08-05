@@ -148,35 +148,6 @@ func ParseGroupedWeakpassDict(content string) map[string][]WeakpassEntry {
 	return groups
 }
 
-// SplitUserPasswordDicts 分离用户名和密码字典
-// 返回: 用户名列表, 密码列表
-func SplitUserPasswordDicts(content string) ([]string, []string) {
-	entries := ParseWeakpassDict(content)
-	usernameSet := make(map[string]struct{})
-	passwordSet := make(map[string]struct{})
-
-	for _, entry := range entries {
-		if entry.Username != "" {
-			usernameSet[entry.Username] = struct{}{}
-		}
-		if entry.Password != "" {
-			passwordSet[entry.Password] = struct{}{}
-		}
-	}
-
-	usernames := make([]string, 0, len(usernameSet))
-	for u := range usernameSet {
-		usernames = append(usernames, u)
-	}
-
-	passwords := make([]string, 0, len(passwordSet))
-	for p := range passwordSet {
-		passwords = append(passwords, p)
-	}
-
-	return usernames, passwords
-}
-
 // WeakpassDictModel 弱口令字典模型
 type WeakpassDictModel struct {
 	coll *mongo.Collection
@@ -375,17 +346,17 @@ func (m *WeakpassDictModel) UpsertByName(ctx context.Context, doc *WeakpassDict)
 // 字典文件格式: [service]\nuser:pass\nuser:pass\n[service2]\nuser:pass
 func (m *WeakpassDictModel) InitBuiltinDicts(ctx context.Context) error {
 	// 确定字典文件路径
-	dictFile := "/app/poc/custom-weakpass/default-weakpass.txt"
+	dictFile := "/app/rules/weakpass/default-weakpass.txt"
 
 	// 尝试多个可能的位置
 	if _, err := os.Stat(dictFile); os.IsNotExist(err) {
-		dictFile = "poc/custom-weakpass/default-weakpass.txt"
+		dictFile = "rules/weakpass/default-weakpass.txt"
 	}
 	if _, err := os.Stat(dictFile); os.IsNotExist(err) {
-		dictFile = "../poc/custom-weakpass/default-weakpass.txt"
+		dictFile = "../rules/weakpass/default-weakpass.txt"
 	}
 	if _, err := os.Stat(dictFile); os.IsNotExist(err) {
-		dictFile = "../../poc/custom-weakpass/default-weakpass.txt"
+		dictFile = "../../rules/weakpass/default-weakpass.txt"
 	}
 	if _, err := os.Stat(dictFile); os.IsNotExist(err) {
 		logx.Errorf("[WeakpassDict] Weakpass dict file not found at: %s", dictFile)

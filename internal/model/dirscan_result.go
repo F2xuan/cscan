@@ -66,16 +66,6 @@ func NewDirScanResultModel(db *mongo.Database) *DirScanResultModel {
 	}
 }
 
-// NewDirScanResultModelWithWorkspace 多租户集合模型（与JSFinder保持一致：{workspaceId}_dirscan）
-func NewDirScanResultModelWithWorkspace(db *mongo.Database, workspaceId string) *DirScanResultModel {
-	if workspaceId == "" || workspaceId == "all" {
-		workspaceId = "default"
-	}
-	return &DirScanResultModel{
-		coll: db.Collection("dirscan"),
-	}
-}
-
 // Collection 返回底层集合（便于跨workspace查询）
 func (m *DirScanResultModel) Collection() *mongo.Collection {
 	return m.coll

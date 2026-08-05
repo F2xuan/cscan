@@ -208,6 +208,24 @@ func (m *CustomPocModel) FindWithFilter(ctx context.Context, filter bson.M, page
 	return docs, nil
 }
 
+// SelectAll 全选场景批量查询：无分页上限，仅投影选择所需轻量字段（name/template_id）
+func (m *CustomPocModel) SelectAll(ctx context.Context, filter bson.M) ([]CustomPoc, error) {
+	opts := options.Find().
+		SetSort(bson.D{{Key: "create_time", Value: -1}}).
+		SetProjection(bson.M{"name": 1, "template_id": 1})
+	cursor, err := m.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []CustomPoc
+	if err = cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	return docs, nil
+}
+
 // CountWithFilter 带筛选条件的计数
 func (m *CustomPocModel) CountWithFilter(ctx context.Context, filter bson.M) (int64, error) {
 	return m.coll.CountDocuments(ctx, filter)
@@ -480,6 +498,24 @@ func (m *NucleiTemplateModel) BulkUpsert(ctx context.Context, docs []*NucleiTemp
 	opts := options.BulkWrite().SetOrdered(false)
 	_, err := m.coll.BulkWrite(ctx, models, opts)
 	return err
+}
+
+// SelectAll 全选场景批量查询：无分页上限，仅投影选择所需轻量字段（template_id/name）
+func (m *NucleiTemplateModel) SelectAll(ctx context.Context, filter bson.M) ([]NucleiTemplate, error) {
+	opts := options.Find().
+		SetSort(bson.D{{Key: "severity", Value: 1}, {Key: "name", Value: 1}}).
+		SetProjection(bson.M{"template_id": 1, "name": 1})
+	cursor, err := m.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []NucleiTemplate
+	if err = cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	return docs, nil
 }
 
 func (m *NucleiTemplateModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]NucleiTemplate, error) {

@@ -35,9 +35,9 @@ func NewCustomImportService(fpModel *model.FingerprintModel, pocModel *model.Cus
 func (s *CustomImportService) ImportAll(ctx context.Context) {
 	time.Sleep(2 * time.Second)
 
-	pocBaseDir := "/app/poc"
+	pocBaseDir := "/app/rules"
 	if _, err := os.Stat(pocBaseDir); os.IsNotExist(err) {
-		pocBaseDir = "poc"
+		pocBaseDir = "rules"
 	}
 	if _, err := os.Stat(pocBaseDir); os.IsNotExist(err) {
 		logx.Info("[CustomImport] POC directory not found, skipping import")
@@ -51,9 +51,9 @@ func (s *CustomImportService) ImportAll(ctx context.Context) {
 
 // importCustomFingerprints 导入自定义指纹
 func (s *CustomImportService) importCustomFingerprints(ctx context.Context, baseDir string) {
-	fingerDir := filepath.Join(baseDir, "custom-finger")
+	fingerDir := filepath.Join(baseDir, "fingerprint")
 	if _, err := os.Stat(fingerDir); os.IsNotExist(err) {
-		logx.Info("[CustomImport] custom-finger directory not found, skipping")
+		logx.Info("[CustomImport] fingerprint directory not found, skipping")
 		return
 	}
 
@@ -114,9 +114,9 @@ func (s *CustomImportService) importActiveFingerprints(ctx context.Context, base
 		return
 	}
 
-	fingerDir := filepath.Join(baseDir, "custom-finger")
+	fingerDir := filepath.Join(baseDir, "fingerprint")
 	if _, err := os.Stat(fingerDir); os.IsNotExist(err) {
-		logx.Info("[CustomImport] custom-finger directory not found, skipping active fingerprints")
+		logx.Info("[CustomImport] fingerprint directory not found, skipping active fingerprints")
 		return
 	}
 
@@ -186,9 +186,9 @@ func (s *CustomImportService) importActiveFingerprints(ctx context.Context, base
 
 // importCustomPocs 导入自定义POC
 func (s *CustomImportService) importCustomPocs(ctx context.Context, baseDir string) {
-	pocDir := filepath.Join(baseDir, "custom-pocs")
+	pocDir := filepath.Join(baseDir, "pocs")
 	if _, err := os.Stat(pocDir); os.IsNotExist(err) {
-		logx.Info("[CustomImport] custom-pocs directory not found, skipping")
+		logx.Info("[CustomImport] pocs directory not found, skipping")
 		return
 	}
 
@@ -335,17 +335,6 @@ func parseNucleiPoc(content string) *model.CustomPoc {
 	}
 }
 
-// truncateError 截断错误信息
-func truncateError(err error, maxLen int) string {
-	if err == nil {
-		return ""
-	}
-	errStr := err.Error()
-	if len(errStr) > maxLen {
-		return errStr[:maxLen] + "..."
-	}
-	return errStr
-}
 
 // 为了兼容性，在ServiceContext中添加这些方法的包装
 type SyncMethods struct {
@@ -425,12 +414,12 @@ func (s *SyncMethods) initBuiltinDirScanDicts(ctx context.Context) {
 	}
 
 	// 确定字典目录路径
-	dictDir := "/app/poc/custom-url"
+	dictDir := "/app/rules/url"
 	if _, err := os.Stat(dictDir); os.IsNotExist(err) {
-		dictDir = "poc/custom-url"
+		dictDir = "rules/url"
 	}
 	if _, err := os.Stat(dictDir); os.IsNotExist(err) {
-		logx.Info("[SyncMethods] custom-url directory not found, skipping builtin dicts")
+		logx.Info("[SyncMethods] url directory not found, skipping builtin dicts")
 		return
 	}
 
@@ -507,12 +496,12 @@ func (s *SyncMethods) initBuiltinSubdomainDicts(ctx context.Context) {
 	}
 
 	// 确定字典目录路径
-	dictDir := "/app/poc/custom-subname"
+	dictDir := "/app/rules/subdomain"
 	if _, err := os.Stat(dictDir); os.IsNotExist(err) {
-		dictDir = "poc/custom-subname"
+		dictDir = "rules/subdomain"
 	}
 	if _, err := os.Stat(dictDir); os.IsNotExist(err) {
-		logx.Info("[SyncMethods] custom-subname directory not found, skipping builtin subdomain dicts")
+		logx.Info("[SyncMethods] subdomain directory not found, skipping builtin subdomain dicts")
 		return
 	}
 
@@ -583,7 +572,7 @@ func (s *SyncMethods) initBuiltinSubdomainDicts(ctx context.Context) {
 	logx.Infof("[SyncMethods] Builtin subdomain dicts initialized: %d imported, %d skipped", totalImported, totalSkipped)
 }
 
-// importHttpServiceMappings 从 poc/custom-http 目录导入HTTP服务映射配置
+// importHttpServiceMappings 从 rules/http-service 目录导入HTTP服务映射配置
 func (s *SyncMethods) importHttpServiceMappings(ctx context.Context) {
 	if s.httpServiceModel == nil {
 		logx.Info("[SyncMethods] HttpServiceModel is nil, skipping HTTP service mappings import")
@@ -591,12 +580,12 @@ func (s *SyncMethods) importHttpServiceMappings(ctx context.Context) {
 	}
 
 	// 确定配置目录路径
-	configDir := "/app/poc/custom-http"
+	configDir := "/app/rules/http-service"
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
-		configDir = "poc/custom-http"
+		configDir = "rules/http-service"
 	}
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
-		logx.Info("[SyncMethods] custom-http directory not found, skipping HTTP service mappings import")
+		logx.Info("[SyncMethods] http-service directory not found, skipping HTTP service mappings import")
 		return
 	}
 
@@ -807,7 +796,7 @@ func mergeUniquePorts(existing, newPorts []int) []int {
 }
 
 // initBuiltinBlacklist 初始化内置黑名单规则
-// 从 poc/custom-blacklist 目录读取默认黑名单，合并到现有黑名单（不重复导入）
+// 从 rules/blacklist 目录读取默认黑名单，合并到现有黑名单（不重复导入）
 func (s *SyncMethods) initBuiltinBlacklist(ctx context.Context) {
 	if s.blacklistModel == nil {
 		logx.Info("[SyncMethods] BlacklistModel is nil, skipping builtin blacklist import")
@@ -815,12 +804,12 @@ func (s *SyncMethods) initBuiltinBlacklist(ctx context.Context) {
 	}
 
 	// 确定黑名单目录路径
-	blacklistDir := "/app/poc/custom-blacklist"
+	blacklistDir := "/app/rules/blacklist"
 	if _, err := os.Stat(blacklistDir); os.IsNotExist(err) {
-		blacklistDir = "poc/custom-blacklist"
+		blacklistDir = "rules/blacklist"
 	}
 	if _, err := os.Stat(blacklistDir); os.IsNotExist(err) {
-		logx.Info("[SyncMethods] custom-blacklist directory not found, skipping builtin blacklist import")
+		logx.Info("[SyncMethods] blacklist directory not found, skipping builtin blacklist import")
 		return
 	}
 
@@ -923,7 +912,7 @@ func (s *SyncMethods) initBuiltinBlacklist(ctx context.Context) {
 }
 
 // initBuiltinWeakpassDicts 初始化内置弱口令字典
-// 从 poc/custom-weakpass 目录读取默认字典文件，导入到数据库
+// 从 rules/weakpass 目录读取默认字典文件，导入到数据库
 func (s *SyncMethods) initBuiltinWeakpassDicts(ctx context.Context) {
 	if s.weakpassDictModel == nil {
 		logx.Info("[SyncMethods] WeakpassDictModel is nil, skipping builtin weakpass dicts import")
@@ -931,16 +920,16 @@ func (s *SyncMethods) initBuiltinWeakpassDicts(ctx context.Context) {
 	}
 
 	// 确定字典目录路径
-	dictDir := "/app/poc/custom-weakpass"
+	dictDir := "/app/rules/weakpass"
 	if _, err := os.Stat(dictDir); os.IsNotExist(err) {
-		dictDir = "poc/custom-weakpass"
+		dictDir = "rules/weakpass"
 	}
 	if _, err := os.Stat(dictDir); os.IsNotExist(err) {
 		// 尝试多个可能的路径
 		possiblePaths := []string{
-			"poc/custom-weakpass/default-weakpass.txt",
-			"../poc/custom-weakpass/default-weakpass.txt",
-			"../../poc/custom-weakpass/default-weakpass.txt",
+			"rules/weakpass/default-weakpass.txt",
+			"../rules/weakpass/default-weakpass.txt",
+			"../../rules/weakpass/default-weakpass.txt",
 		}
 		for _, p := range possiblePaths {
 			if _, err := os.Stat(p); err == nil {

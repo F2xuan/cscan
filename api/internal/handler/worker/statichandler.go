@@ -67,7 +67,7 @@ services:
 
 // WorkerTuneHandler 提供 worker-tune.sh：在【目标 Worker 机】本地检测其内存/CPU，
 // 生成 host 尺寸的 docker-compose.worker.override.yml 并启动，使配置真正匹配该独立服务器。
-// （server 无法感知 client 规格，故 sizing 必须发生在 client 侧，思路与主栈 memtune.sh 一致）
+// （server 无法感知 client 规格，故 sizing 必须发生在 client 侧）
 func WorkerTuneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		content := `#!/bin/bash
@@ -75,7 +75,7 @@ func WorkerTuneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 #
 # 解决的问题: /static/docker-compose-worker.yaml 是「通用模板」（固定 2G/2 核），
 #   无法感知你部署 Worker 的独立服务器规格。本脚本在【目标 Worker 机】上检测其内存/CPU，
-#   生成 host 尺寸的 override 并启动，使配置真正匹配该独立服务器（思路同主栈 memtune.sh）。
+#   生成 host 尺寸的 override 并启动，使配置真正匹配该独立服务器。
 #
 # 用法:
 #   CSCAN_SERVER=http://YOUR_SERVER:8888 CSCAN_KEY=YOUR_KEY \

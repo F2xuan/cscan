@@ -25,12 +25,38 @@ import (
 var dirscanAIBatchTasks sync.Map // taskId -> *dirscanBatchTaskState
 
 type dirscanBatchTaskState struct {
-	mu        sync.Mutex
-	TaskId    string
-	Total     int64
-	Completed int64
-	Status    string // running/completed/failed/stopped/stopping
-	StopCh    chan struct{}
+	mu          sync.Mutex
+	TaskId      string
+	Total       int64
+	Completed   int64   // 成功研判条数
+	RiskCount   int64   // 有风险条数
+	NoRiskCount int64   // 无风险条数
+	FailedCount int64   // 研判失败条数
+	Status      string  // running/completed/failed/stopped/stopping
+	StopCh      chan struct{}
+	EndTime     time.Time // 任务结束时间（用于TTL清理）
+	consecFail  int32   // 连续AI调用失败次数（原子访问），用于熔断
+}
+
+func init() {
+	// 定期清理已完成/失败/停止超过 1 小时的批量任务，防止内存泄漏
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cutoff := time.Now().Add(-1 * time.Hour)
+			dirscanAIBatchTasks.Range(func(key, value any) bool {
+				state := value.(*dirscanBatchTaskState)
+				state.mu.Lock()
+				shouldDelete := (state.Status == "completed" || state.Status == "failed" || state.Status == "stopped") && !state.EndTime.IsZero() && state.EndTime.Before(cutoff)
+				state.mu.Unlock()
+				if shouldDelete {
+					dirscanAIBatchTasks.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
 }
 
 // DirScanLogic 目录扫描AI研判逻辑
@@ -180,6 +206,7 @@ func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatc
 	if err != nil {
 		state.mu.Lock()
 		state.Status = "failed"
+		state.EndTime = time.Now()
 		state.mu.Unlock()
 		logx.Errorf("[DirScan-AI] batch task %s config error: %v", taskId, err)
 		return
@@ -207,41 +234,69 @@ func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatc
 			defer wg.Done()
 			defer func() { <-sem }()
 
+			// 已停止/熔断，未处理数据保持待研判状态
 			if atomic.LoadInt32(&stopped) == 1 {
-				state.mu.Lock()
-				state.Completed++
-				state.mu.Unlock()
 				return
 			}
 
 			result, reason, err := l.callDirScanAIAnalysis(aiCfg, d)
+			if err != nil {
+				atomic.AddInt64(&state.FailedCount, 1)
+				logx.Errorf("[DirScan-AI] doc %s analyze error: %v", d.Id.Hex(), err)
+				// 连续失败达到阈值，判定AI服务中断并熔断后续研判
+				if atomic.AddInt32(&state.consecFail, 1) >= aiFailFastThreshold {
+					l.abortDirScanBatch(state, &stopped)
+				}
+				return
+			}
+			atomic.StoreInt32(&state.consecFail, 0)
+
 			now := time.Now()
 			aiResult := "no_risk"
-			if err == nil && result == "risk" {
+			if result == "risk" {
 				aiResult = "risk"
 			}
-			reason2use := reason
-			if err != nil {
-				reason2use = "研判失败: " + err.Error()
-				logx.Errorf("[DirScan-AI] doc %s analyze error: %v", d.Id.Hex(), err)
+			// 仅研判成功才回写库；失败保持待研判状态，便于重试
+			if err := m.UpdateAIResult(context.Background(), d.Id.Hex(), "completed", aiResult, reason, now); err != nil {
+				atomic.AddInt64(&state.FailedCount, 1)
+				logx.Errorf("[DirScan-AI] doc %s save result error: %v", d.Id.Hex(), err)
+				return
 			}
-			_ = m.UpdateAIResult(context.Background(), d.Id.Hex(), "completed", aiResult, reason2use, now)
-
-			state.mu.Lock()
-			state.Completed++
-			state.mu.Unlock()
+			if aiResult == "risk" {
+				atomic.AddInt64(&state.RiskCount, 1)
+			} else {
+				atomic.AddInt64(&state.NoRiskCount, 1)
+			}
+			atomic.AddInt64(&state.Completed, 1)
 		}(doc)
 	}
 	wg.Wait()
 
 	state.mu.Lock()
-	if atomic.LoadInt32(&stopped) == 1 {
-		state.Status = "stopped"
-	} else {
+	// 熔断（failed）与用户停止（stopping）已在执行中置位，此处只收尾运行中任务
+	switch state.Status {
+	case "running":
 		state.Status = "completed"
+	case "stopping":
+		state.Status = "stopped"
 	}
+	state.EndTime = time.Now()
 	state.mu.Unlock()
-	logx.Infof("[DirScan-AI] batch task %s finished: status=%s, completed=%d/%d", taskId, state.Status, state.Completed, state.Total)
+	logx.Infof("[DirScan-AI] batch task %s finished: status=%s, completed=%d/%d, risk=%d, noRisk=%d, failed=%d",
+		taskId, state.Status, state.Completed, state.Total, state.RiskCount, state.NoRiskCount, state.FailedCount)
+}
+
+// abortDirScanBatch AI 服务连续失败熔断，终止批量任务（仅运行中状态允许，防重复关闭 StopCh）
+func (l *DirScanLogic) abortDirScanBatch(state *dirscanBatchTaskState, stopped *int32) {
+	atomic.StoreInt32(stopped, 1)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Status != "running" {
+		return
+	}
+	state.Status = "failed"
+	close(state.StopCh)
+	logx.Errorf("[DirScan-AI] batch task %s aborted: AI service consecutive failures", state.TaskId)
 }
 
 // StopBatchTask 停止批量研判
@@ -274,7 +329,9 @@ func (l *DirScanLogic) GetBatchProgress(req *types.DirScanAIBatchProgressReq) (*
 	defer state.mu.Unlock()
 	return &types.DirScanAIBatchProgressResp{
 		Code: 0, Msg: "success",
-		Total: state.Total, Completed: state.Completed, Status: state.Status,
+		Total: state.Total, Completed: state.Completed,
+		RiskCount: state.RiskCount, NoRiskCount: state.NoRiskCount, FailedCount: state.FailedCount,
+		Status: state.Status,
 	}, nil
 }
 
@@ -529,16 +586,6 @@ func dirScanToResp(d *model.DirScanResult) *types.DirScanResult {
 	}
 }
 
-// ClearDirScanResults 清空目录扫描结果
-func (l *DirScanLogic) ClearDirScanResults(workspaceId string) (int64, error) {
-	m := l.getModel()
-	filter := bson.M{}
-	if workspaceId != "" && workspaceId != "all" {
-		filter["workspace_id"] = workspaceId
-	}
-	return m.DeleteMany(l.ctx, filter)
-}
-
 // ==================== AI研判辅助方法 ====================
 
 func (l *DirScanLogic) loadDirScanAIConfig(workspaceId string) (*model.APIConfig, error) {
@@ -567,7 +614,7 @@ func (l *DirScanLogic) loadDirScanAIConfigWithCtx(ctx context.Context, workspace
 func (l *DirScanLogic) callDirScanAIAnalysis(cfg *model.APIConfig, doc *model.DirScanResult) (string, string, error) {
 	client := NewAIClientFromConfig(cfg)
 	prompt := buildDirScanAnalysisPrompt(doc)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), aiCallTimeout)
 	defer cancel()
 	content, err := client.Chat(ctx, prompt, 1024)
 	if err != nil {

@@ -32,14 +32,6 @@ func (e *APIError) WithDetails(details interface{}) *APIError {
 	}
 }
 
-// NewErrorType creates a new error type
-func NewErrorType(code string, status int) *APIError {
-	return &APIError{
-		Code:   code,
-		Status: status,
-	}
-}
-
 // ==================== Standard Error Types ====================
 
 var (

@@ -10,7 +10,6 @@ export const useUserStore = defineStore('user', () => {
   const userId = ref(localStorage.getItem('userId') || '')
   const username = ref(localStorage.getItem('username') || '')
   const role = ref(localStorage.getItem('role') || '')
-  const workspaceId = ref(localStorage.getItem('workspaceId') || '')
   const avatar = ref(localStorage.getItem('avatar') || '')
   const profile = ref({
     email: '',
@@ -31,13 +30,11 @@ export const useUserStore = defineStore('user', () => {
       userId.value = res.userId
       username.value = res.username
       role.value = res.role
-      workspaceId.value = res.workspaceId || ''
 
       localStorage.setItem('token', res.token)
       localStorage.setItem('userId', res.userId)
       localStorage.setItem('username', res.username)
       localStorage.setItem('role', res.role)
-      localStorage.setItem('workspaceId', res.workspaceId || '')
 
       await refreshProfile()
     }
@@ -98,7 +95,6 @@ export const useUserStore = defineStore('user', () => {
     userId.value = ''
     username.value = ''
     role.value = ''
-    workspaceId.value = ''
     avatar.value = ''
     profile.value = { email: '', phone: '', status: '', lastLoginTime: 0, createTime: 0 }
 
@@ -106,7 +102,6 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
     localStorage.removeItem('role')
-    localStorage.removeItem('workspaceId')
     localStorage.removeItem('avatar')
   }
 
@@ -115,7 +110,6 @@ export const useUserStore = defineStore('user', () => {
     userId,
     username,
     role,
-    workspaceId,
     avatar,
     avatarSrc,
     profile,

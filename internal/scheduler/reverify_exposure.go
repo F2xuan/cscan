@@ -2,44 +2,44 @@ package scheduler
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"strings"
-	"sync"
+	"encoding/json"
 	"time"
 
 	"cscan/internal/model"
-	"cscan/pkg/httpclient"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// 敏感信息复验默认参数（T3.4）
-const (
-	defaultExposureProbeTimeout = 5 * time.Second // 单 URL 探测超时
-)
+// 探测超时已随实现迁移到 Worker 侧（worker_reverify.go）
 
-// ExposureReverifier 敏感信息持续复验器（T3.4）
+// ReverifyExposureTarget 单条敏感信息复验目标（随任务下发 Worker 执行）
+type ReverifyExposureTarget struct {
+	Kind      string   `json:"kind"` // "jsfinder" / "dirscan"
+	Id        string   `json:"id"`
+	Url       string   `json:"url"`
+	Extracted []string `json:"extracted,omitempty"` // 原泄露内容特征（软 404 内容兜底）
+}
+
+// ExposureReverifier 敏感信息持续复验调度器（T3.4）
 //
 // 设计要点（对齐 T3.3 弱口令复验，且匹配实际数据存储架构）：
-//   - 敏感信息发现产物存于独立集合 {wsId}_jsfinder（URL + ExtractedResults）与全局 dirscan_result（URL + StatusCode），
-//     并不写入 {wsId}_vul（deriveRiskSource 不产出 auto:info-leak，且 jsfinder/dirscan 不走 gRPC SaveVulResult）。
-//     故复验直接探测这些发现集合中的 URL，而非 {wsId}_vul 的 risk_source=auto:info-leak（该路径当前无数据）。
-//   - 严格区分"目标不可达（连不上）"与"已不可访问（404/410）"：不可达仅标记待确认，不误判为已修复（验收标准 3）。
-//   - 内容特征兜底（验收标准 4）：URL 仍返回 200（软 404）时，若原 ExtractedResults 敏感内容已不在响应体中，
-//     判定为已修复（内容消失）；若仍包含敏感内容，判定为仍泄露。
+//   - 敏感信息发现产物存于独立集合 jsfinder（URL + ExtractedResults）与全局 dirscan_result（URL + StatusCode），
+//     并不写入 vul（deriveRiskSource 不产出 auto:info-leak，且 jsfinder/dirscan 不走 gRPC SaveVulResult）。
+//     故复验直接探测这些发现集合中的 URL，而非 vul 的 risk_source=auto:info-leak（该路径当前无数据）。
+//   - 探测动作全部由 Worker 执行（R8）：本器只负责到期判定、目标查询与任务入队；
+//     Worker 复验完成后经 /api/v1/worker/reverify/result 回传，由 API 侧完成状态回写、通知与 NextRunTime 回写。
 type ExposureReverifier struct {
-	db     *mongo.Database
-	sender ReverifySender
+	db    *mongo.Database
+	sched *Scheduler
 }
 
-// NewExposureReverifier 创建敏感信息复验器
-func NewExposureReverifier(db *mongo.Database, sender ReverifySender) *ExposureReverifier {
-	return &ExposureReverifier{db: db, sender: sender}
+// NewExposureReverifier 创建敏感信息复验调度器
+func NewExposureReverifier(db *mongo.Database, sched *Scheduler) *ExposureReverifier {
+	return &ExposureReverifier{db: db, sched: sched}
 }
 
-// Run 执行一次全量复验（手动触发或 runNow 端点调用）——忽略 NextRunTime，立即执行所有启用的 workspace
+// Run 执行一次全量复验（手动触发或 runNow 端点调用）——忽略 NextRunTime，立即下发所有启用的 workspace
 func (r *ExposureReverifier) Run(ctx context.Context) error {
 	configModel := model.NewReverifyConfigModel(r.db)
 	configs, err := configModel.FindEnabledExposure(ctx)
@@ -52,12 +52,13 @@ func (r *ExposureReverifier) Run(ctx context.Context) error {
 		return nil
 	}
 	for _, cfg := range configs {
-		r.reverifyWorkspace(ctx, cfg)
+		r.dispatchWorkspace(ctx, cfg)
 	}
 	return nil
 }
 
-// RunDue sweep 模式：仅执行 NextRunTime <= now 且启用的 workspace（修复 H-8，尊重用户配置的 CronSpec）
+// RunDue sweep 模式：仅下发 NextRunTime <= now 且启用的 workspace（修复 H-8，尊重用户配置的 CronSpec）
+// 执行后的 NextRunTime 由 Worker 结果回传时按各自 CronSpec 计算回写。
 func (r *ExposureReverifier) RunDue(ctx context.Context) {
 	configModel := model.NewReverifyConfigModel(r.db)
 	configs, err := configModel.FindEnabledExposure(ctx)
@@ -70,12 +71,12 @@ func (r *ExposureReverifier) RunDue(ctx context.Context) {
 		if !cfg.NextRunTime.IsZero() && cfg.NextRunTime.After(now) {
 			continue
 		}
-		logx.Infof("[ExposureReverifier] reverify config due (next_run=%v), running", cfg.NextRunTime)
-		r.reverifyWorkspace(ctx, cfg)
+		logx.Infof("[ExposureReverifier] reverify config due (next_run=%v), dispatching", cfg.NextRunTime)
+		r.dispatchWorkspace(ctx, cfg)
 	}
 }
 
-// RunWorkspace 对单个工作空间立即执行复验（供 runNow 端点调用）
+// RunWorkspace 对单个工作空间立即下发复验（供 runNow 端点调用）
 func (r *ExposureReverifier) RunWorkspace(ctx context.Context, workspaceId string) error {
 	configModel := model.NewReverifyConfigModel(r.db)
 	cfg, err := configModel.GetByWorkspace(ctx, workspaceId)
@@ -86,36 +87,19 @@ func (r *ExposureReverifier) RunWorkspace(ctx context.Context, workspaceId strin
 		logx.Infof("[ExposureReverifier] workspace=%s 敏感信息复验未启用，skip", workspaceId)
 		return nil
 	}
-	r.reverifyWorkspace(ctx, *cfg)
+	r.dispatchWorkspace(ctx, *cfg)
 	return nil
 }
 
-// exposureOutcome 探测分类结果
-type exposureOutcome int
-
-const (
-	exposurePending  exposureOutcome = iota // 目标不可达，待确认（不误判为已修复）
-	exposureResolved                        // 已确认不可访问 / 内容已消失 → 视为修复
-	exposureVerified                        // 仍存在 / 仍暴露
-)
-
-// exposureTarget 单个复验目标
-type exposureTarget struct {
-	kind      string // "jsfinder" / "dirscan"
-	id        string
-	url       string
-	extracted []string // 原泄露内容特征（用于软 404 内容兜底）
-}
-
-// reverifyWorkspace 复验单个工作空间的敏感信息泄露
-func (r *ExposureReverifier) reverifyWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
+// dispatchWorkspace 收集待复验敏感信息并构造复验任务入队（探测由 Worker 执行）
+func (r *ExposureReverifier) dispatchWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
 	wsId := "default"
 	now := time.Now()
 
 	targets := r.collectTargets(ctx, wsId)
 	if len(targets) == 0 {
 		logx.Infof("[ExposureReverifier] workspace=%s 无待复验敏感信息，skip", wsId)
-		_ = model.NewReverifyConfigModel(r.db).UpdateRunState(ctx, wsId, now, "success", 0, "", nextReverifyRunTime(cfg.CronSpec, now))
+		_ = model.NewReverifyConfigModel(r.db).UpdateRunState(ctx, wsId, now, "success", 0, "", NextReverifyRunTime(cfg.CronSpec, now))
 		return
 	}
 
@@ -130,62 +114,37 @@ func (r *ExposureReverifier) reverifyWorkspace(ctx context.Context, cfg model.Re
 		targets = targets[:maxTargets]
 	}
 
-	concurrency := cfg.Concurrency
-	if concurrency <= 0 {
-		concurrency = defaultReverifyConcurrency
+	cfgBytes, mErr := json.Marshal(map[string]interface{}{
+		"taskType":    "reverify_exposure",
+		"workspaceId": wsId,
+		"targets":     targets,
+	})
+	if mErr != nil {
+		logx.Errorf("[ExposureReverifier] workspace=%s marshal reverify task failed: %v", wsId, mErr)
+		return
 	}
-
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var resolved, verified, pending []exposureTarget
-
-	for _, t := range targets {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(t exposureTarget) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			outcome := probeExposure(ctx, t, defaultExposureProbeTimeout)
-			mu.Lock()
-			switch outcome {
-			case exposureResolved:
-				resolved = append(resolved, t)
-			case exposureVerified:
-				verified = append(verified, t)
-			default:
-				pending = append(pending, t)
-			}
-			mu.Unlock()
-		}(t)
+	task := &TaskInfo{
+		WorkspaceId: wsId,
+		TaskName:    "reverify_exposure",
+		Config:      string(cfgBytes),
+		Priority:    PriorityNormal,
 	}
-	wg.Wait()
-
-	// 回写各记录复验状态
-	r.applyOutcome(ctx, wsId, resolved, exposureResolved)
-	r.applyOutcome(ctx, wsId, verified, exposureVerified)
-	r.applyOutcome(ctx, wsId, pending, exposurePending)
-
-	resolvedCount := len(resolved)
-	verifiedCount := len(verified)
-	pendingCount := len(pending)
-
-	// 回写运行状态（不触碰配置字段）
-	_ = model.NewReverifyConfigModel(r.db).UpdateRunState(ctx, wsId, now, "success", len(targets), "", nextReverifyRunTime(cfg.CronSpec, now))
-
-	// 通知（修复/不可访问确认汇总，走 T1.4 的 FixedVulCount 进通知）
-	if resolvedCount > 0 {
-		sendReverifyNotify(ctx, r.sender, buildReverifyNotify("exposure-reverify", "敏感信息持续复验", wsId, resolvedCount), wsId, "exposure-reverify")
+	if pErr := r.sched.PushTask(ctx, task); pErr != nil {
+		logx.Errorf("[ExposureReverifier] workspace=%s PushTask failed: %v", wsId, pErr)
+		return
 	}
-
-	logx.Infof("[ExposureReverifier] workspace=%s 复验完成: 共%d 已修复/不可访问%d 仍暴露%d 不可达%d",
-		wsId, len(targets), resolvedCount, verifiedCount, pendingCount)
+	// 入队即推进 NextRunTime：否则每分钟 sweep 会持续命中同一到期配置，
+	// 在 Worker 回传结果前重复下发任务。终态状态由结果回传时回写。
+	if uErr := model.NewReverifyConfigModel(r.db).MarkDispatched(ctx, now, len(targets), NextReverifyRunTime(cfg.CronSpec, now)); uErr != nil {
+		logx.Errorf("[ExposureReverifier] workspace=%s 推进复验调度状态失败: %v", wsId, uErr)
+	}
+	logx.Infof("[ExposureReverifier] workspace=%s 已下发敏感信息复验任务: %d 个目标（worker 执行，结果回传后回写状态）",
+		wsId, len(targets))
 }
 
 // collectTargets 收集待复验的敏感信息泄露目标（jsfinder 泄露发现 + dirscan 已发现路径）
-func (r *ExposureReverifier) collectTargets(ctx context.Context, wsId string) []exposureTarget {
-	var targets []exposureTarget
+func (r *ExposureReverifier) collectTargets(ctx context.Context, wsId string) []ReverifyExposureTarget {
+	var targets []ReverifyExposureTarget
 
 	// 1) JSFinder 泄露发现（含 info-leak / sensitive / high-risk 标签，URL + 原泄露内容特征）
 	jsModel := model.NewJSFinderResultModel(r.db, wsId)
@@ -197,11 +156,11 @@ func (r *ExposureReverifier) collectTargets(ctx context.Context, wsId string) []
 			if j.URL == "" {
 				continue
 			}
-			targets = append(targets, exposureTarget{
-				kind:      "jsfinder",
-				id:        j.Id.Hex(),
-				url:       j.URL,
-				extracted: j.ExtractedResults,
+			targets = append(targets, ReverifyExposureTarget{
+				Kind:      "jsfinder",
+				Id:        j.Id.Hex(),
+				Url:       j.URL,
+				Extracted: j.ExtractedResults,
 			})
 		}
 	}
@@ -216,109 +175,13 @@ func (r *ExposureReverifier) collectTargets(ctx context.Context, wsId string) []
 			if d.URL == "" {
 				continue
 			}
-			targets = append(targets, exposureTarget{
-				kind: "dirscan",
-				id:   d.Id.Hex(),
-				url:  d.URL,
+			targets = append(targets, ReverifyExposureTarget{
+				Kind: "dirscan",
+				Id:   d.Id.Hex(),
+				Url:  d.URL,
 			})
 		}
 	}
 
 	return targets
-}
-
-// probeExposure 探测敏感 URL 的可访问性并分类（纯函数，便于单测）。
-func probeExposure(ctx context.Context, t exposureTarget, timeout time.Duration) exposureOutcome {
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, t.url, nil)
-	if err != nil {
-		// URL 非法 → 视为不可达，待确认
-		return exposurePending
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CScan-Reverify/1.0)")
-
-	resp, err := httpclient.Do(req)
-	if err != nil {
-		// 连接拒绝 / 超时 / DNS 失败 / TLS 错误：目标不可达，仅标记待确认，不误判为已修复（验收标准 3）
-		return exposurePending
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusNotFound, http.StatusGone: // 404 / 410：资源已移除 → 已修复
-		return exposureResolved
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout: // 5xx：暂态错误，不判定为已修复
-		return exposurePending
-	case http.StatusForbidden, http.StatusUnauthorized, http.StatusMethodNotAllowed: // 403/401/405：仍存在但访问受限 → 仍暴露
-		return exposureVerified
-	}
-
-	// 2xx / 3xx（或其它 4xx）：可达。内容特征兜底（验收标准 4）：
-	// 若原泄露内容（ExtractedResults）非空且当前响应体中已不再出现 → 视为已修复（软 404 / 内容消失）。
-	if len(t.extracted) > 0 {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
-		if readErr == nil {
-			bodyLower := strings.ToLower(string(body))
-			stillLeaking := false
-			for _, ex := range t.extracted {
-				if ex == "" {
-					continue
-				}
-				if strings.Contains(bodyLower, strings.ToLower(ex)) {
-					stillLeaking = true
-					break
-				}
-			}
-			if !stillLeaking {
-				return exposureResolved
-			}
-		}
-	}
-	return exposureVerified
-}
-
-// applyOutcome 将分类结果回写到对应集合的记录
-func (r *ExposureReverifier) applyOutcome(ctx context.Context, wsId string, items []exposureTarget, outcome exposureOutcome) {
-	if len(items) == 0 {
-		return
-	}
-	var jsIds, dirIds []string
-	for _, it := range items {
-		switch it.kind {
-		case "jsfinder":
-			jsIds = append(jsIds, it.id)
-		case "dirscan":
-			dirIds = append(dirIds, it.id)
-		}
-	}
-	status := reverifyStatusFromOutcome(outcome)
-	now := time.Now()
-	pending := outcome == exposurePending
-
-	if len(jsIds) > 0 {
-		jsModel := model.NewJSFinderResultModel(r.db, wsId)
-		if err := jsModel.MarkReverify(ctx, jsIds, status, now, pending); err != nil {
-			logx.Errorf("[ExposureReverifier] workspace=%s mark jsfinder reverify failed: %v", wsId, err)
-		}
-	}
-	if len(dirIds) > 0 {
-		dirModel := model.NewDirScanResultModel(r.db)
-		if err := dirModel.MarkReverify(ctx, dirIds, status, now, pending); err != nil {
-			logx.Errorf("[ExposureReverifier] workspace=%s mark dirscan reverify failed: %v", wsId, err)
-		}
-	}
-}
-
-// reverifyStatusFromOutcome 将分类结果映射为存储状态串
-func reverifyStatusFromOutcome(o exposureOutcome) string {
-	switch o {
-	case exposureResolved:
-		return "resolved"
-	case exposureVerified:
-		return "verified"
-	default:
-		return "pending"
-	}
 }

@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
-    # 内存限制配置化：可通过环境变量注入（见 MEMORY_AUTOTUNE.md）。未设置时使用默认值。
+    # 内存限制配置化：可通过环境变量注入（见 README「资源配置」）。未设置时使用默认值。
     deploy:
       resources:
         limits:

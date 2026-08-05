@@ -167,40 +167,7 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="tokenForm.scopeMode === 'custom'" :label="$t('user.tokenScopeGroups', 'API 分组')">
-          <div v-if="scopeTreeLoading" class="scope-tree-loading">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <span style="margin-left: 8px">{{ $t('user.tokenScopeLoading', '加载接口列表…') }}</span>
-          </div>
-          <div v-else-if="scopeTreeData.length && !scopeTreeFailed" class="scope-matrix">
-            <div class="scope-matrix-toolbar">
-              <el-checkbox :model-value="allSelected" :indeterminate="someSelected && !allSelected"
-                @change="handleSelectAllTree">{{ $t('user.tokenScopeSelectAll', '全选') }}</el-checkbox>
-              <el-button text size="small" :disabled="noneSelected" @click="handleSelectAllTree(false)">{{ $t('user.tokenScopeSelectNone', '全不选') }}</el-button>
-              <span class="scope-summary">{{ selectedCount }} / {{ totalCount }}</span>
-            </div>
-            <div class="scope-tree-wrap">
-              <el-tree
-                ref="scopeTreeRef"
-                :data="scopeTreeData"
-                node-key="key"
-                show-checkbox
-                :check-strictly="false"
-                :default-expanded-keys="defaultExpandedKeys"
-                :default-checked-keys="defaultCheckedKeys"
-                :props="{ label: 'label', children: 'children' }"
-                @check="onScopeTreeCheck">
-                <template #default="{ data }">
-                  <span v-if="data.type === 'leaf'" class="scope-leaf">
-                    <span class="scope-leaf-summary">{{ data.summary }}</span>
-                    <span class="scope-leaf-path">{{ data.method }} {{ data.path }}</span>
-                  </span>
-                  <span v-else>{{ data.label }}</span>
-                </template>
-              </el-tree>
-            </div>
-            <div class="scope-tip">{{ $t('user.tokenScopeTip', '未勾选的分组下所有 API 都将被拒绝') }}</div>
-          </div>
-          <div v-else class="scope-matrix">
+          <div class="scope-matrix">
             <div class="scope-matrix-toolbar">
               <el-checkbox :model-value="allSelected" :indeterminate="someSelected && !allSelected"
                 @change="handleSelectAll">{{ $t('user.tokenScopeSelectAll', '全选') }}</el-checkbox>
@@ -248,12 +215,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus, Refresh, Loading } from '@element-plus/icons-vue'
-import axios from 'axios'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { useUserStore, DEFAULT_AVATAR } from '@/stores/user'
 import {
   getUserProfile,
@@ -449,17 +415,11 @@ function showCreateTokenDialog() {
   tokenForm.expiresAt = null
   tokenForm.scopeMode = 'all'
   tokenForm.scopes = []
-  scopeTreeLoaded = false
-  scopeTreeData.value = []
-  nodeMap.clear()
   tokenDialogVisible.value = true
 }
 
-watch(() => tokenForm.scopeMode, async (mode) => {
-  if (mode === 'custom') {
-    await ensureScopeTreeLoaded()
-    nextTick(syncTreeFromScopes)
-  }
+watch(() => tokenForm.scopeMode, (mode) => {
+  if (mode === 'custom' && !scopeGroups.value.length) loadScopes()
 })
 
 async function loadScopes() {
@@ -473,102 +433,6 @@ async function loadScopes() {
   } catch (e) {
     // 静默失败：分组选择器仅是辅助，失败时不阻塞 Token 创建
   }
-}
-
-// ===== Scope tree state =====
-const scopeTreeData = ref([])
-const scopeTreeLoading = ref(false)
-const scopeTreeFailed = ref(false)
-const scopeTreeRef = ref()
-const defaultExpandedKeys = ref([])
-const defaultCheckedKeys = ref([])
-const nodeMap = new Map()
-let scopeTreeLoaded = false
-
-function rebuildNodeMap(nodes) {
-  nodeMap.clear()
-  walkTree(nodes, n => nodeMap.set(n.key, n))
-}
-
-function collectLeafKeys(nodes) {
-  const keys = []
-  walkTree(nodes, n => { if (n.type === 'leaf') keys.push(n.key) })
-  return keys
-}
-
-function collectDefaultExpanded(nodes) {
-  const keys = []
-  walkTree(nodes, n => {
-    if (n.type === 'group') keys.push(n.key)
-  })
-  return keys
-}
-
-async function ensureScopeTreeLoaded() {
-  if (scopeTreeLoaded && scopeTreeData.value.length) return
-  scopeTreeLoading.value = true
-  scopeTreeFailed.value = false
-  try {
-    if (!scopeGroups.value.length) {
-      await loadScopes()
-    }
-    if (!scopeGroups.value.length) {
-      scopeTreeFailed.value = true
-      return
-    }
-    const spec = await axios.get('/swagger/doc.json')
-    const paths = spec?.data?.paths
-    if (!paths) {
-      scopeTreeFailed.value = true
-      return
-    }
-    const whitelist = new Set(scopeGroups.value.map(g => g.value))
-    const endpoints = flattenSwaggerPaths(paths, whitelist)
-    const tree = buildScopeTree(endpoints, scopeGroups.value)
-    scopeTreeData.value = tree
-    rebuildNodeMap(tree)
-    defaultExpandedKeys.value = collectDefaultExpanded(tree)
-    scopeTreeLoaded = true
-  } catch (e) {
-    scopeTreeFailed.value = true
-    ElMessage.warning(t('user.tokenScopeLoadFailed', '接口列表加载失败，已回退到分组选择'))
-  } finally {
-    scopeTreeLoading.value = false
-  }
-}
-
-function syncTreeFromScopes() {
-  const refEl = scopeTreeRef.value
-  if (!refEl) return
-  const scopeSet = new Set(tokenForm.scopes)
-  const leafKeys = []
-  walkTree(scopeTreeData.value, n => {
-    if (n.type === 'leaf' && scopeSet.has(n.value)) leafKeys.push(n.key)
-  })
-  refEl.setCheckedKeys(leafKeys)
-}
-
-function onScopeTreeCheck() {
-  const refEl = scopeTreeRef.value
-  if (!refEl) return
-  const checkedLeafKeys = refEl.getCheckedKeys(true) || []
-  const scopes = new Set()
-  for (const k of checkedLeafKeys) {
-    const n = nodeMap.get(k)
-    if (n && n.value) scopes.add(n.value)
-  }
-  tokenForm.scopes = Array.from(scopes)
-}
-
-function handleSelectAllTree(val) {
-  const refEl = scopeTreeRef.value
-  if (!refEl) return
-  if (val) {
-    refEl.setCheckedKeys(collectLeafKeys(scopeTreeData.value))
-  } else {
-    refEl.setCheckedKeys([])
-  }
-  onScopeTreeCheck()
 }
 
 const ACTION_LABELS = {
@@ -590,123 +454,6 @@ function scopeLabel(value) {
   const grpLabel = group ? group.label : g
   if (!a) return grpLabel
   return `${grpLabel}·${actionLabel(a)}`
-}
-
-// ===== Scope tree helpers (与 middleware/scopes.go 同构) =====
-const VERB_FULL_MAP = {
-  // create
-  save: 'create', create: 'create', add: 'create', insert: 'create', import: 'create', upload: 'create', new: 'create', register: 'create', generate: 'create', install: 'create', refresh: 'create', open: 'create', start: 'create', enable: 'create', recover: 'create', retry: 'create', batchImport: 'create', rename: 'create',
-  // update
-  update: 'update', set: 'update', edit: 'update', modify: 'update', change: 'update', rename: 'update', clear: 'update', reset: 'update', enable: 'update', disable: 'update', recover: 'update', retry: 'update', reload: 'update', refresh: 'update', restart: 'update', updateLabels: 'update', updateMemo: 'update', updateColorTag: 'update', updateEnabled: 'update', config: 'update', sync: 'update', start: 'update', stop: 'update', pause: 'update', resume: 'update',
-  // delete
-  delete: 'delete', remove: 'delete', clear: 'delete', clearAll: 'delete', destroy: 'delete', drop: 'delete', offline: 'delete',
-  // read
-  list: 'read', get: 'read', stat: 'read', detail: 'read', count: 'read', search: 'read', export: 'read', history: 'read', validate: 'read', download: 'read', query: 'read', queryResult: 'read', check: 'read', info: 'read', audit: 'read', files: 'read', categories: 'read', tree: 'read', scanAssets: 'read'
-}
-
-const VERB_PREFIX = [
-  ['batchDelete', 'delete'],
-  ['batchRemove', 'delete'],
-  ['batchUpdate', 'update'],
-  ['batchEnable', 'update'],
-  ['batchDisable', 'update'],
-  ['batchValidate', 'read'],
-  ['batchImport', 'create'],
-  ['batchScanAssets', 'read']
-]
-
-function actionOfPath(tail) {
-  if (!tail) return 'read'
-  if (VERB_FULL_MAP[tail] === 'delete' || VERB_FULL_MAP[tail] === 'remove') return 'delete'
-  if (VERB_FULL_MAP[tail] === 'create') return 'create'
-  if (VERB_FULL_MAP[tail] === 'update') return 'update'
-  for (const [prefix, action] of VERB_PREFIX) {
-    if (tail.startsWith(prefix)) return action
-  }
-  if (tail.startsWith('batchDelete') || tail.startsWith('batchRemove')) return 'delete'
-  if (tail.startsWith('batchUpdate') || tail.startsWith('batchEnable') || tail.startsWith('batchDisable')) return 'update'
-  if (VERB_FULL_MAP[tail]) return VERB_FULL_MAP[tail]
-  return 'read'
-}
-
-function groupOfPath(path) {
-  if (!path) return ''
-  if (!path.startsWith('/api/v1/')) return ''
-  const rest = path.slice('/api/v1/'.length)
-  const seg = rest.split('/')[0] || ''
-  return seg
-}
-
-function flattenSwaggerPaths(paths, groupWhitelist) {
-  const endpoints = []
-  if (!paths) return endpoints
-  for (const [p, methods] of Object.entries(paths)) {
-    const group = groupOfPath(p)
-    if (!group || !groupWhitelist.has(group)) continue
-    for (const [method, op] of Object.entries(methods)) {
-      const upper = method.toUpperCase()
-      if (!['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(upper)) continue
-      const segs = p.split('/')
-      const tail = segs[segs.length - 1] || ''
-      endpoints.push({
-        group,
-        action: actionOfPath(tail),
-        path: p,
-        method: upper,
-        summary: op?.summary || `${upper} ${p}`
-      })
-    }
-  }
-  return endpoints
-}
-
-function buildScopeTree(endpoints, scopeGroups) {
-  const groupLabelMap = new Map(scopeGroups.map(g => [g.value, g.label]))
-  const groupOrder = scopeGroups.map(g => g.value)
-  const byGroup = new Map()
-  for (const ep of endpoints) {
-    if (!byGroup.has(ep.group)) byGroup.set(ep.group, [])
-    byGroup.get(ep.group).push(ep)
-  }
-  const actionOrder = ['read', 'create', 'update', 'delete']
-  const trees = []
-  for (const g of groupOrder) {
-    if (!byGroup.has(g)) continue
-    const eps = byGroup.get(g)
-    eps.sort((a, b) => {
-      const ai = actionOrder.indexOf(a.action)
-      const bi = actionOrder.indexOf(b.action)
-      if (ai !== bi) return ai - bi
-      return (a.path || '').localeCompare(b.path || '')
-    })
-    const groupNode = {
-      key: `g:${g}`,
-      label: groupLabelMap.get(g) || g,
-      type: 'group',
-      group: g,
-      value: g,
-      children: eps.map(ep => ({
-        key: `g:${g}:p:${ep.method}:${ep.path}`,
-        label: `${ep.method} ${ep.path}`,
-        type: 'leaf',
-        group: g,
-        action: ep.action,
-        value: `${g}:${ep.action}`,
-        method: ep.method,
-        path: ep.path,
-        summary: ep.summary
-      }))
-    }
-    if (groupNode.children.length) trees.push(groupNode)
-  }
-  return trees
-}
-
-function walkTree(nodes, visitor) {
-  for (const n of nodes || []) {
-    visitor(n)
-    if (n.children) walkTree(n.children, visitor)
-  }
 }
 
 // ===== Scope matrix: 全选 / 全不选 / 单组全选 =====
@@ -881,38 +628,6 @@ onMounted(() => {
   border: 1px solid var(--el-border-color);
   border-radius: 8px;
   padding: 12px 16px;
-
-  .scope-tree-wrap {
-    max-height: 56vh;
-    overflow-y: auto;
-    border: 1px solid var(--el-border-color-lighter);
-    border-radius: 6px;
-    padding: 8px 12px;
-    margin-bottom: 8px;
-  }
-
-  .scope-leaf {
-    display: inline-flex;
-    flex-direction: column;
-    line-height: 1.2;
-  }
-  .scope-leaf-summary {
-    font-size: 12px;
-  }
-  .scope-leaf-path {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-
-  .scope-tree-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    border: 1px solid var(--el-border-color);
-    border-radius: 8px;
-  }
 
   .scope-matrix-toolbar {
     display: flex;

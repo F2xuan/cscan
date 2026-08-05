@@ -9,12 +9,10 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
 	"cscan/pkg/utils"
-	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // TaskBuilder handles common task creation logic
@@ -32,13 +30,6 @@ func NewTaskBuilder(ctx context.Context, svcCtx *svc.ServiceContext) *TaskBuilde
 		log:      logx.WithContext(ctx),
 		Priority: scheduler.PriorityLow,
 	}
-}
-
-// WithPriority 设置入队优先级（不改变现有调用点行为，默认 PriorityLow）。
-// T3.5 自动深度扫描任务注入 scheduler.PriorityBackground，使其排在所有手动/正常任务之后。
-func (b *TaskBuilder) WithPriority(p int) *TaskBuilder {
-	b.Priority = p
-	return b
 }
 
 // BuildAndPushSubTasks splits targets and pushes sub-tasks to Redis queue
@@ -127,172 +118,6 @@ func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, 
 	}
 
 	return b.svcCtx.Scheduler.PushTask(b.ctx, schedTask)
-}
-
-func (b *TaskBuilder) prewriteInitialAssets(workspaceId string, task *model.MainTask, taskConfig map[string]interface{}, batches []string) error {
-	assetModel := b.svcCtx.GetAssetModel(workspaceId)
-	orgId, _ := taskConfig["orgId"].(string)
-	assets := collectInitialAssets(batches)
-
-	for _, asset := range assets {
-		if err := b.upsertInitialAsset(assetModel, task, asset, orgId); err != nil {
-			b.log.Errorf("TaskBuilder: prewrite asset failed for task %s target %s: %v", task.TaskId, buildPrewriteAssetKey(asset), err)
-		}
-	}
-
-	return nil
-}
-
-func collectInitialAssets(batches []string) []*scanner.Asset {
-	// Scheme 2: Pass a generator that avoids synchronous DNS lookups during API request
-	return collectInitialAssetsWithGenerator(batches, scanner.GenerateAssetsFromTargetsWithoutDNS)
-}
-
-func collectInitialAssetsWithGenerator(batches []string, generator func(string) []*scanner.Asset) []*scanner.Asset {
-	seen := make(map[string]struct{})
-	collected := make([]*scanner.Asset, 0)
-
-	for _, batch := range batches {
-		assets := generator(batch)
-		for _, asset := range assets {
-			if asset == nil || asset.Host == "" {
-				continue
-			}
-
-			key := buildPrewriteAssetKey(asset)
-			if key == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			collected = append(collected, asset)
-		}
-	}
-
-	return collected
-}
-
-func buildPrewriteAssetKey(asset *scanner.Asset) string {
-	if asset == nil {
-		return ""
-	}
-	if asset.Port > 0 {
-		return fmt.Sprintf("%s:%d", asset.Host, asset.Port)
-	}
-	return asset.Authority
-}
-
-func (b *TaskBuilder) upsertInitialAsset(assetModel *model.AssetModel, task *model.MainTask, scanAsset *scanner.Asset, orgId string) error {
-	asset := convertScannerAssetToModelAsset(task, scanAsset, orgId)
-
-	var existing *model.Asset
-	var err error
-	if asset.Port > 0 {
-		existing, err = assetModel.FindByHostPort(b.ctx, asset.Host, asset.Port)
-	} else {
-		existing, err = assetModel.FindByAuthorityOnly(b.ctx, asset.Authority)
-	}
-
-	if err != nil && err != mongo.ErrNoDocuments {
-		return err
-	}
-
-	if existing == nil {
-		asset.IsNewAsset = true
-		asset.IsUpdated = false
-		asset.LastTaskId = ""
-		asset.FirstSeenTaskId = task.TaskId
-		asset.LastStatusChangeTime = time.Now()
-		return assetModel.Insert(b.ctx, asset)
-	}
-
-	// task_builder 仅承担"预写"职责：仅补齐 existing 缺失的字段，
-	// 不覆盖已有的业务字段、不强制推进 update_time / update 标志。
-	// 预写是从用户输入推断的字段（如 IP / CName / Domain），
-	// 真正的业务字段（title/header/body）由后续扫描器回写时推进。
-	updateFields := bson.M{}
-	if len(existing.Ip.IpV4) == 0 && len(existing.Ip.IpV6) == 0 && (len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0) {
-		updateFields["ip"] = asset.Ip
-	}
-	if existing.CName == "" && asset.CName != "" {
-		updateFields["cname"] = asset.CName
-	}
-	if existing.Domain == "" && asset.Domain != "" {
-		updateFields["domain"] = asset.Domain
-	}
-	if existing.Source == "" && asset.Source != "" {
-		updateFields["source"] = asset.Source
-	}
-	if existing.OrgId == "" && asset.OrgId != "" {
-		updateFields["org_id"] = asset.OrgId
-	}
-	if existing.TaskId == "" && asset.TaskId != "" {
-		updateFields["taskId"] = asset.TaskId
-	}
-	if existing.Category == "" && asset.Category != "" {
-		updateFields["category"] = asset.Category
-	}
-	if existing.Host == "" && asset.Host != "" {
-		updateFields["host"] = asset.Host
-	}
-	if existing.Authority == "" && asset.Authority != "" {
-		updateFields["authority"] = asset.Authority
-	}
-	if existing.Port == 0 && asset.Port > 0 {
-		updateFields["port"] = asset.Port
-	}
-	if !existing.IsHTTP && asset.IsHTTP {
-		updateFields["is_http"] = asset.IsHTTP
-	}
-
-	if len(updateFields) == 0 {
-		return nil
-	}
-	return assetModel.Update(b.ctx, existing.Id.Hex(), updateFields)
-}
-
-func convertScannerAssetToModelAsset(task *model.MainTask, scanAsset *scanner.Asset, orgId string) *model.Asset {
-	now := time.Now()
-	asset := &model.Asset{
-		Authority:       scanAsset.Authority,
-		Host:            scanAsset.Host,
-		Port:            scanAsset.Port,
-		Category:        scanAsset.Category,
-		CName:           scanAsset.CName,
-		IsHTTP:          scanAsset.IsHTTP,
-		TaskId:          task.TaskId,
-		Source:          scanAsset.Source,
-		OrgId:           orgId,
-		CreateTime:      now,
-		UpdateTime:      now,
-		IsNewAsset:      true,
-		IsUpdated:       false,
-		FirstSeenTaskId: task.TaskId,
-	}
-	if asset.Source == "" {
-		asset.Source = "user_input"
-	}
-	// 复制 IconData 到 IconHashBytes（用于指纹匹配时重新计算 MMH3 hash）
-	if len(scanAsset.IconData) > 0 {
-		asset.IconHashBytes = scanAsset.IconData
-	}
-	switch scanAsset.Category {
-	case "domain":
-		asset.Domain = scanAsset.Host
-	case "ipv4":
-		asset.Ip.IpV4 = append(asset.Ip.IpV4, model.IPV4{IPName: scanAsset.Host})
-	case "ipv6":
-		asset.Ip.IpV6 = append(asset.Ip.IpV6, model.IPV6{IPName: scanAsset.Host})
-	}
-	for _, ip := range scanAsset.IPV4 {
-		asset.Ip.IpV4 = append(asset.Ip.IpV4, model.IPV4{IPName: ip.IP, Location: ip.Location})
-	}
-	for _, ip := range scanAsset.IPV6 {
-		asset.Ip.IpV6 = append(asset.Ip.IpV6, model.IPV6{IPName: ip.IP, Location: ip.Location})
-	}
-	return asset
 }
 
 func (b *TaskBuilder) cacheTaskInfo(workspaceId string, task *model.MainTask, subTaskCount, batchCount, modules int) {

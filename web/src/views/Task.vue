@@ -1515,14 +1515,8 @@ function handleSelectionChange(rows) { selectedRows.value = rows }
 
 async function handleBatchDelete() {
   if (selectedRows.value.length === 0) return
-  // 检查是否所有选中的任务都在同一个工作空间
-  const workspaceIds = [...new Set(selectedRows.value.map(row => row.workspaceId))]
-  if (workspaceIds.length > 1) {
-    ElMessage.warning(t('task.batchDeleteSameWorkspace'))
-    return
-  }
   await ElMessageBox.confirm(t('task.confirmBatchDelete', { count: selectedRows.value.length }), t('common.tip'), { type: 'warning' })
-  const res = await batchDeleteTask({ ids: selectedRows.value.map(row => row.id), workspaceId: workspaceIds[0] })
+  const res = await batchDeleteTask({ ids: selectedRows.value.map(row => row.id), workspaceId: 'default' })
   res.code === 0 ? (ElMessage.success(t('task.deleteSuccess')), selectedRows.value = [], loadData()) : ElMessage.error(res.msg)
 }
 

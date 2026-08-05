@@ -208,18 +208,6 @@ var periodicSeverityRank = map[string]int{
 	"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1, "unknown": 0,
 }
 
-func certSeverityLabel(c *model.Cert) string {
-	daysLeft := int(c.NotAfter.Sub(time.Now()).Hours() / 24)
-	switch {
-	case daysLeft < 0, daysLeft <= 7:
-		return "critical"
-	case daysLeft <= 30:
-		return "high"
-	default:
-		return "low"
-	}
-}
-
 // derivePeriodRange 根据周期类型与截止日期推导当前周期与上一周期区间
 // 修复 M-17：使用上海时区本地午夜、半开区间 [start, end) 等长不重叠。
 //   - weekly 当前区间为 7 天（原实现覆盖 8 天，上一周期覆盖 14 天）

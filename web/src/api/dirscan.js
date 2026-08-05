@@ -59,9 +59,9 @@ export function getDirScanDetail(data) {
 
 // ==================== 目录扫描 AI研判 API ====================
 
-// 单条AI研判
+// 单条AI研判（AI接口响应可能较慢，放宽单次请求超时，避免触发全局30s超时）
 export function analyzeDirByAI(data) {
-  return request.post('/dirscan/ai/analyze', data)
+  return request.post('/dirscan/ai/analyze', data, { timeout: 70000 })
 }
 
 // 批量AI研判（异步启动）

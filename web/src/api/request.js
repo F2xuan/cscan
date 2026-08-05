@@ -29,10 +29,6 @@ request.interceptors.request.use(
     if (userStore.token) {
       config.headers['Authorization'] = `Bearer ${userStore.token}`
     }
-    // 按 CLAUDE.md §3.7：请求拦截器自动注入 X-Workspace-Id，供后端鉴权中间件解析工作空间
-    if (userStore.workspaceId) {
-      config.headers['X-Workspace-Id'] = userStore.workspaceId
-    }
     return config
   },
   error => {

@@ -71,45 +71,6 @@ func (l *WorkerLogger) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
 }
 
-// TaskLogger 任务日志记录器（本地输出）
-type TaskLogger struct {
-	workerName string
-	taskId     string
-}
-
-// NewTaskLoggerLocal 创建本地任务日志记录器
-func NewTaskLoggerLocal(workerName, taskId string) *TaskLogger {
-	return &TaskLogger{
-		workerName: workerName,
-		taskId:     taskId,
-	}
-}
-
-// log 内部日志方法，输出到控制台
-func (l *TaskLogger) log(level, format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
-
-	// 输出到控制台
-	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
-}
-
-func (l *TaskLogger) Debug(format string, args ...interface{}) {
-	l.log(LevelDebug, format, args...)
-}
-
-func (l *TaskLogger) Info(format string, args ...interface{}) {
-	l.log(LevelInfo, format, args...)
-}
-
-func (l *TaskLogger) Warn(format string, args ...interface{}) {
-	l.log(LevelWarn, format, args...)
-}
-
-func (l *TaskLogger) Error(format string, args ...interface{}) {
-	l.log(LevelError, format, args...)
-}
-
 // ==================== File-based Logger (本地文件 + 游标同步) ====================
 
 // WorkerLoggerWS Worker 日志记录器
@@ -227,10 +188,6 @@ func InitGlobalFileLogger(logDir, workerName string) {
 	globalFileLogger = NewFileLogger(logDir, workerName)
 }
 
-// GetGlobalFileLogger 获取全局文件日志器
-func GetGlobalFileLogger() *FileLogger {
-	return globalFileLogger
-}
 
 // UpdateGlobalFileLoggerWorkerName 更新全局文件日志器的 worker 名称（rename 后调用）
 func UpdateGlobalFileLoggerWorkerName(name string) {

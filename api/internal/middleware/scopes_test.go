@@ -159,11 +159,21 @@ func TestScopeAllowed(t *testing.T) {
 	}
 }
 
-func TestAllScopes_CoversGroupsBy4Actions(t *testing.T) {
-	all := AllScopes()
-	// 每个已知分组（不含 "*"）衍生 4 个 <group>:<action> 组合
-	want := len(ScopeGroups()) * len(ScopeActions())
-	if got := len(all); got != want {
-		t.Errorf("AllScopes len = %d, want %d", got, want)
+// TestScopeMatrix_AllCombinationsValid 每个分组衍生的 <group>:<action> 组合都必须是合法 scope，
+// 保证前端按 ScopeGroups × ScopeActions 渲染出的矩阵不会产生服务端拒绝的 scope。
+func TestScopeMatrix_AllCombinationsValid(t *testing.T) {
+	groups := ScopeGroups()
+	actions := ScopeActions()
+	if len(groups) == 0 || len(actions) == 0 {
+		t.Fatalf("ScopeGroups=%d ScopeActions=%d，两者均不应为空", len(groups), len(actions))
+	}
+
+	for _, g := range groups {
+		for _, a := range actions {
+			scope := string(g.Value) + ":" + a
+			if !ValidScope(scope) {
+				t.Errorf("ValidScope(%q) = false，分组矩阵组合必须合法", scope)
+			}
+		}
 	}
 }

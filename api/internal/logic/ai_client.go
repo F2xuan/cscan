@@ -9,12 +9,38 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"cscan/internal/model"
 	"cscan/pkg/httpclient"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// aiCallTimeout 单次 AI 研判调用超时预算
+const aiCallTimeout = 60 * time.Second
+
+// aiFailFastThreshold 连续失败熔断阈值：AI 服务连续失败达到该次数即判定中断，终止批量研判
+const aiFailFastThreshold = 5
+
+var (
+	// aiClient AI 调用专用连接池客户端（无客户端级超时，由调用方 context 控制）
+	aiClient     *http.Client
+	aiClientOnce sync.Once
+)
+
+// aiHTTPClient 返回 AI 调用专用客户端。
+// 默认客户端带 30s 硬超时，会截断慢速 AI 接口的响应；此处不设客户端级超时，
+// 请求生命周期完全由调用方 context（aiCallTimeout）控制。
+func aiHTTPClient() *http.Client {
+	aiClientOnce.Do(func() {
+		cfg := httpclient.DefaultPoolConfig()
+		cfg.Timeout = 0
+		aiClient = httpclient.NewPooledClient(cfg)
+	})
+	return aiClient
+}
 
 // AIClient 大模型调用客户端（OpenAI/Anthropic兼容）
 type AIClient struct {
@@ -96,8 +122,7 @@ func (c *AIClient) Chat(ctx context.Context, prompt string, maxTokens int) (stri
 		return "", fmt.Errorf("AI API密钥未配置")
 	}
 
-	httpclient.Init()
-	client := httpclient.DefaultClient
+	client := aiHTTPClient()
 
 	var url string
 	var reqBody interface{}

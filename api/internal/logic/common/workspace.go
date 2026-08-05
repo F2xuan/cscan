@@ -51,8 +51,3 @@ func LoadOrgMap(ctx context.Context, svcCtx *svc.ServiceContext) map[string]stri
 func InvalidateOrgMap(svcCtx *svc.ServiceContext) {
 	svcCtx.QueryCache.Delete("org_map")
 }
-
-// InvalidateWorkspaceIds 主动失效工作空间列表缓存（工作空间 CRUD 后调用）
-// 单租户化改造后已无多工作空间列表缓存，保留为兼容空函数。
-func InvalidateWorkspaceIds(svcCtx *svc.ServiceContext) {
-}

@@ -20,7 +20,6 @@ type Config struct {
 	}
 	Redis   redis.RedisConf
 	TaskRpc zrpc.RpcClientConf
-	Console ConsoleConfig `json:",optional"`
 	Docker  DockerConfig  `json:",optional"`
 }
 

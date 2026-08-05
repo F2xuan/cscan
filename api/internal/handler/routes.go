@@ -29,7 +29,6 @@ import (
 	"cscan/api/internal/handler/worker"
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
-	"cscan/api/internal/swagger"
 	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/rest"
@@ -64,39 +63,33 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		WorkerWSHandlerInstance.SyncAllAndWait(3 * time.Second)
 	}
 
-	// 初始化审计服务
-	worker.InitAuditService(svcCtx)
+	// 健康检查处理函数（统一的健康检查逻辑）
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// 检查MongoDB连接
+		if err := svcCtx.MongoClient.Ping(r.Context(), nil); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"code":503,"msg":"MongoDB unhealthy","data":null}`))
+			return
+		}
+		// 检查Redis连接
+		if err := svcCtx.RedisClient.Ping(r.Context()).Err(); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"code":503,"msg":"Redis unhealthy","data":null}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"code":0,"msg":"healthy","data":{"status":"ok"}}`))
+	}
 
 	// 健康检查端点（无需认证）
 	server.AddRoutes(
 		[]rest.Route{
-			{Method: http.MethodGet, Path: "/health", Handler: func(w http.ResponseWriter, r *http.Request) {
-				// 检查MongoDB连接
-				if err := svcCtx.MongoClient.Ping(r.Context(), nil); err != nil {
-					http.Error(w, "MongoDB unhealthy", http.StatusServiceUnavailable)
-					return
-				}
-				// 检查Redis连接
-				if err := svcCtx.RedisClient.Ping(r.Context()).Err(); err != nil {
-					http.Error(w, "Redis unhealthy", http.StatusServiceUnavailable)
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("OK"))
-			}},
+			{Method: http.MethodGet, Path: "/health", Handler: healthHandler},
+			{Method: http.MethodGet, Path: "/api/v1/health", Handler: healthHandler},
 		},
 	)
-
-	// Swagger 文档路由（公开访问，便于开发联调）
-	server.AddRoutes([]rest.Route{
-		{Method: http.MethodGet, Path: "/swagger/doc.json", Handler: swagger.SpecHandler},
-		{Method: http.MethodGet, Path: "/swagger-ui", Handler: swagger.UIHandler},
-		{Method: http.MethodGet, Path: "/api-docs", Handler: swagger.UIHandler},
-	})
-	swagger.CollectEx(http.MethodGet, "/health", swagger.TierPublic)
-	swagger.CollectEx(http.MethodGet, "/swagger/doc.json", swagger.TierPublic)
-	swagger.CollectEx(http.MethodGet, "/swagger-ui", swagger.TierPublic)
-	swagger.CollectEx(http.MethodGet, "/api-docs", swagger.TierPublic)
 
 	// 公开路由（无需认证）- 登录接口和Worker安装相关
 	server.AddRoutes(
@@ -132,6 +125,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/vul", Handler: worker.WorkerVulResultHandler(svcCtx)},
 		// 单条漏洞复验结果回传（worker 复测完成后写入复验结论/状态，T-复验闭环）
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/vul/reverify", Handler: worker.WorkerVulReverifyHandler(svcCtx)},
+		// 持续复验批量结果回传（T3.3 弱口令 / T3.4 敏感信息，worker 执行后回传状态流转）
+		{Method: http.MethodPost, Path: "/api/v1/worker/reverify/result", Handler: worker.WorkerReverifyBatchHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/dirscan", Handler: worker.WorkerDirScanResultHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/subtask/done", Handler: worker.WorkerSubTaskDoneHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/control", Handler: worker.WorkerTaskControlHandler(svcCtx)},
@@ -165,10 +160,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		workerRoutes[i].Handler = func(w http.ResponseWriter, r *http.Request) {
 			workerAuthMiddleware.Handle(http.HandlerFunc(originalHandler)).ServeHTTP(w, r)
 		}
-	}
-
-	for _, rt := range workerRoutes {
-		swagger.CollectEx(rt.Method, rt.Path, swagger.TierWorker)
 	}
 
 	server.AddRoutes(workerRoutes)
@@ -538,9 +529,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	}
 
 	server.AddRoutes(authRoutes)
-	for _, rt := range authRoutes {
-		swagger.CollectEx(rt.Method, rt.Path, swagger.TierAuth)
-	}
 
 	// 需要管理员权限的路由（敏感操作）
 	adminRoutes := []rest.Route{
@@ -586,6 +574,14 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/blacklist/config/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
 		// M-4 接口契约兼容别名：文档中的 /blacklist/save 映射到同一个保存处理器
 		{Method: http.MethodPost, Path: "/api/v1/blacklist/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
+
+		// 容器管理（管理员权限；原随 Worker 控制台路由注册，控制台移除后并入管理员组）
+		{Method: http.MethodPost, Path: "/api/v1/container/list", Handler: container.ContainerListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/container/logs/fetch", Handler: container.ContainerLogsFetchHandler(svcCtx)},
+		// 容器日志历史(本地文件读取)
+		{Method: http.MethodGet, Path: "/api/v1/container/logs/dates", Handler: container.ContainerLogDatesHandler(svcCtx)},
+		{Method: http.MethodGet, Path: "/api/v1/container/logs/files", Handler: container.ContainerLogFilesHandler(svcCtx)},
+		{Method: http.MethodGet, Path: "/api/v1/container/logs/history", Handler: container.ContainerLogHistoryHandler(svcCtx)},
 	}
 
 	// 为管理员路由包装认证中间件 + 管理员权限中间件
@@ -598,66 +594,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 
 	if len(adminRoutes) > 0 {
 		server.AddRoutes(adminRoutes)
-		for _, rt := range adminRoutes {
-			swagger.CollectEx(rt.Method, rt.Path, swagger.TierAdmin)
-		}
 	}
-
-	// Worker控制台路由（需要认证 + 管理员权限）
-	consoleAuthMiddleware := middleware.NewConsoleAuthMiddleware(svcCtx.RedisClient)
-	consoleRoutes := []rest.Route{
-		// Worker控制台信息
-		{Method: http.MethodGet, Path: "/api/v1/worker/console/info", Handler: worker.WorkerConsoleInfoHandler(svcCtx, WorkerWSHandlerInstance)},
-		// Worker文件管理
-		{Method: http.MethodGet, Path: "/api/v1/worker/console/files", Handler: worker.WorkerFileListHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/console/files/upload", Handler: worker.WorkerFileUploadHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodGet, Path: "/api/v1/worker/console/files/download", Handler: worker.WorkerFileDownloadHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodDelete, Path: "/api/v1/worker/console/files", Handler: worker.WorkerFileDeleteHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/console/files/mkdir", Handler: worker.WorkerFileMkdirHandler(svcCtx, WorkerWSHandlerInstance)},
-		// Worker终端操作（非WebSocket）
-		{Method: http.MethodPost, Path: "/api/v1/worker/console/terminal/open", Handler: worker.WorkerTerminalOpenHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/console/terminal/close", Handler: worker.WorkerTerminalCloseHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/console/terminal/exec", Handler: worker.WorkerTerminalExecHandler(svcCtx, WorkerWSHandlerInstance)},
-		{Method: http.MethodGet, Path: "/api/v1/worker/console/terminal/history", Handler: worker.WorkerTerminalHistoryHandler(svcCtx)},
-		// 审计日志
-		{Method: http.MethodGet, Path: "/api/v1/worker/console/audit", Handler: worker.WorkerAuditLogHandler(svcCtx)},
-		{Method: http.MethodDelete, Path: "/api/v1/worker/console/audit", Handler: worker.WorkerAuditLogClearHandler(svcCtx)},
-		// 容器日志(POST 接口走 console-auth;SSE 流走单独的 token 查询参数认证)
-		{Method: http.MethodPost, Path: "/api/v1/container/list", Handler: container.ContainerListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/container/logs/fetch", Handler: container.ContainerLogsFetchHandler(svcCtx)},
-		// 容器日志历史(本地文件读取)
-		{Method: http.MethodGet, Path: "/api/v1/container/logs/dates", Handler: container.ContainerLogDatesHandler(svcCtx)},
-		{Method: http.MethodGet, Path: "/api/v1/container/logs/files", Handler: container.ContainerLogFilesHandler(svcCtx)},
-		{Method: http.MethodGet, Path: "/api/v1/container/logs/history", Handler: container.ContainerLogHistoryHandler(svcCtx)},
-	}
-
-	// 为控制台路由包装认证中间件和管理员权限中间件
-	for i := range consoleRoutes {
-		originalHandler := consoleRoutes[i].Handler
-		consoleRoutes[i].Handler = func(w http.ResponseWriter, r *http.Request) {
-			// 先进行JWT认证
-			authMiddleware.Handle(func(w http.ResponseWriter, r *http.Request) {
-				// 再进行管理员权限检查
-				consoleAuthMiddleware.Handle(http.HandlerFunc(originalHandler)).ServeHTTP(w, r)
-			}).ServeHTTP(w, r)
-		}
-	}
-
-	server.AddRoutes(consoleRoutes)
-	for _, rt := range consoleRoutes {
-		swagger.CollectEx(rt.Method, rt.Path, swagger.TierConsole)
-	}
-
-	// 终端 WebSocket 路由（单独处理，支持从 URL 参数读取 token）
-	terminalWSRoute := []rest.Route{
-		{Method: http.MethodGet, Path: "/api/v1/worker/console/terminal", Handler: worker.WorkerTerminalWSHandlerWithAuth(svcCtx, WorkerWSHandlerInstance)},
-	}
-	server.AddRoutes(terminalWSRoute)
-	for _, rt := range terminalWSRoute {
-		swagger.CollectEx(rt.Method, rt.Path, swagger.TierTerminal)
-	}
-
-	// 容器日志 SSE 路由已移除（改为文件+刷新模式）
 
 	// 开放 API（T5.5）：第三方系统只读查询资产/漏洞/证书。
 	// 复用 PAT 鉴权（含 readonly scope 校验），叠加按 token 维度的限流（超频 429）。
@@ -680,7 +617,4 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		}
 	}
 	server.AddRoutes(openAPIRoutes)
-	for _, rt := range openAPIRoutes {
-		swagger.CollectEx(rt.Method, rt.Path, swagger.TierAuth)
-	}
 }

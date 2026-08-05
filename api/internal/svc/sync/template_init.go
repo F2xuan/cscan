@@ -54,15 +54,15 @@ func InitBuiltinTemplates(templateModel *model.ScanTemplateModel) {
 	logx.Infof("[TemplateInit] Builtin templates initialized, total: %d", len(templates))
 }
 
-// loadTemplatesFromFiles 从 poc/custom-scanTemplate 目录加载模板
+// loadTemplatesFromFiles 从 rules/scan-template 目录加载模板
 func loadTemplatesFromFiles() []model.ScanTemplate {
 	var templates []model.ScanTemplate
 
 	// 尝试多个可能的路径
 	possiblePaths := []string{
-		"poc/custom-scanTemplate",
-		"../poc/custom-scanTemplate",
-		"../../poc/custom-scanTemplate",
+		"rules/scan-template",
+		"../rules/scan-template",
+		"../../rules/scan-template",
 	}
 
 	var templateDir string

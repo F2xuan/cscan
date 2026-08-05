@@ -2,44 +2,6 @@ package worker
 
 import "cscan/internal/scanner"
 
-// ToAssetDocument transforms a scanner.Asset into an AssetDocument
-// Used to consolidate mapping logic between result_sink.go and worker.go
-func ToAssetDocument(asset *scanner.Asset) AssetDocument {
-	doc := AssetDocument{
-		Authority:  asset.Authority,
-		Host:       asset.Host,
-		Port:       int32(asset.Port),
-		Category:   asset.Category,
-		Service:    asset.Service,
-		Title:      asset.Title,
-		App:        asset.App,
-		HttpStatus: asset.HttpStatus,
-		HttpHeader: asset.HttpHeader,
-		HttpBody:   asset.HttpBody,
-		Cert:       asset.Cert,
-		IconHash:   asset.IconHash,
-		IconData:   asset.IconData,
-		Screenshot: asset.Screenshot,
-		Server:     asset.Server,
-		Banner:     asset.Banner,
-		IsHttp:     asset.IsHTTP,
-		Cname:      asset.CName,
-		IsCdn:      asset.IsCDN,
-		IsCloud:    asset.IsCloud,
-		Source:     asset.Source,
-	}
-
-	for _, ip := range asset.IPV4 {
-		doc.Ipv4 = append(doc.Ipv4, IPV4Info{IP: ip.IP, Location: ip.Location})
-	}
-
-	for _, ip := range asset.IPV6 {
-		doc.Ipv6 = append(doc.Ipv6, IPV6Info{IP: ip.IP, Location: ip.Location})
-	}
-
-	return doc
-}
-
 // ToVulDocument transforms a scanner.Vulnerability into a VulDocument
 // Used to consolidate mapping logic between result_sink.go and worker.go
 func ToVulDocument(vul *scanner.Vulnerability, taskId string) VulDocument {

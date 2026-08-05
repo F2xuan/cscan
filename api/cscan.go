@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -19,7 +20,7 @@ import (
 	"cscan/internal/model"
 	"cscan/internal/onlineapi"
 	"cscan/pkg"
-	"cscan/pkg/notify"
+
 	"cscan/pkg/utils"
 	"cscan/internal/scheduler"
 
@@ -95,11 +96,15 @@ func main() {
 	}
 
 	// 创建HTTP服务器
-	server := rest.MustNewServer(c.RestConf)
+	server := rest.MustNewServer(c.RestConf,
+		rest.WithNotFoundHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"code":404,"msg":"接口不存在","data":null}`))
+		})),
+		rest.WithCors("*"), // 启用 CORS，允许所有来源（生产环境应配置具体域名）
+	)
 	defer server.Stop()
-
-	logx.Infof("Swagger UI: http://%s:%d/swagger-ui", c.Host, c.Port)
-	logx.Infof("Swagger JSON: http://%s:%d/swagger/doc.json", c.Host, c.Port)
 
 	handler.RegisterHandlers(server, svcCtx)
 
@@ -107,41 +112,15 @@ func main() {
 	schedulerSvc := scheduler.NewSchedulerService(svcCtx.Scheduler, svcCtx.RedisClient, svcCtx.SyncMethods, &cronTaskSourceAdapter{model: svcCtx.CronTaskModel})
 	go schedulerSvc.Start()
 
-	// T3.3：注入弱口令持续复验器（主侧周期任务 + 修复确认通知）。
-	// sender 复用 NotifyManager，按工作空间已启用通道发送。
-	reverifierSender := func(ctx context.Context, result *notify.NotifyResult) error {
-		mgr := notify.NewNotifyManager()
-		configs, err := svcCtx.NotifyConfigModel.FindEnabled(ctx)
-		if err != nil {
-			return err
-		}
-		items := make([]notify.ConfigItem, 0, len(configs))
-		for _, cfg := range configs {
-			items = append(items, notify.ConfigItem{
-				Provider:        cfg.Provider,
-				Config:          cfg.Config,
-				Status:          cfg.Status,
-				MessageTemplate: cfg.MessageTemplate,
-				WebURL:          cfg.WebURL,
-			})
-		}
-		if len(items) == 0 {
-			return nil // 无可用告警通道，静默跳过
-		}
-		if err := mgr.LoadConfigs(items); err != nil {
-			return err
-		}
-		return mgr.Send(ctx, result)
-	}
-	reverifier := scheduler.NewWeakPassReverifier(svcCtx.MongoDB, reverifierSender)
+	// T3.3：注入弱口令持续复验器
+	reverifier := scheduler.NewWeakPassReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
 	schedulerSvc.SetWeakPassReverifier(reverifier, "")
-	// runNow 端点通过 svcCtx 触发单工作空间立即复验（解耦 scheduler 直接依赖）
 	svcCtx.RunWeakPassReverify = func(ctx context.Context, workspaceId string) error {
 		return reverifier.RunWorkspace(ctx, workspaceId)
 	}
 
-	// T3.4：注入敏感信息（暴露面）持续复验器，复用同一 reverifierSender（修复确认通知）
-	exposureReverifier := scheduler.NewExposureReverifier(svcCtx.MongoDB, reverifierSender)
+	// T3.4：注入敏感信息（暴露面）持续复验器
+	exposureReverifier := scheduler.NewExposureReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
 	schedulerSvc.SetExposureReverifier(exposureReverifier, "")
 	svcCtx.RunExposureReverify = func(ctx context.Context, workspaceId string) error {
 		return exposureReverifier.RunWorkspace(ctx, workspaceId)
@@ -984,18 +963,3 @@ func (a *cronTaskSourceAdapter) UpdateCronTaskRunInfo(ctx context.Context, cronT
 	return a.model.UpdateByCronTaskId(ctx, cronTaskId, update)
 }
 
-// hasEnabledScanPhase 判断任务配置中是否至少启用一个扫描阶段（与 logic.hasAnyScanPhaseEnabled 逻辑一致，
-// 用于在 api 主包内校验自动深度扫描模板，避免 main→logic 额外耦合）。
-func hasEnabledScanPhase(taskConfig map[string]interface{}) bool {
-	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "dirscan", "pocscan", "brutescan", "jsfinder"}
-	for _, phase := range phases {
-		section, ok := taskConfig[phase].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if enable, ok := section["enable"].(bool); ok && enable {
-			return true
-		}
-	}
-	return false
-}

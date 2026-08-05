@@ -35,7 +35,7 @@
             :status="batchProgressStatus"
           />
           <span v-if="batchAnalyzing && batchTaskId" style="margin-left: 8px; font-size: 13px; color: var(--el-text-color-regular);">
-            {{ batchCompleted }}/{{ batchTotal }}
+            {{ batchProcessed }}/{{ batchTotal }}
           </span>
           <el-button
             v-if="batchAnalyzing && batchTaskId && batchStatus === 'running'"
@@ -210,12 +210,18 @@ const batchAnalyzing = ref(false)
 const batchTaskId = ref('')
 const batchTotal = ref(0)
 const batchCompleted = ref(0)
+const batchRiskCount = ref(0)
+const batchNoRiskCount = ref(0)
+const batchFailedCount = ref(0)
 const batchStatus = ref('')
 let batchTimer = null
 
+// 已处理条数（成功+失败），用于进度显示
+const batchProcessed = computed(() => batchCompleted.value + batchFailedCount.value)
+
 const batchProgressPercent = computed(() => {
   if (batchTotal.value === 0) return 0
-  return Math.min(100, Math.round((batchCompleted.value / batchTotal.value) * 100))
+  return Math.min(100, Math.round((batchProcessed.value / batchTotal.value) * 100))
 })
 const batchProgressStatus = computed(() => {
   if (batchStatus.value === 'completed') return 'success'
@@ -331,8 +337,9 @@ const dirSearchItems = computed(() => {
 
 // 列表请求参数转换：将前端 aiStatus 筛选值映射到后端的 aiStatus/aiResult 参数
 // AI未研判 -> aiStatus=pending；有风险 -> aiResult=risk；无风险 -> aiResult=no_risk
+// completed（研判已完成，来自外部固定过滤）保留原样，不得覆盖已有的 aiResult
 function transformListPayload(payload) {
-  if (payload.aiStatus && payload.aiStatus !== 'pending') {
+  if (payload.aiStatus === 'risk' || payload.aiStatus === 'no_risk') {
     payload.aiResult = payload.aiStatus
     delete payload.aiStatus
   }
@@ -469,6 +476,9 @@ async function handleBatchAnalyze() {
   batchAnalyzing.value = true
   batchTotal.value = 0
   batchCompleted.value = 0
+  batchRiskCount.value = 0
+  batchNoRiskCount.value = 0
+  batchFailedCount.value = 0
   batchStatus.value = 'running'
   try {
     const res = await batchAnalyzeDirByAI(params)
@@ -502,31 +512,54 @@ function startBatchPolling() {
   batchTimer = setInterval(async () => {
     try {
       const res = await getDirBatchProgress({ taskId: batchTaskId.value })
-      if (res.code === 0) {
-        batchCompleted.value = res.completed
-        batchTotal.value = res.total
-        batchStatus.value = res.status
-        saveBatchTaskToStorage()
-        if (res.status === 'completed') {
-          clearInterval(batchTimer); batchTimer = null
-          batchAnalyzing.value = false
-          localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
-          ElMessage.success(t('dirscan.batchAnalyzeDone', { completed: res.completed, total: res.total }))
-          proTableRef.value?.loadData()
-          emit('data-changed')
-        } else if (res.status === 'failed') {
-          clearInterval(batchTimer); batchTimer = null
-          batchAnalyzing.value = false
-          localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
-          ElMessage.error(t('dirscan.batchAnalyzeFailed'))
-        } else if (res.status === 'stopped') {
-          clearInterval(batchTimer); batchTimer = null
-          batchAnalyzing.value = false
-          localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
-          ElMessage.warning(t('dirscan.batchAnalyzeStopped', { completed: res.completed, total: res.total }))
-          proTableRef.value?.loadData()
-          emit('data-changed')
-        }
+      if (res.code !== 0) {
+        // 任务不存在（如服务重启导致内存态丢失），停止轮询避免卡死
+        clearInterval(batchTimer); batchTimer = null
+        batchAnalyzing.value = false
+        batchStatus.value = ''
+        localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+        ElMessage.warning(t('dirscan.batchTaskLost'))
+        return
+      }
+      batchCompleted.value = res.completed
+      batchTotal.value = res.total
+      batchRiskCount.value = res.riskCount || 0
+      batchNoRiskCount.value = res.noRiskCount || 0
+      batchFailedCount.value = res.failedCount || 0
+      batchStatus.value = res.status
+      saveBatchTaskToStorage()
+      if (res.status === 'completed') {
+        clearInterval(batchTimer); batchTimer = null
+        batchAnalyzing.value = false
+        localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+        ElMessage.success(t('dirscan.batchAnalyzeDone', {
+          completed: res.completed, total: res.total,
+          risk: res.riskCount || 0, noRisk: res.noRiskCount || 0, failed: res.failedCount || 0
+        }))
+        proTableRef.value?.loadData()
+        emit('data-changed')
+      } else if (res.status === 'failed') {
+        clearInterval(batchTimer); batchTimer = null
+        batchAnalyzing.value = false
+        // 任务失败（AI服务中断），清除持久化；未研判数据保持待研判，刷新列表
+        localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+        ElMessage.error(t('dirscan.batchAnalyzeFailed', {
+          completed: res.completed, total: res.total,
+          risk: res.riskCount || 0, noRisk: res.noRiskCount || 0, failed: res.failedCount || 0,
+          unprocessed: res.total - res.completed - (res.failedCount || 0)
+        }))
+        proTableRef.value?.loadData()
+        emit('data-changed')
+      } else if (res.status === 'stopped') {
+        clearInterval(batchTimer); batchTimer = null
+        batchAnalyzing.value = false
+        localStorage.removeItem(BATCH_TASK_STORAGE_KEY)
+        ElMessage.warning(t('dirscan.batchAnalyzeStopped', {
+          completed: res.completed, total: res.total,
+          risk: res.riskCount || 0, noRisk: res.noRiskCount || 0, failed: res.failedCount || 0
+        }))
+        proTableRef.value?.loadData()
+        emit('data-changed')
       }
     } catch (e) { /* ignore */ }
   }, 2000)

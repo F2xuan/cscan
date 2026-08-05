@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -72,12 +73,14 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq, workspaceId string) (
 				{"domain": bson.M{"$regex": req.Domain, "$options": "i"}},
 			}
 		} else if req.RootDomain != "" {
-			// 根域名搜索
+			// 根域名搜索：匹配根域名自身（example.com）及其子域名（www.example.com）。
+			// 用 (^|\.) 前缀 + QuoteMeta 转义，避免根域自身的点被当作任意字符、子域漏配
+			escapedRoot := regexp.QuoteMeta(req.RootDomain)
 			filter["$and"] = []bson.M{
 				{"$or": baseCondition},
 				{"$or": []bson.M{
-					{"domain": bson.M{"$regex": "\\." + req.RootDomain + "$", "$options": "i"}},
-					{"host": bson.M{"$regex": "\\." + req.RootDomain + "$", "$options": "i"}},
+					{"domain": bson.M{"$regex": "(^|\\.)" + escapedRoot + "$", "$options": "i"}},
+					{"host": bson.M{"$regex": "(^|\\.)" + escapedRoot + "$", "$options": "i"}},
 				}},
 			}
 		} else if req.IP != "" {

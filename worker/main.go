@@ -53,7 +53,7 @@ func getEnvIntOrDefault(key string, defaultVal int) int {
 
 // deriveConcurrencyFromMemory 在未显式设置 CSCAN_CONCURRENCY 时，依据容器 cgroup 内存上限
 // （读取失败则回退到宿主机物理内存）自动推导安全并发数：既能在高配机充分利用资源，
-// 又避免低配环境因 Chrome 标签数过多触发 OOM。详见 MEMORY_AUTOTUNE.md。
+// 又避免低配环境因 Chrome 标签数过多触发 OOM。详见 README「资源配置」。
 func deriveConcurrencyFromMemory() int {
 	const (
 		perTabMB   = 384  // headless Chrome 单标签 + 扫描器常驻开销经验值

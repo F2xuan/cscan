@@ -135,6 +135,23 @@ func (m *ReverifyConfigModel) FindEnabledExposure(ctx context.Context) ([]Reveri
 	return cfgs, nil
 }
 
+// MarkDispatched 下发复验任务后推进调度状态：立即写入 last_run_time 与 next_run_time，
+// 使 RunDue sweep 不再重复命中同一到期配置（结果回传前 last_run_status 保持 running）。
+func (m *ReverifyConfigModel) MarkDispatched(ctx context.Context, dispatchTime time.Time, count int, nextRunTime time.Time) error {
+	_, err := m.coll.UpdateOne(ctx,
+		bson.M{},
+		bson.M{"$set": bson.M{
+			"last_run_time":   dispatchTime,
+			"last_run_status": "running",
+			"last_run_count":  count,
+			"last_run_error":  "",
+			"next_run_time":   nextRunTime,
+		}},
+		options.Update().SetUpsert(false),
+	)
+	return err
+}
+
 // UpdateRunState 回写复验运行状态（不触碰配置字段与密钥，满足隔离约束）
 func (m *ReverifyConfigModel) UpdateRunState(ctx context.Context, workspaceId string, lastRunTime time.Time, status string, count int, runErr string, nextRunTime time.Time) error {
 	_, err := m.coll.UpdateOne(ctx,

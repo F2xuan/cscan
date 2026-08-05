@@ -94,7 +94,6 @@
         <el-table-column prop="updateTime" :label="$t('worker.lastResponse')" width="165" />
         <el-table-column :label="$t('common.operation')" width="260" fixed="right">
           <template #default="{ row }">
-            <el-button link size="small" type="primary" @click="openConsole(row.name)" :disabled="row.status !== 'running'">{{ $t('worker.console') }}</el-button>
             <el-button link size="small" type="info" @click="openLogDialog(row.name)">{{ $t('worker.logs') }}</el-button>
             <el-popconfirm
               :title="$t('worker.confirmRestart')"
@@ -351,12 +350,10 @@
 import { ref, onMounted, onUnmounted, reactive, computed, nextTick } from 'vue'
 import { Refresh, Delete, Edit, RefreshRight, Download, Monitor, Document, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { useRouter } from 'vue-router'
 import request from '@/api/request'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
-const router = useRouter()
 const loading = ref(false)
 const tableData = ref([])
 const autoRefresh = ref(true)
@@ -770,10 +767,6 @@ function closeLogDialog() {
   logDialogVisible.value = false
   logDialogWorker.value = ''
   logLines.value = []
-}
-
-function openConsole(workerName) {
-  router.push(`/worker/console/${workerName}`)
 }
 </script>
 

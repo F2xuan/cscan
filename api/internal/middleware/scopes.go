@@ -1,4 +1,4 @@
-package middleware
+﻿package middleware
 
 import (
 	"strings"
@@ -26,7 +26,6 @@ const (
 	ScopePoc          APIScope = "poc"
 	ScopeOnlineAPI    APIScope = "onlineapi"
 	ScopeOrganization APIScope = "organization"
-	ScopeWorkspace    APIScope = "workspace"
 	ScopeDirscan      APIScope = "dirscan"
 	ScopeSubdomain    APIScope = "subdomain"
 	ScopeSubfinder    APIScope = "subfinder"
@@ -59,7 +58,6 @@ func ScopeGroups() []ScopeGroupMeta {
 		{ScopePoc, "POC 管理", "自定义 POC、Nuclei 模板、AI 生成"},
 		{ScopeOnlineAPI, "在线搜索", "FOFA/Hunter/Quake API 聚合"},
 		{ScopeOrganization, "组织管理", "组织 CRUD、状态切换"},
-		{ScopeWorkspace, "工作空间", "工作空间 CRUD"},
 		{ScopeDirscan, "目录扫描", "字典管理、扫描结果"},
 		{ScopeSubdomain, "子域名字典", "子域名字典管理"},
 		{ScopeSubfinder, "Subfinder 配置", "Subfinder 子域名发现配置"},
@@ -85,39 +83,6 @@ type ScopeMeta struct {
 	Value       APIScope
 	Label       string
 	Description string
-}
-
-// AllScopes 返回所有 <group>:<action> 组合的元信息（不含 "*"）。
-// 兼容旧前端 UI 的扁平列表结构；新前端使用 ScopeGroups + ScopeActions。
-func AllScopes() []ScopeMeta {
-	groups := ScopeGroups()
-	actions := ScopeActions()
-	out := make([]ScopeMeta, 0, len(groups)*len(actions))
-	for _, g := range groups {
-		for _, a := range actions {
-			label := g.Label + " · " + actionLabel(a)
-			out = append(out, ScopeMeta{
-				Value:       APIScope(string(g.Value) + ":" + a),
-				Label:       label,
-				Description: g.Description,
-			})
-		}
-	}
-	return out
-}
-
-func actionLabel(a string) string {
-	switch a {
-	case ActionRead:
-		return "读"
-	case ActionCreate:
-		return "增"
-	case ActionUpdate:
-		return "改"
-	case ActionDelete:
-		return "删"
-	}
-	return a
 }
 
 // ValidScope 判断字符串是否为合法的 scope 标识：

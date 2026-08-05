@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -28,17 +27,6 @@ const (
 	WSTypeLog            = "LOG"             // 日志消息
 	WSTypeLogBatch       = "LOG_BATCH"       // 批量日志消息
 	WSTypeControl        = "CONTROL"         // 控制信号
-	WSTypeTerminalOpen   = "TERMINAL_OPEN"   // 打开终端
-	WSTypeTerminalClose  = "TERMINAL_CLOSE"  // 关闭终端
-	WSTypeTerminalInput  = "TERMINAL_INPUT"  // 终端输入
-	WSTypeTerminalOutput = "TERMINAL_OUTPUT" // 终端输出
-	WSTypeTerminalResize = "TERMINAL_RESIZE" // 终端大小调整
-	WSTypeFileList       = "FILE_LIST"       // 文件列表
-	WSTypeFileUpload     = "FILE_UPLOAD"     // 文件上传
-	WSTypeFileDownload   = "FILE_DOWNLOAD"   // 文件下载
-	WSTypeFileDelete     = "FILE_DELETE"     // 文件删除
-	WSTypeFileMkdir      = "FILE_MKDIR"      // 创建目录
-	WSTypeWorkerInfo     = "WORKER_INFO"     // Worker信息
 	WSTypeLogSyncReq     = "LOG_SYNC_REQ"    // API 请求 Worker 同步日志
 	WSTypeLogSyncResp    = "LOG_SYNC_RESP"   // Worker 返回同步日志数据
 	WSTypeLogSyncAck     = "LOG_SYNC_ACK"    // API 确认日志已写入文件
@@ -131,29 +119,6 @@ func DefaultWSClientConfig(serverURL, workerName, installKey string) *WSClientCo
 // ControlHandler 控制信号处理函数
 type ControlHandler func(taskId, action string)
 
-// WorkerInfoHandler Worker信息请求处理函数
-type WorkerInfoHandler func() *WorkerInfoPayload
-
-// FileOperationHandler 文件操作处理函数接口
-type FileOperationHandler interface {
-	ListDir(path string) ([]FileInfo, error)
-	ReadFile(path string) ([]byte, error)
-	WriteFile(path string, data []byte) error
-	DeleteFile(path string) error
-	MakeDir(path string) error
-}
-
-// TerminalOperationHandler 终端操作处理函数接口
-type TerminalOperationHandler interface {
-	CreateSession(sessionId string) (*TerminalSession, error)
-	CloseSession(sessionId string) error
-	ExecuteCommand(ctx context.Context, sessionId, command string) error
-	SendInput(sessionId string, data []byte) error
-	ResizeTerminal(sessionId string, cols, rows int) error
-	InterruptCommand(sessionId string) error
-	IsCommandBlacklisted(command string) bool
-}
-
 // WorkerControlHandler Worker级别控制处理函数类型
 type WorkerControlHandler func(action string, param string)
 
@@ -174,9 +139,6 @@ type WorkerWSClient struct {
 	logMu                sync.Mutex
 	controlHandler       ControlHandler
 	workerControlHandler WorkerControlHandler
-	workerInfoHandler    WorkerInfoHandler
-	fileHandler          FileOperationHandler
-	terminalHandler      TerminalOperationHandler
 	logSyncHandler       LogSyncHandler
 	lastPong             time.Time
 	pongMu               sync.RWMutex
@@ -205,21 +167,6 @@ func (c *WorkerWSClient) SetControlHandler(handler ControlHandler) {
 // SetWorkerControlHandler 设置Worker级别控制处理函数
 func (c *WorkerWSClient) SetWorkerControlHandler(handler WorkerControlHandler) {
 	c.workerControlHandler = handler
-}
-
-// SetWorkerInfoHandler 设置Worker信息请求处理函数
-func (c *WorkerWSClient) SetWorkerInfoHandler(handler WorkerInfoHandler) {
-	c.workerInfoHandler = handler
-}
-
-// SetFileHandler 设置文件操作处理函数
-func (c *WorkerWSClient) SetFileHandler(handler FileOperationHandler) {
-	c.fileHandler = handler
-}
-
-// SetTerminalHandler 设置终端操作处理函数
-func (c *WorkerWSClient) SetTerminalHandler(handler TerminalOperationHandler) {
-	c.terminalHandler = handler
 }
 
 // SetLogSyncHandler 设置日志同步请求处理函数
@@ -771,46 +718,6 @@ func (c *WorkerWSClient) handleMessage(msg *WSMessage) {
 		// 收到控制信号
 		c.handleControl(msg.Payload)
 
-	case WSTypeWorkerInfo:
-		// 收到Worker信息请求
-		c.handleWorkerInfoRequest(msg.Payload)
-
-	case WSTypeFileList:
-		// 收到文件列表请求
-		c.handleFileListRequest(msg.Payload)
-
-	case WSTypeFileUpload:
-		// 收到文件上传请求
-		c.handleFileUploadRequest(msg.Payload)
-
-	case WSTypeFileDownload:
-		// 收到文件下载请求
-		c.handleFileDownloadRequest(msg.Payload)
-
-	case WSTypeFileDelete:
-		// 收到文件删除请求
-		c.handleFileDeleteRequest(msg.Payload)
-
-	case WSTypeFileMkdir:
-		// 收到创建目录请求
-		c.handleFileMkdirRequest(msg.Payload)
-
-	case WSTypeTerminalOpen:
-		// 收到打开终端请求
-		c.handleTerminalOpenRequest(msg.Payload)
-
-	case WSTypeTerminalClose:
-		// 收到关闭终端请求
-		c.handleTerminalCloseRequest(msg.Payload)
-
-	case WSTypeTerminalInput:
-		// 收到终端输入请求
-		c.handleTerminalInputRequest(msg.Payload)
-
-	case WSTypeTerminalResize:
-		// 收到终端大小调整请求
-		c.handleTerminalResizeRequest(msg.Payload)
-
 	case WSTypeLogSyncReq:
 		// 收到日志同步请求
 		c.handleLogSyncReq(msg.Payload)
@@ -887,46 +794,6 @@ func (c *WorkerWSClient) handleControl(payload json.RawMessage) {
 	}
 }
 
-// WSWorkerInfoRequest Worker信息请求载荷
-type WSWorkerInfoRequest struct {
-	RequestId string `json:"requestId"` // 请求ID，用于关联响�?
-}
-
-// WSWorkerInfoResponse Worker信息响应载荷
-type WSWorkerInfoResponse struct {
-	RequestId string             `json:"requestId"`
-	Info      *WorkerInfoPayload `json:"info"`
-	Error     string             `json:"error,omitempty"`
-}
-
-// handleWorkerInfoRequest 处理Worker信息请求
-func (c *WorkerWSClient) handleWorkerInfoRequest(payload json.RawMessage) {
-	var request WSWorkerInfoRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid worker info request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received worker info request: requestId=%s", request.RequestId)
-
-	// 构建响应
-	response := WSWorkerInfoResponse{
-		RequestId: request.RequestId,
-	}
-
-	if c.workerInfoHandler != nil {
-		response.Info = c.workerInfoHandler()
-	} else {
-		response.Error = "worker info handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeWorkerInfo,
-		Payload: payloadData,
-	})
-}
 
 // ==================== Send Methods ====================
 
@@ -948,381 +815,7 @@ func (c *WorkerWSClient) sendMessage(msg *WSMessage) error {
 }
 
 
-// ==================== File Operation Handlers ====================
 
-// handleFileListRequest 处理文件列表请求
-func (c *WorkerWSClient) handleFileListRequest(payload json.RawMessage) {
-	var request FileListRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file list request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received file list request: requestId=%s, path=%s", request.RequestId, request.Path)
-
-	// 构建响应
-	response := FileListResponse{
-		RequestId: request.RequestId,
-		Path:      request.Path,
-	}
-
-	if c.fileHandler != nil {
-		files, err := c.fileHandler.ListDir(request.Path)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Files = files
-		}
-	} else {
-		response.Error = "file handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeFileList,
-		Payload: payloadData,
-	})
-}
-
-// handleFileUploadRequest 处理文件上传请求
-func (c *WorkerWSClient) handleFileUploadRequest(payload json.RawMessage) {
-	var request FileUploadRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file upload request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received file upload request: requestId=%s, path=%s", request.RequestId, request.Path)
-
-	// 构建响应
-	response := FileUploadResponse{
-		RequestId: request.RequestId,
-		Path:      request.Path,
-	}
-
-	if c.fileHandler != nil {
-		// 解码Base64数据
-		data, err := base64.StdEncoding.DecodeString(request.Data)
-		if err != nil {
-			response.Error = "invalid base64 data: " + err.Error()
-		} else {
-			err = c.fileHandler.WriteFile(request.Path, data)
-			if err != nil {
-				response.Error = err.Error()
-			} else {
-				response.Success = true
-			}
-		}
-	} else {
-		response.Error = "file handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeFileUpload,
-		Payload: payloadData,
-	})
-}
-
-// handleFileDownloadRequest 处理文件下载请求
-func (c *WorkerWSClient) handleFileDownloadRequest(payload json.RawMessage) {
-	var request FileDownloadRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file download request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received file download request: requestId=%s, path=%s", request.RequestId, request.Path)
-
-	// 构建响应
-	response := FileDownloadResponse{
-		RequestId: request.RequestId,
-		Path:      request.Path,
-	}
-
-	if c.fileHandler != nil {
-		data, err := c.fileHandler.ReadFile(request.Path)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Data = base64.StdEncoding.EncodeToString(data)
-			response.Size = int64(len(data))
-		}
-	} else {
-		response.Error = "file handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeFileDownload,
-		Payload: payloadData,
-	})
-}
-
-// handleFileDeleteRequest 处理文件删除请求
-func (c *WorkerWSClient) handleFileDeleteRequest(payload json.RawMessage) {
-	var request FileDeleteRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file delete request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received file delete request: requestId=%s, path=%s", request.RequestId, request.Path)
-
-	// 构建响应
-	response := FileDeleteResponse{
-		RequestId: request.RequestId,
-		Path:      request.Path,
-	}
-
-	if c.fileHandler != nil {
-		err := c.fileHandler.DeleteFile(request.Path)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Success = true
-		}
-	} else {
-		response.Error = "file handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeFileDelete,
-		Payload: payloadData,
-	})
-}
-
-// handleFileMkdirRequest 处理创建目录请求
-func (c *WorkerWSClient) handleFileMkdirRequest(payload json.RawMessage) {
-	var request FileMkdirRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file mkdir request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received file mkdir request: requestId=%s, path=%s", request.RequestId, request.Path)
-
-	// 构建响应
-	response := FileMkdirResponse{
-		RequestId: request.RequestId,
-		Path:      request.Path,
-	}
-
-	if c.fileHandler != nil {
-		err := c.fileHandler.MakeDir(request.Path)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Success = true
-		}
-	} else {
-		response.Error = "file handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeFileMkdir,
-		Payload: payloadData,
-	})
-}
-
-// ==================== Terminal Operation Handlers ====================
-
-// handleTerminalOpenRequest 处理打开终端请求
-func (c *WorkerWSClient) handleTerminalOpenRequest(payload json.RawMessage) {
-	var request TerminalOpenRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal open request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received terminal open request: requestId=%s, sessionId=%s", request.RequestId, request.SessionId)
-
-	// 构建响应
-	response := TerminalOpenResponse{
-		RequestId: request.RequestId,
-		SessionId: request.SessionId,
-	}
-
-	if c.terminalHandler != nil {
-		session, err := c.terminalHandler.CreateSession(request.SessionId)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Success = true
-			// 如果指定了终端大小，设置�?
-			if request.Cols > 0 && request.Rows > 0 {
-				c.terminalHandler.ResizeTerminal(session.ID, request.Cols, request.Rows)
-			}
-		}
-	} else {
-		response.Error = "terminal handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeTerminalOpen,
-		Payload: payloadData,
-	})
-}
-
-// handleTerminalCloseRequest 处理关闭终端请求
-func (c *WorkerWSClient) handleTerminalCloseRequest(payload json.RawMessage) {
-	var request TerminalCloseRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal close request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received terminal close request: requestId=%s, sessionId=%s", request.RequestId, request.SessionId)
-
-	// 构建响应
-	response := TerminalCloseResponse{
-		RequestId: request.RequestId,
-		SessionId: request.SessionId,
-	}
-
-	if c.terminalHandler != nil {
-		err := c.terminalHandler.CloseSession(request.SessionId)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Success = true
-		}
-	} else {
-		response.Error = "terminal handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeTerminalClose,
-		Payload: payloadData,
-	})
-}
-
-// handleTerminalInputRequest 处理终端输入请求
-func (c *WorkerWSClient) handleTerminalInputRequest(payload json.RawMessage) {
-	var request TerminalInputRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal input request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received terminal input request: requestId=%s, sessionId=%s", request.RequestId, request.SessionId)
-
-	// 构建响应
-	response := TerminalInputResponse{
-		RequestId: request.RequestId,
-		SessionId: request.SessionId,
-	}
-
-	if c.terminalHandler != nil {
-		// 如果有直接命令，执行命令
-		if request.Command != "" {
-			// 检查命令是否在黑名单中
-			if c.terminalHandler.IsCommandBlacklisted(request.Command) {
-				response.Error = "command is blacklisted"
-			} else {
-				err := c.terminalHandler.ExecuteCommand(context.Background(), request.SessionId, request.Command)
-				if err != nil {
-					response.Error = err.Error()
-				} else {
-					response.Success = true
-				}
-			}
-		} else if request.Data != "" {
-			// 解码Base64数据并发送到stdin
-			data, err := DecodeTerminalInput(request.Data)
-			if err != nil {
-				response.Error = "invalid base64 data: " + err.Error()
-			} else {
-				// 检查是否是Ctrl+C (0x03)
-				if len(data) == 1 && data[0] == 0x03 {
-					err = c.terminalHandler.InterruptCommand(request.SessionId)
-				} else {
-					err = c.terminalHandler.SendInput(request.SessionId, data)
-				}
-				if err != nil {
-					response.Error = err.Error()
-				} else {
-					response.Success = true
-				}
-			}
-		} else {
-			response.Error = "no command or data provided"
-		}
-	} else {
-		response.Error = "terminal handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeTerminalInput,
-		Payload: payloadData,
-	})
-}
-
-// handleTerminalResizeRequest 处理终端大小调整请求
-func (c *WorkerWSClient) handleTerminalResizeRequest(payload json.RawMessage) {
-	var request TerminalResizeRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal resize request payload: %v", err)
-		return
-	}
-
-	logx.Infof("[WSClient] Received terminal resize request: requestId=%s, sessionId=%s, cols=%d, rows=%d", request.RequestId, request.SessionId, request.Cols, request.Rows)
-
-	// 构建响应
-	response := TerminalResizeResponse{
-		RequestId: request.RequestId,
-		SessionId: request.SessionId,
-	}
-
-	if c.terminalHandler != nil {
-		err := c.terminalHandler.ResizeTerminal(request.SessionId, request.Cols, request.Rows)
-		if err != nil {
-			response.Error = err.Error()
-		} else {
-			response.Success = true
-		}
-	} else {
-		response.Error = "terminal handler not set"
-	}
-
-	// 发送响�?
-	payloadData, _ := json.Marshal(response)
-	c.sendMessage(&WSMessage{
-		Type:    WSTypeTerminalResize,
-		Payload: payloadData,
-	})
-}
-
-// SendTerminalOutput 发送终端输�?
-func (c *WorkerWSClient) SendTerminalOutput(sessionId string, data []byte) error {
-	if !c.IsConnected() {
-		return fmt.Errorf("not connected")
-	}
-
-	payload := TerminalOutputPayload{
-		SessionId: sessionId,
-		Data:      EncodeTerminalOutput(data),
-	}
-	payloadData, _ := json.Marshal(payload)
-
-	return c.sendMessage(&WSMessage{
-		Type:    WSTypeTerminalOutput,
-		Payload: payloadData,
-	})
-}
 
 // ==================== Log Sync Handlers ====================
 

@@ -226,12 +226,6 @@ const routes = [
         meta: { title: 'menu.HighRiskFilter', icon: 'Warning' }
       },
       {
-        path: 'worker/console/:name',
-        name: 'WorkerConsole',
-        component: lazyLoad(() => import('@/views/WorkerConsole.vue')),
-        meta: { title: 'menu.WorkerConsole', icon: 'Monitor', hidden: true }
-      },
-      {
         path: 'poc',
         name: 'Poc',
         component: lazyLoad(() => import('@/views/Poc.vue')),
@@ -306,12 +300,6 @@ const routes = [
         name: 'Profile',
         component: lazyLoad(() => import('@/views/Profile.vue')),
         meta: { title: 'menu.Profile', icon: 'User', hidden: true }
-      },
-      {
-        path: 'api-docs',
-        name: 'ApiDocs',
-        component: lazyLoad(() => import('@/views/ApiDocs.vue')),
-        meta: { title: 'menu.ApiDocs', icon: 'Document', roles: ['admin', 'superadmin'] }
       },
       {
         path: 'ai-config',

@@ -229,21 +229,6 @@ func (l *AppListLogic) countNewAppAssets(workspaceId string) (int64, error) {
 	return total, nil
 }
 
-func (l *AppListLogic) AppDelete(req *types.AppDeleteReq) (*types.BaseResp, error) {
-	if req.Id == "" {
-		return &types.BaseResp{Code: 400, Msg: "应用不能为空"}, nil
-	}
-
-	deleted, err := l.deleteAppAssets(middleware.GetWorkspaceId(l.ctx), bson.M{"app": bson.M{"$in": []string{req.Id}}})
-	if err != nil {
-		return nil, err
-	}
-	if deleted == 0 {
-		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
-	}
-	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(deleted, 10) + " 条资产"}, nil
-}
-
 func (l *AppListLogic) AppBatchDelete(req *types.AppBatchDeleteReq) (*types.BaseResp, error) {
 	if len(req.Ids) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的应用"}, nil

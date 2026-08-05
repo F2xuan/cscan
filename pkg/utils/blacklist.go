@@ -270,37 +270,3 @@ func NewExcludeHostsMatcher(excludeHosts string) *BlacklistMatcher {
 
 	return NewBlacklistMatcher(rules)
 }
-
-// FilterAssetsByIP 根据IP过滤资产列表
-// 检查资产的所有IPv4地址，如果任一IP在黑名单中则过滤该资产
-func (m *BlacklistMatcher) FilterAssetsByIP(hosts []string, ipv4Map map[string][]string) []string {
-	if m == nil || m.IsEmpty() {
-		return hosts
-	}
-
-	var filtered []string
-	for _, host := range hosts {
-		// 检查主机名/域名本身
-		if m.IsBlacklisted(host) {
-			continue
-		}
-
-		// 检查该主机解析出的所有IP
-		if ips, ok := ipv4Map[host]; ok {
-			isBlacklisted := false
-			for _, ip := range ips {
-				if m.IsIPBlacklisted(ip) {
-					isBlacklisted = true
-					break
-				}
-			}
-			if isBlacklisted {
-				continue
-			}
-		}
-
-		filtered = append(filtered, host)
-	}
-
-	return filtered
-}

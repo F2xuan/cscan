@@ -218,25 +218,3 @@ func TestIsCertFetchTarget(t *testing.T) {
 		})
 	}
 }
-
-// 确保 parseHostPort 行为符合预期（缺省端口 443）
-func TestParseHostPort(t *testing.T) {
-	cases := []struct {
-		in       string
-		wantHost string
-		wantPort int
-		wantOK   bool
-	}{
-		{"example.com", "example.com", 443, true},
-		{"example.com:8443", "example.com", 8443, true},
-		{"127.0.0.1:443", "127.0.0.1", 443, true},
-		{"", "", 0, false},
-		{"bad:port", "", 0, false},
-	}
-	for _, c := range cases {
-		h, p, ok := parseHostPort(c.in)
-		if ok != c.wantOK || h != c.wantHost || p != c.wantPort {
-			t.Errorf("parseHostPort(%q)=(%q,%d,%v), want (%q,%d,%v)", c.in, h, p, ok, c.wantHost, c.wantPort, c.wantOK)
-		}
-	}
-}

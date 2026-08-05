@@ -82,12 +82,3 @@ func (m *APIConfigModel) Update(ctx context.Context, id string, update bson.M) e
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
 	return err
 }
-
-func (m *APIConfigModel) Delete(ctx context.Context, id string) error {
-	oid, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return err
-	}
-	_, err = m.coll.DeleteOne(ctx, bson.M{"_id": oid})
-	return err
-}

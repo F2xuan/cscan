@@ -1,4 +1,4 @@
-package logic
+﻿package logic
 
 import (
 	"context"
@@ -103,6 +103,7 @@ func (l *IconListLogic) IconList(req *types.IconListReq) (*types.IconListResp, e
 
 func (l *IconListLogic) pickIconPresentation(iconHash, iconDataFromStat string, assets []model.Asset) (types.IconItem, bool) {
 	assetNames := make([]string, 0, len(assets))
+	seenHosts := make(map[string]struct{})
 	iconHashFile := ""
 	iconData := iconDataFromStat
 	screenshot := ""
@@ -110,6 +111,10 @@ func (l *IconListLogic) pickIconPresentation(iconHash, iconDataFromStat string, 
 	var latestUpdate time.Time
 
 	for _, asset := range assets {
+		if _, exists := seenHosts[asset.Host]; exists {
+			continue
+		}
+		seenHosts[asset.Host] = struct{}{}
 		assetNames = append(assetNames, asset.Host)
 		if iconHashFile == "" && asset.IconHashFile != "" {
 			iconHashFile = asset.IconHashFile
@@ -264,20 +269,6 @@ func (l *IconListLogic) countNewIconAssets(workspaceId string) (int64, error) {
 	return total, nil
 }
 
-func (l *IconListLogic) IconDelete(req *types.IconDeleteReq) (*types.BaseResp, error) {
-	if req.Id == "" {
-		return &types.BaseResp{Code: 400, Msg: "Icon不能为空"}, nil
-	}
-
-	deleted, err := l.deleteIconAssets(middleware.GetWorkspaceId(l.ctx), bson.M{"icon_hash": req.Id})
-	if err != nil {
-		return nil, err
-	}
-	if deleted == 0 {
-		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
-	}
-	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(deleted, 10) + " 条资产"}, nil
-}
 
 func (l *IconListLogic) IconBatchDelete(req *types.IconBatchDeleteReq) (*types.BaseResp, error) {
 	if len(req.Ids) == 0 {

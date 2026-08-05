@@ -4,7 +4,7 @@
 
 ### 1.1 项目概述
 
-**cscan** — 企业级分布式网络资产扫描平台（V4.5）
+**cscan** — 企业级分布式网络资产扫描平台（V5.0）
 
 ### 1.2 技术栈
 
@@ -64,9 +64,9 @@
 - **负载均衡**: 任务统一进公共队列，空闲 Worker 竞争获取；`cscan:worker:load` Hash 记录各 Worker 负载（心跳上报），可用性筛选（心跳 >30s 超时 / 槽位满 / CPU>90 / Mem>90 剔除），负载评分 = 任务占用量×0.5 + CPU×0.3 + Mem×0.2
 - **孤儿恢复**: 后台每 30s 检查 `cscan:task:processing`，Worker 离线或执行超时（CPU≤4 核 20min / ≤8 核 15min / 其余 10min，自适应）的任务重置重排；MaxRetries=3，Lua 脚本原子"重入队 → 刷新 info → 摘除 processing"，杜绝丢失窗口
 - **定时调度**: robfig/cron v3 秒级表达式；CronTask 主存 MongoDB、`cscan:cron:tasks` Hash 缓存；到点 PUBLISH `cscan:cron:execute_scan`（扫描）或 `cscan:cron:execute_space`（空间引擎）；控制频道 `reload/remove/runnow`
-- **资产复核（持续复验）**: 对已发现的弱口令漏洞（T3.3）与敏感信息暴露（T3.4）周期复核确认是否修复；在 Scheduler 侧直接执行、不下发 Worker 子任务；默认每日 03:00，每分钟 sweep 检查 `NextRunTime`；结果状态 resolved/verified/pending
-- **Worker 通信**: Install Key 认证注册 → WebSocket（`/api/v1/worker/ws`）长连接（AUTH/PING/LOG_BATCH/CONTROL/TERMINAL/FILE/LOG_SYNC 消息）+ REST 回传结果；断网时结果落本地 `log/result_queue` 自动重放；日志以 Worker 本地 JSONL 为事实源，游标式增量同步到 API 落盘
-- **认证体系（6 级）**: 无认证 → Worker Key（`X-Worker-Key` Install Key）→ JWT 或 PAT（`cscan_pat_*`，scope 校验）→ JWT+管理员 → JWT+Console（Worker 控制台/容器）→ 开放 API（PAT readonly scope + 每 token 限流 120 次/分，超频 429）
+- **资产复核（持续复验）**: 对已发现的弱口令漏洞（T3.3）与敏感信息暴露（T3.4）周期复核确认是否修复；Scheduler 侧仅查询目标并入队，探测由 Worker 执行，结果经 `/api/v1/worker/reverify/result` 批量回传后完成状态流转与通知；默认每日 03:00，每分钟 sweep 检查 `NextRunTime`（入队即推进，避免重复下发）；结果状态 resolved/verified/pending
+- **Worker 通信**: Install Key 认证注册 → WebSocket（`/api/v1/worker/ws`）长连接（AUTH/PING/LOG/LOG_BATCH/CONTROL/LOG_SYNC 消息）+ REST 回传结果；断网时结果落本地 `log/result_queue` 自动重放；日志以 Worker 本地 JSONL 为事实源，游标式增量同步到 API 落盘
+- **认证体系（5 级）**: 无认证 → Worker Key（`X-Worker-Key` Install Key）→ JWT 或 PAT（`cscan_pat_*`，scope 校验）→ JWT+管理员 → 开放 API（PAT readonly scope + 每 token 限流 120 次/分，超频 429）
 
 ---
 
@@ -82,27 +82,23 @@ cscan/
 │   └── internal/
 │       ├── config/config.go      # 配置结构体定义
 │       ├── handler/              # 路由处理器（按资源域分子包）
-│       │   ├── routes.go         # 统一路由注册（6 级认证）
+│       │   ├── routes.go         # 统一路由注册（5 级认证）
 │       │   ├── asset/ task/ vul/ worker/ fingerprint/ poc/ onlineapi/ user/
 │       │   ├── organization/ blacklist/ dirscan/ subdomain/ subfinder/
 │       │   ├── notify/ report/ ai/ cert/ container/ dashboard/ jsfinder/
-│       │   ├── weakpass/ openapi/
-│       │   └── swagger/          # Swagger 元数据（按路由分级 CollectEx）
+│       │   └── weakpass/ openapi/
 │       ├── logic/                # 业务逻辑层（平铺，{动作}{实体}logic.go）
 │       ├── middleware/           # 中间件
 │       │   ├── authmiddleware.go # JWT + PAT 双路径认证、GetUserId/GetRole/GetWorkspaceId、RequireAdmin
 │       │   ├── workerauth.go     # Worker Install Key 认证（X-Worker-Key）
-│       │   ├── consoleauth.go    # Worker 控制台认证（管理员 + 审计流 cscan:audit:console）
 │       │   ├── ratelimit.go      # TokenRateLimiter 固定窗口限流（429 + Retry-After）
-│       │   ├── scopes.go         # 开放平台 scope 定义与校验（21 组）
-│       │   └── jwt.go            # 独立 JWT 校验（WebSocket/SSE 入口复用）
+│       │   └── scopes.go         # 开放平台 scope 定义与校验（分组 × CRUD 动作矩阵）
 │       ├── svc/                  # 服务上下文（DI 容器 + 服务实现）
 │       │   ├── servicecontext.go # ServiceContext 核心结构体
-│       │   ├── asset_aggregation_service.go # 资产聚合（$lookup 一次查询，消灭 N+1）
 │       │   ├── asset_service.go  # 资产列表 + 扫描结果集成
 │       │   ├── docker_service.go # Docker SDK 容器管理（cscan 容器识别/日志）
 │       │   ├── log_collector.go  # 容器日志采集（15s 轮询 tail → 本地按日分片文件）
-│       │   ├── transaction.go    # Mongo 事务管理（快照读 + Majority 写 + 重试）
+│       │   ├── reverifynotify.go # 复验修复确认通知（T3.3 / T3.4 共用）
 │       │   ├── worker_log_writer.go # Worker 日志落盘（有界队列 + flushLoop，JSONL 按日）
 │       │   ├── scanresult_service.go / history_service.go
 │       │   └── sync/             # 同步服务（模板/指纹/POC 同步）
@@ -112,7 +108,6 @@ cscan/
 │       ├── task.go               # RPC 服务入口（服务根 main，端口 9000）
 │       ├── task.proto            # Protobuf 定义（20 个方法）
 │       ├── pb/                   # 生成的 pb 代码
-│       ├── taskservice/          # 服务实现
 │       ├── client/               # 客户端封装
 │       ├── etc/task.yaml         # RPC 配置
 │       └── internal/
@@ -133,17 +128,17 @@ cscan/
 │           ├── worker_port_identify.go / worker_brute_scan.go
 │           ├── worker_dir_scan.go / worker_js_finder.go
 │           ├── worker_target_parse.go / worker_auto_tag.go / worker_utility.go
+│           ├── worker_reverify.go    # 持续复验执行（弱口令凭据验证 / 敏感 URL 探测，批量回传）
 │           ├── filelogger.go / logsync.go / logwriter.go # 本地日志事实源 + 游标同步
-│           ├── terminal.go / filemanager.go              # 控制台终端/文件（黑名单/白名单）
 │           ├── mapper.go / sysinfo.go / loadavg_*.go / restart_*.go
 │           └── *_test.go         # 单元测试
 ├── internal/                     # 工程内部公共模块
 │   ├── model/                    # MongoDB 数据模型（全局单集合 + workspace_id 字段）
 │   │   ├── asset.go / asset_history.go / vul.go / task.go / scanresult.go
-│   │   ├── scanjob.go / scantarget.go / scan_diff.go（变化基线）
+│   │   ├── scan_diff.go（变化基线）
 │   │   ├── cert.go / jsfinder.go / dirscan.go / dirscan_result.go
 │   │   ├── crontask.go / scantemplate.go / task_profile.go
-│   │   ├── user.go / user_token.go（PAT）/ organization.go / auditlog.go
+│   │   ├── user.go / user_token.go（PAT）/ organization.go
 │   │   ├── fingerprint.go / httpservice.go / active_fingerprint.go
 │   │   ├── poc.go / nuclei_template.go / tag_mapping.go
 │   │   ├── blacklist.go / notifyconfig.go / subdomain_dict.go / weakpass_dict.go
@@ -151,10 +146,8 @@ cscan/
 │   │   ├── reverify_config.go / workspace_baseline.go
 │   │   ├── indexes.go / base.go / errors.go
 │   ├── scanner/                  # 扫描模块
-│   │   ├── pipeline.go           # 阶段化扫描管道（Stage 权重进度）
-│   │   ├── registry.go           # 扫描器注册表（工厂 + 内置注册）
 │   │   ├── target.go / target_preprocessor.go # 目标解析与预处理
-│   │   ├── subfinder.go / domainscan.go / subdomain_bruteforce.go
+│   │   ├── subfinder.go / subdomain_bruteforce.go
 │   │   ├── naabu.go / masscan.go / nmap.go / portscan.go
 │   │   ├── fingerprint.go / fingerprintx.go / customfinger.go / httpx_lib.go
 │   │   ├── nuclei.go / brutescan.go / brute/
@@ -166,14 +159,11 @@ cscan/
 │   │   ├── service.go            # SchedulerService 门面（cron + 复验注入 + 同步）
 │   │   ├── chunk_manager.go      # 任务分块（分片信息/进度/清理）
 │   │   ├── splitter.go           # 目标拆分（CIDR/IP 范围展开、分片优先级、耗时预估）
-│   │   ├── load_balancer.go      # Worker 负载观测与可用性筛选
 │   │   ├── cron.go               # CronManager 定时任务（Mongo 主存 + Redis 缓存）
 │   │   ├── task_recovery.go      # 孤儿任务恢复（30s 检查 + Lua 原子重排队）
-│   │   ├── reverify_common.go    # 复验共享（默认每日 03:00、目标上限 200、通知）
-│   │   ├── reverify_weakpass.go  # 弱口令周期复验（auth_reject 判定已修复）
-│   │   ├── reverify_exposure.go  # 敏感信息暴露复验（软 404 内容特征判定）
-│   │   ├── config.go             # 任务配置默认值 + 链式校验（SimpleValidator）
-│   │   └── config_validator.go   # 配置校验器（xerr.NewConfigError）
+│   │   ├── reverify_common.go    # 复验共享（默认每日 03:00、目标上限 200、NextRunTime 计算）
+│   │   ├── reverify_weakpass.go  # 弱口令周期复验下发（查询目标 + 入队，探测由 Worker 执行）
+│   │   └── reverify_exposure.go  # 敏感信息暴露复验下发（同上）
 │   └── onlineapi/                # 在线资产搜索（fofa.go / hunter.go / quake.go）
 ├── pkg/                          # 对外公共模块
 │   ├── xerr/                     # 业务错误码体系（errcode.go + errors.go）
@@ -187,7 +177,14 @@ cscan/
 │   ├── template/parser.go        # Nuclei 模板 YAML 解析（分类/元数据）
 │   ├── utils/                    # 通用工具函数
 │   └── logfilter.go              # logx 包装器：过滤高频轮询 access log
-├── poc/                          # POC 定义文件
+├── rules/                        # 默认规则与字典（12 个文件，7 类）
+│   ├── blacklist/                # default-blacklist.txt
+│   ├── fingerprint/              # 指纹规则（active-paths.yaml、custom-fingerprints-*.yml）
+│   ├── http-service/             # HTTP 服务映射（http-port-mapping.txt 等）
+│   ├── scan-template/            # 扫描模板（quick-scan.json、standard-scan.json）
+│   ├── subdomain/                # 子域名默认字典（subnames.txt）
+│   ├── url/                      # URL 字典（dic.txt、backup.txt、springboot.txt）
+│   └── weakpass/                 # 弱口令默认字典（default-weakpass.txt）
 ├── docker/                       # Docker 配置
 │   ├── Dockerfile.api / Dockerfile.rpc / Dockerfile.worker
 │   ├── cscan-api.yaml / task.yaml  # 容器内配置
@@ -207,12 +204,12 @@ cscan/
 │   ├── vite.config.js            # Vite 配置（代理、分包、SCSS、test）
 │   └── package.json
 ├── docker-compose.yaml           # 生产全栈（redis/mongodb/api/rpc/web/worker + 资源限制）
-├── docker-compose.dev.yaml       # 本地开发依赖（仅 MongoDB + Redis）
+├── docker-compose.dev.yaml       # 本地开发全栈（MongoDB + Redis + RPC + API + Web + Worker，本地构建）
 ├── docker-compose-worker.yaml    # 独立 Worker 探针部署
 ├── scripts/dev.ps1 / dev.sh / dev.bat   # 一键启动开发环境
 ├── .github/workflows/build-images.yml   # CI/CD（4 个镜像并行构建推送）
 ├── go.mod / go.sum / VERSION / cscan.sh / cscan.bat
-└── README.md / README_EN.md / CLAUDE.md / CLEANUP_PLAN.md
+└── README.md / README_EN.md / CLAUDE.md
 ```
 
 ### 2.2 业务模块清单
@@ -224,7 +221,7 @@ cscan/
 | 资产空间搜索 | `handler/asset` | `AssetSpaceSearch.vue` | 聚合卡片视图检索（AssetInventoryCardView） |
 | 任务管理 | `handler/task` | `Task.vue`, `TaskCreate.vue`, `TaskDetail.vue`, `CronTask.vue`, `CronTaskCreate.vue`, `ScanTemplate.vue` | 创建/分块/暂停/恢复/停止/重试/定时/模板/快速创建 |
 | 漏洞管理 | `handler/vul` | `VulnerabilityManagement.vue` | 列表/详情/统计/状态/复验配置与触发 |
-| Worker 管理 | `handler/worker` | `Worker.vue`, `WorkerLogs.vue`, `WorkerConsole.vue` | 注册/心跳/WebSocket/日志流/控制台（终端/文件/审计） |
+| Worker 管理 | `handler/worker` | `Worker.vue`, `WorkerLogs.vue` | 注册/心跳/WebSocket/日志流 |
 | 容器管理 | `handler/container` | 控制台内 | cscan 容器列表/实时日志/历史日志（本地文件） |
 | 指纹管理 | `handler/fingerprint` | `Fingerprint.vue` | 指纹 CRUD/分类/同步/主动指纹/HTTP 服务映射 |
 | POC 管理 | `handler/poc` | `Poc.vue` | 自定义 POC/Nuclei 模板/AI 生成/批量验证/标签映射 |
@@ -238,15 +235,15 @@ cscan/
 | 组织管理 | `handler/organization` | `settings/OrganizationManagement.vue` | 组织 CRUD/状态切换 |
 | 黑名单 | `handler/blacklist` | `Blacklist.vue` | 全局黑名单规则配置（下发 Worker） |
 | 通知/主题/品牌 | `handler/notify` | `settings/NotifyConfig.vue`, `settings/BrandingConfig.vue`, `HighRiskFilter.vue` | 通知配置/高危过滤器/主题/品牌 |
-| 资产复核 | `handler/vul` + `internal/scheduler/reverify_*` | `settings/ReverifyConfig.vue` | 弱口令/暴露面持续复验配置与执行 |
+| 资产复核 | `handler/vul` + `handler/worker/reverifybatchhandler.go` + `internal/scheduler/reverify_*` | `settings/ReverifyConfig.vue` | 弱口令/暴露面持续复验配置、下发与结果回传 |
 | 报告 | `handler/report` | `Report.vue` | 报告详情/导出/周期报告 |
 | 扫描模板 | `handler/task` | `ScanTemplate.vue` | 扫描配置模板管理（task/template） |
-| 开放平台 | `handler/openapi` | `ApiDocs.vue` | `/api/open/v1` 只读 API（PAT + 限流） |
+| 开放平台 | `handler/openapi` | — | `/api/open/v1` 只读 API（PAT + 限流） |
 | 工作空间 | —（无独立模块） | — | 经 `X-Workspace-Id` 请求头过滤，无 CRUD 路由 |
 
-### 2.3 MongoDB 集合清单（全局单集合，38 个）
+### 2.3 MongoDB 集合清单（全局单集合，35 个）
 
-`asset`、`asset_history`、`scanresult`、`scanjob`、`scantarget`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`audit_log`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`reverify_config`、`workspace_baseline`
+`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`、`reverify_config`、`workspace_baseline`
 
 ---
 
@@ -383,7 +380,7 @@ response.ParamError(w, "参数校验失败")          // 参数错误
 - **PAT 认证**：`Authorization` 令牌以 `cscan_pat_` 开头走 PAT 路径（`AuthMiddleware.WithPAT`），校验状态/过期 + `ScopeAllowed` scope；PAT 明文仅创建时返回一次，库中存 HMAC 哈希；修改/重置密码吊销该用户全部 PAT
 - **开放 API**：`/api/open/v1/*` 复用 PAT 认证（只读 scope）+ `TokenRateLimiter`（120 次/分，key = tokenId > userId > IP，超频 429）
 - **Worker 认证**：`X-Worker-Key` 请求头，双密钥校验（环境变量 `CSCAN_WORKER_KEY` 或 Redis install_key）；Redis 故障返回 503 而非 401
-- 任务配置校验：`internal/scheduler/config.go` 的 `ValidateTaskConfig` + `ApplyDefaults`（模块启用时校验 tool 枚举/非负参数）；完整校验器 `internal/scheduler/config_validator.go` 返回 `xerr.NewConfigError`
+- 任务配置校验：分片配置经 `internal/scheduler/splitter.go` 的 `ValidateChunkConfig` 校验；扫描模块参数在各 logic 层按需校验
 
 ### 3.8 Struct Tag 规范
 
@@ -404,9 +401,9 @@ type Asset struct {
 ### 3.9 API 路由规范
 
 - 所有端点前缀：`/api/v1/*`；开放平台只读 API 前缀 `/api/open/v1/*`
-- HTTP 方法：除健康检查 (`GET /health`)、Swagger (`GET /swagger/*`)、Worker WebSocket (`GET /api/v1/worker/ws`)、静态文件与部分查询外，**业务接口均为 POST**
-- 六层认证级别（见 1.4）：无认证 / Worker Key / JWT+PAT / JWT+管理员 / JWT+Console / 开放 API
-- 路由注册顺序即中间件叠加顺序：Worker → 认证 → 管理员 → Console → 终端 WS → 开放 API；每条路由经 `swagger.CollectEx(method, path, tier)` 分级采集到 `/swagger/doc.json`
+- HTTP 方法：除健康检查 (`GET /health`)、Worker WebSocket (`GET /api/v1/worker/ws`)、静态文件与部分查询外，**业务接口均为 POST**
+- 五层认证级别（见 1.4）：无认证 / Worker Key / JWT+PAT / JWT+管理员 / 开放 API
+- 路由注册顺序即中间件叠加顺序：Worker → 认证 → 管理员 → 开放 API
 - 接口契约兼容：保留别名路由（如 `/organization/create` → save、`/blacklist/save` → config/save、`/task/cron/create`）
 
 ### 3.10 Redis 使用规范
@@ -430,7 +427,6 @@ type Asset struct {
 | 定时任务缓存 | `cscan:cron:tasks` | Hash |
 | 定时触发 | `cscan:cron:execute_scan` / `cscan:cron:execute_space` | Pub/Sub |
 | 定时控制 | `cscan:cron:reload` / `cscan:cron:remove` / `cscan:cron:runnow` | Pub/Sub |
-| 控制台审计 | `cscan:audit:console` | Stream (MaxLen 10000) |
 
 ### 3.11 前端其他规范
 
@@ -487,12 +483,13 @@ properties.TestingRun(t)
 
 ### 4.2 Go 集成测试
 
-- `handler/worker/security_test.go` — 中间件安全测试（httptest + miniredis）
-- `handler/asset/scanresult_integration_test.go` — 扫描结果集成测试
+- `handler/worker/heartbeat_concurrency_test.go` — Worker 心跳并发上报测试
+- `handler/asset/scanresult_integration_test.go` — 扫描结果集成测试（需本地 MongoDB）
 - `handler/api_compatibility_test.go` — API 兼容性测试
 - `middleware/authmiddleware_pat_test.go`、`middleware/openapi_scope_test.go`、`middleware/ratelimit_test.go`、`middleware/scopes_test.go` — PAT/scope/限流测试
-- `internal/scheduler/scheduler_bucket_test.go`、`internal/scheduler/reverify_exposure_test.go` — 分桶队列与复验探测分类测试
+- `internal/scheduler/scheduler_bucket_test.go` — 分桶队列测试；`internal/scheduler/benchmark_test.go` — 入队/出队/分片基准（Redis 不可用自动 skip）
 - `worker/internal/worker/task_queue_manager_test.go`、`worker/internal/worker/concurrency_test.go` — 优先级队列与并发调整测试
+- `worker/internal/worker/worker_reverify_test.go` — 敏感信息复验探测分类测试
 - `internal/model/*_test.go`、`pkg/executor/executor_test.go`、`api/internal/logic/reverifylogic_test.go` 等
 
 ### 4.3 前端测试
@@ -513,21 +510,24 @@ test: {
 
 ### 5.1 环境与配置
 
-**本地开发依赖启动**：
+**一键启动完整本地栈（推荐）**：
 ```bash
-docker-compose -f docker-compose.dev.yaml up -d   # 启动 MongoDB(:27017) + Redis(:6379)
+# Windows PowerShell:
+./scripts/dev.ps1
+# Linux/macOS / Git Bash:
+./scripts/dev.sh
 ```
+脚本执行 `docker-compose -f docker-compose.dev.yaml up -d --build`，一次性容器化启动全部服务
+（MongoDB :27017 / Redis :6379 / RPC / API :8888 / Web :7777 / Worker），本地代码自动构建，
+Worker 默认使用内置密钥 `cscan-dev-key`（可用环境变量 `CSCAN_WORKER_KEY` 覆盖），无需手动配置。
+停止：`docker-compose -f docker-compose.dev.yaml down`。
 
-**后端服务启动（按顺序）**：
+**手动分步启动（调试用，host 直跑）**：
 ```bash
 go run rpc/task/task.go -f rpc/task/etc/task.yaml     # 1. 启动 gRPC 服务 (:9000)
 go run api/cscan.go -f api/etc/cscan.yaml              # 2. 启动 HTTP API (:8888)
-go run worker/main.go -k <install_key> -s http://localhost:8888  # 3. 启动 Worker
-```
-
-**前端启动**：
-```bash
-cd web && npm install && npm run dev    # 开发服务器 (:7777)，代理 /api → :8888
+cd web && npm install && npm run dev                   # 3. 启动前端 (:7777)，代理 /api → :8888
+go run worker/main.go -k <install_key> -s http://localhost:8888  # 4. （可选）启动 Worker
 ```
 
 **关键配置文件**：
@@ -610,19 +610,16 @@ go build ./... 2>&1 | Out-File -Encoding ascii build.log
 # 随后用编辑器/Read 打开 build.log，确认无 "# ..." 错误行
 ```
 
-#### 5.5.2 本地起服务（Mongo + Redis）
+#### 5.5.2 一键启动完整本地栈
 
 ```powershell
-docker-compose -f docker-compose.dev.yaml up -d
+./scripts/dev.ps1   # 等价于 docker-compose -f docker-compose.dev.yaml up -d --build
 ```
 
-> 确认上一步的编译没有问题之后，可以通过脚本进行启动
+> 脚本容器化启动全部服务（MongoDB + Redis + RPC + API + Web + Worker），本地代码自动构建；
+> 确认上一步的编译没有问题之后即可运行（首次构建需拉取基础镜像并编译，耗时较长）。
 
-一键启动服务脚本：
-```powershell
-./scripts/dev.ps1
-```
-健康检查：`curl http://127.0.0.1:8888/health` → `OK`。前端如需浏览器验证：`cd web && npm run dev`（:7777，代理 /api → :8888）。
+健康检查：`curl http://127.0.0.1:8888/health` → `OK`。前端如需浏览器验证：直接访问 `http://localhost:7777`，或 `cd web && npm run dev`（:7777，代理 /api → :8888）。
 
 #### 5.5.3 接口冒烟（免登录）
 
@@ -689,8 +686,7 @@ docs/                # 本地文档（已被忽略）
 | `README.md` | 根目录 | 中文项目说明、功能特性、快速开始 |
 | `README_EN.md` | 根目录 | 英文项目说明 |
 | `CLAUDE.md` | 根目录 | AI 编码助手指导文件 |
-| `CLEANUP_PLAN.md` | 根目录 | 代码清理计划与记录（Worker 拆分等） |
-| `VERSION` | 根目录 | 当前版本号（V4.5） |
+| `VERSION` | 根目录 | 当前版本号（V5.0） |
 | `LICENSE` | 根目录 | MIT 许可证 |
 
 项目 `docs/` 目录已被 `.gitignore` 忽略（GOZERO_ARCHITECTURE.md / IMPLEMENTATION_SUMMARY.md 已随 go-zero 改造回退删除），无 lint 配置文件（ESLint/Prettier/golangci-lint），无 Makefile。

@@ -20,9 +20,9 @@ export function getJSFinderDetail(data) {
   return request.post('/jsfinder/detail', data)
 }
 
-// 单条AI研判
+// 单条AI研判（AI接口响应可能较慢，放宽单次请求超时，避免触发全局30s超时）
 export function analyzeJSByAI(data) {
-  return request.post('/jsfinder/ai/analyze', data)
+  return request.post('/jsfinder/ai/analyze', data, { timeout: 70000 })
 }
 
 // 批量研判所有未研判数据（异步）

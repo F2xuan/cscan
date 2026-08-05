@@ -218,8 +218,8 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 	}
 	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s:%s:%v",
-		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.TagsAny)
+	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s:%s:%s:%v",
+		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.AIResult, req.TagsAny)
 
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, jsfinderListCacheTTL, func() (interface{}, error) {
 		return l.getJSFinderListUncached(req)
@@ -497,13 +497,17 @@ func (l *JSFinderLogic) GetJSFinderDetail(req *types.JSFinderDetailReq) (*types.
 var jsfinderAIBatchTasks sync.Map // taskId -> *batchTaskState
 
 type batchTaskState struct {
-	mu        sync.Mutex
-	TaskId    string
-	Total     int64
-	Completed int64
-	Status    string // running/completed/failed/stopped
-	StopCh    chan struct{} // 停止信号通道
-	EndTime   time.Time    // 任务结束时间（用于TTL清理）
+	mu          sync.Mutex
+	TaskId      string
+	Total       int64
+	Completed   int64   // 成功研判条数
+	RiskCount   int64   // 有风险条数
+	NoRiskCount int64   // 无风险条数
+	FailedCount int64   // 研判失败条数
+	Status      string  // running/completed/failed/stopped/stopping
+	StopCh      chan struct{} // 停止信号通道
+	EndTime     time.Time    // 任务结束时间（用于TTL清理）
+	consecFail  int32    // 连续AI调用失败次数（原子访问），用于熔断
 }
 
 func init() {
@@ -700,7 +704,7 @@ func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *b
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
-	stopped := int32(0) // 原子标记是否已停止
+	stopped := int32(0) // 原子标记是否已停止/熔断
 
 	for _, doc := range pendingDocs {
 		// 检查是否收到停止信号
@@ -720,11 +724,8 @@ func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *b
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			// 再次检查停止信号（避免已停止后还在处理）
+			// 已停止/熔断，未处理数据保持待研判状态
 			if atomic.LoadInt32(&stopped) == 1 {
-				state.mu.Lock()
-				state.Completed++ // 跳过的也算入完成数，避免进度卡住
-				state.mu.Unlock()
 				return
 			}
 
@@ -736,34 +737,63 @@ func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *b
 			m := l.svcCtx.GetJSFinderResultModel(wsId)
 
 			result, reason, err := l.callAIAnalysis(aiCfg, d)
+			if err != nil {
+				atomic.AddInt64(&state.FailedCount, 1)
+				logx.Errorf("[JSFinder-AI] doc %s analyze error: %v", d.Id.Hex(), err)
+				// 连续失败达到阈值，判定AI服务中断并熔断后续研判
+				if atomic.AddInt32(&state.consecFail, 1) >= aiFailFastThreshold {
+					l.abortBatchTask(state, &stopped)
+				}
+				return
+			}
+			atomic.StoreInt32(&state.consecFail, 0)
+
 			now := time.Now()
 			aiResult := "no_risk"
-			if err == nil && result == "risk" {
+			if result == "risk" {
 				aiResult = "risk"
 			}
-			reason2use := reason
-			if err != nil {
-				reason2use = "研判失败: " + err.Error()
-				logx.Errorf("[JSFinder-AI] doc %s analyze error: %v", d.Id.Hex(), err)
+			// 仅研判成功才回写库；失败保持待研判状态，便于重试
+			if err := m.UpdateAIResult(context.Background(), d.Id.Hex(), "completed", aiResult, reason, now); err != nil {
+				atomic.AddInt64(&state.FailedCount, 1)
+				logx.Errorf("[JSFinder-AI] doc %s save result error: %v", d.Id.Hex(), err)
+				return
 			}
-			_ = m.UpdateAIResult(context.Background(), d.Id.Hex(), "completed", aiResult, reason2use, now)
-
-			state.mu.Lock()
-			state.Completed++
-			state.mu.Unlock()
+			if aiResult == "risk" {
+				atomic.AddInt64(&state.RiskCount, 1)
+			} else {
+				atomic.AddInt64(&state.NoRiskCount, 1)
+			}
+			atomic.AddInt64(&state.Completed, 1)
 		}(doc)
 	}
 	wg.Wait()
 
 	state.mu.Lock()
-	if atomic.LoadInt32(&stopped) == 1 {
-		state.Status = "stopped"
-	} else {
+	// 熔断（failed）与用户停止（stopping）已在执行中置位，此处只收尾运行中任务
+	switch state.Status {
+	case "running":
 		state.Status = "completed"
+	case "stopping":
+		state.Status = "stopped"
 	}
 	state.EndTime = time.Now()
 	state.mu.Unlock()
-	logx.Infof("[JSFinder-AI] batch task %s finished: status=%s, completed=%d/%d", taskId, state.Status, state.Completed, state.Total)
+	logx.Infof("[JSFinder-AI] batch task %s finished: status=%s, completed=%d/%d, risk=%d, noRisk=%d, failed=%d",
+		taskId, state.Status, state.Completed, state.Total, state.RiskCount, state.NoRiskCount, state.FailedCount)
+}
+
+// abortBatchTask AI 服务连续失败熔断，终止批量任务（仅运行中状态允许，防重复关闭 StopCh）
+func (l *JSFinderLogic) abortBatchTask(state *batchTaskState, stopped *int32) {
+	atomic.StoreInt32(stopped, 1)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Status != "running" {
+		return
+	}
+	state.Status = "failed"
+	close(state.StopCh)
+	logx.Errorf("[JSFinder-AI] batch task %s aborted: AI service consecutive failures", state.TaskId)
 }
 
 // StopBatchTask 停止批量研判任务
@@ -798,7 +828,9 @@ func (l *JSFinderLogic) GetBatchProgress(req *types.JSFinderAIBatchProgressReq) 
 	defer state.mu.Unlock()
 	return &types.JSFinderAIBatchProgressResp{
 		Code: 0, Msg: "success",
-		Total: state.Total, Completed: state.Completed, Status: state.Status,
+		Total: state.Total, Completed: state.Completed,
+		RiskCount: state.RiskCount, NoRiskCount: state.NoRiskCount, FailedCount: state.FailedCount,
+		Status: state.Status,
 	}, nil
 }
 
@@ -838,7 +870,7 @@ func (l *JSFinderLogic) callAIAnalysis(cfg *model.APIConfig, doc *model.JSFinder
 
 	prompt := buildJSAnalysisPrompt(doc)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), aiCallTimeout)
 	defer cancel()
 
 	content, err := client.Chat(ctx, prompt, 1024)

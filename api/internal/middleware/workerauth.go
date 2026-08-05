@@ -84,11 +84,3 @@ func workerUnauthorized(w http.ResponseWriter, msg string) {
 		"msg":  msg,
 	})
 }
-
-// GetWorkerName 从Context获取Worker名称
-func GetWorkerName(ctx context.Context) string {
-	if v := ctx.Value(WorkerNameKey); v != nil {
-		return v.(string)
-	}
-	return ""
-}

@@ -900,10 +900,10 @@ type MainTaskUpdateReq struct {
 
 // GetTaskLogsReq 获取任务日志请求
 type GetTaskLogsReq struct {
-	TaskId string `json:"taskId"`            // 任务ID
-	Limit  int    `json:"limit,default=100"` // 返回条数限制
-	Search string `json:"search,optional"`   // 模糊搜索关键词
-	IncludeDebug bool `json:"includeDebug,optional"` // 是否包含 DEBUG 级别日志（默认不含，用于与容器日志对齐排查）
+	TaskId       string `json:"taskId"`                // 任务ID
+	Limit        int    `json:"limit,default=100"`     // 返回条数限制
+	Search       string `json:"search,optional"`       // 模糊搜索关键词
+	IncludeDebug bool   `json:"includeDebug,optional"` // 是否包含 DEBUG 级别日志（默认不含，用于与容器日志对齐排查）
 }
 
 // TaskLogEntry 任务日志条目
@@ -3481,11 +3481,14 @@ type JSFinderAIBatchProgressReq struct {
 
 // JSFinderAIBatchProgressResp 批量研判进度响应
 type JSFinderAIBatchProgressResp struct {
-	Code      int    `json:"code"`
-	Msg       string `json:"msg"`
-	Total     int64  `json:"total"`
-	Completed int64  `json:"completed"`
-	Status    string `json:"status"` // running/completed/failed/stopped/stopping
+	Code        int    `json:"code"`
+	Msg         string `json:"msg"`
+	Total       int64  `json:"total"`
+	Completed   int64  `json:"completed"`   // 成功研判条数（risk + noRisk）
+	RiskCount   int64  `json:"riskCount"`   // 有风险条数
+	NoRiskCount int64  `json:"noRiskCount"` // 无风险条数
+	FailedCount int64  `json:"failedCount"` // 研判失败条数
+	Status      string `json:"status"`      // running/completed/failed/stopped/stopping
 }
 
 // JSFinderAIStopBatchReq 停止批量研判请求
@@ -3621,11 +3624,14 @@ type DirScanAIBatchProgressReq struct {
 
 // DirScanAIBatchProgressResp 批量研判进度响应
 type DirScanAIBatchProgressResp struct {
-	Code      int    `json:"code"`
-	Msg       string `json:"msg"`
-	Total     int64  `json:"total"`
-	Completed int64  `json:"completed"`
-	Status    string `json:"status"`
+	Code        int    `json:"code"`
+	Msg         string `json:"msg"`
+	Total       int64  `json:"total"`
+	Completed   int64  `json:"completed"`   // 成功研判条数（risk + noRisk）
+	RiskCount   int64  `json:"riskCount"`   // 有风险条数
+	NoRiskCount int64  `json:"noRiskCount"` // 无风险条数
+	FailedCount int64  `json:"failedCount"` // 研判失败条数
+	Status      string `json:"status"`      // running/completed/failed/stopped/stopping
 }
 
 // DirScanAIStopBatchReq 停止批量研判请求
@@ -3806,6 +3812,27 @@ type WorkerVulReverifyReq struct {
 
 // WorkerVulReverifyResp Worker 复验结果回传响应
 type WorkerVulReverifyResp struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	Success bool   `json:"success"`
+}
+
+// WorkerReverifyBatchReq Worker 持续复验批量结果回传（T3.3 弱口令 / T3.4 敏感信息，worker 专用端点）
+type WorkerReverifyBatchReq struct {
+	WorkspaceId string                    `json:"workspaceId"`
+	Kind        string                    `json:"kind"` // weakpass / exposure
+	Results     []WorkerReverifyBatchItem `json:"results"`
+}
+
+// WorkerReverifyBatchItem 单条复验结论
+type WorkerReverifyBatchItem struct {
+	Id      string `json:"id"`      // vulnId（weakpass）或 jsfinder/dirscan 记录 ID（exposure）
+	Kind    string `json:"kind"`    // exposure 回写集合归属: jsfinder / dirscan（weakpass 忽略）
+	Outcome string `json:"outcome"` // weakpass: fixed/still_vuln/unreachable; exposure: resolved/verified/pending
+}
+
+// WorkerReverifyBatchResp Worker 持续复验批量结果回传响应
+type WorkerReverifyBatchResp struct {
 	Code    int    `json:"code"`
 	Msg     string `json:"msg"`
 	Success bool   `json:"success"`

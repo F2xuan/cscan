@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"runtime"
 	"time"
 
 	"cscan/api/internal/svc"
@@ -197,30 +196,3 @@ func (l *WorkerInstallLogic) ValidateInstallKey(req *types.WorkerValidateKeyReq)
 	}, nil
 }
 
-// GetWorkerBinaryInfo 获取Worker二进制文件信息
-func (l *WorkerInstallLogic) GetWorkerBinaryInfo(osType, arch string) (*types.WorkerBinaryInfoResp, error) {
-	// 默认值
-	if osType == "" {
-		osType = runtime.GOOS
-	}
-	if arch == "" {
-		arch = runtime.GOARCH
-	}
-
-	// 构建文件名
-	filename := "cscan-worker"
-	if osType == "windows" {
-		filename = "cscan-worker.exe"
-	}
-
-	// 这里可以从配置或数据库获取实际的二进制文件路径
-	// 目前返回基本信息
-	return &types.WorkerBinaryInfoResp{
-		Code:     0,
-		Msg:      "success",
-		Filename: filename,
-		OS:       osType,
-		Arch:     arch,
-		Version:  "1.0.0",
-	}, nil
-}

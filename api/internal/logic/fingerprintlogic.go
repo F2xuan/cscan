@@ -1043,22 +1043,6 @@ func parseArrayOrString(v interface{}) []string {
 	return result
 }
 
-// parseIntArray 解析可能是数组或单个数字的字段
-func parseIntArray(v interface{}) []int {
-	var result []int
-	switch val := v.(type) {
-	case []interface{}:
-		for _, item := range val {
-			if n, ok := item.(float64); ok {
-				result = append(result, int(n))
-			}
-		}
-	case float64:
-		result = append(result, int(val))
-	}
-	return result
-}
-
 // FingerprintValidateLogic 验证指纹
 type FingerprintValidateLogic struct {
 	logx.Logger
@@ -1209,11 +1193,6 @@ type SingleFingerprintEngine struct {
 
 func NewSingleFingerprintEngine(fp *model.Fingerprint) *SingleFingerprintEngine {
 	return &SingleFingerprintEngine{fp: fp}
-}
-
-func (e *SingleFingerprintEngine) Match(data *FingerprintData) bool {
-	matched, _ := e.MatchWithDetails(data)
-	return matched
 }
 
 // MatchWithDetails 执行匹配并返回匹配的条件详情
@@ -1425,31 +1404,6 @@ func parseBaseUrl(rawUrl string) (string, error) {
 	return "", fmt.Errorf("invalid url")
 }
 
-// calculateMMH3Hash 计算Shodan风格的MMH3 favicon hash
-func calculateMMH3Hash(data []byte) string {
-	if len(data) == 0 {
-		return ""
-	}
-	// Shodan的favicon hash计算方式：
-	// 1. Base64编码（标准编码，每76字符换行）
-	// 2. 计算MMH3 hash
-	b64 := base64.StdEncoding.EncodeToString(data)
-
-	// 添加换行符（每76字符）模拟标准base64输出
-	var b64WithNewlines strings.Builder
-	for i := 0; i < len(b64); i += 76 {
-		end := i + 76
-		if end > len(b64) {
-			end = len(b64)
-		}
-		b64WithNewlines.WriteString(b64[i:end])
-		b64WithNewlines.WriteString("\n")
-	}
-
-	hash := mmh3Hash32([]byte(b64WithNewlines.String()))
-	return fmt.Sprintf("%d", int32(hash))
-}
-
 // calculateMMH3HashSimple 计算Shodan风格的MMH3 favicon hash（简化版，无换行）
 // 与扫描器 scanner/fingerprint.go 中的 CalculateMMH3Hash 算法一致
 func calculateMMH3HashSimple(data []byte) string {
@@ -1518,12 +1472,6 @@ func mmh3Hash32(data []byte) uint32 {
 	return h
 }
 
-// matchRule 匹配ARL格式规则
-func matchRule(rule string, data *FingerprintData) bool {
-	matched, _ := matchRuleWithDetails(rule, data)
-	return matched
-}
-
 // matchRuleWithDetails 匹配ARL格式规则并返回匹配的条件
 func matchRuleWithDetails(rule string, data *FingerprintData) (bool, []string) {
 	rule = strings.TrimSpace(rule)
@@ -1551,11 +1499,6 @@ func matchRuleWithDetails(rule string, data *FingerprintData) (bool, []string) {
 	}
 
 	return matchRuleAndWithDetails(rule, data)
-}
-
-func matchRuleAnd(rule string, data *FingerprintData) bool {
-	matched, _ := matchRuleAndWithDetails(rule, data)
-	return matched
 }
 
 func matchRuleAndWithDetails(rule string, data *FingerprintData) (bool, []string) {
@@ -1618,11 +1561,6 @@ func splitByOperator(rule, op string) []string {
 		parts = append(parts, strings.TrimSpace(current.String()))
 	}
 	return parts
-}
-
-func matchSingleCondition(condition string, data *FingerprintData) bool {
-	matched, _ := matchSingleConditionWithDetails(condition, data)
-	return matched
 }
 
 // matchSingleConditionWithDetails 匹配单个条件并返回详情
@@ -1842,11 +1780,6 @@ func encodeToGBK(s string) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-func matchWappalyzerRules(fp *model.Fingerprint, data *FingerprintData) bool {
-	matched, _ := matchWappalyzerRulesWithDetails(fp, data)
-	return matched
 }
 
 // matchARLWebappRulesWithDetails 匹配ARL webapp.json格式规则并返回匹配详情

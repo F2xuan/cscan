@@ -230,24 +230,6 @@ func validateDate(date string) bool {
 	return dateRegexp.MatchString(date)
 }
 
-// writeToFile 直接写入文件（仅 flushLoop 退出时使用）
-func (w *WorkerLogWriter) writeToFile(entry WorkerLogEntry) {
-	dateStr := time.Now().Format("2006-01-02")
-	dateDir := filepath.Join(w.logDir, dateStr)
-	_ = os.MkdirAll(dateDir, 0o755)
-
-	fpath := filepath.Join(dateDir, sanitizeWorkerName(entry.Worker)+".log")
-	f, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	data, _ := json.Marshal(entry)
-	data = append(data, '\n')
-	f.Write(data)
-}
-
 // Close 关闭写入器，flush 剩余日志
 func (w *WorkerLogWriter) Close() {
 	w.closeOnce.Do(func() {

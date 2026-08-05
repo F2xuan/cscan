@@ -1,12 +1,8 @@
 import request from './request'
-import { useUserStore } from '@/stores/user'
 
-// 复验类接口必须携带 workspaceId（后端将该字段视为必填，缺失会返回
-// "field workspaceId is not set"）。优先使用调用方显式传入的值，否则回退到
-// 当前用户所在工作空间；为空时后端 common.GetDefaultWorkspaceId 会解析为默认空间。
+// 复验类接口必须携带 workspaceId，默认使用 "default"
 function withWorkspace(data) {
-  const ws = useUserStore().workspaceId || ''
-  return { ...data, workspaceId: data?.workspaceId ?? ws }
+  return { ...data, workspaceId: data?.workspaceId || 'default' }
 }
 
 // 获取弱口令/敏感信息持续复验配置（T3.3 / T3.4）

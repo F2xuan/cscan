@@ -52,13 +52,6 @@ type CertCheckScanner struct {
 	BaseScanner
 }
 
-// NewCertCheckScanner 创建 certcheck 扫描器
-func NewCertCheckScanner() *CertCheckScanner {
-	return &CertCheckScanner{
-		BaseScanner: BaseScanner{name: "certcheck"},
-	}
-}
-
 // certTarget 单目标（已规范化 host:port）
 type certTarget struct {
 	Host      string
@@ -130,23 +123,6 @@ func joinNonEmpty(ss []string) string {
 	return strings.Join(ss, ",")
 }
 
-// parseHostPort 解析 "host" 或 "host:port"；缺省端口为 443
-func parseHostPort(s string) (string, int, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", 0, false
-	}
-	host, portStr, err := net.SplitHostPort(s)
-	if err != nil {
-		return s, 443, true
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 || port > 65535 {
-		return "", 0, false
-	}
-	return host, port, true
-}
-
 // isHTTPSAsset 判断资产是否为 HTTPS / 443 / 8443 类（证书采集候选）
 func isHTTPSAsset(a *Asset) bool {
 	if a.Port == 443 || a.Port == 8443 {
@@ -213,30 +189,7 @@ func FetchCert(ctx context.Context, host string, port int, timeout time.Duration
 	}
 }
 
-// scanOne 连接单个目标的 TLS 端口并解析证书（保留以兼容旧调用方）
-func (s *CertCheckScanner) scanOne(ctx context.Context, t certTarget, timeout time.Duration) *CertResult {
-	return FetchCert(ctx, t.Host, t.Port, timeout)
-}
-
-// Scan 占位实现 Scanner 接口（certcheck 不再作为独立扫描阶段，证书抓取由 FingerprintScanner 附加调用）
-func (s *CertCheckScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	result := &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId}
-	if len(config.Assets) == 0 {
-		return result, nil
-	}
-	timeout := 10 * time.Second
-	for _, a := range config.Assets {
-		if a == nil || !isCertFetchTarget(a) {
-			continue
-		}
-		if cr := FetchCert(ctx, a.Host, a.Port, timeout); cr != nil {
-			result.CertResults = append(result.CertResults, cr)
-		}
-	}
-	return result, nil
-}
-
-// oidEmailAddress PKCS#9 emailAddress OID (1.2.840.113549.1.9.1)，pkix.Name 不解析该字段，需从 Names 提取。
+// oidEmailAddress PKCS#9 emailAddress OID (1.2.840.113549.1.9.1)
 var oidEmailAddress = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 1}
 
 // sha1SumBytes / sha256SumBytes / md5SumBytes 返回对应哈希的定长字节数组。

@@ -56,11 +56,3 @@ func InitLogSync(logDir, workerName string, wsClient *WorkerWSClient) {
 
 	logx.Infof("[LogSync] Initialized: logDir=%s, worker=%s", logDir, workerName)
 }
-
-// GetSyncCursor 获取当前同步游标
-func GetSyncCursor() SyncCursor {
-	if globalCursorManager == nil {
-		return SyncCursor{}
-	}
-	return globalCursorManager.Get()
-}

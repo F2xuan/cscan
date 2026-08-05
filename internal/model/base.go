@@ -51,16 +51,6 @@ type PageParams struct {
 	SortDesc bool   // 是否降序
 }
 
-// DefaultPageParams 默认分页参数
-func DefaultPageParams() PageParams {
-	return PageParams{
-		Page:     1,
-		PageSize: 20,
-		SortBy:   "create_time",
-		SortDesc: true,
-	}
-}
-
 // ToFindOptions 转换为 MongoDB FindOptions
 func (p PageParams) ToFindOptions() *options.FindOptions {
 	opts := options.Find()

@@ -46,7 +46,6 @@ type ServiceContext struct {
 	HttpServiceModel        *model.HttpServiceModel // 新的HTTP服务设置模型
 	ActiveFingerprintModel  *model.ActiveFingerprintModel
 	CommandHistoryModel     *model.CommandHistoryModel
-	AuditLogModel           *model.AuditLogModel
 	NotifyConfigModel       *model.NotifyConfigModel
 	ScanTemplateModel       *model.ScanTemplateModel
 	CronTaskModel           *model.CronTaskModel
@@ -185,7 +184,6 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		HttpServiceModel:        model.NewHttpServiceModel(mongoDB),
 		ActiveFingerprintModel:  model.NewActiveFingerprintModel(mongoDB),
 		CommandHistoryModel:     model.NewCommandHistoryModel(mongoDB),
-		AuditLogModel:           model.NewAuditLogModel(mongoDB),
 		NotifyConfigModel:       model.NewNotifyConfigModel(mongoDB),
 		ScanTemplateModel:       model.NewScanTemplateModel(mongoDB),
 		CronTaskModel:           model.NewCronTaskModel(mongoDB),

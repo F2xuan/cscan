@@ -380,8 +380,3 @@ func (s *TargetSplitter) GetTargetCount(target string) int {
 	targets, _ := splitter.parseAllTargets(target)
 	return len(targets)
 }
-
-// NeedSplit 判断是否需要拆分
-func (s *TargetSplitter) NeedSplit(target string) bool {
-	return s.GetTargetCount(target) > s.batchSize
-}

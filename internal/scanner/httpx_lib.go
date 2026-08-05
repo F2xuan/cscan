@@ -12,33 +12,6 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// HttpxLibScanner 使用httpx库进行HTTP探测
-type HttpxLibScanner struct {
-	mu sync.Mutex
-}
-
-// NewHttpxLibScanner 创建httpx库扫描器
-func NewHttpxLibScanner() *HttpxLibScanner {
-	return &HttpxLibScanner{}
-}
-
-// HttpxLibResult httpx库扫描结果
-type HttpxLibResult struct {
-	URL          string
-	Host         string
-	Port         int
-	Title        string
-	StatusCode   int
-	Technologies []string
-	FaviconHash  string
-	Server       string
-	ContentType  string
-	Body         string
-	Headers      string
-	Screenshot   string
-	Scheme       string
-}
-
 // RunHttpxLib 使用httpx库进行批量HTTP探测
 // 注意：此函数使用同步阻塞方式执行，确保所有 httpx 回调完成后才返回
 // 内部使用 mutex 保护对共享 asset 对象的并发访问

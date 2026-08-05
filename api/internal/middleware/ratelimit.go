@@ -135,9 +135,3 @@ func (l *TokenRateLimiter) Handle(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Reset 清空所有限流桶（主要用于测试）。
-func (l *TokenRateLimiter) Reset() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.buckets = make(map[string]*tokenBucket)
-}

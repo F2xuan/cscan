@@ -82,15 +82,6 @@ type Worker struct {
 	wappalyzerClient *wappalyzer.Wappalyze
 	wappalyzerOnce   sync.Once
 
-	// 系统信息收集器
-	sysInfoCollector *SysInfoCollector
-
-	// 文件管理器
-	fileManager *FileManager
-
-	// 终端处理器
-	terminalHandler *TerminalHandler
-
 	// 自适应调度器（新版智能调度）
 	adaptiveScheduler *AdaptiveScheduler
 
@@ -282,9 +273,6 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	// 创建可取消的Context
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Worker版本号
-	workerVersion := "1.0.0"
-
 	w := &Worker{
 		ctx:              ctx,
 		cancel:           cancel,
@@ -295,7 +283,6 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		resultChan:       make(chan *scanner.ScanResult, 100),
 		stopChan:         make(chan struct{}),
 		logger:           NewWorkerLoggerLocal(config.Name), // 使用本地日志
-		sysInfoCollector: NewSysInfoCollector(config.Name, config.IP, workerVersion),
 	}
 
 	// Phase 2: 按需启用客户端优先级队列管理器
@@ -335,23 +322,6 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	})
 
 	// 设置Worker信息请求处理函数
-	w.wsClient.SetWorkerInfoHandler(func() *WorkerInfoPayload {
-		return w.GetWorkerInfo()
-	})
-
-	// 创建文件管理器并设置到WebSocket客户端
-	w.fileManager = NewFileManager(nil) // 使用默认配置
-	w.wsClient.SetFileHandler(w.fileManager)
-
-	// 创建终端处理器并设置到WebSocket客户端
-	w.terminalHandler = NewTerminalHandler(nil) // 使用默认配置
-	w.wsClient.SetTerminalHandler(w.terminalHandler)
-
-	// 设置终端输出回调，将输出发送到WebSocket
-	w.terminalHandler.SetOutputHandler(func(sessionId string, data []byte) {
-		w.wsClient.SendTerminalOutput(sessionId, data)
-	})
-
 	// 创建自适应调度器（新版智能调度）
 	adaptiveConfig := DefaultAdaptiveSchedulerConfig(config.Concurrency)
 	w.adaptiveScheduler = NewAdaptiveScheduler(adaptiveConfig)
@@ -532,23 +502,6 @@ func (w *Worker) ClearTaskControlSignal(taskId string) {
 	if mainTaskId != taskId {
 		w.taskControlSignals.Delete(mainTaskId)
 	}
-}
-
-// GetWorkerInfo 获取Worker详细信息
-func (w *Worker) GetWorkerInfo() *WorkerInfoPayload {
-	w.mu.Lock()
-	taskStarted := w.taskStarted
-	taskExecuted := w.taskExecuted
-	concurrency := w.config.Concurrency
-	w.mu.Unlock()
-
-	// 计算正在运行的任务数
-	taskRunning := taskStarted - taskExecuted
-	if taskRunning < 0 {
-		taskRunning = 0
-	}
-
-	return w.sysInfoCollector.Collect(taskStarted, taskRunning, concurrency)
 }
 
 // GetSchedulerStats 获取调度器统计信息
@@ -1338,6 +1291,16 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	if taskType == "vuln_reverify" {
 		w.taskLog(task.TaskId, LevelInfo, "Step 7e: Executing vuln reverify task")
 		w.executeVulnReverifyTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "reverify_weakpass" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7f: Executing weakpass reverify task")
+		w.executeReverifyWeakpassTask(ctx, task, taskConfig, startTime)
+		return
+	}
+	if taskType == "reverify_exposure" {
+		w.taskLog(task.TaskId, LevelInfo, "Step 7g: Executing exposure reverify task")
+		w.executeReverifyExposureTask(ctx, task, taskConfig, startTime)
 		return
 	}
 

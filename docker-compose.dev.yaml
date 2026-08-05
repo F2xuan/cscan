@@ -1,5 +1,7 @@
-# 本地开发用 - 仅启动依赖服务（MongoDB, Redis）
-# 使用方式: docker-compose -f docker-compose.dev.yaml up -d
+# 本地开发全栈 - 一键启动全部服务（MongoDB + Redis + RPC + API + Web + Worker）
+# 所有服务均由本地代码构建；Worker 默认使用内置密钥 cscan-dev-key（可用环境变量 CSCAN_WORKER_KEY 覆盖）。
+# 使用方式: docker-compose -f docker-compose.dev.yaml up -d --build
+#           docker-compose -f docker-compose.dev.yaml down
 
 x-logging: &default-logging
   driver: json-file
@@ -21,7 +23,9 @@ services:
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
-    # 内存限制可经环境变量注入（见 MEMORY_AUTOTUNE.md）
+    networks:
+      - cscan_dev_network
+    # 内存限制可经环境变量注入（见 README「资源配置」）
     deploy:
       resources:
         limits:
@@ -47,7 +51,9 @@ services:
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
-    # 内存限制可经环境变量注入（见 MEMORY_AUTOTUNE.md）
+    networks:
+      - cscan_dev_network
+    # 内存限制可经环境变量注入（见 README「资源配置」）
     deploy:
       resources:
         limits:
@@ -60,8 +66,147 @@ services:
       timeout: 5s
       retries: 3
 
+  # CSCAN RPC 服务（本地构建）
+  cscan-rpc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rpc
+    container_name: cscan_rpc_dev
+    logging: *default-logging
+    environment:
+      - TZ=Asia/Shanghai
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - cscan_dev_network
+    deploy:
+      resources:
+        limits:
+          cpus: '${CSCAN_RPC_CPU_LIMIT:-2}'
+          memory: ${CSCAN_RPC_MEM_LIMIT:-1G}
+        reservations:
+          cpus: '${CSCAN_RPC_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_RPC_MEM_RESERVATION:-256M}
+
+  # CSCAN API 服务（本地构建）
+  # JWT secret 由 entrypoint.sh 自动生成并持久化到 /app/data/.jwt_secret，无需手动配置
+  cscan-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: cscan_api_dev
+    logging: *default-logging
+    environment:
+      - TZ=Asia/Shanghai
+      # Worker 默认密钥（与下方 cscan-worker 的 CSCAN_KEY 保持一致）；可用环境变量覆盖
+      - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY:-cscan-dev-key}
+    volumes:
+      - cscan_api_data_dev:/app/data
+      - ./log:/app/log
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8888:8888"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - cscan_dev_network
+    deploy:
+      resources:
+        limits:
+          cpus: '${CSCAN_API_CPU_LIMIT:-2}'
+          memory: ${CSCAN_API_MEM_LIMIT:-1G}
+        reservations:
+          cpus: '${CSCAN_API_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_API_MEM_RESERVATION:-256M}
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget --quiet --tries=1 --spider http://localhost:8888/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # CSCAN Web 前端（本地构建，nginx + 自签证书）
+  cscan-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: cscan_web_dev
+    logging: *default-logging
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "3000:80"
+      - "7777:443"
+    volumes:
+      - cscan_ssl_certs_dev:/etc/nginx/ssl
+    depends_on:
+      - cscan-api
+    restart: unless-stopped
+    networks:
+      - cscan_dev_network
+    deploy:
+      resources:
+        limits:
+          cpus: '${CSCAN_WEB_CPU_LIMIT:-2}'
+          memory: ${CSCAN_WEB_MEM_LIMIT:-512M}
+        reservations:
+          cpus: '${CSCAN_WEB_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_WEB_MEM_RESERVATION:-128M}
+
+  # CSCAN Worker 默认节点（本地构建，随主服务一键启动）
+  cscan-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      args:
+        VERSION: ${CSCAN_VERSION:-dev}
+    container_name: cscan_worker_dev
+    logging: *default-logging
+    environment:
+      - TZ=Asia/Shanghai
+      - CSCAN_SERVER=http://cscan-api:8888
+      - CSCAN_KEY=${CSCAN_WORKER_KEY:-cscan-dev-key}
+      - CSCAN_NAME=cscan-dev-worker
+      # 并发可经环境变量注入；未设置时 Worker 按容器内存上限自动推导（见 worker/main.go）
+      - CSCAN_CONCURRENCY=${CSCAN_WORKER_CONCURRENCY:-2}
+    depends_on:
+      cscan-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - cscan_dev_network
+    volumes:
+      - cscan_worker_logs_dev:/app/log
+    deploy:
+      resources:
+        limits:
+          cpus: '${CSCAN_WORKER_CPU_LIMIT:-2}'
+          # 内存上限可经环境变量注入；配合 CSCAN_CONCURRENCY 自动推导，充分利用高配机、避免低配 OOM
+          memory: ${CSCAN_WORKER_MEM_LIMIT:-2G}
+        reservations:
+          cpus: '${CSCAN_WORKER_CPU_RESERVATION:-0.5}'
+          memory: ${CSCAN_WORKER_MEM_RESERVATION:-512M}
+
 volumes:
   cscan_redis_data_dev:
     driver: local
   cscan_mongodb_data_dev:
     driver: local
+  cscan_api_data_dev:
+    driver: local
+  cscan_worker_logs_dev:
+    driver: local
+  cscan_ssl_certs_dev:
+    driver: local
+
+networks:
+  cscan_dev_network:
+    driver: bridge

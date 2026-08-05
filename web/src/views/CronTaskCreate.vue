@@ -730,13 +730,19 @@
               <template v-if="form.pocscanMode === 'manual'">
                 <el-form-item :label="$t('task.selectedPoc')">
                   <div class="selected-poc-summary">
-                    <el-tag type="primary" size="small" v-if="form.pocscanNucleiTemplateIds.length">
+                    <el-tag type="primary" size="small" v-if="nucleiSelectAll">
+                      {{ $t('task.defaultTemplate') }}: {{ $t('task.allSelectedCount', { count: nucleiSelectAllCount }) }}
+                    </el-tag>
+                    <el-tag type="primary" size="small" v-else-if="form.pocscanNucleiTemplateIds.length">
                       {{ $t('task.defaultTemplate') }}: {{ form.pocscanNucleiTemplateIds.length }}
                     </el-tag>
-                    <el-tag type="warning" size="small" v-if="form.pocscanCustomPocIds.length">
+                    <el-tag type="warning" size="small" v-if="customPocSelectAll">
+                      {{ $t('task.customPoc') }}: {{ $t('task.allSelectedCount', { count: customPocSelectAllCount }) }}
+                    </el-tag>
+                    <el-tag type="warning" size="small" v-else-if="form.pocscanCustomPocIds.length">
                       {{ $t('task.customPoc') }}: {{ form.pocscanCustomPocIds.length }}
                     </el-tag>
-                    <span v-if="!form.pocscanNucleiTemplateIds.length && !form.pocscanCustomPocIds.length" class="secondary-hint">
+                    <span v-if="!nucleiSelectAll && !customPocSelectAll && !form.pocscanNucleiTemplateIds.length && !form.pocscanCustomPocIds.length" class="secondary-hint">
                       {{ $t('task.noPocSelected') }}
                     </span>
                     <el-button type="primary" link @click="showPocSelectDialog">{{ $t('task.selectPoc') }}</el-button>
@@ -911,11 +917,14 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" size="small" @click="loadNucleiTemplatesForSelect">{{ $t('common.search') }}</el-button>
-                  <el-button type="success" size="small" @click="selectAllNucleiTemplates" :loading="selectAllNucleiLoading">{{ $t('task.selectAll') }}</el-button>
-                  <el-button type="warning" size="small" @click="deselectAllNucleiTemplates" v-if="selectedNucleiTemplateIds.length > 0">{{ $t('task.deselectAll') }}</el-button>
+                  <el-button v-if="!nucleiSelectAll" type="success" size="small" @click="selectAllNucleiTemplates" :loading="selectAllNucleiLoading">{{ $t('task.selectAll') }}</el-button>
+                  <el-button v-if="nucleiSelectAll || selectedNucleiTemplateIds.length > 0" type="warning" size="small" @click="deselectAllNucleiTemplates">{{ $t('task.deselectAll') }}</el-button>
                 </el-form-item>
               </el-form>
-              <el-table 
+              <div v-if="nucleiSelectAll" class="select-all-tip">
+                {{ $t('task.selectAllHint', { count: nucleiSelectAllCount }) }}
+              </div>
+              <el-table
                 ref="nucleiTableRef"
                 :data="nucleiTemplateList" 
                 v-loading="nucleiTemplateLoading" 
@@ -966,11 +975,14 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" size="small" @click="loadCustomPocsForSelect">{{ $t('common.search') }}</el-button>
-                  <el-button type="success" size="small" @click="selectAllCustomPocs" :loading="selectAllCustomLoading">{{ $t('task.selectAll') }}</el-button>
-                  <el-button type="warning" size="small" @click="deselectAllCustomPocs" v-if="selectedCustomPocIds.length > 0">{{ $t('task.deselectAll') }}</el-button>
+                  <el-button v-if="!customPocSelectAll" type="success" size="small" @click="selectAllCustomPocs" :loading="selectAllCustomLoading">{{ $t('task.selectAll') }}</el-button>
+                  <el-button v-if="customPocSelectAll || selectedCustomPocIds.length > 0" type="warning" size="small" @click="deselectAllCustomPocs">{{ $t('task.deselectAll') }}</el-button>
                 </el-form-item>
               </el-form>
-              <el-table 
+              <div v-if="customPocSelectAll" class="select-all-tip">
+                {{ $t('task.selectAllHint', { count: customPocSelectAllCount }) }}
+              </div>
+              <el-table
                 ref="customPocTableRef"
                 :data="customPocList" 
                 v-loading="customPocLoading" 
@@ -1009,8 +1021,8 @@
         <!-- 右侧：已选择列表 -->
         <div class="poc-select-right">
           <div class="selected-header">
-            <span>{{ $t('task.selected') }} ({{ selectedNucleiTemplates.length + selectedCustomPocs.length }})</span>
-            <el-button type="danger" link size="small" @click="clearAllSelections" v-if="selectedNucleiTemplates.length + selectedCustomPocs.length > 0">
+            <span>{{ $t('task.selected') }} ({{ (nucleiSelectAll ? nucleiSelectAllCount : selectedNucleiTemplates.length) + (customPocSelectAll ? customPocSelectAllCount : selectedCustomPocs.length) }})</span>
+            <el-button type="danger" link size="small" @click="clearAllSelections" v-if="nucleiSelectAll || customPocSelectAll || selectedNucleiTemplates.length + selectedCustomPocs.length > 0">
               {{ $t('task.clearAll') }}
             </el-button>
           </div>
@@ -1019,7 +1031,20 @@
           </div>
           <div class="selected-list">
             <!-- 默认模板 -->
-            <div v-if="filteredSelectedNucleiTemplates.length > 0" class="selected-group">
+            <div v-if="nucleiSelectAll" class="selected-group">
+              <div class="group-header">
+                <span>{{ $t('task.defaultTemplate') }}: {{ $t('task.allSelectedCount', { count: nucleiSelectAllCount }) }}</span>
+                <el-button type="danger" link size="small" @click="deselectAllNucleiTemplates">{{ $t('task.deselectAll') }}</el-button>
+              </div>
+              <div v-if="hasNucleiSelectAllFilter" class="selected-all-conditions">
+                <el-tag v-if="nucleiSelectAllFilter.keyword" size="small">{{ $t('task.nameOrId') }}: {{ nucleiSelectAllFilter.keyword }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{ nucleiSelectAllFilter.severity }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.category" size="small">{{ $t('task.category') }}: {{ nucleiSelectAllFilter.category }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{ nucleiSelectAllFilter.tag }}</el-tag>
+              </div>
+              <div v-else class="selected-all-conditions">{{ $t('task.allTemplates') }}</div>
+            </div>
+            <div v-else-if="filteredSelectedNucleiTemplates.length > 0" class="selected-group">
               <div class="group-header">
                 <span>{{ $t('task.defaultTemplate') }} ({{ filteredSelectedNucleiTemplates.length }}<template v-if="selectedPocSearchKeyword">/{{ selectedNucleiTemplates.length }}</template>)</span>
                 <el-button type="danger" link size="small" @click="clearNucleiSelections">{{ $t('task.clear') }}</el-button>
@@ -1032,7 +1057,19 @@
               </div>
             </div>
             <!-- 自定义POC -->
-            <div v-if="filteredSelectedCustomPocs.length > 0" class="selected-group">
+            <div v-if="customPocSelectAll" class="selected-group">
+              <div class="group-header">
+                <span>{{ $t('task.customPoc') }}: {{ $t('task.allSelectedCount', { count: customPocSelectAllCount }) }}</span>
+                <el-button type="danger" link size="small" @click="deselectAllCustomPocs">{{ $t('task.deselectAll') }}</el-button>
+              </div>
+              <div v-if="hasCustomPocSelectAllFilter" class="selected-all-conditions">
+                <el-tag v-if="customPocSelectAllFilter.name" size="small">{{ $t('common.name') }}: {{ customPocSelectAllFilter.name }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{ customPocSelectAllFilter.severity }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{ customPocSelectAllFilter.tag }}</el-tag>
+              </div>
+              <div v-else class="selected-all-conditions">{{ $t('task.allPocs') }}</div>
+            </div>
+            <div v-else-if="filteredSelectedCustomPocs.length > 0" class="selected-group">
               <div class="group-header">
                 <span>{{ $t('task.customPoc') }} ({{ filteredSelectedCustomPocs.length }}<template v-if="selectedPocSearchKeyword">/{{ selectedCustomPocs.length }}</template>)</span>
                 <el-button type="danger" link size="small" @click="clearCustomPocSelections">{{ $t('task.clear') }}</el-button>
@@ -1045,7 +1082,7 @@
               </div>
             </div>
             <!-- 空状态 -->
-            <div v-if="filteredSelectedNucleiTemplates.length === 0 && filteredSelectedCustomPocs.length === 0" class="selected-empty">
+            <div v-if="!nucleiSelectAll && !customPocSelectAll && filteredSelectedNucleiTemplates.length === 0 && filteredSelectedCustomPocs.length === 0" class="selected-empty">
               <span>{{ selectedPocSearchKeyword ? $t('task.noMatchingResults') : $t('task.noPocSelected') }}</span>
             </div>
           </div>
@@ -1283,6 +1320,17 @@ const selectedCustomPocIds = ref([])
 const selectedNucleiTemplates = ref([])
 const selectedCustomPocs = ref([])
 const selectedPocSearchKeyword = ref('')
+// 手动全选状态：前端只记录选择意图（标记 + 筛选条件），由后端按条件查询展开
+const nucleiSelectAll = ref(false) // 默认模板是否全选
+const nucleiSelectAllCount = ref(0) // 全选数量（仅展示，不加载列表）
+const nucleiSelectAllFilter = reactive({ keyword: '', severity: '', category: '', tag: '' })
+const customPocSelectAll = ref(false) // 自定义POC是否全选
+const customPocSelectAllCount = ref(0)
+const customPocSelectAllFilter = reactive({ name: '', severity: '', tag: '' })
+
+// 全选筛选条件是否有非空项（用于展示条件标签）
+const hasNucleiSelectAllFilter = computed(() => Object.values(nucleiSelectAllFilter).some(v => v))
+const hasCustomPocSelectAllFilter = computed(() => Object.values(customPocSelectAllFilter).some(v => v))
 // 防护标志：数据加载或批量选择期间，跳过 selection-change 事件处理
 const isLoadingData = ref(false)
 const isSelectingAll = ref(false)
@@ -1795,8 +1843,17 @@ function buildConfig() {
 
   // 根据POC模式设置不同的配置
   if (form.pocscanMode === 'manual') {
-    config.pocscan.nucleiTemplateIds = form.pocscanNucleiTemplateIds || []
-    config.pocscan.customPocIds = form.pocscanCustomPocIds || []
+    // 手动选择模式：全选只传标记与筛选条件，由后端查询展开
+    config.pocscan.nucleiSelectAll = nucleiSelectAll.value
+    config.pocscan.nucleiSelectAllFilter = nucleiSelectAll.value ? { ...nucleiSelectAllFilter } : undefined
+    config.pocscan.customPocSelectAll = customPocSelectAll.value
+    config.pocscan.customPocSelectAllFilter = customPocSelectAll.value ? { ...customPocSelectAllFilter } : undefined
+    if (!nucleiSelectAll.value) {
+      config.pocscan.nucleiTemplateIds = form.pocscanNucleiTemplateIds || []
+    }
+    if (!customPocSelectAll.value) {
+      config.pocscan.customPocIds = form.pocscanCustomPocIds || []
+    }
     config.pocscan.autoScan = false
     config.pocscan.automaticScan = false
     config.pocscan.customPocOnly = false
@@ -1896,6 +1953,13 @@ function applyConfig(config) {
     form.pocscanNucleiTemplateIds = config.pocscan.nucleiTemplateIds || []
     form.pocscanCustomPocIds = config.pocscan.customPocIds || []
     form.pocscanForceScan = config.pocscan.forceScan ?? false
+    // 恢复手动全选状态（后端已展开的 ID 列表数量仅作展示，不加载列表）
+    nucleiSelectAll.value = !!config.pocscan.nucleiSelectAll
+    nucleiSelectAllCount.value = nucleiSelectAll.value ? (config.pocscan.nucleiTemplateIds?.length || 0) : 0
+    Object.assign(nucleiSelectAllFilter, config.pocscan.nucleiSelectAllFilter || {})
+    customPocSelectAll.value = !!config.pocscan.customPocSelectAll
+    customPocSelectAllCount.value = customPocSelectAll.value ? (config.pocscan.customPocIds?.length || 0) : 0
+    Object.assign(customPocSelectAllFilter, config.pocscan.customPocSelectAllFilter || {})
     const headerResult = parseCustomHeaders(config.pocscan.customHeaders)
     form.pocscanHeaderMode = headerResult.pocscanHeaderMode
     form.pocscanPresetUA = headerResult.pocscanPresetUA
@@ -2068,6 +2132,8 @@ async function loadNucleiTemplatesForSelect() {
 // 恢复当前页 Nuclei 表格的选中状态（不影响其他页）
 function restoreNucleiTableSelection() {
   if (!nucleiTableRef.value) return
+  // 全选状态下表格选择被禁用，无需恢复
+  if (nucleiSelectAll.value || customPocSelectAll.value) return
   const selectedIds = new Set(selectedNucleiTemplateIds.value)
   nucleiTemplateList.value.forEach(row => {
     if (selectedIds.has(row.id)) {
@@ -2099,6 +2165,8 @@ async function loadCustomPocsForSelect() {
 // 恢复当前页自定义 POC 表格的选中状态
 function restoreCustomPocTableSelection() {
   if (!customPocTableRef.value) return
+  // 全选状态下表格选择被禁用，无需恢复
+  if (nucleiSelectAll.value || customPocSelectAll.value) return
   const selectedIds = new Set(selectedCustomPocIds.value)
   customPocList.value.forEach(row => {
     if (selectedIds.has(row.id)) {
@@ -2119,6 +2187,11 @@ function handleRecursiveDictSelectionChange(val) { selectedRecursiveDictRows.val
 function handleNucleiSelectionChange(selection) {
   // 数据加载或"选择全部"期间跳过，避免覆盖跨页选择
   if (isSelectingAll.value || isLoadingData.value) return
+  // 全选状态下表格勾选不生效（选择意图已由全选标记表达）
+  if (nucleiSelectAll.value) {
+    if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
+    return
+  }
 
   const currentPageIds = new Set(nucleiTemplateList.value.map(t => t.id))
   const currentPageSelectedIds = new Set(selection.map(t => t.id))
@@ -2136,6 +2209,11 @@ function handleNucleiSelectionChange(selection) {
 
 function handleCustomPocSelectionChange(selection) {
   if (isSelectingAll.value || isLoadingData.value) return
+  // 全选状态下表格勾选不生效（选择意图已由全选标记表达）
+  if (customPocSelectAll.value) {
+    if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+    return
+  }
 
   const currentPageIds = new Set(customPocList.value.map(p => p.id))
   const currentPageSelectedIds = new Set(selection.map(p => p.id))
@@ -2153,43 +2231,31 @@ async function selectAllNucleiTemplates() {
   selectAllNucleiLoading.value = true
   isSelectingAll.value = true
   try {
-    const filterArgs = {
-      keyword: nucleiTemplateFilter.keyword, severity: nucleiTemplateFilter.severity,
-      category: nucleiTemplateFilter.category, tag: nucleiTemplateFilter.tag
-    }
-    // 先拿 total
-    const firstRes = await getNucleiTemplateList({ page: 1, pageSize: 1, ...filterArgs })
-    if (firstRes.code !== 0) return
-    const total = firstRes.total || 0
+    // 记录全选条件（当前对话框筛选），只传选择意图由后端查询展开
+    nucleiSelectAllFilter.keyword = nucleiTemplateFilter.keyword
+    nucleiSelectAllFilter.severity = nucleiTemplateFilter.severity
+    nucleiSelectAllFilter.category = nucleiTemplateFilter.category
+    nucleiSelectAllFilter.tag = nucleiTemplateFilter.tag
+
+    // 只查询数量（pageSize=1），不加载列表
+    const res = await getNucleiTemplateList({ page: 1, pageSize: 1, ...nucleiSelectAllFilter })
+    if (res.code !== 0) return
+    const total = res.total || 0
     if (total === 0) {
       ElMessage.warning(t('task.noMatchingTemplate'))
+      resetNucleiSelectAll()
       return
     }
-    // 分页拉全量（避免单次 pageSize 截断）
-    const pageSize = 5000
-    const totalPages = Math.ceil(total / pageSize)
-    const allRows = []
-    for (let page = 1; page <= totalPages; page++) {
-      const res = await getNucleiTemplateList({ page, pageSize, ...filterArgs })
-      if (res.code === 0 && res.list) allRows.push(...res.list)
-    }
-    // 合并去重
-    const existingIds = new Set(selectedNucleiTemplateIds.value)
-    allRows.forEach(row => {
-      if (!existingIds.has(row.id)) {
-        selectedNucleiTemplateIds.value.push(row.id)
-        selectedNucleiTemplates.value.push(row)
-      }
-    })
-    await nextTick()
-    if (nucleiTableRef.value) {
-      nucleiTemplateList.value.forEach(row => {
-        nucleiTableRef.value.toggleRowSelection(row, true)
-      })
-    }
-    ElMessage.success(`${t('task.selected')}: ${allRows.length}`)
+    // 进入全选状态：清空手动选择列表
+    nucleiSelectAll.value = true
+    nucleiSelectAllCount.value = total
+    selectedNucleiTemplateIds.value = []
+    selectedNucleiTemplates.value = []
+    if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
+    ElMessage.success(t('task.allSelectedCount', { count: total }))
   } catch (e) {
     console.error('selectAllNucleiTemplatesFailed', e)
+    resetNucleiSelectAll()
     ElMessage.error(t('task.selectAllFailed') || 'Select all failed')
   } finally {
     selectAllNucleiLoading.value = false
@@ -2198,48 +2264,37 @@ async function selectAllNucleiTemplates() {
 }
 
 function deselectAllNucleiTemplates() {
-  selectedNucleiTemplates.value = []
-  selectedNucleiTemplateIds.value = []
-  if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
+  clearNucleiSelections()
+  ElMessage.success(t('task.allTemplatesDeselected'))
 }
 
 async function selectAllCustomPocs() {
   selectAllCustomLoading.value = true
   isSelectingAll.value = true
   try {
-    const filterArgs = {
-      name: customPocFilter.name, severity: customPocFilter.severity, tag: customPocFilter.tag
-    }
-    const firstRes = await getCustomPocList({ page: 1, pageSize: 1, ...filterArgs })
-    if (firstRes.code !== 0) return
-    const total = firstRes.total || 0
+    // 记录全选条件（当前对话框筛选），只传选择意图由后端查询展开
+    customPocSelectAllFilter.name = customPocFilter.name
+    customPocSelectAllFilter.severity = customPocFilter.severity
+    customPocSelectAllFilter.tag = customPocFilter.tag
+    // 只查询数量（pageSize=1），不加载列表
+    const res = await getCustomPocList({ page: 1, pageSize: 1, ...customPocSelectAllFilter, enabled: true })
+    if (res.code !== 0) return
+    const total = res.total || 0
     if (total === 0) {
       ElMessage.warning(t('task.noMatchingPoc'))
+      resetCustomPocSelectAll()
       return
     }
-    const pageSize = 5000
-    const totalPages = Math.ceil(total / pageSize)
-    const allRows = []
-    for (let page = 1; page <= totalPages; page++) {
-      const res = await getCustomPocList({ page, pageSize, ...filterArgs })
-      if (res.code === 0 && res.list) allRows.push(...res.list)
-    }
-    const existingIds = new Set(selectedCustomPocIds.value)
-    allRows.forEach(row => {
-      if (!existingIds.has(row.id)) {
-        selectedCustomPocIds.value.push(row.id)
-        selectedCustomPocs.value.push(row)
-      }
-    })
-    await nextTick()
-    if (customPocTableRef.value) {
-      customPocList.value.forEach(row => {
-        customPocTableRef.value.toggleRowSelection(row, true)
-      })
-    }
-    ElMessage.success(`${t('task.selected')}: ${allRows.length}`)
+    // 进入全选状态：清空手动选择列表
+    customPocSelectAll.value = true
+    customPocSelectAllCount.value = total
+    selectedCustomPocIds.value = []
+    selectedCustomPocs.value = []
+    if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+    ElMessage.success(t('task.allSelectedCount', { count: total }))
   } catch (e) {
     console.error('selectAllCustomPocsFailed', e)
+    resetCustomPocSelectAll()
     ElMessage.error(t('task.selectAllFailed') || 'Select all failed')
   } finally {
     selectAllCustomLoading.value = false
@@ -2248,9 +2303,8 @@ async function selectAllCustomPocs() {
 }
 
 function deselectAllCustomPocs() {
-  selectedCustomPocs.value = []
-  selectedCustomPocIds.value = []
-  if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+  clearCustomPocSelections()
+  ElMessage.success(t('task.allPocsDeselected'))
 }
 
 function clearAllSelections() {
@@ -2258,19 +2312,42 @@ function clearAllSelections() {
   selectedNucleiTemplateIds.value = []
   selectedCustomPocs.value = []
   selectedCustomPocIds.value = []
+  resetNucleiSelectAll()
+  resetCustomPocSelectAll()
   if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
   if (customPocTableRef.value) customPocTableRef.value.clearSelection()
+}
+
+// 重置默认模板全选状态
+function resetNucleiSelectAll() {
+  nucleiSelectAll.value = false
+  nucleiSelectAllCount.value = 0
+  nucleiSelectAllFilter.keyword = ''
+  nucleiSelectAllFilter.severity = ''
+  nucleiSelectAllFilter.category = ''
+  nucleiSelectAllFilter.tag = ''
+}
+
+// 重置自定义POC全选状态
+function resetCustomPocSelectAll() {
+  customPocSelectAll.value = false
+  customPocSelectAllCount.value = 0
+  customPocSelectAllFilter.name = ''
+  customPocSelectAllFilter.severity = ''
+  customPocSelectAllFilter.tag = ''
 }
 
 function clearNucleiSelections() {
   selectedNucleiTemplates.value = []
   selectedNucleiTemplateIds.value = []
+  resetNucleiSelectAll()
   if (nucleiTableRef.value) nucleiTableRef.value.clearSelection()
 }
 
 function clearCustomPocSelections() {
   selectedCustomPocs.value = []
   selectedCustomPocIds.value = []
+  resetCustomPocSelectAll()
   if (customPocTableRef.value) customPocTableRef.value.clearSelection()
 }
 
@@ -2289,6 +2366,8 @@ function handlePocModeChange(val) {
     selectedCustomPocs.value = []
     selectedNucleiTemplateIds.value = []
     selectedCustomPocIds.value = []
+    resetNucleiSelectAll()
+    resetCustomPocSelectAll()
   }
 }
 
@@ -2869,6 +2948,24 @@ onMounted(async () => {
 
 .selected-group {
   margin-bottom: 15px;
+}
+
+.select-all-tip {
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  background: var(--el-color-success-light-9);
+  color: var(--el-color-success);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.selected-all-conditions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .group-header {

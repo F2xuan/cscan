@@ -10,9 +10,9 @@ import (
 
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/response"
-	"cscan/scheduler"
+	"cscan/internal/scheduler"
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"

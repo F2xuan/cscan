@@ -96,7 +96,7 @@ go run api/cscan.go -f api/etc/cscan.yaml
 cd web ; npm install ; npm run dev
 
 # 5. Start Worker
-go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
+go run worker/main.go -k <install_key> -s http://localhost:8888
 ```
 ---
 

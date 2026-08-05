@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/notify"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"
-	"cscan/scheduler"
+	"cscan/internal/scheduler"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"

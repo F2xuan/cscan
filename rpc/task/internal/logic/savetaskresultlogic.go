@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/utils"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"

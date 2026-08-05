@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/template"
 
 	"github.com/zeromicro/go-zero/core/logx"

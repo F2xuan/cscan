@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson/primitive"

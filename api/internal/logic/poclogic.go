@@ -13,9 +13,9 @@ import (
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/rpc/task/pb"
-	"cscan/scanner"
+	"cscan/internal/scanner"
 
 	"github.com/projectdiscovery/nuclei/v3/pkg/installer"
 	"github.com/zeromicro/go-zero/core/logx"

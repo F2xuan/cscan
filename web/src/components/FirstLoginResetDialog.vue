@@ -83,11 +83,13 @@ async function handleSubmit() {
       newPassword: form.newPassword
     })
     if (res.code === 0) {
-      ElMessage.success(t('auth.passwordResetSuccess', '密码修改成功'))
+      // BUG-002 修复：密码修改成功后不应强制退出登录
+      // 密码已在后端更新，当前 token 仍然有效，保持登录状态
+      ElMessage.success(t('auth.passwordResetSuccess', '密码修改成功，欢迎进入系统'))
       visible.value = false
-      // 立即登出，防止旧 token 继续发请求触发大量 401
-      userStore.logout()
-      router.push('/login')
+      // 不再调用 logout()，保持登录状态
+      // userStore.logout()  // 已移除
+      // router.push('/login')  // 已移除
     } else {
       ElMessage.error(res.msg || t('auth.passwordResetFailed', '密码修改失败'))
     }

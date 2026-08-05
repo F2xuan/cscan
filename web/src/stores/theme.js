@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import request from '@/api/request'
+import { useUserStore } from '@/stores/user'
 
 // 可用的款式列表（设计语言风格）— 10 个设计系统
 export const THEME_STYLES = [
@@ -28,6 +29,13 @@ export const useThemeStore = defineStore('theme', () => {
 
   // 从服务端加载主题配置
   async function loadFromServer() {
+    // BUG-001 修复：仅在已登录状态下才加载服务端主题配置
+    const userStore = useUserStore()
+    if (!userStore.token) {
+      console.warn('[ThemeStore] Skipping server theme load: user not logged in')
+      return
+    }
+
     try {
       const res = await request.post('/theme/config/get')
       if (res.code === 0 && res.config) {

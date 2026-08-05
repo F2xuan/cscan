@@ -88,7 +88,7 @@ type UserDeleteReq struct {
 
 type UserResetPasswordReq struct {
 	Id          string `json:"id"`
-	OldPassword string `json:"oldPassword"`
+	OldPassword string `json:"oldPassword,optional"`
 	NewPassword string `json:"newPassword"`
 }
 

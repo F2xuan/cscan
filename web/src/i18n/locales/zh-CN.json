@@ -115,6 +115,7 @@
   "common": {
     "exportAll": "导出全部",
     "confirm": "确认",
+    "confirmBatchDelete": "确定删除选中的 {count} 项吗？",
     "cancel": "取消",
     "save": "保存",
     "delete": "删除",
@@ -309,7 +310,7 @@
     "newPassword": "新密码",
     "confirmPassword": "确认密码",
     "passwordMismatch": "两次输入密码不一致",
-    "passwordResetSuccess": "密码修改成功，欢迎进入系统",
+    "passwordResetSuccess": "密码修改成功",
     "forceResetTitle": "首次登录请修改密码"
   },
   "dashboard": {
@@ -1006,7 +1007,7 @@
     "retry": "重新执行",
     "delete": "删除",
     "created": "待启动",
-    "pendingExec": "待安装扫描节点",
+    "pendingExec": "排队中",
     "executing": "执行中",
     "paused": "已暂停",
     "execFailed": "执行失败",

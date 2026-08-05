@@ -10,8 +10,8 @@ import (
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
-	"cscan/scheduler"
+	"cscan/internal/model"
+	"cscan/internal/scheduler"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"

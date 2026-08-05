@@ -23,7 +23,7 @@ import (
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/rpc/task/pb"
 
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"

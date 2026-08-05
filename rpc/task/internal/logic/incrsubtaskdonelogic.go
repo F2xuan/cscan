@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/notify"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"

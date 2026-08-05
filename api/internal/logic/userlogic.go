@@ -9,7 +9,7 @@ import (
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -247,19 +247,27 @@ func NewUserResetPasswordLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordReq) (resp *types.BaseResp, err error) {
-	// 安全自绑定：忽略客户端传入的 Id，仅允许修改当前登录用户自己的密码
 	currentUserId := middleware.GetUserId(l.ctx)
 	if currentUserId == "" {
 		return &types.BaseResp{Code: 401, Msg: "未认证"}, nil
 	}
-	req.Id = currentUserId
+	currentRole := middleware.GetRole(l.ctx)
+	isAdmin := currentRole == "admin" || currentRole == "superadmin"
+
+	// 非管理员只能修改自己的密码
+	if !isAdmin {
+		req.Id = currentUserId
+	} else if req.Id == "" {
+		// 管理员未指定目标用户时，默认改自己
+		req.Id = currentUserId
+	}
 
 	// 验证新密码强度
 	if err := model.ValidatePasswordStrength(req.NewPassword); err != nil {
 		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil
 	}
 
-	// 检查用户是否存在
+	// 检查目标用户是否存在
 	user, err := l.svcCtx.UserModel.FindById(l.ctx, req.Id)
 	if err != nil {
 		logx.Errorf("查询用户失败: %v", err)
@@ -269,17 +277,19 @@ func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordR
 		return &types.BaseResp{Code: 404, Msg: "用户不存在"}, nil
 	}
 
-	// 校验原密码
-	if req.OldPassword == "" {
-		return &types.BaseResp{Code: 400, Msg: "请输入原密码"}, nil
-	}
-	if !model.CheckPassword(req.OldPassword, user.Password) {
-		return &types.BaseResp{Code: 400, Msg: "原密码错误"}, nil
-	}
-
-	// 新密码不能与原密码相同
-	if req.OldPassword == req.NewPassword {
-		return &types.BaseResp{Code: 400, Msg: "新密码不能与原密码相同"}, nil
+	// 管理员重置其他用户密码时，跳过原密码校验（管理员不知道目标用户的旧密码）
+	// 管理员重置自己密码、或普通用户修改自己密码时，仍需验证原密码
+	isResetSelf := req.Id == currentUserId
+	if isResetSelf {
+		if req.OldPassword == "" {
+			return &types.BaseResp{Code: 400, Msg: "请输入原密码"}, nil
+		}
+		if !model.CheckPassword(req.OldPassword, user.Password) {
+			return &types.BaseResp{Code: 400, Msg: "原密码错误"}, nil
+		}
+		if req.OldPassword == req.NewPassword {
+			return &types.BaseResp{Code: 400, Msg: "新密码不能与原密码相同"}, nil
+		}
 	}
 
 	// 重置密码

@@ -181,28 +181,6 @@ func parsePort(s string) int {
 	return 0
 }
 
-// ParseTargetsWithPorts 解析多个目标，分离带端口和不带端口的目标
-// 返回: (带端口的目标列表, 不带端口的目标列表)
-func ParseTargetsWithPorts(targets string) (withPort []string, withoutPort []string) {
-	lines := strings.Split(targets, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		info := ParseTarget(line)
-		if info.HasPort || info.Protocol != "" {
-			// 带端口或协议的目标
-			withPort = append(withPort, line)
-		} else {
-			// 不带端口的目标
-			withoutPort = append(withoutPort, line)
-		}
-	}
-	return
-}
-
 // BuildTargetWithPort 构建带端口的目标字符串
 func BuildTargetWithPort(host string, port int) string {
 	if port > 0 {

@@ -9,3 +9,5 @@ docs/
 .claude/
 /data
 /log
+.playwright-mcp
+/docs

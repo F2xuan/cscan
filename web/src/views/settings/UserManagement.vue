@@ -117,7 +117,7 @@
     <!-- 重置密码对话框 -->
     <el-dialog v-model="resetPasswordVisible" :title="$t('user.resetPassword')" width="400px">
       <el-form ref="resetFormRef" :model="resetForm" :rules="resetRules" label-width="80px">
-        <el-form-item :label="$t('user.oldPassword')" prop="oldPassword">
+        <el-form-item v-if="isResetSelf" :label="$t('user.oldPassword')" prop="oldPassword">
           <el-input v-model="resetForm.oldPassword" type="password" :placeholder="$t('user.pleaseEnterOldPassword')" show-password />
         </el-form-item>
         <el-form-item :label="$t('user.newPassword')" prop="newPassword">
@@ -210,8 +210,11 @@ const resetPasswordVisible = ref(false)
 const resetting = ref(false)
 const resetFormRef = ref()
 const resetForm = ref({ id: '', oldPassword: '', newPassword: '', confirmPassword: '' })
+const isResetSelf = computed(() => resetForm.value.id === userStore.userId)
 const resetRules = computed(() => ({
-  oldPassword: [{ required: true, message: t('user.pleaseEnterOldPassword'), trigger: 'blur' }],
+  oldPassword: isResetSelf.value
+    ? [{ required: true, message: t('user.pleaseEnterOldPassword'), trigger: 'blur' }]
+    : [],
   newPassword: [
     { required: true, message: t('user.pleaseEnterNewPassword'), trigger: 'blur' },
     { validator: validatePasswordStrength, trigger: 'blur' }
@@ -337,11 +340,14 @@ async function handleResetPassword() {
   try {
     await resetFormRef.value.validate()
     resetting.value = true
-    const res = await resetUserPassword({
+    const payload = {
       id: resetForm.value.id,
-      oldPassword: resetForm.value.oldPassword,
       newPassword: resetForm.value.newPassword
-    })
+    }
+    if (isResetSelf.value) {
+      payload.oldPassword = resetForm.value.oldPassword
+    }
+    const res = await resetUserPassword(payload)
     if (res.code === 0) {
       ElMessage.success(res.msg || t('user.passwordResetSuccess'))
       resetPasswordVisible.value = false

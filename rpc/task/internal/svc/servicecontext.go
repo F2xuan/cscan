@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/rpc/task/internal/config"
-	"cscan/scheduler"
+	"cscan/internal/scheduler"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"

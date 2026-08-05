@@ -12,17 +12,17 @@
               <VideoPause v-else />
             </el-icon>
             <span class="persistent-task-title">
-              {{ persistentTask.status === 'running' ? '批量验证进行中' : persistentTask.status === 'completed' ? '批量验证已完成' : persistentTask.status === 'failed' ? '批量验证失败' : '批量验证已停止' }}
+              {{ persistentTask.status === 'running' ? '批量验证进行中' : persistentTask.status === 'completed' ? '批量验证已完成' :
+                persistentTask.status === 'failed' ? '批量验证失败' : '批量验证已停止' }}
             </span>
             <span class="persistent-task-url" :title="persistentTask.url">{{ persistentTask.url }}</span>
-            <el-tag size="small" :type="getScopeTagType(persistentTask.scope)">{{ getScopeLabel(persistentTask.scope) }}</el-tag>
+            <el-tag size="small" :type="getScopeTagType(persistentTask.scope)">{{ getScopeLabel(persistentTask.scope)
+            }}</el-tag>
           </div>
           <div v-if="persistentTask.status === 'running'" class="persistent-task-progress">
             <el-progress
               :percentage="persistentTask.total > 0 ? Math.min(99, Math.floor(persistentTask.completed / persistentTask.total * 100)) : 0"
-              :stroke-width="8"
-              style="width: 280px;"
-            />
+              :stroke-width="8" style="width: 280px;" />
             <span class="persistent-task-stat">{{ persistentTask.completed }}/{{ persistentTask.total || '?' }}</span>
           </div>
           <div v-else-if="persistentTask.status === 'completed'" class="persistent-task-result">
@@ -30,14 +30,18 @@
             <el-tag type="info" size="small" style="margin-left: 4px;">共检测 {{ persistentTask.total || 0 }} 个</el-tag>
           </div>
           <div class="persistent-task-actions">
-            <el-button v-if="persistentTask.status === 'running'" type="danger" size="small" text @click="handleStopBatchValidate">
+            <el-button v-if="persistentTask.status === 'running'" type="danger" size="small" text
+              @click="handleStopBatchValidate">
               停止
             </el-button>
-            <el-button v-if="persistentTask.status === 'completed' || persistentTask.status === 'stopped'" type="primary" size="small" @click="showBatchResultDialog">
+            <el-button v-if="persistentTask.status === 'completed' || persistentTask.status === 'stopped'"
+              type="primary" size="small" @click="showBatchResultDialog">
               查看结果
             </el-button>
             <el-button type="info" size="small" text @click="dismissPersistentTask">
-              <el-icon><Close /></el-icon>
+              <el-icon>
+                <Close />
+              </el-icon>
             </el-button>
           </div>
         </div>
@@ -46,511 +50,560 @@
 
     <div class="tabs-with-action">
       <el-tabs v-model="activeTab" @tab-change="handleTabChange" class="flex-grow-tabs">
-      <!-- 内置指纹 -->
-      <el-tab-pane :label="$t('fingerprint.builtinFingerprint')" name="builtin">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>{{ $t('fingerprint.wappalyzerBuiltinLib') }}</span>
-              <span class="card-header-hint">
-                {{ $t('fingerprint.totalFingerprints', { count: stats.builtin || 0 }) }}
-              </span>
-              <div style="margin-left: auto; display: flex; gap: 8px;">
-                <el-button type="success" size="small" @click="showBuiltinImportDialog">
-                  <el-icon><Upload /></el-icon>{{ $t('fingerprint.importFingerprint') }}
-                </el-button>
-                <el-dropdown @command="handleSyncCommand">
-                  <el-button type="primary" size="small" :loading="syncLoading">
-                    <el-icon><Refresh /></el-icon>{{ $t('fingerprint.syncFingerprint') }}<el-icon class="el-icon--right"><arrow-down /></el-icon>
+        <!-- 内置指纹 -->
+        <el-tab-pane :label="$t('fingerprint.builtinFingerprint')" name="builtin">
+          <el-card>
+            <template #header>
+              <div class="card-header">
+                <span>{{ $t('fingerprint.wappalyzerBuiltinLib') }}</span>
+                <span class="card-header-hint">
+                  {{ $t('fingerprint.totalFingerprints', { count: stats.builtin || 0 }) }}
+                </span>
+                <div style="margin-left: auto; display: flex; gap: 8px;">
+                  <el-button type="success" size="small" @click="showBuiltinImportDialog">
+                    <el-icon>
+                      <Upload />
+                    </el-icon>{{ $t('fingerprint.importFingerprint') }}
                   </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="sync">{{ $t('fingerprint.incrementalSync') }}</el-dropdown-item>
-                      <el-dropdown-item command="force">{{ $t('fingerprint.forceResync') }}</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
+                  <el-dropdown @command="handleSyncCommand">
+                    <el-button type="primary" size="small" :loading="syncLoading">
+                      <el-icon>
+                        <Refresh />
+                      </el-icon>{{ $t('fingerprint.syncFingerprint') }}<el-icon
+                        class="el-icon--right"><arrow-down /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="sync">{{ $t('fingerprint.incrementalSync') }}</el-dropdown-item>
+                        <el-dropdown-item command="force">{{ $t('fingerprint.forceResync') }}</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
               </div>
+            </template>
+            <p class="tip-text">
+              {{ $t('fingerprint.builtinTip') }}
+            </p>
+            <!-- 筛选条件 -->
+            <el-form :inline="true" class="filter-form">
+              <el-form-item :label="$t('fingerprint.category')">
+                <el-select v-model="builtinFilter.category" :placeholder="$t('fingerprint.allCategories')" clearable
+                  style="width: 150px" @change="loadBuiltinFingerprints">
+                  <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
+                </el-select>
+              </el-form-item>
+              <el-form-item :label="$t('fingerprint.search')">
+                <el-input v-model="builtinFilter.keyword" :placeholder="$t('fingerprint.appName')" clearable
+                  style="width: 180px" @keyup.enter="loadBuiltinFingerprints" />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="loadBuiltinFingerprints">{{ $t('fingerprint.search') }}</el-button>
+              </el-form-item>
+            </el-form>
+            <!-- 统计信息 -->
+            <div class="stats-bar">
+              <el-tag type="success" size="small">{{ $t('fingerprint.enabled') }}: {{ stats.enabled || 0 }}</el-tag>
+              <el-tag type="info" size="small">{{ $t('fingerprint.passive') }}: {{ stats.passive || 0 }}</el-tag>
+              <el-tag type="warning" size="small">{{ $t('fingerprint.active') }}: {{ stats.active || 0 }}</el-tag>
+              <el-tag size="small">{{ $t('fingerprint.builtinTotal') }}: {{ stats.builtin || 0 }}</el-tag>
+              <el-tag type="info" size="small" effect="plain">{{ $t('fingerprint.customTotal') }}: {{ stats.custom || 0
+              }}</el-tag>
             </div>
-          </template>
-          <p class="tip-text">
-            {{ $t('fingerprint.builtinTip') }}
-          </p>
-          <!-- 筛选条件 -->
-          <el-form :inline="true" class="filter-form">
-            <el-form-item :label="$t('fingerprint.category')">
-              <el-select v-model="builtinFilter.category" :placeholder="$t('fingerprint.allCategories')" clearable style="width: 150px" @change="loadBuiltinFingerprints">
-                <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
-              </el-select>
-            </el-form-item>
-            <el-form-item :label="$t('fingerprint.search')">
-              <el-input v-model="builtinFilter.keyword" :placeholder="$t('fingerprint.appName')" clearable style="width: 180px" @keyup.enter="loadBuiltinFingerprints" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="loadBuiltinFingerprints">{{ $t('fingerprint.search') }}</el-button>
-            </el-form-item>
-          </el-form>
-          <!-- 统计信息 -->
-          <div class="stats-bar">
-            <el-tag type="success" size="small">{{ $t('fingerprint.enabled') }}: {{ stats.enabled || 0 }}</el-tag>
-            <el-tag type="info" size="small">{{ $t('fingerprint.passive') }}: {{ stats.passive || 0 }}</el-tag>
-            <el-tag type="warning" size="small">{{ $t('fingerprint.active') }}: {{ stats.active || 0 }}</el-tag>
-            <el-tag size="small">{{ $t('fingerprint.builtinTotal') }}: {{ stats.builtin || 0 }}</el-tag>
-            <el-tag type="info" size="small" effect="plain">{{ $t('fingerprint.customTotal') }}: {{ stats.custom || 0 }}</el-tag>
-          </div>
-          <!-- 指纹列表 -->
-          <el-table :data="builtinFingerprints" stripe v-loading="builtinLoading" max-height="500">
-            <el-table-column prop="name" :label="$t('fingerprint.appName')" width="180" show-overflow-tooltip />
-            <el-table-column prop="category" :label="$t('fingerprint.category')" width="100" />
-            <el-table-column prop="website" :label="$t('fingerprint.website')" min-width="200" show-overflow-tooltip>
-              <template #default="{ row }">
-                <a v-if="row.website" :href="row.website" target="_blank" class="link-primary">{{ row.website }}</a>
-                <span v-else>-</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('fingerprint.matchRules')" min-width="250">
-              <template #default="{ row }">
-                <el-tag v-if="row.headers && Object.keys(row.headers).length" size="small" style="margin-right: 3px">Headers</el-tag>
-                <el-tag v-if="row.cookies && Object.keys(row.cookies).length" size="small" style="margin-right: 3px">Cookies</el-tag>
-                <el-tag v-if="row.html && row.html.length" size="small" style="margin-right: 3px">HTML</el-tag>
-                <el-tag v-if="row.scripts && row.scripts.length" size="small" style="margin-right: 3px">Scripts</el-tag>
-                <el-tag v-if="row.scriptSrc && row.scriptSrc.length" size="small" style="margin-right: 3px">ScriptSrc</el-tag>
-                <el-tag v-if="row.js && Object.keys(row.js).length" size="small" style="margin-right: 3px">JS</el-tag>
-                <el-tag v-if="row.meta && Object.keys(row.meta).length" size="small" style="margin-right: 3px">Meta</el-tag>
-                <el-tag v-if="row.css && row.css.length" size="small" style="margin-right: 3px">CSS</el-tag>
-                <el-tag v-if="row.url && row.url.length" size="small" style="margin-right: 3px">URL</el-tag>
-                <el-tag v-if="row.dom" size="small" style="margin-right: 3px">DOM</el-tag>
-                <span v-if="!hasAnyRule(row)" class="text-secondary">-</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
-              <template #default="{ row }">
-                <el-switch v-model="row.enabled" @change="handleToggleEnabled(row)" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('fingerprint.operation')" width="120" fixed="right">
-              <template #default="{ row }">
-                <el-button type="success" link size="small" @click="showValidateDialog(row)">{{ $t('fingerprint.validate') }}</el-button>
-                <el-button type="primary" link size="small" @click="showFingerprintDetail(row)">{{ $t('fingerprint.view') }}</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-pagination
-            v-model:current-page="builtinPagination.page"
-            v-model:page-size="builtinPagination.pageSize"
-            :total="builtinPagination.total"
-            :page-sizes="[50, 100, 200]"
-            layout="total, sizes, prev, pager, next"
-            class="pagination"
-            @size-change="loadBuiltinFingerprints"
-            @current-change="loadBuiltinFingerprints"
-          />
-        </el-card>
-      </el-tab-pane>
-
-      <!-- 自定义指纹 -->
-      <el-tab-pane :label="$t('fingerprint.customFingerprint')" name="custom">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>{{ $t('fingerprint.customFingerprintRules') }}</span>
-              <span class="card-header-hint">
-                {{ $t('fingerprint.totalRules', { count: customPagination.total || 0 }) }}
-              </span>
-              <div style="margin-left: auto; display: flex; gap: 8px;">
-                <el-dropdown @command="handleBatchEnabledCommand">
-                  <el-button type="info" size="small" :loading="batchEnabledLoading">
-                    <el-icon><Operation /></el-icon>{{ $t('fingerprint.batchOperation') }}<el-icon class="el-icon--right"><arrow-down /></el-icon>
-                  </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="enableAll">{{ $t('fingerprint.enableAll') }}</el-dropdown-item>
-                      <el-dropdown-item command="disableAll">{{ $t('fingerprint.disableAll') }}</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-                <el-button type="danger" size="small" @click="handleClearCustomFingerprints">
-                  <el-icon><Delete /></el-icon>{{ $t('fingerprint.clear') }}
-                </el-button>
-                <el-button type="warning" size="small" @click="handleExportFingerprints" :loading="exportLoading">
-                  <el-icon><Download /></el-icon>{{ $t('fingerprint.exportFingerprint') }}
-                </el-button>
-                <el-button type="success" size="small" @click="showImportDialog">
-                  <el-icon><Upload /></el-icon>{{ $t('fingerprint.importFingerprint') }}
-                </el-button>
-                <el-button type="primary" size="small" @click="showFingerprintForm()">
-                  <el-icon><Plus /></el-icon>{{ $t('fingerprint.addFingerprint') }}
-                </el-button>
-              </div>
-            </div>
-          </template>
-
-          <!-- 筛选条件 -->
-          <el-form :inline="true" class="filter-form">
-            <el-form-item :label="$t('fingerprint.search')">
-              <el-input v-model="customFilter.keyword" :placeholder="$t('fingerprint.appNameOrId')" clearable style="width: 200px" @keyup.enter="loadCustomFingerprints" />
-            </el-form-item>
-            <el-form-item :label="$t('fingerprint.status')">
-              <el-select v-model="customFilter.enabled" :placeholder="$t('fingerprint.allStatus')" clearable style="width: 100px" @change="loadCustomFingerprints">
-                <el-option :label="$t('fingerprint.enabled')" :value="true" />
-                <el-option :label="$t('common.disabled')" :value="false" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="loadCustomFingerprints">{{ $t('fingerprint.search') }}</el-button>
-              <el-button @click="resetCustomFilter">{{ $t('fingerprint.reset') }}</el-button>
-            </el-form-item>
-          </el-form>
-          <el-table :data="customFingerprints" stripe v-loading="customLoading" max-height="500">
-            <el-table-column prop="id" :label="$t('fingerprint.id')" width="220">
-              <template #default="{ row }">
-                <el-tooltip :content="$t('fingerprint.clickToCopy')" placement="top">
-                  <span class="fingerprint-id" @click="copyToClipboard(row.id)">{{ row.id }}</span>
-                </el-tooltip>
-              </template>
-            </el-table-column>
-            <el-table-column prop="name" :label="$t('fingerprint.appName')" width="180" />
-            <el-table-column prop="type" :label="$t('fingerprint.type')" width="100">
-              <template #default="{ row }">
-                <el-tag v-if="row.type === 'active'" type="warning" size="small">{{ $t('fingerprint.active') }}</el-tag>
-                <el-tag v-else type="info" size="small">{{ $t('fingerprint.passive') }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('fingerprint.matchRules')" min-width="300">
-              <template #default="{ row }">
-                <template v-if="row.type === 'active' && row.activePaths && row.activePaths.length">
-                  <el-tag size="small" type="success">{{ row.activePaths.length }}{{ $t('fingerprint.paths') }}</el-tag>
-                  <span class="hint-secondary" style="margin-left: 5px">{{ row.activePaths[0] }}{{ row.activePaths.length > 1 ? '...' : '' }}</span>
+            <!-- 指纹列表 -->
+            <el-table :data="builtinFingerprints" stripe v-loading="builtinLoading" max-height="500">
+              <el-table-column prop="name" :label="$t('fingerprint.appName')" width="200" show-overflow-tooltip />
+              <el-table-column prop="category" :label="$t('fingerprint.category')" width="250" show-overflow-tooltip />
+              <el-table-column prop="website" :label="$t('fingerprint.website')" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <a v-if="row.website" :href="row.website" target="_blank" class="link-primary">{{ row.website }}</a>
+                  <span v-else>-</span>
                 </template>
-                <template v-else-if="row.rule">
-                  <el-tag size="small" type="warning">{{ $t('fingerprint.customRule') }}</el-tag>
-                  <span class="hint-secondary" style="margin-left: 5px">{{ truncateRule(row.rule) }}</span>
-                </template>
-                <template v-else>
-                  <el-tag v-if="row.headers && Object.keys(row.headers).length" size="small" style="margin-right: 3px">Headers</el-tag>
-                  <el-tag v-if="row.cookies && Object.keys(row.cookies).length" size="small" style="margin-right: 3px">Cookies</el-tag>
+              </el-table-column>
+              <el-table-column :label="$t('fingerprint.matchRules')" min-width="250">
+                <template #default="{ row }">
+                  <el-tag v-if="row.headers && Object.keys(row.headers).length" size="small"
+                    style="margin-right: 3px">Headers</el-tag>
+                  <el-tag v-if="row.cookies && Object.keys(row.cookies).length" size="small"
+                    style="margin-right: 3px">Cookies</el-tag>
                   <el-tag v-if="row.html && row.html.length" size="small" style="margin-right: 3px">HTML</el-tag>
-                  <el-tag v-if="row.scripts && row.scripts.length" size="small" style="margin-right: 3px">Scripts</el-tag>
-                  <el-tag v-if="row.meta && Object.keys(row.meta).length" size="small" style="margin-right: 3px">Meta</el-tag>
+                  <el-tag v-if="row.scripts && row.scripts.length" size="small"
+                    style="margin-right: 3px">Scripts</el-tag>
+                  <el-tag v-if="row.scriptSrc && row.scriptSrc.length" size="small"
+                    style="margin-right: 3px">ScriptSrc</el-tag>
+                  <el-tag v-if="row.js && Object.keys(row.js).length" size="small" style="margin-right: 3px">JS</el-tag>
+                  <el-tag v-if="row.meta && Object.keys(row.meta).length" size="small"
+                    style="margin-right: 3px">Meta</el-tag>
+                  <el-tag v-if="row.css && row.css.length" size="small" style="margin-right: 3px">CSS</el-tag>
+                  <el-tag v-if="row.url && row.url.length" size="small" style="margin-right: 3px">URL</el-tag>
+                  <el-tag v-if="row.dom" size="small" style="margin-right: 3px">DOM</el-tag>
+                  <span v-if="!hasAnyRule(row)" class="text-secondary">-</span>
                 </template>
-              </template>
-            </el-table-column>
-            <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
-              <template #default="{ row }">
-                <el-switch v-model="row.enabled" @change="handleToggleEnabled(row)" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('fingerprint.operation')" width="250">
-              <template #default="{ row }">
-                <el-button type="success" link size="small" @click="showValidateDialog(row)">{{ $t('fingerprint.validate') }}</el-button>
-                <el-button type="warning" link size="small" @click="showMatchAssetsDialog(row)">{{ $t('fingerprint.matchAssets') }}</el-button>
-                <el-button type="primary" link size="small" @click="showFingerprintForm(row)">{{ $t('fingerprint.edit') }}</el-button>
-                <el-button type="danger" link size="small" @click="handleDeleteFingerprint(row)">{{ $t('fingerprint.delete') }}</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-pagination
-            v-model:current-page="customPagination.page"
-            v-model:page-size="customPagination.pageSize"
-            :total="customPagination.total"
-            :page-sizes="[20, 50, 100]"
-            layout="total, sizes, prev, pager, next"
-            class="pagination"
-            @size-change="loadCustomFingerprints"
-            @current-change="loadCustomFingerprints"
-          />
-        </el-card>
-      </el-tab-pane>
+              </el-table-column>
+              <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
+                <template #default="{ row }">
+                  <el-switch v-model="row.enabled" @change="handleToggleEnabled(row)" size="small" />
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('fingerprint.operation')" width="120" fixed="right">
+                <template #default="{ row }">
+                  <el-button type="success" link size="small" @click="showValidateDialog(row)">{{
+                    $t('fingerprint.validate') }}</el-button>
+                  <el-button type="primary" link size="small" @click="showFingerprintDetail(row)">{{
+                    $t('fingerprint.view') }}</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination v-model:current-page="builtinPagination.page" v-model:page-size="builtinPagination.pageSize"
+              :total="builtinPagination.total" :page-sizes="[50, 100, 200]" layout="total, sizes, prev, pager, next"
+              class="pagination" @size-change="loadBuiltinFingerprints" @current-change="loadBuiltinFingerprints" />
+          </el-card>
+        </el-tab-pane>
 
-      <!-- 主动扫描指纹 -->
-      <el-tab-pane :label="$t('fingerprint.activeFingerprint')" name="activeFingerprint">
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>{{ $t('fingerprint.activeFingerprintRules') }}</span>
-              <span class="card-header-hint">
-                {{ $t('fingerprint.totalRules', { count: activeFingerprintStats.total || 0 }) }}
-              </span>
-              <div style="margin-left: auto; display: flex; gap: 8px;">
-                <el-button type="danger" size="small" @click="handleClearActiveFingerprints">
-                  <el-icon><Delete /></el-icon>{{ $t('fingerprint.clear') }}
-                </el-button>
-                <el-button type="warning" size="small" @click="handleExportActiveFingerprints" :loading="activeExportLoading">
-                  <el-icon><Download /></el-icon>{{ $t('fingerprint.exportYaml') }}
-                </el-button>
-                <el-button type="success" size="small" @click="showActiveImportDialog">
-                  <el-icon><Upload /></el-icon>{{ $t('fingerprint.importYaml') }}
-                </el-button>
-                <el-button type="primary" size="small" @click="showActiveFingerprintForm()">
-                  <el-icon><Plus /></el-icon>{{ $t('fingerprint.addRule') }}
-                </el-button>
+        <!-- 自定义指纹 -->
+        <el-tab-pane :label="$t('fingerprint.customFingerprint')" name="custom">
+          <el-card>
+            <template #header>
+              <div class="card-header">
+                <span>{{ $t('fingerprint.customFingerprintRules') }}</span>
+                <span class="card-header-hint">
+                  {{ $t('fingerprint.totalRules', { count: customPagination.total || 0 }) }}
+                </span>
+                <div style="margin-left: auto; display: flex; gap: 8px;">
+                  <el-dropdown @command="handleBatchEnabledCommand">
+                    <el-button type="info" size="small" :loading="batchEnabledLoading">
+                      <el-icon>
+                        <Operation />
+                      </el-icon>{{ $t('fingerprint.batchOperation') }}<el-icon
+                        class="el-icon--right"><arrow-down /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="enableAll">{{ $t('fingerprint.enableAll') }}</el-dropdown-item>
+                        <el-dropdown-item command="disableAll">{{ $t('fingerprint.disableAll') }}</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                  <el-button type="danger" size="small" @click="handleClearCustomFingerprints">
+                    <el-icon>
+                      <Delete />
+                    </el-icon>{{ $t('fingerprint.clear') }}
+                  </el-button>
+                  <el-button type="warning" size="small" @click="handleExportFingerprints" :loading="exportLoading">
+                    <el-icon>
+                      <Download />
+                    </el-icon>{{ $t('fingerprint.exportFingerprint') }}
+                  </el-button>
+                  <el-button type="success" size="small" @click="showImportDialog">
+                    <el-icon>
+                      <Upload />
+                    </el-icon>{{ $t('fingerprint.importFingerprint') }}
+                  </el-button>
+                  <el-button type="primary" size="small" @click="showFingerprintForm()">
+                    <el-icon>
+                      <Plus />
+                    </el-icon>{{ $t('fingerprint.addFingerprint') }}
+                  </el-button>
+                </div>
               </div>
+            </template>
+
+            <!-- 筛选条件 -->
+            <el-form :inline="true" class="filter-form">
+              <el-form-item :label="$t('fingerprint.search')">
+                <el-input v-model="customFilter.keyword" :placeholder="$t('fingerprint.appNameOrId')" clearable
+                  style="width: 200px" @keyup.enter="loadCustomFingerprints" />
+              </el-form-item>
+              <el-form-item :label="$t('fingerprint.status')">
+                <el-select v-model="customFilter.enabled" :placeholder="$t('fingerprint.allStatus')" clearable
+                  style="width: 100px" @change="loadCustomFingerprints">
+                  <el-option :label="$t('fingerprint.enabled')" :value="true" />
+                  <el-option :label="$t('common.disabled')" :value="false" />
+                </el-select>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="loadCustomFingerprints">{{ $t('fingerprint.search') }}</el-button>
+                <el-button @click="resetCustomFilter">{{ $t('fingerprint.reset') }}</el-button>
+              </el-form-item>
+            </el-form>
+            <el-table :data="customFingerprints" stripe v-loading="customLoading" max-height="500">
+              <el-table-column prop="id" :label="$t('fingerprint.id')" width="220">
+                <template #default="{ row }">
+                  <el-tooltip :content="$t('fingerprint.clickToCopy')" placement="top">
+                    <span class="fingerprint-id" @click="copyToClipboard(row.id)">{{ row.id }}</span>
+                  </el-tooltip>
+                </template>
+              </el-table-column>
+              <el-table-column prop="name" :label="$t('fingerprint.appName')" width="180" />
+              <el-table-column prop="type" :label="$t('fingerprint.type')" width="100">
+                <template #default="{ row }">
+                  <el-tag v-if="row.type === 'active'" type="warning" size="small">{{ $t('fingerprint.active')
+                  }}</el-tag>
+                  <el-tag v-else type="info" size="small">{{ $t('fingerprint.passive') }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('fingerprint.matchRules')" min-width="300">
+                <template #default="{ row }">
+                  <template v-if="row.type === 'active' && row.activePaths && row.activePaths.length">
+                    <el-tag size="small" type="success">{{ row.activePaths.length }}{{ $t('fingerprint.paths')
+                    }}</el-tag>
+                    <span class="hint-secondary" style="margin-left: 5px">{{ row.activePaths[0] }}{{
+                      row.activePaths.length > 1 ? '...' : '' }}</span>
+                  </template>
+                  <template v-else-if="row.rule">
+                    <el-tag size="small" type="warning">{{ $t('fingerprint.customRule') }}</el-tag>
+                    <span class="hint-secondary" style="margin-left: 5px">{{ truncateRule(row.rule) }}</span>
+                  </template>
+                  <template v-else>
+                    <el-tag v-if="row.headers && Object.keys(row.headers).length" size="small"
+                      style="margin-right: 3px">Headers</el-tag>
+                    <el-tag v-if="row.cookies && Object.keys(row.cookies).length" size="small"
+                      style="margin-right: 3px">Cookies</el-tag>
+                    <el-tag v-if="row.html && row.html.length" size="small" style="margin-right: 3px">HTML</el-tag>
+                    <el-tag v-if="row.scripts && row.scripts.length" size="small"
+                      style="margin-right: 3px">Scripts</el-tag>
+                    <el-tag v-if="row.meta && Object.keys(row.meta).length" size="small"
+                      style="margin-right: 3px">Meta</el-tag>
+                  </template>
+                </template>
+              </el-table-column>
+              <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
+                <template #default="{ row }">
+                  <el-switch v-model="row.enabled" @change="handleToggleEnabled(row)" size="small" />
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('fingerprint.operation')" width="250">
+                <template #default="{ row }">
+                  <el-button type="success" link size="small" @click="showValidateDialog(row)">{{
+                    $t('fingerprint.validate') }}</el-button>
+                  <el-button type="warning" link size="small" @click="showMatchAssetsDialog(row)">{{
+                    $t('fingerprint.matchAssets') }}</el-button>
+                  <el-button type="primary" link size="small" @click="showFingerprintForm(row)">{{
+                    $t('fingerprint.edit') }}</el-button>
+                  <el-button type="danger" link size="small" @click="handleDeleteFingerprint(row)">{{
+                    $t('fingerprint.delete') }}</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination v-model:current-page="customPagination.page" v-model:page-size="customPagination.pageSize"
+              :total="customPagination.total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next"
+              class="pagination" @size-change="loadCustomFingerprints" @current-change="loadCustomFingerprints" />
+          </el-card>
+        </el-tab-pane>
+
+        <!-- 主动扫描指纹 -->
+        <el-tab-pane :label="$t('fingerprint.activeFingerprint')" name="activeFingerprint">
+          <el-card>
+            <template #header>
+              <div class="card-header">
+                <span>{{ $t('fingerprint.activeFingerprintRules') }}</span>
+                <span class="card-header-hint">
+                  {{ $t('fingerprint.totalRules', { count: activeFingerprintStats.total || 0 }) }}
+                </span>
+                <div style="margin-left: auto; display: flex; gap: 8px;">
+                  <el-button type="danger" size="small" @click="handleClearActiveFingerprints">
+                    <el-icon>
+                      <Delete />
+                    </el-icon>{{ $t('fingerprint.clear') }}
+                  </el-button>
+                  <el-button type="warning" size="small" @click="handleExportActiveFingerprints"
+                    :loading="activeExportLoading">
+                    <el-icon>
+                      <Download />
+                    </el-icon>{{ $t('fingerprint.exportYaml') }}
+                  </el-button>
+                  <el-button type="success" size="small" @click="showActiveImportDialog">
+                    <el-icon>
+                      <Upload />
+                    </el-icon>{{ $t('fingerprint.importYaml') }}
+                  </el-button>
+                  <el-button type="primary" size="small" @click="showActiveFingerprintForm()">
+                    <el-icon>
+                      <Plus />
+                    </el-icon>{{ $t('fingerprint.addRule') }}
+                  </el-button>
+                </div>
+              </div>
+            </template>
+            <p class="tip-text">
+              {{ $t('fingerprint.activeTip') }}
+              <br />
+              <span class="text-warning">{{ $t('fingerprint.activeRelatedTip') }}</span>
+            </p>
+            <!-- 筛选条件 -->
+            <el-form :inline="true" class="filter-form">
+              <el-form-item :label="$t('fingerprint.search')">
+                <el-input v-model="activeFingerprintFilter.keyword" :placeholder="$t('fingerprint.appName')" clearable
+                  style="width: 200px" @keyup.enter="loadActiveFingerprints" />
+              </el-form-item>
+              <el-form-item :label="$t('fingerprint.status')">
+                <el-select v-model="activeFingerprintFilter.enabled" :placeholder="$t('fingerprint.allStatus')"
+                  clearable style="width: 100px" @change="loadActiveFingerprints">
+                  <el-option :label="$t('fingerprint.enabled')" :value="true" />
+                  <el-option :label="$t('common.disabled')" :value="false" />
+                </el-select>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="loadActiveFingerprints">{{ $t('fingerprint.search') }}</el-button>
+                <el-button @click="resetActiveFingerprintFilter">{{ $t('fingerprint.reset') }}</el-button>
+              </el-form-item>
+            </el-form>
+            <!-- 统计信息 -->
+            <div class="stats-bar">
+              <el-tag type="success" size="small">{{ $t('fingerprint.enabled') }}: {{ activeFingerprintStats.enabled ||
+                0
+              }}</el-tag>
+              <el-tag size="small">{{ $t('fingerprint.total') }}: {{ activeFingerprintStats.total || 0 }}</el-tag>
             </div>
-          </template>
-          <p class="tip-text">
-            {{ $t('fingerprint.activeTip') }}
-            <br/>
-            <span class="text-warning">{{ $t('fingerprint.activeRelatedTip') }}</span>
-          </p>
-          <!-- 筛选条件 -->
-          <el-form :inline="true" class="filter-form">
-            <el-form-item :label="$t('fingerprint.search')">
-              <el-input v-model="activeFingerprintFilter.keyword" :placeholder="$t('fingerprint.appName')" clearable style="width: 200px" @keyup.enter="loadActiveFingerprints" />
-            </el-form-item>
-            <el-form-item :label="$t('fingerprint.status')">
-              <el-select v-model="activeFingerprintFilter.enabled" :placeholder="$t('fingerprint.allStatus')" clearable style="width: 100px" @change="loadActiveFingerprints">
-                <el-option :label="$t('fingerprint.enabled')" :value="true" />
-                <el-option :label="$t('common.disabled')" :value="false" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="loadActiveFingerprints">{{ $t('fingerprint.search') }}</el-button>
-              <el-button @click="resetActiveFingerprintFilter">{{ $t('fingerprint.reset') }}</el-button>
-            </el-form-item>
-          </el-form>
-          <!-- 统计信息 -->
-          <div class="stats-bar">
-            <el-tag type="success" size="small">{{ $t('fingerprint.enabled') }}: {{ activeFingerprintStats.enabled || 0 }}</el-tag>
-            <el-tag size="small">{{ $t('fingerprint.total') }}: {{ activeFingerprintStats.total || 0 }}</el-tag>
-          </div>
-          <!-- 主动指纹列表 -->
-          <el-table :data="activeFingerprints" stripe v-loading="activeFingerprintLoading" max-height="500">
-            <el-table-column prop="name" :label="$t('fingerprint.appName')" width="200" />
-            <el-table-column :label="$t('fingerprint.probePaths')" min-width="300">
-              <template #default="{ row }">
-                <div class="paths-preview">
-                  <el-tag v-for="(path, idx) in (row.paths || []).slice(0, 3)" :key="idx" size="small" style="margin-right: 5px; margin-bottom: 3px">
-                    {{ path }}
-                  </el-tag>
-                  <el-tag v-if="row.paths && row.paths.length > 3" size="small" type="info">
-                    +{{ row.paths.length - 3 }}
-                  </el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('fingerprint.relatedPassive')" width="150">
-              <template #default="{ row }">
-                <el-tag v-if="row.relatedCount > 0" type="success" size="small">
-                  {{ $t('fingerprint.relatedCount', { count: row.relatedCount }) }}
-                </el-tag>
-                <el-tag v-else type="info" size="small">{{ $t('fingerprint.noRelated') }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
-              <template #default="{ row }">
-                <el-switch v-model="row.enabled" @change="handleToggleActiveFingerprintEnabled(row)" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('fingerprint.operation')" width="200">
-              <template #default="{ row }">
-                <el-button type="success" link size="small" @click="showActiveValidateDialog(row)">{{ $t('fingerprint.validate') }}</el-button>
-                <el-button type="info" link size="small" @click="showActiveFingerprintDetail(row)">{{ $t('fingerprint.detail') }}</el-button>
-                <el-button type="primary" link size="small" @click="showActiveFingerprintForm(row)">{{ $t('fingerprint.edit') }}</el-button>
-                <el-button type="danger" link size="small" @click="handleDeleteActiveFingerprint(row)">{{ $t('fingerprint.delete') }}</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-pagination
-            v-model:current-page="activeFingerprintPagination.page"
-            v-model:page-size="activeFingerprintPagination.pageSize"
-            :total="activeFingerprintPagination.total"
-            :page-sizes="[20, 50, 100]"
-            layout="total, sizes, prev, pager, next"
-            class="pagination"
-            @size-change="loadActiveFingerprints"
-            @current-change="loadActiveFingerprints"
-          />
-        </el-card>
-      </el-tab-pane>
-
-      <!-- HTTP映射 -->
-      <el-tab-pane :label="$t('fingerprint.httpMapping')" name="httpServiceMapping" >
-        <el-tabs v-model="httpServiceSubTab" type="card" @tab-change="handleHttpServiceSubTabChange">
-          <!-- 服务映射 -->
-          <el-tab-pane :label="$t('fingerprint.serviceMapping')" name="serviceMapping">
-            <el-card>
-              <template #header>
-                <div class="card-header">
-                  <span>{{ $t('fingerprint.serviceMappingConfig') }}</span>
-                  <div class="header-actions">
-                    <el-button size="small" @click="handleExportHttpService">
-                      <el-icon><Download /></el-icon>{{ $t('fingerprint.export') }}
-                    </el-button>
-                    <el-button size="small" @click="showHttpServiceImportDialog">
-                      <el-icon><Upload /></el-icon>{{ $t('fingerprint.import') }}
-                    </el-button>
-                    <el-button type="primary" size="small" @click="showHttpServiceMappingForm()">
-                      <el-icon><Plus /></el-icon>{{ $t('fingerprint.addMapping') }}
-                    </el-button>
-                  </div>
-                </div>
-              </template>
-              <p class="tip-text">
-                {{ $t('fingerprint.serviceMappingTip') }}
-                <br/>
-                <span class="text-warning">{{ $t('fingerprint.serviceMappingNote') }}</span>
-              </p>
-              <!-- 筛选条件 -->
-              <el-form :inline="true" class="filter-form">
-                <el-form-item :label="$t('fingerprint.type')">
-                  <el-select v-model="httpServiceFilter.isHttp" :placeholder="$t('fingerprint.allTypes')" clearable style="width: 150px" @change="loadHttpServiceMappings">
-                    <el-option :label="$t('fingerprint.httpService')" :value="true" />
-                    <el-option :label="$t('fingerprint.nonHttpService')" :value="false" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item :label="$t('fingerprint.search')">
-                  <el-input v-model="httpServiceFilter.keyword" :placeholder="$t('fingerprint.serviceName')" clearable style="width: 180px" @keyup.enter="loadHttpServiceMappings" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="loadHttpServiceMappings">{{ $t('fingerprint.search') }}</el-button>
-                </el-form-item>
-              </el-form>
-              <!-- 统计信息 -->
-              <div class="stats-bar">
-                <el-tag type="success" size="small">{{ $t('fingerprint.httpService') }}: {{ httpServiceStats.httpCount || 0 }}</el-tag>
-                <el-tag type="info" size="small">{{ $t('fingerprint.nonHttpService') }}: {{ httpServiceStats.nonHttpCount || 0 }}</el-tag>
-                <el-tag size="small">{{ $t('fingerprint.total') }}: {{ httpServiceStats.total || 0 }}</el-tag>
-              </div>
-              <!-- 映射列表 -->
-              <el-table :data="httpServiceMappings" stripe v-loading="httpServiceLoading" max-height="500">
-                <el-table-column prop="serviceName" :label="$t('fingerprint.serviceName')" width="180" />
-                <el-table-column prop="isHttp" :label="$t('fingerprint.serviceType')" width="120">
-                  <template #default="{ row }">
-                    <el-tag :type="row.isHttp ? 'success' : 'info'" size="small">
-                      {{ row.isHttp ? $t('fingerprint.httpService') : $t('fingerprint.nonHttpService') }}
+            <!-- 主动指纹列表 -->
+            <el-table :data="activeFingerprints" stripe v-loading="activeFingerprintLoading" max-height="500">
+              <el-table-column prop="name" :label="$t('fingerprint.appName')" width="200" />
+              <el-table-column :label="$t('fingerprint.probePaths')" min-width="300">
+                <template #default="{ row }">
+                  <div class="paths-preview">
+                    <el-tag v-for="(path, idx) in (row.paths || []).slice(0, 3)" :key="idx" size="small"
+                      style="margin-right: 5px; margin-bottom: 3px">
+                      {{ path }}
                     </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="description" :label="$t('fingerprint.description')" min-width="200" />
-                <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
-                  <template #default="{ row }">
-                    <el-switch v-model="row.enabled" @change="handleToggleHttpServiceEnabled(row)" size="small" />
-                  </template>
-                </el-table-column>
-                <el-table-column :label="$t('fingerprint.operation')" width="120">
-                  <template #default="{ row }">
-                    <el-button type="primary" link size="small" @click="showHttpServiceMappingForm(row)">{{ $t('fingerprint.edit') }}</el-button>
-                    <el-button type="danger" link size="small" @click="handleDeleteHttpServiceMapping(row)">{{ $t('fingerprint.delete') }}</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <el-pagination
-                v-model:current-page="httpServicePagination.page"
-                v-model:page-size="httpServicePagination.pageSize"
-                :total="httpServicePagination.total"
-                :page-sizes="[10,20, 50, 100]"
-                layout="total, sizes, prev, pager, next"
-                class="pagination"
-                @size-change="loadHttpServiceMappings"
-                @current-change="loadHttpServiceMappings"
-              />
-            </el-card>
-          </el-tab-pane>
+                    <el-tag v-if="row.paths && row.paths.length > 3" size="small" type="info">
+                      +{{ row.paths.length - 3 }}
+                    </el-tag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('fingerprint.relatedPassive')" width="150">
+                <template #default="{ row }">
+                  <el-tag v-if="row.relatedCount > 0" type="success" size="small">
+                    {{ $t('fingerprint.relatedCount', { count: row.relatedCount }) }}
+                  </el-tag>
+                  <el-tag v-else type="info" size="small">{{ $t('fingerprint.noRelated') }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
+                <template #default="{ row }">
+                  <el-switch v-model="row.enabled" @change="handleToggleActiveFingerprintEnabled(row)" size="small" />
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('fingerprint.operation')" width="200">
+                <template #default="{ row }">
+                  <el-button type="success" link size="small" @click="showActiveValidateDialog(row)">{{
+                    $t('fingerprint.validate') }}</el-button>
+                  <el-button type="info" link size="small" @click="showActiveFingerprintDetail(row)">{{
+                    $t('fingerprint.detail') }}</el-button>
+                  <el-button type="primary" link size="small" @click="showActiveFingerprintForm(row)">{{
+                    $t('fingerprint.edit') }}</el-button>
+                  <el-button type="danger" link size="small" @click="handleDeleteActiveFingerprint(row)">{{
+                    $t('fingerprint.delete') }}</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination v-model:current-page="activeFingerprintPagination.page"
+              v-model:page-size="activeFingerprintPagination.pageSize" :total="activeFingerprintPagination.total"
+              :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" class="pagination"
+              @size-change="loadActiveFingerprints" @current-change="loadActiveFingerprints" />
+          </el-card>
+        </el-tab-pane>
 
-          <!-- Web端口设置 -->
-          <el-tab-pane :label="$t('fingerprint.portMapping')" name="webPorts">
-            <el-card>
-              <template #header>
-                <div class="card-header">
-                  <span>{{ $t('fingerprint.portConfig') }}</span>
-                  <div class="header-actions">
-                    <el-button size="small" @click="handleExportHttpService">
-                      <el-icon><Download /></el-icon>{{ $t('fingerprint.export') }}
-                    </el-button>
-                    <el-button size="small" @click="showHttpServiceImportDialog">
-                      <el-icon><Upload /></el-icon>{{ $t('fingerprint.import') }}
-                    </el-button>
-                    <el-button type="primary" size="small" @click="handleSaveWebPortsConfig" :loading="webPortsSaving">
-                      <el-icon><Check /></el-icon>{{ $t('fingerprint.saveConfig') }}
-                    </el-button>
+        <!-- HTTP映射 -->
+        <el-tab-pane :label="$t('fingerprint.httpMapping')" name="httpServiceMapping">
+          <el-tabs v-model="httpServiceSubTab" type="card" @tab-change="handleHttpServiceSubTabChange">
+            <!-- 服务映射 -->
+            <el-tab-pane :label="$t('fingerprint.serviceMapping')" name="serviceMapping">
+              <el-card>
+                <template #header>
+                  <div class="card-header">
+                    <span>{{ $t('fingerprint.serviceMappingConfig') }}</span>
+                    <div class="header-actions">
+                      <el-button size="small" @click="handleExportHttpService">
+                        <el-icon>
+                          <Download />
+                        </el-icon>{{ $t('fingerprint.export') }}
+                      </el-button>
+                      <el-button size="small" @click="showHttpServiceImportDialog">
+                        <el-icon>
+                          <Upload />
+                        </el-icon>{{ $t('fingerprint.import') }}
+                      </el-button>
+                      <el-button type="primary" size="small" @click="showHttpServiceMappingForm()">
+                        <el-icon>
+                          <Plus />
+                        </el-icon>{{ $t('fingerprint.addMapping') }}
+                      </el-button>
+                    </div>
                   </div>
+                </template>
+                <p class="tip-text">
+                  {{ $t('fingerprint.serviceMappingTip') }}
+                  <br />
+                  <span class="text-warning">{{ $t('fingerprint.serviceMappingNote') }}</span>
+                </p>
+                <!-- 筛选条件 -->
+                <el-form :inline="true" class="filter-form">
+                  <el-form-item :label="$t('fingerprint.type')">
+                    <el-select v-model="httpServiceFilter.isHttp" :placeholder="$t('fingerprint.allTypes')" clearable
+                      style="width: 150px" @change="loadHttpServiceMappings">
+                      <el-option :label="$t('fingerprint.httpService')" :value="true" />
+                      <el-option :label="$t('fingerprint.nonHttpService')" :value="false" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item :label="$t('fingerprint.search')">
+                    <el-input v-model="httpServiceFilter.keyword" :placeholder="$t('fingerprint.serviceName')" clearable
+                      style="width: 180px" @keyup.enter="loadHttpServiceMappings" />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" @click="loadHttpServiceMappings">{{ $t('fingerprint.search')
+                    }}</el-button>
+                  </el-form-item>
+                </el-form>
+                <!-- 统计信息 -->
+                <div class="stats-bar">
+                  <el-tag type="success" size="small">{{ $t('fingerprint.httpService') }}: {{ httpServiceStats.httpCount
+                    || 0
+                  }}</el-tag>
+                  <el-tag type="info" size="small">{{ $t('fingerprint.nonHttpService') }}: {{
+                    httpServiceStats.nonHttpCount || 0
+                  }}</el-tag>
+                  <el-tag size="small">{{ $t('fingerprint.total') }}: {{ httpServiceStats.total || 0 }}</el-tag>
                 </div>
-              </template>
-              <p class="tip-text">
-                {{ $t('fingerprint.portConfigTip') }}
-                <br/>
-                <span class="text-warning">{{ $t('fingerprint.portConfigNote') }}</span>
-              </p>
-              
-              <el-form :model="webPortsConfig" label-width="120px" v-loading="webPortsLoading" class="web-ports-form">
-                <el-divider content-position="left">{{ $t('fingerprint.webPorts') }}</el-divider>
-                
-                <el-form-item :label="$t('fingerprint.httpPorts')">
-                  <div class="ports-input-wrapper">
-                    <el-input
-                      v-model="webPortsConfig.httpPortsText"
-                      type="textarea"
-                      :rows="4"
-                      :placeholder="$t('fingerprint.httpPortsPlaceholder')"
-                    />
-                    <div class="ports-count">
-                      {{ $t('fingerprint.totalPorts', { count: parsePortsCount(webPortsConfig.httpPortsText) }) }}
+                <!-- 映射列表 -->
+                <el-table :data="httpServiceMappings" stripe v-loading="httpServiceLoading" max-height="500">
+                  <el-table-column prop="serviceName" :label="$t('fingerprint.serviceName')" width="180" />
+                  <el-table-column prop="isHttp" :label="$t('fingerprint.serviceType')" width="120">
+                    <template #default="{ row }">
+                      <el-tag :type="row.isHttp ? 'success' : 'info'" size="small">
+                        {{ row.isHttp ? $t('fingerprint.httpService') : $t('fingerprint.nonHttpService') }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="description" :label="$t('fingerprint.description')" min-width="200" />
+                  <el-table-column prop="enabled" :label="$t('fingerprint.status')" width="80">
+                    <template #default="{ row }">
+                      <el-switch v-model="row.enabled" @change="handleToggleHttpServiceEnabled(row)" size="small" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="$t('fingerprint.operation')" width="120">
+                    <template #default="{ row }">
+                      <el-button type="primary" link size="small" @click="showHttpServiceMappingForm(row)">{{
+                        $t('fingerprint.edit') }}</el-button>
+                      <el-button type="danger" link size="small" @click="handleDeleteHttpServiceMapping(row)">{{
+                        $t('fingerprint.delete') }}</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-pagination v-model:current-page="httpServicePagination.page"
+                  v-model:page-size="httpServicePagination.pageSize" :total="httpServicePagination.total"
+                  :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" class="pagination"
+                  @size-change="loadHttpServiceMappings" @current-change="loadHttpServiceMappings" />
+              </el-card>
+            </el-tab-pane>
+
+            <!-- Web端口设置 -->
+            <el-tab-pane :label="$t('fingerprint.portMapping')" name="webPorts">
+              <el-card>
+                <template #header>
+                  <div class="card-header">
+                    <span>{{ $t('fingerprint.portConfig') }}</span>
+                    <div class="header-actions">
+                      <el-button size="small" @click="handleExportHttpService">
+                        <el-icon>
+                          <Download />
+                        </el-icon>{{ $t('fingerprint.export') }}
+                      </el-button>
+                      <el-button size="small" @click="showHttpServiceImportDialog">
+                        <el-icon>
+                          <Upload />
+                        </el-icon>{{ $t('fingerprint.import') }}
+                      </el-button>
+                      <el-button type="primary" size="small" @click="handleSaveWebPortsConfig"
+                        :loading="webPortsSaving">
+                        <el-icon>
+                          <Check />
+                        </el-icon>{{ $t('fingerprint.saveConfig') }}
+                      </el-button>
                     </div>
                   </div>
-                  <div class="form-tip">{{ $t('fingerprint.commonHttpPorts') }}</div>
-                </el-form-item>
-                
-                <el-form-item :label="$t('fingerprint.httpsPorts')">
-                  <div class="ports-input-wrapper">
-                    <el-input
-                      v-model="webPortsConfig.httpsPortsText"
-                      type="textarea"
-                      :rows="3"
-                      :placeholder="$t('fingerprint.httpsPortsPlaceholder')"
-                    />
-                    <div class="ports-count">
-                      {{ $t('fingerprint.totalPorts', { count: parsePortsCount(webPortsConfig.httpsPortsText) }) }}
+                </template>
+                <p class="tip-text">
+                  {{ $t('fingerprint.portConfigTip') }}
+                  <br />
+                  <span class="text-warning">{{ $t('fingerprint.portConfigNote') }}</span>
+                </p>
+
+                <el-form :model="webPortsConfig" label-width="120px" v-loading="webPortsLoading" class="web-ports-form">
+                  <el-divider content-position="left">{{ $t('fingerprint.webPorts') }}</el-divider>
+
+                  <el-form-item :label="$t('fingerprint.httpPorts')">
+                    <div class="ports-input-wrapper">
+                      <el-input v-model="webPortsConfig.httpPortsText" type="textarea" :rows="4"
+                        :placeholder="$t('fingerprint.httpPortsPlaceholder')" />
+                      <div class="ports-count">
+                        {{ $t('fingerprint.totalPorts', { count: parsePortsCount(webPortsConfig.httpPortsText) }) }}
+                      </div>
                     </div>
-                  </div>
-                  <div class="form-tip">{{ $t('fingerprint.commonHttpsPorts') }}</div>
-                </el-form-item>
-                
-                <el-divider content-position="left">{{ $t('fingerprint.nonWebPorts') }}</el-divider>
-                
-                <el-form-item :label="$t('fingerprint.nonHttpPorts')">
-                  <div class="ports-input-wrapper">
-                    <el-input
-                      v-model="webPortsConfig.nonHttpPortsText"
-                      type="textarea"
-                      :rows="5"
-                      :placeholder="$t('fingerprint.nonHttpPortsPlaceholder')"
-                    />
-                    <div class="ports-count">
-                      {{ $t('fingerprint.totalPorts', { count: parsePortsCount(webPortsConfig.nonHttpPortsText) }) }}
+                    <div class="form-tip">{{ $t('fingerprint.commonHttpPorts') }}</div>
+                  </el-form-item>
+
+                  <el-form-item :label="$t('fingerprint.httpsPorts')">
+                    <div class="ports-input-wrapper">
+                      <el-input v-model="webPortsConfig.httpsPortsText" type="textarea" :rows="3"
+                        :placeholder="$t('fingerprint.httpsPortsPlaceholder')" />
+                      <div class="ports-count">
+                        {{ $t('fingerprint.totalPorts', { count: parsePortsCount(webPortsConfig.httpsPortsText) }) }}
+                      </div>
                     </div>
-                  </div>
-                  <div class="form-tip">
-                    {{ $t('fingerprint.commonNonHttpPorts') }}
-                  </div>
-                </el-form-item>
-              </el-form>
-            </el-card>
-          </el-tab-pane>
-        </el-tabs>
-      </el-tab-pane>
+                    <div class="form-tip">{{ $t('fingerprint.commonHttpsPorts') }}</div>
+                  </el-form-item>
+
+                  <el-divider content-position="left">{{ $t('fingerprint.nonWebPorts') }}</el-divider>
+
+                  <el-form-item :label="$t('fingerprint.nonHttpPorts')">
+                    <div class="ports-input-wrapper">
+                      <el-input v-model="webPortsConfig.nonHttpPortsText" type="textarea" :rows="5"
+                        :placeholder="$t('fingerprint.nonHttpPortsPlaceholder')" />
+                      <div class="ports-count">
+                        {{ $t('fingerprint.totalPorts', { count: parsePortsCount(webPortsConfig.nonHttpPortsText) }) }}
+                      </div>
+                    </div>
+                    <div class="form-tip">
+                      {{ $t('fingerprint.commonNonHttpPorts') }}
+                    </div>
+                  </el-form-item>
+                </el-form>
+              </el-card>
+            </el-tab-pane>
+          </el-tabs>
+        </el-tab-pane>
       </el-tabs>
       <div class="tabs-action-buttons">
         <el-button type="warning" size="small" @click="showBatchValidateDialog">
-          <el-icon><Search /></el-icon>{{ $t('fingerprint.batchValidate') }}
+          <el-icon>
+            <Search />
+          </el-icon>{{ $t('fingerprint.batchValidate') }}
         </el-button>
       </div>
     </div>
 
     <!-- 指纹详情对话框 -->
-    <el-dialog v-model="detailDialogVisible" :title="currentFingerprint.name || $t('fingerprint.fingerprintDetail')" width="900px" top="5vh">
+    <el-dialog v-model="detailDialogVisible" :title="currentFingerprint.name || $t('fingerprint.fingerprintDetail')"
+      width="900px" top="5vh">
       <el-descriptions :column="2" border size="small" style="margin-bottom: 15px">
         <el-descriptions-item :label="$t('fingerprint.appName')">{{ currentFingerprint.name }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('fingerprint.category')">{{ currentFingerprint.category }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('fingerprint.category')">{{ currentFingerprint.category
+        }}</el-descriptions-item>
         <el-descriptions-item :label="$t('fingerprint.website')" :span="2">
-          <a v-if="currentFingerprint.website" :href="currentFingerprint.website" target="_blank" class="link-primary">{{ currentFingerprint.website }}</a>
+          <a v-if="currentFingerprint.website" :href="currentFingerprint.website" target="_blank"
+            class="link-primary">{{
+              currentFingerprint.website }}</a>
           <span v-else>-</span>
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('fingerprint.description')" :span="2">{{ currentFingerprint.description || '-' }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('fingerprint.cpe')" :span="2" v-if="currentFingerprint.cpe">{{ currentFingerprint.cpe }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('fingerprint.description')" :span="2">{{ currentFingerprint.description || '-'
+        }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('fingerprint.cpe')" :span="2" v-if="currentFingerprint.cpe">{{
+          currentFingerprint.cpe }}</el-descriptions-item>
       </el-descriptions>
-      
+
       <el-divider content-position="left">{{ $t('fingerprint.matchRules') }}</el-divider>
-      
+
       <div class="match-logic-tip">
         <el-alert type="info" :closable="false" show-icon>
           <template #title>
@@ -563,15 +616,16 @@
           </template>
         </el-alert>
       </div>
-      
+
       <div v-if="!hasAnyRule(currentFingerprint)" class="no-rules">
         <el-empty :description="$t('fingerprint.noRules')" :image-size="60" />
       </div>
-      
+
       <div class="rules-container" v-else>
         <!-- ARL格式规则 -->
         <div class="rule-section" v-if="currentFingerprint.rule">
-          <div class="rule-title"><el-tag size="small" type="warning">{{ $t('fingerprint.customRule') }}</el-tag> {{ $t('fingerprint.simplifiedSyntax') }}</div>
+          <div class="rule-title"><el-tag size="small" type="warning">{{ $t('fingerprint.customRule') }}</el-tag> {{
+            $t('fingerprint.simplifiedSyntax') }}</div>
           <pre class="rule-content">{{ currentFingerprint.rule }}</pre>
           <div class="rule-help">
             <p>{{ $t('fingerprint.syntaxHelp') }}：</p>
@@ -585,65 +639,77 @@
             </ul>
           </div>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.headers && Object.keys(currentFingerprint.headers).length">
-          <div class="rule-title"><el-tag size="small" type="primary">Headers</el-tag> {{ $t('fingerprint.httpHeaderMatch') }}</div>
+          <div class="rule-title"><el-tag size="small" type="primary">Headers</el-tag> {{
+            $t('fingerprint.httpHeaderMatch')
+          }}</div>
           <pre class="rule-content">{{ JSON.stringify(currentFingerprint.headers, null, 2) }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.cookies && Object.keys(currentFingerprint.cookies).length">
-          <div class="rule-title"><el-tag size="small" type="primary">Cookies</el-tag> {{ $t('fingerprint.cookieMatch') }}</div>
+          <div class="rule-title"><el-tag size="small" type="primary">Cookies</el-tag> {{ $t('fingerprint.cookieMatch')
+          }}
+          </div>
           <pre class="rule-content">{{ JSON.stringify(currentFingerprint.cookies, null, 2) }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.html && currentFingerprint.html.length">
-          <div class="rule-title"><el-tag size="small" type="success">HTML</el-tag> {{ $t('fingerprint.htmlMatch') }}</div>
+          <div class="rule-title"><el-tag size="small" type="success">HTML</el-tag> {{ $t('fingerprint.htmlMatch') }}
+          </div>
           <pre class="rule-content">{{ currentFingerprint.html.join('\n') }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.scripts && currentFingerprint.scripts.length">
-          <div class="rule-title"><el-tag size="small" type="warning">Scripts</el-tag> {{ $t('fingerprint.scriptMatch') }}</div>
+          <div class="rule-title"><el-tag size="small" type="warning">Scripts</el-tag> {{ $t('fingerprint.scriptMatch')
+          }}
+          </div>
           <pre class="rule-content">{{ currentFingerprint.scripts.join('\n') }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.scriptSrc && currentFingerprint.scriptSrc.length">
-          <div class="rule-title"><el-tag size="small" type="warning">ScriptSrc</el-tag> {{ $t('fingerprint.scriptSrcMatch') }}</div>
+          <div class="rule-title"><el-tag size="small" type="warning">ScriptSrc</el-tag> {{
+            $t('fingerprint.scriptSrcMatch')
+          }}</div>
           <pre class="rule-content">{{ currentFingerprint.scriptSrc.join('\n') }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.js && Object.keys(currentFingerprint.js).length">
-          <div class="rule-title"><el-tag size="small" type="danger">JS</el-tag> {{ $t('fingerprint.jsVarMatch') }}</div>
+          <div class="rule-title"><el-tag size="small" type="danger">JS</el-tag> {{ $t('fingerprint.jsVarMatch') }}
+          </div>
           <pre class="rule-content">{{ JSON.stringify(currentFingerprint.js, null, 2) }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.meta && Object.keys(currentFingerprint.meta).length">
           <div class="rule-title"><el-tag size="small" type="info">Meta</el-tag> {{ $t('fingerprint.metaMatch') }}</div>
           <pre class="rule-content">{{ JSON.stringify(currentFingerprint.meta, null, 2) }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.css && currentFingerprint.css.length">
           <div class="rule-title"><el-tag size="small">CSS</el-tag> {{ $t('fingerprint.cssMatch') }}</div>
           <pre class="rule-content">{{ currentFingerprint.css.join('\n') }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.url && currentFingerprint.url.length">
           <div class="rule-title"><el-tag size="small">URL</el-tag> {{ $t('fingerprint.urlMatch') }}</div>
           <pre class="rule-content">{{ currentFingerprint.url.join('\n') }}</pre>
         </div>
-        
+
         <div class="rule-section" v-if="currentFingerprint.dom">
           <div class="rule-title"><el-tag size="small" type="danger">DOM</el-tag> {{ $t('fingerprint.domMatch') }}</div>
           <pre class="rule-content">{{ formatDom(currentFingerprint.dom) }}</pre>
         </div>
       </div>
-      
+
       <template #footer>
         <el-button @click="detailDialogVisible = false">{{ $t('common.close') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 自定义指纹编辑对话框 -->
-    <el-dialog v-model="formDialogVisible" :title="fingerprintForm.id ? $t('fingerprint.editFingerprint') : $t('fingerprint.addFingerprintTitle')" width="800px">
+    <el-dialog v-model="formDialogVisible"
+      :title="fingerprintForm.id ? $t('fingerprint.editFingerprint') : $t('fingerprint.addFingerprintTitle')"
+      width="800px">
       <el-form ref="fingerprintFormRef" :model="fingerprintForm" :rules="fingerprintRules" label-width="100px">
         <el-row :gutter="20">
           <el-col :span="12">
@@ -653,7 +719,8 @@
           </el-col>
           <el-col :span="12">
             <el-form-item :label="$t('fingerprint.category')" prop="category">
-              <el-select v-model="fingerprintForm.category" :placeholder="$t('common.pleaseSelect')" filterable allow-create style="width: 100%">
+              <el-select v-model="fingerprintForm.category" :placeholder="$t('common.pleaseSelect')" filterable
+                allow-create style="width: 100%">
                 <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
               </el-select>
             </el-form-item>
@@ -682,34 +749,28 @@
           </el-col>
         </el-row>
         <el-form-item :label="$t('fingerprint.description')">
-          <el-input v-model="fingerprintForm.description" type="textarea" :rows="2" :placeholder="$t('fingerprint.description')" />
+          <el-input v-model="fingerprintForm.description" type="textarea" :rows="2"
+            :placeholder="$t('fingerprint.description')" />
         </el-form-item>
-        
+
         <!-- 主动指纹路径配置 -->
-        <el-form-item v-if="fingerprintForm.type === 'active'" :label="$t('fingerprint.activePaths')" prop="activePaths">
-          <el-input
-            v-model="fingerprintForm.activePathsText"
-            type="textarea"
-            :rows="3"
+        <el-form-item v-if="fingerprintForm.type === 'active'" :label="$t('fingerprint.activePaths')"
+          prop="activePaths">
+          <el-input v-model="fingerprintForm.activePathsText" type="textarea" :rows="3"
             :placeholder="$t('fingerprint.activePathsPlaceholder')"
-            style="font-family: 'Consolas', 'Monaco', monospace"
-          />
+            style="font-family: 'Consolas', 'Monaco', monospace" />
           <div class="form-tip">
             {{ $t('fingerprint.activeTip') }}
           </div>
         </el-form-item>
-        
+
         <el-divider content-position="left">{{ $t('fingerprint.matchRules') }}</el-divider>
-        
+
         <!-- ARL简化规则 -->
         <el-form-item :label="$t('fingerprint.customRule')" prop="rule">
-          <el-input
-            v-model="fingerprintForm.rule"
-            type="textarea"
-            :rows="4"
+          <el-input v-model="fingerprintForm.rule" type="textarea" :rows="4"
             :placeholder="$t('fingerprint.simplifiedRulePlaceholder')"
-            style="font-family: 'Consolas', 'Monaco', monospace"
-          />
+            style="font-family: 'Consolas', 'Monaco', monospace" />
           <div class="form-tip">
             <p style="margin: 5px 0 3px 0; font-weight: bold;">{{ $t('fingerprint.syntaxHelp') }}：</p>
             <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
@@ -740,30 +801,30 @@
         <template #title>{{ $t('fingerprint.supportMultiFormat') }}</template>
         <template #default>
           <div style="font-size: 12px">
-            <p style="margin: 5px 0;"><strong>Format 1 - ARL finger.json：</strong><code>{"fingerprint": [{"cms": "xxx", "keyword": ["xxx"], "location": "body"}]}</code></p>
-            <p style="margin: 5px 0;"><strong>Format 2 - ARL finger.yml：</strong><code>- name: Weblogic</code> / <code>rule: body="xxx" && title="xxx"</code></p>
-            <p style="margin: 5px 0;"><strong>Format 3 - Simplified YAML：</strong><code>AppName:</code> + <code>- 'body="xxx" || title="xxx"'</code></p>
+            <p style="margin: 5px 0;"><strong>Format 1 - ARL
+                finger.json：</strong><code>{"fingerprint": [{"cms": "xxx", "keyword": ["xxx"], "location": "body"}]}</code>
+            </p>
+            <p style="margin: 5px 0;"><strong>Format 2 - ARL finger.yml：</strong><code>- name: Weblogic</code> /
+              <code>rule: body="xxx" && title="xxx"</code>
+            </p>
+            <p style="margin: 5px 0;"><strong>Format 3 - Simplified YAML：</strong><code>AppName:</code> +
+              <code>- 'body="xxx" || title="xxx"'</code>
+            </p>
           </div>
         </template>
       </el-alert>
-      
-      <el-upload
-        ref="uploadRef"
-        drag
-        :auto-upload="false"
-        :limit="500"
-        accept=".json,.yml,.yaml"
-        :on-change="handleFileChange"
-        multiple
-        :show-file-list="false"
-      >
-        <el-icon class="el-icon--upload"><Upload /></el-icon>
+
+      <el-upload ref="uploadRef" drag :auto-upload="false" :limit="500" accept=".json,.yml,.yaml"
+        :on-change="handleFileChange" multiple :show-file-list="false">
+        <el-icon class="el-icon--upload">
+          <Upload />
+        </el-icon>
         <div class="el-upload__text">{{ $t('fingerprint.uploadHint') }}</div>
         <template #tip>
           <div class="el-upload__tip">{{ $t('fingerprint.uploadTip') }}</div>
         </template>
       </el-upload>
-      
+
       <div v-if="importFiles.length > 0" class="file-preview">
         <div class="preview-header">
           <span>{{ $t('fingerprint.selectedFile') }}: {{ importFiles.length }}</span>
@@ -776,15 +837,17 @@
           </el-table-column>
           <el-table-column :label="$t('fingerprint.operation')" width="80">
             <template #default="{ $index }">
-              <el-button type="danger" link size="small" @click="removeImportFile($index)">{{ $t('common.delete') }}</el-button>
+              <el-button type="danger" link size="small" @click="removeImportFile($index)">{{ $t('common.delete')
+              }}</el-button>
             </template>
           </el-table-column>
         </el-table>
       </div>
-      
+
       <template #footer>
         <el-button @click="importDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="handleImportFingerprints" :loading="importLoading" :disabled="importFiles.length === 0">
+        <el-button type="primary" @click="handleImportFingerprints" :loading="importLoading"
+          :disabled="importFiles.length === 0">
           {{ $t('fingerprint.import') }} ({{ importFiles.length }})
         </el-button>
       </template>
@@ -796,39 +859,38 @@
         <template #title>{{ $t('fingerprint.wappalyzerDataFormat') }}</template>
         <template #default>
           <div style="font-size: 12px">
-            {{ $t('fingerprint.wappalyzerDataTip') }}<br/>
-            <a href="https://github.com/projectdiscovery/wappalyzergo/blob/main/fingerprints_data.json" target="_blank" class="link-primary">wappalyzergo GitHub</a>
+            {{ $t('fingerprint.wappalyzerDataTip') }}<br />
+            <a href="https://github.com/projectdiscovery/wappalyzergo/blob/main/fingerprints_data.json" target="_blank"
+              class="link-primary">wappalyzergo GitHub</a>
           </div>
         </template>
       </el-alert>
-      
-      <el-upload
-        ref="builtinUploadRef"
-        drag
-        :auto-upload="false"
-        :limit="1"
-        accept=".json"
-        :on-change="handleBuiltinFileChange"
-        :on-exceed="handleExceed"
-      >
-        <el-icon class="el-icon--upload"><Upload /></el-icon>
+
+      <el-upload ref="builtinUploadRef" drag :auto-upload="false" :limit="1" accept=".json"
+        :on-change="handleBuiltinFileChange" :on-exceed="handleExceed">
+        <el-icon class="el-icon--upload">
+          <Upload />
+        </el-icon>
         <div class="el-upload__text">{{ $t('fingerprint.uploadHint') }}</div>
         <template #tip>
           <div class="el-upload__tip">fingerprints_data.json</div>
         </template>
       </el-upload>
-      
+
       <div v-if="builtinImportContent" class="file-preview">
         <div class="preview-header">
           <span>{{ $t('fingerprint.selectedFile') }} ({{ builtinImportFileName }})</span>
-          <el-button type="danger" link size="small" @click="clearBuiltinImportFile">{{ $t('fingerprint.clear') }}</el-button>
+          <el-button type="danger" link size="small" @click="clearBuiltinImportFile">{{ $t('fingerprint.clear')
+          }}</el-button>
         </div>
-        <pre class="preview-content">{{ builtinImportContent.substring(0, 500) }}{{ builtinImportContent.length > 500 ? '\n...' : '' }}</pre>
+        <pre class="preview-content">{{ builtinImportContent.substring(0, 500) }}{{ builtinImportContent.length > 500 ?
+          '\n...' : '' }}</pre>
       </div>
-      
+
       <template #footer>
         <el-button @click="builtinImportDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="handleImportBuiltinFingerprints" :loading="builtinImportLoading" :disabled="!builtinImportContent">{{ $t('fingerprint.import') }}</el-button>
+        <el-button type="primary" @click="handleImportBuiltinFingerprints" :loading="builtinImportLoading"
+          :disabled="!builtinImportContent">{{ $t('fingerprint.import') }}</el-button>
       </template>
     </el-dialog>
 
@@ -852,7 +914,8 @@
       </div>
       <template #footer>
         <el-button @click="validateDialogVisible = false">{{ $t('common.close') }}</el-button>
-        <el-button type="primary" @click="handleValidateFingerprint" :loading="validateLoading" :disabled="!validateUrl">{{ $t('fingerprint.validate') }}</el-button>
+        <el-button type="primary" @click="handleValidateFingerprint" :loading="validateLoading"
+          :disabled="!validateUrl">{{ $t('fingerprint.validate') }}</el-button>
       </template>
     </el-dialog>
 
@@ -876,7 +939,8 @@
       </el-alert>
       <template #footer>
         <el-button @click="batchValidateDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="handleBatchValidate" :loading="batchValidateLoading" :disabled="!batchValidateUrl">开始验证</el-button>
+        <el-button type="primary" @click="handleBatchValidate" :loading="batchValidateLoading"
+          :disabled="!batchValidateUrl">开始验证</el-button>
       </template>
     </el-dialog>
 
@@ -918,10 +982,14 @@
     </el-dialog>
 
     <!-- HTTP服务映射编辑对话框 -->
-    <el-dialog v-model="httpServiceMappingDialogVisible" :title="httpServiceMappingForm.id ? $t('fingerprint.editMapping') : $t('fingerprint.addMappingTitle')" width="500px">
-      <el-form ref="httpServiceMappingFormRef" :model="httpServiceMappingForm" :rules="httpServiceMappingRules" label-width="100px">
+    <el-dialog v-model="httpServiceMappingDialogVisible"
+      :title="httpServiceMappingForm.id ? $t('fingerprint.editMapping') : $t('fingerprint.addMappingTitle')"
+      width="500px">
+      <el-form ref="httpServiceMappingFormRef" :model="httpServiceMappingForm" :rules="httpServiceMappingRules"
+        label-width="100px">
         <el-form-item :label="$t('fingerprint.serviceName')" prop="serviceName">
-          <el-input v-model="httpServiceMappingForm.serviceName" :placeholder="$t('fingerprint.serviceNamePlaceholder')" />
+          <el-input v-model="httpServiceMappingForm.serviceName"
+            :placeholder="$t('fingerprint.serviceNamePlaceholder')" />
         </el-form-item>
         <el-form-item :label="$t('fingerprint.serviceType')" prop="isHttp">
           <el-radio-group v-model="httpServiceMappingForm.isHttp">
@@ -930,7 +998,8 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item :label="$t('fingerprint.description')">
-          <el-input v-model="httpServiceMappingForm.description" :placeholder="$t('fingerprint.descriptionPlaceholder')" />
+          <el-input v-model="httpServiceMappingForm.description"
+            :placeholder="$t('fingerprint.descriptionPlaceholder')" />
         </el-form-item>
         <el-form-item :label="$t('fingerprint.enabled')">
           <el-switch v-model="httpServiceMappingForm.enabled" />
@@ -945,13 +1014,15 @@
     <!-- 匹配现有资产对话框 -->
     <el-dialog v-model="matchAssetsDialogVisible" :title="$t('fingerprint.matchExistingAssets')" width="900px">
       <el-descriptions :column="2" border size="small" style="margin-bottom: 15px">
-        <el-descriptions-item :label="$t('fingerprint.fingerprintName')">{{ matchAssetsFingerprint.name }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('fingerprint.fingerprintName')">{{ matchAssetsFingerprint.name
+        }}</el-descriptions-item>
         <el-descriptions-item :label="$t('fingerprint.matchRules')">
-          <el-tag v-if="matchAssetsFingerprint.rule" size="small" type="warning">{{ $t('fingerprint.customRule') }}</el-tag>
+          <el-tag v-if="matchAssetsFingerprint.rule" size="small" type="warning">{{ $t('fingerprint.customRule')
+          }}</el-tag>
           <span v-else>-</span>
         </el-descriptions-item>
       </el-descriptions>
-      
+
       <div v-if="!matchAssetsResult" class="match-assets-tip">
         <el-alert type="info" :closable="false" show-icon>
           <template #title>
@@ -969,7 +1040,7 @@
           </el-checkbox>
         </div>
       </div>
-      
+
       <div v-if="matchAssetsResult" class="match-assets-result">
         <div class="result-header">
           <el-tag type="success" size="large">
@@ -981,7 +1052,8 @@
         </div>
         <div v-if="matchAssetsResult.matchedList && matchAssetsResult.matchedList.length > 0" class="matched-list">
           <el-table :data="matchAssetsResult.matchedList" stripe max-height="400">
-            <el-table-column prop="authority" :label="$t('fingerprint.assetAddress')" min-width="250" show-overflow-tooltip />
+            <el-table-column prop="authority" :label="$t('fingerprint.assetAddress')" min-width="250"
+              show-overflow-tooltip />
             <el-table-column prop="host" label="Host" width="150" />
             <el-table-column prop="port" label="Port" width="80" />
             <el-table-column prop="title" label="Title" min-width="200" show-overflow-tooltip />
@@ -992,7 +1064,7 @@
           <el-empty :description="$t('fingerprint.noMatchedAssets')" :image-size="60" />
         </div>
       </div>
-      
+
       <template #footer>
         <el-button @click="matchAssetsDialogVisible = false">{{ $t('common.close') }}</el-button>
         <el-button type="primary" @click="handleMatchAssets" :loading="matchAssetsLoading">
@@ -1002,31 +1074,41 @@
     </el-dialog>
 
     <!-- 主动指纹详情对话框 -->
-    <el-dialog v-model="activeFingerprintDetailDialogVisible" :title="currentActiveFingerprint.name || $t('fingerprint.activeFingerprintDetail')" width="800px">
+    <el-dialog v-model="activeFingerprintDetailDialogVisible"
+      :title="currentActiveFingerprint.name || $t('fingerprint.activeFingerprintDetail')" width="800px">
       <el-descriptions :column="2" border size="small" style="margin-bottom: 15px">
-        <el-descriptions-item :label="$t('fingerprint.appName')">{{ currentActiveFingerprint.name }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('fingerprint.appName')">{{ currentActiveFingerprint.name
+        }}</el-descriptions-item>
         <el-descriptions-item :label="$t('fingerprint.status')">
           <el-tag :type="currentActiveFingerprint.enabled ? 'success' : 'info'" size="small">
             {{ currentActiveFingerprint.enabled ? $t('fingerprint.enabled') : $t('common.disabled') }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('fingerprint.description')" :span="2">{{ currentActiveFingerprint.description || '-' }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('common.createTime')">{{ currentActiveFingerprint.createTime }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('common.updateTime')">{{ currentActiveFingerprint.updateTime }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('fingerprint.description')" :span="2">{{ currentActiveFingerprint.description
+          ||
+          '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('common.createTime')">{{ currentActiveFingerprint.createTime
+        }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('common.updateTime')">{{ currentActiveFingerprint.updateTime
+        }}</el-descriptions-item>
       </el-descriptions>
-      
-      <el-divider content-position="left">{{ $t('fingerprint.probePaths') }} ({{ (currentActiveFingerprint.paths || []).length }})</el-divider>
+
+      <el-divider content-position="left">{{ $t('fingerprint.probePaths') }} ({{ (currentActiveFingerprint.paths ||
+        []).length }})</el-divider>
       <div class="paths-list">
-        <el-tag v-for="(path, idx) in (currentActiveFingerprint.paths || [])" :key="idx" size="small" style="margin-right: 8px; margin-bottom: 8px">
+        <el-tag v-for="(path, idx) in (currentActiveFingerprint.paths || [])" :key="idx" size="small"
+          style="margin-right: 8px; margin-bottom: 8px">
           {{ path }}
         </el-tag>
       </div>
-      
-      <el-divider content-position="left" v-if="currentActiveFingerprint.relatedFingerprints && currentActiveFingerprint.relatedFingerprints.length">
+
+      <el-divider content-position="left"
+        v-if="currentActiveFingerprint.relatedFingerprints && currentActiveFingerprint.relatedFingerprints.length">
         {{ $t('fingerprint.relatedPassiveFingerprints') }} ({{ currentActiveFingerprint.relatedCount }})
       </el-divider>
-      <el-table v-if="currentActiveFingerprint.relatedFingerprints && currentActiveFingerprint.relatedFingerprints.length" 
-                :data="currentActiveFingerprint.relatedFingerprints" stripe max-height="300" size="small">
+      <el-table
+        v-if="currentActiveFingerprint.relatedFingerprints && currentActiveFingerprint.relatedFingerprints.length"
+        :data="currentActiveFingerprint.relatedFingerprints" stripe max-height="300" size="small">
         <el-table-column prop="name" :label="$t('common.name')" width="150" />
         <el-table-column prop="rule" :label="$t('fingerprint.matchRules')" min-width="300" show-overflow-tooltip />
         <el-table-column prop="source" :label="$t('fingerprint.type')" width="100">
@@ -1044,19 +1126,24 @@
           </template>
         </el-table-column>
       </el-table>
-      <div v-else-if="!currentActiveFingerprint.relatedFingerprints || currentActiveFingerprint.relatedFingerprints.length === 0" class="no-related">
+      <div
+        v-else-if="!currentActiveFingerprint.relatedFingerprints || currentActiveFingerprint.relatedFingerprints.length === 0"
+        class="no-related">
         <el-empty :description="$t('fingerprint.noRelatedPassive')" :image-size="60">
         </el-empty>
       </div>
-      
+
       <template #footer>
         <el-button @click="activeFingerprintDetailDialogVisible = false">{{ $t('common.close') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 主动指纹编辑对话框 -->
-    <el-dialog v-model="activeFingerprintFormDialogVisible" :title="activeFingerprintForm.id ? $t('fingerprint.editActiveFingerprint') : $t('fingerprint.addActiveFingerprint')" width="800px">
-      <el-form ref="activeFingerprintFormRef" :model="activeFingerprintForm" :rules="activeFingerprintRules" label-width="100px">
+    <el-dialog v-model="activeFingerprintFormDialogVisible"
+      :title="activeFingerprintForm.id ? $t('fingerprint.editActiveFingerprint') : $t('fingerprint.addActiveFingerprint')"
+      width="800px">
+      <el-form ref="activeFingerprintFormRef" :model="activeFingerprintForm" :rules="activeFingerprintRules"
+        label-width="100px">
         <el-form-item :label="$t('fingerprint.appName')" prop="name">
           <div style="display: flex; gap: 10px; width: 100%;">
             <el-input v-model="activeFingerprintForm.name" placeholder="WordPress, Nacos" style="flex: 1;" />
@@ -1066,24 +1153,20 @@
           </div>
         </el-form-item>
         <el-form-item :label="$t('fingerprint.probePaths')" prop="pathsText">
-          <el-input
-            v-model="activeFingerprintForm.pathsText"
-            type="textarea"
-            :rows="6"
-            :placeholder="$t('fingerprint.pathsPlaceholder')"
-            style="font-family: 'Consolas', 'Monaco', monospace"
-          />
+          <el-input v-model="activeFingerprintForm.pathsText" type="textarea" :rows="6"
+            :placeholder="$t('fingerprint.pathsPlaceholder')" style="font-family: 'Consolas', 'Monaco', monospace" />
           <div class="form-tip">
             {{ $t('fingerprint.activeTip') }}
           </div>
         </el-form-item>
         <el-form-item :label="$t('fingerprint.description')">
-          <el-input v-model="activeFingerprintForm.description" type="textarea" :rows="2" :placeholder="$t('fingerprint.descriptionPlaceholder')" />
+          <el-input v-model="activeFingerprintForm.description" type="textarea" :rows="2"
+            :placeholder="$t('fingerprint.descriptionPlaceholder')" />
         </el-form-item>
         <el-form-item :label="$t('fingerprint.enabled')">
           <el-switch v-model="activeFingerprintForm.enabled" />
         </el-form-item>
-        
+
         <!-- 关联被动指纹区域 -->
         <el-divider content-position="left">{{ $t('fingerprint.relatedPassiveFingerprints') }}</el-divider>
         <div v-if="!activeFingerprintForm.name" class="passive-tip">
@@ -1092,14 +1175,17 @@
           </el-alert>
         </div>
         <div v-else-if="searchPassiveLoading" style="text-align: center; padding: 20px;">
-          <el-icon class="is-loading"><Loading /></el-icon>
+          <el-icon class="is-loading">
+            <Loading />
+          </el-icon>
           <span style="margin-left: 8px;">{{ $t('common.loading') }}</span>
         </div>
         <div v-else>
           <div v-if="relatedPassiveFingerprints.length > 0" class="related-passive-list">
             <el-table :data="relatedPassiveFingerprints" stripe max-height="200" size="small">
               <el-table-column prop="name" :label="$t('common.name')" width="150" />
-              <el-table-column prop="rule" :label="$t('fingerprint.matchRules')" min-width="250" show-overflow-tooltip />
+              <el-table-column prop="rule" :label="$t('fingerprint.matchRules')" min-width="250"
+                show-overflow-tooltip />
               <el-table-column prop="source" :label="$t('fingerprint.type')" width="80">
                 <template #default="{ row }">
                   <el-tag size="small" :type="row.isBuiltin ? 'primary' : 'warning'">
@@ -1109,7 +1195,8 @@
               </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="{ row }">
-                  <el-button v-if="!row.isBuiltin" type="primary" link size="small" @click="handleEditRelatedPassive(row)">编辑</el-button>
+                  <el-button v-if="!row.isBuiltin" type="primary" link size="small"
+                    @click="handleEditRelatedPassive(row)">编辑</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -1119,7 +1206,9 @@
           </div>
           <div style="margin-top: 10px;">
             <el-button type="success" size="small" @click="handleAddRelatedPassive">
-              <el-icon><Plus /></el-icon>{{ $t('fingerprint.addPassiveFingerprint') }}
+              <el-icon>
+                <Plus />
+              </el-icon>{{ $t('fingerprint.addPassiveFingerprint') }}
             </el-button>
           </div>
         </div>
@@ -1131,19 +1220,17 @@
     </el-dialog>
 
     <!-- 关联被动指纹编辑对话框 -->
-    <el-dialog v-model="relatedPassiveDialogVisible" :title="relatedPassiveForm.id ? $t('fingerprint.editPassiveFingerprint') : $t('fingerprint.addPassiveFingerprintTitle')" width="600px" append-to-body>
+    <el-dialog v-model="relatedPassiveDialogVisible"
+      :title="relatedPassiveForm.id ? $t('fingerprint.editPassiveFingerprint') : $t('fingerprint.addPassiveFingerprintTitle')"
+      width="600px" append-to-body>
       <el-form ref="relatedPassiveFormRef" :model="relatedPassiveForm" :rules="relatedPassiveRules" label-width="100px">
         <el-form-item :label="$t('fingerprint.appName')">
           <el-input :value="relatedPassiveForm.name" disabled />
         </el-form-item>
         <el-form-item :label="$t('fingerprint.matchRules')" prop="rule">
-          <el-input
-            v-model="relatedPassiveForm.rule"
-            type="textarea"
-            :rows="4"
+          <el-input v-model="relatedPassiveForm.rule" type="textarea" :rows="4"
             :placeholder="$t('fingerprint.simplifiedRulePlaceholder')"
-            style="font-family: 'Consolas', 'Monaco', monospace"
-          />
+            style="font-family: 'Consolas', 'Monaco', monospace" />
           <div class="form-tip">
             {{ $t('fingerprint.syntaxHelp') }}
           </div>
@@ -1172,69 +1259,61 @@ SpringBoot-Actuator:
           </div>
         </template>
       </el-alert>
-      
-      <el-upload
-        ref="activeUploadRef"
-        drag
-        :auto-upload="false"
-        :limit="1"
-        accept=".yaml,.yml"
-        :on-change="handleActiveFileChange"
-        :show-file-list="false"
-      >
-        <el-icon class="el-icon--upload"><Upload /></el-icon>
+
+      <el-upload ref="activeUploadRef" drag :auto-upload="false" :limit="1" accept=".yaml,.yml"
+        :on-change="handleActiveFileChange" :show-file-list="false">
+        <el-icon class="el-icon--upload">
+          <Upload />
+        </el-icon>
         <div class="el-upload__text">{{ $t('fingerprint.uploadHint') }}</div>
         <template #tip>
           <div class="el-upload__tip">.yaml / .yml</div>
         </template>
       </el-upload>
-      
+
       <div v-if="activeImportContent" class="file-preview">
         <div class="preview-header">
           <span>{{ $t('fingerprint.selectedFile') }} ({{ activeImportFileName }})</span>
-          <el-button type="danger" link size="small" @click="clearActiveImportFile">{{ $t('fingerprint.clear') }}</el-button>
+          <el-button type="danger" link size="small" @click="clearActiveImportFile">{{ $t('fingerprint.clear')
+          }}</el-button>
         </div>
-        <pre class="preview-content">{{ activeImportContent.substring(0, 800) }}{{ activeImportContent.length > 800 ? '\n...' : '' }}</pre>
+        <pre class="preview-content">{{ activeImportContent.substring(0, 800) }}{{ activeImportContent.length > 800 ?
+          '\n...' : '' }}</pre>
       </div>
-      
+
       <template #footer>
         <el-button @click="activeImportDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="handleImportActiveFingerprints" :loading="activeImportLoading" :disabled="!activeImportContent">{{ $t('fingerprint.import') }}</el-button>
+        <el-button type="primary" @click="handleImportActiveFingerprints" :loading="activeImportLoading"
+          :disabled="!activeImportContent">{{ $t('fingerprint.import') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- HTTP服务映射导入对话框 -->
-    <el-dialog v-model="httpServiceImportDialogVisible" :title="$t('fingerprint.importHttpServiceConfig')" width="700px">
+    <el-dialog v-model="httpServiceImportDialogVisible" :title="$t('fingerprint.importHttpServiceConfig')"
+      width="700px">
       <el-alert type="info" :closable="false" style="margin-bottom: 15px">
         <template #default>
           <div>{{ $t('fingerprint.httpServiceImportTip') }}</div>
         </template>
       </el-alert>
-      
-      <el-upload
-        ref="httpServiceUploadRef"
-        :auto-upload="false"
-        :show-file-list="false"
-        accept=".txt"
-        :on-change="handleHttpServiceFileChange"
-      >
+
+      <el-upload ref="httpServiceUploadRef" :auto-upload="false" :show-file-list="false" accept=".txt"
+        :on-change="handleHttpServiceFileChange">
         <template #trigger>
           <el-button type="primary">{{ $t('fingerprint.selectFile') }}</el-button>
         </template>
-        <span class="text-muted" style="margin-left: 10px">{{ httpServiceImportFileName || $t('fingerprint.noFileSelected') }}</span>
+        <span class="text-muted" style="margin-left: 10px">{{ httpServiceImportFileName ||
+          $t('fingerprint.noFileSelected')
+        }}</span>
       </el-upload>
-      
-      <el-input
-        v-model="httpServiceImportContent"
-        type="textarea"
-        :rows="15"
-        :placeholder="$t('fingerprint.httpServiceImportPlaceholder')"
-        style="margin-top: 15px"
-      />
-      
+
+      <el-input v-model="httpServiceImportContent" type="textarea" :rows="15"
+        :placeholder="$t('fingerprint.httpServiceImportPlaceholder')" style="margin-top: 15px" />
+
       <template #footer>
         <el-button @click="httpServiceImportDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="handleImportHttpService" :loading="httpServiceImportLoading" :disabled="!httpServiceImportContent">{{ $t('fingerprint.import') }}</el-button>
+        <el-button type="primary" @click="handleImportHttpService" :loading="httpServiceImportLoading"
+          :disabled="!httpServiceImportContent">{{ $t('fingerprint.import') }}</el-button>
       </template>
     </el-dialog>
 
@@ -1246,10 +1325,12 @@ SpringBoot-Actuator:
         </el-form-item>
         <el-form-item :label="$t('fingerprint.probePaths')">
           <div class="paths-preview">
-            <el-tag v-for="(path, idx) in (activeValidateFingerprint.paths || []).slice(0, 5)" :key="idx" size="small" style="margin-right: 5px; margin-bottom: 3px">
+            <el-tag v-for="(path, idx) in (activeValidateFingerprint.paths || []).slice(0, 5)" :key="idx" size="small"
+              style="margin-right: 5px; margin-bottom: 3px">
               {{ path }}
             </el-tag>
-            <el-tag v-if="activeValidateFingerprint.paths && activeValidateFingerprint.paths.length > 5" size="small" type="info">
+            <el-tag v-if="activeValidateFingerprint.paths && activeValidateFingerprint.paths.length > 5" size="small"
+              type="info">
               +{{ activeValidateFingerprint.paths.length - 5 }}
             </el-tag>
           </div>
@@ -1268,7 +1349,8 @@ SpringBoot-Actuator:
           <el-table-column prop="path" :label="$t('fingerprint.probePaths')" width="200" />
           <el-table-column prop="statusCode" label="Status" width="80">
             <template #default="{ row }">
-              <el-tag v-if="row.statusCode" :type="row.statusCode >= 200 && row.statusCode < 400 ? 'success' : 'warning'" size="small">
+              <el-tag v-if="row.statusCode"
+                :type="row.statusCode >= 200 && row.statusCode < 400 ? 'success' : 'warning'" size="small">
                 {{ row.statusCode }}
               </el-tag>
               <span v-else class="text-secondary">-</span>
@@ -1291,7 +1373,8 @@ SpringBoot-Actuator:
       </div>
       <template #footer>
         <el-button @click="activeValidateDialogVisible = false">{{ $t('common.close') }}</el-button>
-        <el-button type="primary" @click="handleActiveValidateFingerprint" :loading="activeValidateLoading" :disabled="!activeValidateUrl">{{ $t('fingerprint.validate') }}</el-button>
+        <el-button type="primary" @click="handleActiveValidateFingerprint" :loading="activeValidateLoading"
+          :disabled="!activeValidateUrl">{{ $t('fingerprint.validate') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1600,7 +1683,7 @@ onUnmounted(() => {
 function handleTabChange(tab) {
   // Tab切换时更新URL
   router.replace({ query: { ...route.query, tab: tab } })
-  
+
   if (tab === 'builtin' && builtinFingerprints.value.length === 0) {
     loadBuiltinFingerprints()
   } else if (tab === 'custom' && customFingerprints.value.length === 0) {
@@ -1657,7 +1740,7 @@ async function loadCustomFingerprints() {
     if (customFilter.enabled !== null && customFilter.enabled !== '') {
       params.enabled = customFilter.enabled
     }
-    
+
     const res = await getFingerprintList(params)
     if (res.code === 0) {
       customFingerprints.value = res.list || []
@@ -1680,7 +1763,7 @@ function resetCustomFilter() {
 async function handleBatchEnabledCommand(command) {
   const enabled = command === 'enableAll'
   const action = enabled ? '启用' : '禁用'
-  
+
   try {
     await ElMessageBox.confirm(
       `确定要${action}全部自定义指纹吗？`,
@@ -1690,7 +1773,7 @@ async function handleBatchEnabledCommand(command) {
   } catch {
     return
   }
-  
+
   batchEnabledLoading.value = true
   try {
     const res = await batchUpdateFingerprintEnabled({
@@ -1724,19 +1807,19 @@ function showImportDialog() {
 // 处理文件选择（批量）
 function handleFileChange(file) {
   if (!file || !file.raw) return
-  
+
   // 检查文件类型
   const fileName = file.name.toLowerCase()
   if (!fileName.endsWith('.json') && !fileName.endsWith('.yml') && !fileName.endsWith('.yaml')) {
     ElMessage.warning(`文件 ${file.name} 不是支持的格式，已跳过`)
     return
   }
-  
+
   // 检查是否已存在
   if (importFiles.value.some(f => f.name === file.name)) {
     return
   }
-  
+
   // 读取文件内容
   const reader = new FileReader()
   reader.onload = (e) => {
@@ -1783,12 +1866,12 @@ async function handleImportFingerprints() {
     ElMessage.warning(t('fingerprint.selectFile'))
     return
   }
-  
+
   importLoading.value = true
   let totalImported = 0
   let totalSkipped = 0
   let failedFiles = []
-  
+
   try {
     // 逐个文件导入
     for (const file of importFiles.value) {
@@ -1797,7 +1880,7 @@ async function handleImportFingerprints() {
           content: file.content,
           format: 'auto'
         })
-        
+
         if (res.code === 0) {
           totalImported += res.imported || 0
           totalSkipped += res.skipped || 0
@@ -1808,15 +1891,15 @@ async function handleImportFingerprints() {
         failedFiles.push(file.name + ': ' + (err.message || '请求失败'))
       }
     }
-    
+
     importDialogVisible.value = false
-    
+
     // 显示导入结果
     let resultHtml = `<div style="text-align: center; font-size: 14px;">
       <p style="margin-bottom: 10px;">批量导入完成</p>
       <p><strong class="text-success" style="font-size: 20px;">${totalImported}</strong> 个指纹导入成功</p>
       <p><strong class="text-muted" style="font-size: 20px;">${totalSkipped}</strong> 个指纹已跳过</p>`
-    
+
     if (failedFiles.length > 0) {
       resultHtml += `<p class="text-danger" style="margin-top: 10px;">失败文件：</p>
         <div style="text-align: left; font-size: 12px; max-height: 100px; overflow-y: auto;">
@@ -1824,13 +1907,13 @@ async function handleImportFingerprints() {
         </div>`
     }
     resultHtml += '</div>'
-    
+
     ElMessageBox.alert(DOMPurify.sanitize(resultHtml), '导入结果', {
       dangerouslyUseHTMLString: true,
       confirmButtonText: '确定',
       type: failedFiles.length > 0 ? 'warning' : 'success'
     })
-    
+
     loadCustomFingerprints()
     loadCategories()
   } catch (err) {
@@ -1859,7 +1942,7 @@ function handleExceed() {
 // 处理内置指纹文件选择
 function handleBuiltinFileChange(file) {
   if (!file || !file.raw) return
-  
+
   const reader = new FileReader()
   reader.onload = (e) => {
     let content = e.target.result
@@ -1891,7 +1974,7 @@ async function handleImportBuiltinFingerprints() {
     ElMessage.warning(t('fingerprint.selectFile'))
     return
   }
-  
+
   builtinImportLoading.value = true
   try {
     const res = await importFingerprints({
@@ -1899,7 +1982,7 @@ async function handleImportBuiltinFingerprints() {
       format: 'wappalyzer',
       isBuiltin: true
     })
-    
+
     if (res.code === 0) {
       builtinImportDialogVisible.value = false
       ElMessageBox.alert(
@@ -1944,7 +2027,7 @@ async function handleSyncCommand(command) {
       return
     }
   }
-  
+
   syncLoading.value = true
   try {
     const res = await syncFingerprints({ force: command === 'force' })
@@ -2055,7 +2138,7 @@ async function handleClearCustomFingerprints() {
         confirmButtonClass: 'el-button--danger'
       }
     )
-    
+
     const res = await clearCustomFingerprints({ clearAll: true })
     if (res.code === 0) {
       ElMessage.success(`已清空 ${res.deleted || 0} 个自定义指纹`)
@@ -2178,7 +2261,7 @@ function fallbackCopyToClipboard(text) {
     textarea.select()
     const successful = document.execCommand('copy')
     document.body.removeChild(textarea)
-    
+
     if (successful) {
       ElMessage.success('ID已复制到剪贴板')
     } else {
@@ -2232,7 +2315,7 @@ async function handleValidateFingerprint() {
 // 格式化验证详情，高亮命中条件
 function formatValidateDetails(details) {
   if (!details) return ''
-  
+
   // 转义HTML特殊字符
   const escapeHtml = (str) => {
     return str
@@ -2242,7 +2325,7 @@ function formatValidateDetails(details) {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;')
   }
-  
+
   // 按行处理
   const lines = details.split('\n')
   const formattedLines = lines.map(line => {
@@ -2253,7 +2336,7 @@ function formatValidateDetails(details) {
     }
     return escapedLine
   })
-  
+
   return formattedLines.join('\n')
 }
 
@@ -2566,22 +2649,22 @@ async function loadHttpServiceMappings() {
     if (httpServiceFilter.keyword) {
       params.keyword = httpServiceFilter.keyword
     }
-    
+
     const res = await getHttpServiceMappingList(params)
     if (res.code === 0) {
       const list = res.list || []
       httpServiceAllData.value = list
-      
+
       // 计算统计信息（基于当前筛选结果）
       httpServiceStats.value = {
         total: list.length,
         httpCount: list.filter(item => item.isHttp).length,
         nonHttpCount: list.filter(item => !item.isHttp).length
       }
-      
+
       // 更新分页总数
       httpServicePagination.total = list.length
-      
+
       // 前端分页
       const start = (httpServicePagination.page - 1) * httpServicePagination.pageSize
       const end = start + httpServicePagination.pageSize
@@ -2709,12 +2792,12 @@ async function handleSaveWebPortsConfig() {
   const httpPorts = parsePortsText(webPortsConfig.httpPortsText)
   const httpsPorts = parsePortsText(webPortsConfig.httpsPortsText)
   const nonHttpPorts = parsePortsText(webPortsConfig.nonHttpPortsText)
-  
+
   if (httpPorts.length === 0 && httpsPorts.length === 0) {
     ElMessage.warning('请至少配置一个Web端口')
     return
   }
-  
+
   webPortsSaving.value = true
   try {
     const res = await saveHttpServiceConfig({
@@ -2818,13 +2901,13 @@ async function handleImportHttpService() {
     ElMessage.warning(t('fingerprint.pleaseInputContent'))
     return
   }
-  
+
   httpServiceImportLoading.value = true
   try {
     const res = await importHttpServiceConfig({
       content: httpServiceImportContent.value
     })
-    
+
     if (res.code === 0) {
       httpServiceImportDialogVisible.value = false
       ElMessage.success(res.msg || t('fingerprint.importSuccess'))
@@ -2856,7 +2939,7 @@ async function loadActiveFingerprints() {
     if (activeFingerprintFilter.enabled !== null && activeFingerprintFilter.enabled !== '') {
       params.enabled = activeFingerprintFilter.enabled
     }
-    
+
     const res = await getActiveFingerprintList(params)
     if (res.code === 0) {
       activeFingerprints.value = res.list || []
@@ -2887,7 +2970,7 @@ function showActiveFingerprintForm(row = null) {
   // 重置关联被动指纹状态
   relatedPassiveFingerprints.value = []
   passiveSearched.value = false
-  
+
   if (row) {
     Object.assign(activeFingerprintForm, {
       id: row.id,
@@ -2920,17 +3003,17 @@ async function handleSearchRelatedPassiveFingerprint() {
     ElMessage.warning('请先输入应用名称')
     return
   }
-  
+
   searchPassiveLoading.value = true
   passiveSearched.value = false
-  
+
   try {
     const res = await getFingerprintList({
       keyword: activeFingerprintForm.name,
       page: 1,
       pageSize: 100
     })
-    
+
     if (res.code === 0) {
       // 精确匹配名称
       relatedPassiveFingerprints.value = (res.list || []).filter(fp => fp.name === activeFingerprintForm.name)
@@ -2949,7 +3032,7 @@ function handleAddRelatedPassive() {
     ElMessage.warning('请先输入应用名称')
     return
   }
-  
+
   Object.assign(relatedPassiveForm, {
     id: '',
     name: activeFingerprintForm.name,
@@ -2973,7 +3056,7 @@ function handleEditRelatedPassive(row) {
 // 保存关联被动指纹
 async function handleSaveRelatedPassive() {
   await relatedPassiveFormRef.value.validate()
-  
+
   const res = await saveFingerprint({
     id: relatedPassiveForm.id,
     name: relatedPassiveForm.name,
@@ -2981,7 +3064,7 @@ async function handleSaveRelatedPassive() {
     source: 'custom',
     enabled: relatedPassiveForm.enabled
   })
-  
+
   if (res.code === 0) {
     ElMessage.success(t('fingerprint.saveSuccess'))
     relatedPassiveDialogVisible.value = false
@@ -2995,18 +3078,18 @@ async function handleSaveRelatedPassive() {
 // 保存主动指纹
 async function handleSaveActiveFingerprint() {
   await activeFingerprintFormRef.value.validate()
-  
+
   // 解析路径
   const paths = activeFingerprintForm.pathsText
     .split('\n')
     .map(p => p.trim())
     .filter(p => p && p.startsWith('/'))
-  
+
   if (paths.length === 0) {
     ElMessage.warning('请输入有效的探测路径（以/开头）')
     return
   }
-  
+
   const res = await saveActiveFingerprint({
     id: activeFingerprintForm.id,
     name: activeFingerprintForm.name,
@@ -3014,7 +3097,7 @@ async function handleSaveActiveFingerprint() {
     description: activeFingerprintForm.description,
     enabled: activeFingerprintForm.enabled
   })
-  
+
   if (res.code === 0) {
     ElMessage.success(t('fingerprint.saveSuccess'))
     activeFingerprintFormDialogVisible.value = false
@@ -3068,7 +3151,7 @@ async function handleClearActiveFingerprints() {
         confirmButtonClass: 'el-button--danger'
       }
     )
-    
+
     const res = await clearActiveFingerprints()
     if (res.code === 0) {
       ElMessage.success(`已清空 ${res.deleted || 0} 个主动指纹`)
@@ -3094,7 +3177,7 @@ function showActiveImportDialog() {
 // 处理主动指纹文件选择
 function handleActiveFileChange(file) {
   if (!file || !file.raw) return
-  
+
   const reader = new FileReader()
   reader.onload = (e) => {
     let content = e.target.result
@@ -3126,13 +3209,13 @@ async function handleImportActiveFingerprints() {
     ElMessage.warning(t('fingerprint.selectFile'))
     return
   }
-  
+
   activeImportLoading.value = true
   try {
     const res = await importActiveFingerprints({
       content: activeImportContent.value
     })
-    
+
     if (res.code === 0) {
       activeImportDialogVisible.value = false
       ElMessageBox.alert(
@@ -3165,7 +3248,7 @@ async function handleExportActiveFingerprints() {
     ElMessage.warning(t('fingerprint.noDataToExport'))
     return
   }
-  
+
   activeExportLoading.value = true
   try {
     const res = await exportActiveFingerprints()
@@ -3229,19 +3312,23 @@ async function handleActiveValidateFingerprint() {
   .persistent-task-bar {
     margin-bottom: 12px;
   }
+
   .persistent-task-card {
     border-radius: 8px;
     border-left: 4px solid var(--el-color-primary);
+
     :deep(.el-card__body) {
       padding: 12px 16px;
     }
   }
+
   .persistent-task-content {
     display: flex;
     align-items: center;
     gap: 16px;
     flex-wrap: wrap;
   }
+
   .persistent-task-info {
     display: flex;
     align-items: center;
@@ -3249,11 +3336,13 @@ async function handleActiveValidateFingerprint() {
     flex: 1;
     min-width: 0;
   }
+
   .persistent-task-title {
     font-weight: 600;
     font-size: 14px;
     white-space: nowrap;
   }
+
   .persistent-task-url {
     color: var(--el-text-color-secondary);
     font-size: 13px;
@@ -3262,34 +3351,45 @@ async function handleActiveValidateFingerprint() {
     white-space: nowrap;
     max-width: 300px;
   }
+
   .persistent-task-progress {
     display: flex;
     align-items: center;
     gap: 10px;
   }
+
   .persistent-task-stat {
     font-size: 13px;
     color: var(--el-text-color-secondary);
     white-space: nowrap;
     min-width: 60px;
   }
+
   .persistent-task-result {
     display: flex;
     align-items: center;
     gap: 4px;
   }
+
   .persistent-task-actions {
     display: flex;
     align-items: center;
     gap: 4px;
     flex-shrink: 0;
   }
+
   .rotating {
     animation: rotating 1.5s linear infinite;
   }
+
   @keyframes rotating {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .tabs-with-action {
@@ -3297,10 +3397,12 @@ async function handleActiveValidateFingerprint() {
     align-items: flex-start;
     gap: 12px;
   }
+
   .flex-grow-tabs {
     flex: 1;
     min-width: 0;
   }
+
   .tabs-action-buttons {
     padding-top: 4px;
     flex-shrink: 0;
@@ -3312,6 +3414,12 @@ async function handleActiveValidateFingerprint() {
     display: flex;
     justify-content: space-between;
     align-items: center;
+
+    > span:first-child {
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-weight: 500;
+    }
   }
 
   .tip-text {
@@ -3342,7 +3450,7 @@ async function handleActiveValidateFingerprint() {
 
   .rule-section {
     margin-bottom: 15px;
-    
+
     .rule-title {
       font-weight: bold;
       margin-bottom: 8px;
@@ -3351,7 +3459,7 @@ async function handleActiveValidateFingerprint() {
       align-items: center;
       gap: 8px;
     }
-    
+
     .rule-content {
       background: var(--code-bg);
       color: var(--el-text-color-primary);
@@ -3455,7 +3563,7 @@ async function handleActiveValidateFingerprint() {
     font-size: 12px;
     color: var(--el-color-primary);
     cursor: pointer;
-    
+
     &:hover {
       text-decoration: underline;
     }

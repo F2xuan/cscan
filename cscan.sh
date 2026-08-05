@@ -399,12 +399,79 @@ wait_for_healthy() {
     warning "部分服务可能未完全启动，请检查日志"
 }
 
+# 显示各模块 CPU / 内存分配
+# 优先读取运行中容器的实际 cgroup 配额（含 override/.env 覆盖），容器未运行时回退到
+# docker-compose.yaml 的 ${VAR:-默认} 默认值，确保无论是否经过 memtune 调优都能展示。
+# 将 MB 数值转为易读的内存单位
+mb_to_human() {
+    local mb=$1
+    if [ "$mb" -ge 1024 ] 2>/dev/null; then
+        awk -v m="$mb" 'BEGIN{printf "%.1fG", m/1024}'
+    else
+        echo "${mb}M"
+    fi
+}
+
+show_resource_summary() {
+    echo ""
+    info "各模块资源配额（CPU 上限 / 内存上限）："
+    echo "----------------------------------------------------------------"
+    printf "%-14s %-12s %-12s\n" "模块" "CPU" "内存上限"
+    echo "----------------------------------------------------------------"
+
+    # 模块 -> 容器名 与 compose 默认值的映射
+    # 格式: "模块|容器名|CPU默认|内存默认"
+    local modules=(
+        "API|cscan_api|2|1G"
+        "RPC|cscan_rpc|2|1G"
+        "Web|cscan_web|2|512M"
+        "Worker|cscan_worker|2|2G"
+        "Redis|cscan_redis|-|512M"
+        "MongoDB|cscan_mongodb|-|2G"
+    )
+
+    for entry in "${modules[@]}"; do
+        local name container cpu_default mem_default
+        IFS='|' read -r name container cpu_default mem_default <<< "$entry"
+
+        local cpu mem
+        if docker inspect "$container" >/dev/null 2>&1; then
+            # 容器存在：读取 cgroup 实际配额
+            local mem_bytes cpu_quota cpu_period nano cpu_count
+            mem_bytes=$(docker inspect -f '{{.HostConfig.Memory}}' "$container" 2>/dev/null || echo 0)
+            if [ "$mem_bytes" != "0" ] && [ -n "$mem_bytes" ]; then
+                mem=$(mb_to_human $((mem_bytes / 1024 / 1024)))
+            else
+                mem="$mem_default"
+            fi
+            cpu_quota=$(docker inspect -f '{{.HostConfig.CpuQuota}}' "$container" 2>/dev/null || echo 0)
+            cpu_period=$(docker inspect -f '{{.HostConfig.CpuPeriod}}' "$container" 2>/dev/null || echo 100000)
+            if [ "$cpu_quota" != "0" ] && [ -n "$cpu_quota" ] && [ "$cpu_period" != "0" ]; then
+                nano=$((cpu_quota * 1000 / cpu_period))
+                cpu_count=$(awk -v n="$nano" 'BEGIN{printf "%.1f", n/1000}')
+                cpu="$cpu_count 核"
+            else
+                cpu="${cpu_default:-不限} 核"
+            fi
+        else
+            # 容器未运行：回退到 compose 默认值
+            cpu="${cpu_default:-不限} 核"
+            mem="$mem_default"
+        fi
+
+        printf "%-14s %-12s %-12s\n" "$name" "$cpu" "$mem"
+    done
+    echo "----------------------------------------------------------------"
+    echo "提示: 运行 \`bash cscan.sh memtune status\` 可查看实时占用与使用率"
+}
+
 # 显示安装成功信息
 show_install_success() {
     echo ""
     echo "========================================"
     info "CSCAN 安装成功！"
     echo "========================================"
+    show_resource_summary
     echo ""
     warning "访问地址："
     for ip in $(get_local_ips); do

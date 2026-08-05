@@ -7,7 +7,7 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/scheduler"
+	"cscan/internal/scheduler"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )

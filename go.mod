@@ -32,7 +32,6 @@ require (
 	github.com/xuri/excelize/v2 v2.10.0
 	github.com/zeromicro/go-zero v1.10.2
 	go.mongodb.org/mongo-driver v1.17.9
-	go.opentelemetry.io/otel/trace v1.40.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.52.0
 	golang.org/x/sync v0.20.0
@@ -447,6 +446,7 @@ require (
 	go.opentelemetry.io/otel/exporters/zipkin v1.40.0 // indirect
 	go.opentelemetry.io/otel/metric v1.40.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.40.0 // indirect
+	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect

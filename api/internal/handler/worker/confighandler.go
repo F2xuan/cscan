@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/response"
 	"cscan/rpc/task/pb"
 

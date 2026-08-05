@@ -40,11 +40,19 @@ themeStore.initTheme()
 themeStore.watchSystemTheme()
 
 // 初始化品牌配置（Logo / 标题）
+// BUG-001 修复：仅在已登录状态下才加载品牌配置，避免未登录时发送 API 请求
 import { useBrandingStore } from './stores/branding'
+import { useUserStore } from './stores/user'
 const brandingStore = useBrandingStore()
-brandingStore.load().then(() => {
-  if (brandingStore.displayTitle) document.title = brandingStore.displayTitle
-})
+const userStore = useUserStore()
+if (userStore.token) {
+  brandingStore.load().then(() => {
+    if (brandingStore.displayTitle) document.title = brandingStore.displayTitle
+  })
+} else {
+  // 未登录时使用默认标题
+  document.title = 'CSCAN'
+}
 
 // 启用性能监控（仅开发环境）
 if (import.meta.env.DEV) {

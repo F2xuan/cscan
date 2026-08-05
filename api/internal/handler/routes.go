@@ -30,7 +30,7 @@ import (
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/swagger"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/rest"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -227,13 +227,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/logs/export", Handler: worker.WorkerLogsExportHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/logs/clear", Handler: worker.WorkerLogsClearHandler(svcCtx)},
 
-		// 组织管理
+		// 组织管理（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/organization/list", Handler: organization.OrganizationListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/organization/save", Handler: organization.OrganizationSaveHandler(svcCtx)},
-		// M-4 接口契约兼容别名：文档中的 /organization/create 映射到同一个保存处理器
-		{Method: http.MethodPost, Path: "/api/v1/organization/create", Handler: organization.OrganizationSaveHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/organization/delete", Handler: organization.OrganizationDeleteHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/organization/updateStatus", Handler: organization.OrganizationUpdateStatusHandler(svcCtx)},
 
 		// 资产管理
 		{Method: http.MethodPost, Path: "/api/v1/asset/list", Handler: asset.AssetListHandler(svcCtx)},
@@ -498,10 +493,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/batch-progress", Handler: dirscan.DirScanAIBatchProgressHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/stop-batch", Handler: dirscan.DirScanAIStopBatchHandler(svcCtx)},
 
-		// 通知配置
+		// 通知配置（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/notify/config/list", Handler: notify.NotifyConfigListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/notify/config/save", Handler: notify.NotifyConfigSaveHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/notify/config/delete", Handler: notify.NotifyConfigDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/notify/config/test", Handler: notify.NotifyConfigTestHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/notify/providers", Handler: notify.NotifyProviderListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/notify/highrisk/config/get", Handler: notify.HighRiskFilterConfigGetHandler(svcCtx)},
@@ -514,11 +507,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/fingerprints/list", Handler: asset.AssetFingerprintsListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/ports/stats", Handler: asset.AssetPortsStatsHandler(svcCtx)},
 
-		// 全局黑名单
+		// 全局黑名单（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/blacklist/config/get", Handler: blacklist.BlacklistConfigGetHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/blacklist/config/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
-		// M-4 接口契约兼容别名：文档中的 /blacklist/save 映射到同一个保存处理器
-		{Method: http.MethodPost, Path: "/api/v1/blacklist/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
 
 		// JSFinder 全局配置
 		{Method: http.MethodPost, Path: "/api/v1/jsfinder/config/get", Handler: jsfinder.JSFinderConfigGetHandler(svcCtx)},
@@ -580,6 +570,22 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/site/clear", Handler: asset.SiteClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/domain/clear", Handler: asset.DomainClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/ip/clear", Handler: asset.IPClearHandler(svcCtx)},
+
+		// 组织管理（写操作需要管理员权限）
+		{Method: http.MethodPost, Path: "/api/v1/organization/save", Handler: organization.OrganizationSaveHandler(svcCtx)},
+		// M-4 接口契约兼容别名：文档中的 /organization/create 映射到同一个保存处理器
+		{Method: http.MethodPost, Path: "/api/v1/organization/create", Handler: organization.OrganizationSaveHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/organization/delete", Handler: organization.OrganizationDeleteHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/organization/updateStatus", Handler: organization.OrganizationUpdateStatusHandler(svcCtx)},
+
+		// 通知配置（写操作需要管理员权限）
+		{Method: http.MethodPost, Path: "/api/v1/notify/config/save", Handler: notify.NotifyConfigSaveHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/notify/config/delete", Handler: notify.NotifyConfigDeleteHandler(svcCtx)},
+
+		// 全局黑名单（写操作需要管理员权限）
+		{Method: http.MethodPost, Path: "/api/v1/blacklist/config/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
+		// M-4 接口契约兼容别名：文档中的 /blacklist/save 映射到同一个保存处理器
+		{Method: http.MethodPost, Path: "/api/v1/blacklist/save", Handler: blacklist.BlacklistConfigSaveHandler(svcCtx)},
 	}
 
 	// 为管理员路由包装认证中间件 + 管理员权限中间件

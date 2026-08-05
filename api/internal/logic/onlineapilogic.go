@@ -10,8 +10,8 @@ import (
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
-	"cscan/onlineapi"
+	"cscan/internal/model"
+	"cscan/internal/onlineapi"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"

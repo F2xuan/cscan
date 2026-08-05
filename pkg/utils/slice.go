@@ -3,33 +3,10 @@ package utils
 // SliceUtils 切片工具集
 // 提供泛型切片操作，消除重复代码
 
-// Unique 去重（保持顺序）
-func Unique[T comparable](slice []T) []T {
-	seen := make(map[T]bool)
-	result := make([]T, 0, len(slice))
-	for _, v := range slice {
-		if !seen[v] {
-			seen[v] = true
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
 // Contains 检查切片是否包含元素
 func Contains[T comparable](slice []T, item T) bool {
 	for _, v := range slice {
 		if v == item {
-			return true
-		}
-	}
-	return false
-}
-
-// ContainsFunc 使用自定义函数检查切片是否包含元素
-func ContainsFunc[T any](slice []T, predicate func(T) bool) bool {
-	for _, v := range slice {
-		if predicate(v) {
 			return true
 		}
 	}
@@ -56,24 +33,6 @@ func Map[T any, R any](slice []T, mapper func(T) R) []R {
 	return result
 }
 
-// MapWithIndex 带索引的映射
-func MapWithIndex[T any, R any](slice []T, mapper func(int, T) R) []R {
-	result := make([]R, len(slice))
-	for i, v := range slice {
-		result[i] = mapper(i, v)
-	}
-	return result
-}
-
-// Reduce 归约切片
-func Reduce[T any, R any](slice []T, initial R, reducer func(R, T) R) R {
-	result := initial
-	for _, v := range slice {
-		result = reducer(result, v)
-	}
-	return result
-}
-
 // Find 查找第一个匹配的元素
 func Find[T any](slice []T, predicate func(T) bool) (T, bool) {
 	for _, v := range slice {
@@ -85,16 +44,6 @@ func Find[T any](slice []T, predicate func(T) bool) (T, bool) {
 	return zero, false
 }
 
-// FindIndex 查找第一个匹配元素的索引
-func FindIndex[T any](slice []T, predicate func(T) bool) int {
-	for i, v := range slice {
-		if predicate(v) {
-			return i
-		}
-	}
-	return -1
-}
-
 // All 检查所有元素是否满足条件
 func All[T any](slice []T, predicate func(T) bool) bool {
 	for _, v := range slice {
@@ -103,16 +52,6 @@ func All[T any](slice []T, predicate func(T) bool) bool {
 		}
 	}
 	return true
-}
-
-// Any 检查是否有任意元素满足条件
-func Any[T any](slice []T, predicate func(T) bool) bool {
-	for _, v := range slice {
-		if predicate(v) {
-			return true
-		}
-	}
-	return false
 }
 
 // Chunk 将切片分成指定大小的块

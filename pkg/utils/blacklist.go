@@ -271,24 +271,6 @@ func NewExcludeHostsMatcher(excludeHosts string) *BlacklistMatcher {
 	return NewBlacklistMatcher(rules)
 }
 
-// MergeMatchers 合并多个匹配器的规则
-// 返回一个新的匹配器，包含所有输入匹配器的规则
-func MergeMatchers(matchers ...*BlacklistMatcher) *BlacklistMatcher {
-	merged := &BlacklistMatcher{}
-
-	for _, m := range matchers {
-		if m == nil {
-			continue
-		}
-		merged.domainPatterns = append(merged.domainPatterns, m.domainPatterns...)
-		merged.ipAddresses = append(merged.ipAddresses, m.ipAddresses...)
-		merged.ipNetworks = append(merged.ipNetworks, m.ipNetworks...)
-		merged.keywords = append(merged.keywords, m.keywords...)
-	}
-
-	return merged
-}
-
 // FilterAssetsByIP 根据IP过滤资产列表
 // 检查资产的所有IPv4地址，如果任一IP在黑名单中则过滤该资产
 func (m *BlacklistMatcher) FilterAssetsByIP(hosts []string, ipv4Map map[string][]string) []string {

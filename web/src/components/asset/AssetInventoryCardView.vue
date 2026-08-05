@@ -1,10 +1,10 @@
 <template>
   <div class="asset-inventory-tab">
-    <!-- 鎼滅储鍜岃繃婊ゆ爮 -->
+    <!-- 搜索和过滤栏 -->
     <div class="toolbar">
       <el-autocomplete :fetch-suggestions="(qs, cb) => querySearch(qs, cb, 'global')" @select="handleSearch"
         v-model="searchQuery" :placeholder="t('asset.assetInventoryTab.searchPlaceholder')" clearable
-        class="search-input" @input="handleSearch" </el-autocomplete>
+        class="search-input" @input="handleSearch" />
         <div class="header-actions">
           <el-button @click="showFilters = !showFilters">
             <el-icon>

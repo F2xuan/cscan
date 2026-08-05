@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/response"
 
 	"github.com/zeromicro/go-zero/core/logx"

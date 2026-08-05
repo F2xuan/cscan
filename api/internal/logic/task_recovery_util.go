@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"

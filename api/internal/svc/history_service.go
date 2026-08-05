@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"

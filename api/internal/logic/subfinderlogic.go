@@ -5,7 +5,7 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"go.mongodb.org/mongo-driver/bson"
 )

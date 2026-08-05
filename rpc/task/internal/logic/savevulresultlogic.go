@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"
 

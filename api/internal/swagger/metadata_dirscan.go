@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"cscan/api/internal/types"
-	"cscan/model"
+	"cscan/internal/model"
 )
 
 // 目录扫描分组：字典 CRUD + 扫描结果列表/删除/清空/统计。

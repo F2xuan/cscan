@@ -10,7 +10,7 @@ import (
 
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

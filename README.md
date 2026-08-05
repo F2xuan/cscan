@@ -9,7 +9,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25.7-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-4.3-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-4.5-green)](VERSION)
 
 [中文](README.md) · [English](README_EN.md)
 
@@ -20,7 +20,7 @@
 <table width="100%">
   <tr>
     <td align="center"><b>控制台</b></td>
-    <td align="center"><b>资产检索</b></td>
+    <td align="center"><b>资产空间搜索</b></td>
     <td align="center"><b>指纹管理</b></td>
     <td align="center"><b>漏洞库</b></td>
     <td align="center"><b>节点监控</b></td>
@@ -70,29 +70,29 @@ bash cscan.sh
 ## 本地开发
 
 ```bash
-# 提示：以下 RPC / API / Web 三步可用一条命令全部拉起（一键启动并统一停止，见 scripts/dev.*）：
-#   Linux/macOS / Git Bash: ./scripts/dev.sh
-#   Windows PowerShell:     ./scripts/dev.ps1
-#   Windows CMD:            scripts\dev.bat
-
 # 1. 启动依赖
 docker-compose -f docker-compose.dev.yaml up -d
 
-# 2. 启动服务
-go run rpc/task/task.go -f rpc/task/etc/task.yaml
+# 2. 脚本一键启动
+./scripts/dev.ps1
+#   Linux/macOS / Git Bash: ./scripts/dev.sh
+```
+~~# 2. 启动服务~~
+~~go run rpc/task/task.go -f rpc/task/etc/task.yaml~~
 
-# 3. 启动 API
-go run api/cscan.go -f api/etc/cscan.yaml
+~~# 3. 启动 API~~
+~~go run api/cscan.go -f api/etc/cscan.yaml~~
 
-# 4. 启动前端
-cd web ; npm install ; npm run dev
+~~# 4. 启动前端~~
+~~cd web ; npm install ; npm run dev~~
 
+```
 # 5. 启动 Worker
-go run cmd/worker/main.go -s http://localhost:8888 -k <install_key> 
+go run worker/main.go -s http://localhost:8888 -k <install_key> 
 ```
 ---
 
 ## License
 
 MIT
-<img src="images/wechat.jpg">
+<img src="images/wechat.jpg" width = " 50% ">

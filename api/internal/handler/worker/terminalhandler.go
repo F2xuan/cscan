@@ -11,7 +11,7 @@ import (
 
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/response"
 
 	"github.com/gobwas/ws"

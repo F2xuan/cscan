@@ -3,7 +3,7 @@ package logic
 import (
 	"context"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/notify"
 	"cscan/rpc/task/internal/svc"
 

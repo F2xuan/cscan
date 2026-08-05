@@ -1,5 +1,5 @@
 package logic
-import "cscan/model"
+import "cscan/internal/model"
 
 import (
 	"context"

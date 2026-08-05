@@ -128,6 +128,11 @@ const routes = [
         component: lazyLoad(() => import('@/views/TaskCreate.vue')),
         meta: { title: 'menu.TaskCreate', icon: 'List', hidden: true }
       },
+      // BUG-003 修复：添加旧路径重定向，兼容旧书签和外部链接
+      {
+        path: 'task-create',
+        redirect: '/task/create'
+      },
       {
         path: 'task/edit/:id',
         name: 'TaskEdit',

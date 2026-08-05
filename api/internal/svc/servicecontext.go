@@ -12,10 +12,10 @@ import (
 
 	"cscan/api/internal/config"
 	svcsync "cscan/api/internal/svc/sync"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/cache"
 	"cscan/rpc/task/pb"
-	"cscan/scheduler"
+	"cscan/internal/scheduler"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"

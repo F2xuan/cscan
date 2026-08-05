@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/utils"
-	"cscan/scanner"
-	"cscan/scheduler"
+	"cscan/internal/scanner"
+	"cscan/internal/scheduler"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"

@@ -115,6 +115,7 @@
   "common": {
     "exportAll": "Export All",
     "confirm": "Confirm",
+    "confirmBatchDelete": "Are you sure you want to delete {count} selected items?",
     "cancel": "Cancel",
     "save": "Save",
     "delete": "Delete",
@@ -309,7 +310,7 @@
     "newPassword": "New Password",
     "confirmPassword": "Confirm Password",
     "passwordMismatch": "The two passwords do not match",
-    "passwordResetSuccess": "Password changed successfully, welcome to the system",
+    "passwordResetSuccess": "Password changed successfully",
     "forceResetTitle": "Please change your password on first login"
   },
   "dashboard": {
@@ -1006,7 +1007,7 @@
     "retry": "Retry",
     "delete": "Delete",
     "created": "Created",
-    "pendingExec": "Pending Scanner Node",
+    "pendingExec": "Queued",
     "executing": "Executing",
     "paused": "Paused",
     "execFailed": "Failed",

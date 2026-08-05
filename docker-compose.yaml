@@ -193,7 +193,7 @@ services:
       - CSCAN_SERVER=http://cscan-api:8888
       - CSCAN_KEY=${CSCAN_WORKER_KEY}
       - CSCAN_NAME=cscan-default-worker
-      # 并发可经环境变量注入；未设置时 Worker 按容器内存上限自动推导（见 cmd/worker/main.go）
+      # 并发可经环境变量注入；未设置时 Worker 按容器内存上限自动推导（见 worker/main.go）
       - CSCAN_CONCURRENCY=${CSCAN_WORKER_CONCURRENCY:-2}
     depends_on:
       cscan-api:

@@ -7,7 +7,7 @@ import (
 
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"
-	"cscan/scheduler"
+	"cscan/internal/scheduler"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"

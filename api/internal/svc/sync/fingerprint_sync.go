@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"cscan/model"
+	"cscan/internal/model"
 
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 	"github.com/zeromicro/go-zero/core/logx"

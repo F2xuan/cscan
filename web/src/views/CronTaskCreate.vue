@@ -1985,7 +1985,8 @@ async function handleDictDialogOpen() {
   try {
     const res = await getDirScanDictEnabledList()
     if (res.code === 0) {
-      dictList.value = res.data || []
+      // 后端 DirScanDictEnabledListResp 列表字段为 list（与 TaskCreate.vue 保持一致）
+      dictList.value = res.list || []
       nextTick(() => {
         if (dictTableRef.value && form.dirscanDictIds) {
           dictList.value.forEach(row => {
@@ -2005,7 +2006,8 @@ async function handleSubdomainDictDialogOpen() {
   try {
     const res = await getSubdomainDictEnabledList()
     if (res.code === 0) {
-      subdomainDictList.value = res.data || []
+      // 后端 SubdomainDictEnabledListResp 列表字段为 list
+      subdomainDictList.value = res.list || []
       nextTick(() => {
         if (subdomainDictTableRef.value && form.subdomainDictIds) {
           subdomainDictList.value.forEach(row => {
@@ -2025,7 +2027,8 @@ async function handleRecursiveDictDialogOpen() {
   try {
     const res = await getSubdomainDictEnabledList()
     if (res.code === 0) {
-      recursiveDictList.value = res.data || []
+      // 后端 SubdomainDictEnabledListResp 列表字段为 list
+      recursiveDictList.value = res.list || []
       nextTick(() => {
         if (recursiveDictTableRef.value && form.recursiveDictIds) {
           recursiveDictList.value.forEach(row => {

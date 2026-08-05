@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"gopkg.in/yaml.v3"

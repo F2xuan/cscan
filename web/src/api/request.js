@@ -16,6 +16,16 @@ const request = axios.create({
 request.interceptors.request.use(
   config => {
     const userStore = useUserStore()
+
+    // BUG-001 修复：未登录时，除登录/健康检查等公开接口外，拒绝所有需要认证的请求
+    const publicEndpoints = ['/login', '/health']
+    const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint))
+
+    if (!userStore.token && !isPublicEndpoint) {
+      console.warn('[Request] Blocked unauthenticated request:', config.url)
+      return Promise.reject(new Error('No authentication token'))
+    }
+
     if (userStore.token) {
       config.headers['Authorization'] = `Bearer ${userStore.token}`
     }

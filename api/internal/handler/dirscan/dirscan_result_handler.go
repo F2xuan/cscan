@@ -5,7 +5,7 @@ import (
 
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 )

@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"cscan/model"
+	"cscan/internal/model"
 	"cscan/pkg/httpclient"
 
 	"github.com/zeromicro/go-zero/core/logx"

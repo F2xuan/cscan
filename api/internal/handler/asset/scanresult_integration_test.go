@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"cscan/api/internal/svc"
-	"cscan/model"
+	"cscan/internal/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

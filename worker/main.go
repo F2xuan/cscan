@@ -221,8 +221,10 @@ func main() {
 		name = worker.GetWorkerName()
 	}
 
-	// 强制要求安装密钥
-	if *installKey == "" {
+	// 开发模式下跳过安装密钥验证（同 API 的 CSCAN_DEV=1 行为）
+	if os.Getenv("CSCAN_DEV") == "1" {
+		logx.Info("⚠️  Dev mode (CSCAN_DEV=1): skipping install key validation")
+	} else if *installKey == "" {
 		logx.Error("❌ Error: install key is required (-k flag)")
 		logx.Error("   Please get the install key from the admin panel")
 		os.Exit(1)
@@ -239,12 +241,17 @@ func main() {
 	logx.Infof("🔗 Connecting to API Server: %s", apiServer)
 	logx.Infof("🔑 Validating Identity for: %s", name)
 
-	// 验证安装密钥
-	if err := validateInstallKey(apiServer, *installKey, name); err != nil {
-		logx.Errorf("❌ Authentication failed: %v", err)
-		os.Exit(1)
+	// 开发模式下跳过 API 密钥验证
+	if os.Getenv("CSCAN_DEV") == "1" {
+		logx.Info("⚠️  Dev mode (CSCAN_DEV=1): skipping API key validation")
+	} else {
+		// 验证安装密钥
+		if err := validateInstallKey(apiServer, *installKey, name); err != nil {
+			logx.Errorf("❌ Authentication failed: %v", err)
+			os.Exit(1)
+		}
+		logx.Info("✅ Identity verified successfully")
 	}
-	logx.Info("✅ Identity verified successfully")
 	// 获取本机IP
 	ip := worker.GetLocalIP()
 

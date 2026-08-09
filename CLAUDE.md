@@ -517,17 +517,16 @@ test: {
 # Linux/macOS / Git Bash:
 ./scripts/dev.sh
 ```
-脚本执行 `docker-compose -f docker-compose.dev.yaml up -d --build`，一次性容器化启动全部服务
-（MongoDB :27017 / Redis :6379 / RPC / API :8888 / Web :7777 / Worker），本地代码自动构建，
-Worker 默认使用内置密钥 `cscan-dev-key`（可用环境变量 `CSCAN_WORKER_KEY` 覆盖），无需手动配置。
+脚本执行 `docker-compose -f docker-compose.dev.yaml up -d`，容器启动服务依赖
+（MongoDB :27017 / Redis :6379 ）
 停止：`docker-compose -f docker-compose.dev.yaml down`。
 
-**手动分步启动（调试用，host 直跑）**：
+**分步启动命令如下**：
 ```bash
 go run rpc/task/task.go -f rpc/task/etc/task.yaml     # 1. 启动 gRPC 服务 (:9000)
-go run api/cscan.go -f api/etc/cscan.yaml              # 2. 启动 HTTP API (:8888)
-cd web && npm install && npm run dev                   # 3. 启动前端 (:7777)，代理 /api → :8888
-go run worker/main.go -k <install_key> -s http://localhost:8888  # 4. （可选）启动 Worker
+go run api/cscan.go -f api/etc/cscan.yaml             # 2. 启动 HTTP API (:8888)
+cd web && npm install && npm run dev                  # 3. 启动前端 (:7777)，代理 /api → :8888
+go run worker/main.go -s http://localhost:8888        # 4. 启动 Worker
 ```
 
 **关键配置文件**：

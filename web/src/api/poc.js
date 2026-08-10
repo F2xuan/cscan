@@ -51,16 +51,6 @@ export function syncNucleiTemplates(data = {}) {
   return request.post('/poc/nuclei/sync', data, { timeout: 600000 })
 }
 
-// 下载Nuclei默认模板库
-export function downloadNucleiTemplates(data = {}) {
-  return request.post('/poc/nuclei/download', data, { timeout: 600000 })
-}
-
-// 查询下载状态
-export function getDownloadStatus(taskId) {
-  return request.get('/poc/nuclei/download/status', { params: { taskId } })
-}
-
 // 清空Nuclei模板
 export function clearNucleiTemplates() {
   return request.post('/poc/nuclei/clear')

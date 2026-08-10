@@ -1,11 +1,11 @@
 package scanner
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,70 +14,50 @@ import (
 	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
 
-	"github.com/projectdiscovery/goflags"
-	"github.com/projectdiscovery/naabu/v2/pkg/result"
-	"github.com/projectdiscovery/naabu/v2/pkg/runner"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // ErrPortThresholdExceeded 端口阈值超过错误
-var ErrPortThresholdExceeded = errors.New("port threshold exceeded")
+var ErrPortThresholdExceeded = fmt.Errorf("port threshold exceeded")
 
-// ipLocator IP 地理位置定位器（全局单例）
 var ipLocator = geolocation.NewIPLocator()
 
-// NaabuScanner Naabu端口扫描器
+// NaabuScanner Naabu端口扫描器 (CLI 模式)
 type NaabuScanner struct {
 	BaseScanner
-	skippedHosts   []string // 因端口阈值超限被跳过的主机
-	dnsFailedHosts []string // DNS解析失败的主机
+	skippedHosts   []string
+	dnsFailedHosts []string
 	mu             sync.Mutex
+	executor       *CmdExecutor
 }
 
 // NewNaabuScanner 创建Naabu扫描器
 func NewNaabuScanner() *NaabuScanner {
+	cfg := ToolConfigs["naabu"]
 	return &NaabuScanner{
-		BaseScanner:  BaseScanner{name: "naabu"},
+		BaseScanner: BaseScanner{name: "naabu"},
 		skippedHosts: make([]string, 0),
+		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
 	}
-}
-
-// collectSkippedHosts 收集因端口阈值超限被跳过的主机列表
-func (s *NaabuScanner) collectSkippedHosts() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	result := make([]string, len(s.skippedHosts))
-	copy(result, s.skippedHosts)
-	return result
-}
-
-// collectDNSFailedHosts 收集DNS解析失败的主机列表
-func (s *NaabuScanner) collectDNSFailedHosts() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	result := make([]string, len(s.dnsFailedHosts))
-	copy(result, s.dnsFailedHosts)
-	return result
 }
 
 // NaabuOptions Naabu扫描选项
 type NaabuOptions struct {
 	Ports             string `json:"ports"`
-	Rate              int    `json:"rate"`              // 每秒发送包数，默认1000，建议3000-7000
-	Timeout           int    `json:"timeout"`           // 单个端口超时(ms)，默认1000
-	ScanType          string `json:"scanType"`          // s=SYN, c=CONNECT，默认 c
-	PortThreshold     int    `json:"portThreshold"`     // 端口阈值，使用 naabu 原生 -port-threshold 参数
-	SkipHostDiscovery bool   `json:"skipHostDiscovery"` // 跳过主机发现 (-Pn)
-	ExcludeCDN        bool   `json:"excludeCDN"`        // 排除 CDN/WAF，仅扫描 80,443 端口 (-ec)
-	ExcludeHosts      string `json:"excludeHosts"`      // 排除的目标，逗号分隔 (-eh)
-	Retries           int    `json:"retries"`           // 重试次数，默认3，建议1-2
-	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)，默认2，建议0-1
-	Workers           int    `json:"workers"`           // Naabu SDK 内部工作线程，默认25（内部参数，不受 Worker 并发限制）
-	Verify            bool   `json:"verify"`            // TCP验证，默认false（禁用以提速）
+	Rate              int    `json:"rate"`
+	Timeout           int    `json:"timeout"`
+	ScanType          string `json:"scanType"`
+	PortThreshold     int    `json:"portThreshold"`
+	SkipHostDiscovery bool   `json:"skipHostDiscovery"`
+	ExcludeCDN        bool   `json:"excludeCDN"`
+	ExcludeHosts      string `json:"excludeHosts"`
+	Retries           int    `json:"retries"`
+	WarmUpTime        int    `json:"warmUpTime"`
+	Workers           int    `json:"workers"`
+	Verify            bool   `json:"verify"`
 }
 
-// Validate 验证 NaabuOptions 配置是否有效
-// 实现 ScannerOptions 接口
+// Validate 验证配置
 func (o *NaabuOptions) Validate() error {
 	if o.Rate < 0 {
 		return fmt.Errorf("rate must be non-negative, got %d", o.Rate)
@@ -89,124 +69,84 @@ func (o *NaabuOptions) Validate() error {
 		return fmt.Errorf("portThreshold must be non-negative, got %d", o.PortThreshold)
 	}
 	if o.ScanType != "" && o.ScanType != "s" && o.ScanType != "c" {
-		return fmt.Errorf("scanType must be 's' (SYN) or 'c' (CONNECT), got %s", o.ScanType)
+		return fmt.Errorf("scanType must be 's' or 'c', got %s", o.ScanType)
 	}
 	return nil
 }
 
+// NaabuHostResult Naabu JSON 输出结构
+type NaabuHostResult struct {
+	Host string `json:"host"`
+	IP   string `json:"ip"`
+	Ports []struct {
+		Port int    `json:"port"`
+		Proto string `json:"proto"`
+		Status string `json:"status"`
+	} `json:"ports"`
+}
+
 // Scan 执行Naabu扫描
 func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	// 重置跳过主机列表（扫描器可能被复用）
 	s.mu.Lock()
 	s.skippedHosts = s.skippedHosts[:0]
 	s.dnsFailedHosts = s.dnsFailedHosts[:0]
 	s.mu.Unlock()
 
-	// 默认配置 - 使用自适应参数，根据系统硬件自动调整
 	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NaabuOptions{
 		Ports:         "80,443,8080",
-		Rate:          adaptive.NaabuRate,    // 自适应: 低配500, 中配1500, 高配3000
-		Timeout:       60,                    // 单个目标扫描超时，默认60秒
-		ScanType:      "c",                   // 默认 CONNECT 扫描（无需 root 权限）
-		PortThreshold: 0,                     // 默认不限制
-		Retries:       adaptive.NaabuRetries, // 自适应: 低配1, 中配2, 高配2
-		WarmUpTime:    1,                     // 降低预热时间从2到1秒
-		Workers:       adaptive.NaabuWorkers, // 自适应: 低配10, 中配25, 高配50
-		Verify:        false,                 // 禁用TCP验证以提速
+		Rate:          adaptive.NaabuRate,
+		Timeout:       60,
+		ScanType:      "c",
+		PortThreshold: 0,
+		Retries:       adaptive.NaabuRetries,
+		WarmUpTime:    1,
+		Workers:       adaptive.NaabuWorkers,
+		Verify:        false,
 	}
-
-	// 日志函数，优先使用任务日志回调
-	logInfo := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("INFO", format, args...)
-			return // 已由 TaskLogger 统一输出，避免双写
-		}
-		logx.Infof(format, args...)
-	}
-	logWarn := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("WARN", format, args...)
-			return // 已由 TaskLogger 统一输出，避免双写
-		}
-		// 修复 M3：原 logx.Infof 导致 WARN 日志以 INFO 级别落盘，无法按级别过滤
-		logx.Errorf(format, args...)
-	}
-
-	// 进度回调
-	onProgress := config.OnProgress
-
-	// 从配置中提取选项
 	if config.Options != nil {
 		switch v := config.Options.(type) {
 		case *NaabuOptions:
 			opts = v
 		case *PortScanOptions:
-			if v.Ports != "" {
-				opts.Ports = v.Ports
-			}
-			if v.Rate > 0 {
-				opts.Rate = v.Rate
-			}
-			if v.Timeout > 0 {
-				opts.Timeout = v.Timeout
-			}
-			if v.PortThreshold > 0 {
-				opts.PortThreshold = v.PortThreshold
-			}
+			if v.Ports != "" { opts.Ports = v.Ports }
+			if v.Rate > 0 { opts.Rate = v.Rate }
+			if v.Timeout > 0 { opts.Timeout = v.Timeout }
+			if v.PortThreshold > 0 { opts.PortThreshold = v.PortThreshold }
 		default:
-			// 尝试通过JSON转换（支持scheduler.PortScanConfig等其他类型）
 			if data, err := json.Marshal(config.Options); err == nil {
 				var portConfig struct {
-					Ports             string `json:"ports"`
-					Rate              int    `json:"rate"`
-					Timeout           int    `json:"timeout"`
-					PortThreshold     int    `json:"portThreshold"`
-					ScanType          string `json:"scanType"`
-					SkipHostDiscovery bool   `json:"skipHostDiscovery"`
-					ExcludeCDN        bool   `json:"excludeCDN"`
-					ExcludeHosts      string `json:"excludeHosts"`
-					Retries           int    `json:"retries"`
-					WarmUpTime        int    `json:"warmUpTime"`
-					Workers           int    `json:"workers"`
-					Verify            bool   `json:"verify"`
+					Ports string `json:"ports"`
+					Rate int `json:"rate"`
+					Timeout int `json:"timeout"`
+					PortThreshold int `json:"portThreshold"`
+					ScanType string `json:"scanType"`
+					SkipHostDiscovery bool `json:"skipHostDiscovery"`
+					ExcludeCDN bool `json:"excludeCDN"`
+					ExcludeHosts string `json:"excludeHosts"`
+					Retries int `json:"retries"`
+					WarmUpTime int `json:"warmUpTime"`
+					Workers int `json:"workers"`
+					Verify bool `json:"verify"`
 				}
 				if err := json.Unmarshal(data, &portConfig); err == nil {
-					if portConfig.Ports != "" {
-						opts.Ports = portConfig.Ports
-					}
-					if portConfig.Rate > 0 {
-						opts.Rate = portConfig.Rate
-					}
-					if portConfig.Timeout > 0 {
-						opts.Timeout = portConfig.Timeout
-					}
-					if portConfig.PortThreshold > 0 {
-						opts.PortThreshold = portConfig.PortThreshold
-					}
-					if portConfig.ScanType != "" {
-						opts.ScanType = portConfig.ScanType
-					}
-					if portConfig.Retries > 0 {
-						opts.Retries = portConfig.Retries
-					}
-					if portConfig.WarmUpTime >= 0 {
-						opts.WarmUpTime = portConfig.WarmUpTime
-					}
-					if portConfig.Workers > 0 {
-						opts.Workers = portConfig.Workers
-					}
+					if portConfig.Ports != "" { opts.Ports = portConfig.Ports }
+					if portConfig.Rate > 0 { opts.Rate = portConfig.Rate }
+					if portConfig.Timeout > 0 { opts.Timeout = portConfig.Timeout }
+					if portConfig.PortThreshold > 0 { opts.PortThreshold = portConfig.PortThreshold }
+					if portConfig.ScanType != "" { opts.ScanType = portConfig.ScanType }
+					if portConfig.Retries > 0 { opts.Retries = portConfig.Retries }
+					if portConfig.WarmUpTime >= 0 { opts.WarmUpTime = portConfig.WarmUpTime }
+					if portConfig.Workers > 0 { opts.Workers = portConfig.Workers }
 					opts.SkipHostDiscovery = portConfig.SkipHostDiscovery
 					opts.ExcludeCDN = portConfig.ExcludeCDN
 					opts.ExcludeHosts = portConfig.ExcludeHosts
 					opts.Verify = portConfig.Verify
 				}
-
 			}
 		}
 	}
 
-	// 解析目标
 	targetParseResult := ParseTargetsForPortScan(config.Target)
 	for _, t := range config.Targets {
 		res := ParseTargetsForPortScan(t)
@@ -216,23 +156,16 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 
 	var cleanTargets []string
 	seenHost := make(map[string]bool)
-
 	for _, host := range targetParseResult.WithoutPort {
 		if !seenHost[host] {
 			seenHost[host] = true
 			cleanTargets = append(cleanTargets, host)
 		}
 	}
-
-	// 保留原始端口配置（"top100"/"top1000"），用于 naabu SDK 原生 TopPorts 参数
 	originalPorts := opts.Ports
-
 	ports := parsePorts(opts.Ports)
 	portSet := make(map[int]bool)
-	for _, p := range ports {
-		portSet[p] = true
-	}
-
+	for _, p := range ports { portSet[p] = true }
 	for _, taskWithPort := range targetParseResult.WithPort {
 		if !seenHost[taskWithPort.Host] {
 			seenHost[taskWithPort.Host] = true
@@ -243,312 +176,220 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			ports = append(ports, taskWithPort.Port)
 		}
 	}
-
-	targets := cleanTargets
-
-	// 当存在附带端口的合并时，需要展开为具体端口列表；否则保留原始配置
 	if len(targetParseResult.WithPort) > 0 {
 		opts.Ports = portsToString(ports)
 	} else {
 		opts.Ports = originalPorts
 	}
 
-	if len(targets) == 0 {
-		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
-			Assets:      []*Asset{},
-		}, nil
+	if len(cleanTargets) == 0 {
+		return &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
-	// 执行Naabu扫描
-	assets, thresholdExceeded := s.runNaabuWithLogger(ctx, targets, opts, logInfo, logWarn, onProgress)
-
+	assets, thresholdExceeded := s.runNaabuCLI(ctx, cleanTargets, opts)
 	if thresholdExceeded {
 		return &ScanResult{
-			WorkspaceId:    config.WorkspaceId,
-			MainTaskId:     config.MainTaskId,
-			Assets:         assets,
-			SkippedHosts:   s.collectSkippedHosts(),
-			DNSFailedHosts: s.collectDNSFailedHosts(),
+			WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+			Assets: assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
 		}, ErrPortThresholdExceeded
 	}
-
 	return &ScanResult{
-		WorkspaceId:    config.WorkspaceId,
-		MainTaskId:     config.MainTaskId,
-		Assets:         assets,
-		SkippedHosts:   s.collectSkippedHosts(),
-		DNSFailedHosts: s.collectDNSFailedHosts(),
+		WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+		Assets: assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
 	}, nil
 }
 
-// logFunc 日志函数类型
-type logFunc func(format string, args ...interface{})
-
-// progressFunc 进度回调函数类型
-type progressFunc func(progress int, message string)
-
-// runNaabuWithLogger 运行Naabu扫描（带日志回调）
-// 按单个目标拆分，串行执行，每个目标独立超时控制
-// 返回值: assets - 发现的资产, thresholdExceeded - 是否有任何目标超过端口阈值
-func (s *NaabuScanner) runNaabuWithLogger(ctx context.Context, targets []string, opts *NaabuOptions, logInfo, logWarn logFunc, onProgress progressFunc) ([]*Asset, bool) {
+func (s *NaabuScanner) runNaabuCLI(ctx context.Context, targets []string, opts *NaabuOptions) ([]*Asset, bool) {
 	var allAssets []*Asset
-	anyThresholdExceeded := false // 记录是否有任何目标超过阈值
+	anyThresholdExceeded := false
 
-	// 处理端口配置
-	var portsStr string
-	var topPorts string
-
+	var portsStr, topPorts string
 	switch opts.Ports {
 	case "top100":
 		topPorts = "100"
 	case "top1000":
 		topPorts = "1000"
 	default:
-		// 优化端口参数，避免命令行参数过长
 		portsStr = optimizePortsForNaabu(opts.Ports)
 	}
 
 	totalTargets := len(targets)
-	logInfo("Naabu: scanning %d targets, skipHostDiscovery=%v, excludeCDN=%v, excludeHosts=%s, ports=%s", totalTargets, opts.SkipHostDiscovery, opts.ExcludeCDN, opts.ExcludeHosts, opts.Ports)
+	logx.Infof("Naabu(CLI): scanning %d targets, ports=%s, rate=%d", totalTargets, opts.Ports, opts.Rate)
 
-	// 串行扫描每个目标
 	for i, target := range targets {
-		// 检查父context是否已取消（任务被停止）
 		select {
 		case <-ctx.Done():
-			logInfo("Naabu: canceled at %d/%d targets", i, totalTargets)
 			return allAssets, anyThresholdExceeded
 		default:
 		}
 
-		// 报告进度 (端口扫描占总进度的0-30%)
-		if onProgress != nil {
-			progress := (i * 30) / totalTargets
-			onProgress(progress, fmt.Sprintf("Port scan: %d/%d", i, totalTargets))
-		}
-
-		assets, thresholdExceeded := s.scanSingleTargetWithLogger(ctx, target, portsStr, topPorts, opts, logInfo, logWarn)
-
+		assets, thresholdExceeded := s.scanTargetCLI(ctx, target, portsStr, topPorts, opts)
 		if thresholdExceeded {
-			// 单个目标超过阈值，记录并跳过该目标，继续扫描其他目标
 			anyThresholdExceeded = true
 			s.mu.Lock()
 			s.skippedHosts = append(s.skippedHosts, target)
 			s.mu.Unlock()
-			logWarn("Naabu: %s skipped due to port threshold, continuing with next target", target)
 			continue
 		}
-
 		allAssets = append(allAssets, assets...)
+		_ = i
 	}
 
-	// 端口扫描完成，进度到30%
-	if onProgress != nil {
-		onProgress(30, fmt.Sprintf("Port scan completed: %d ports", len(allAssets)))
-	}
-
-	logInfo("Naabu: completed, found %d open ports", len(allAssets))
+	logx.Infof("Naabu(CLI): completed, found %d open ports", len(allAssets))
 	return allAssets, anyThresholdExceeded
 }
 
-// 使用 Naabu 原生的 PortThreshold 参数实现端口阈值检测
-// 当某个主机的开放端口数超过阈值时，Naabu 会自动跳过该主机
-func (s *NaabuScanner) scanSingleTargetWithLogger(ctx context.Context, target, portsStr, topPorts string, opts *NaabuOptions, logInfo, logWarn logFunc) ([]*Asset, bool) {
-	var assets []*Asset
-	var mu sync.Mutex
-	var foundPorts []string // 收集发现的端口
-	thresholdExceeded := false
-
-	// 外层 portCtx（worker 已基于端口数/速率估算）控制超时，此处不再重复包裹
-	targetCtx := ctx
-
-	// 调试日志：打印扫描配置
-	logInfo("Naabu: scanning %s, ports=%s, topPorts=%s, rate=%d, workers=%d, retries=%d, warmUpTime=%d, scanType=%s, skipHostDiscovery=%v, excludeCDN=%v, excludeHosts=%s, verify=%v",
-		target, portsStr, topPorts, opts.Rate, opts.Workers, opts.Retries, opts.WarmUpTime, opts.ScanType, opts.SkipHostDiscovery, opts.ExcludeCDN, opts.ExcludeHosts, opts.Verify)
-
-	options := runner.Options{
-		Host:          goflags.StringSlice([]string{target}),
-		Ports:         portsStr,
-		TopPorts:      topPorts,
-		Rate:          opts.Rate,
-		Timeout:       10 * time.Second, // 单端口连接超时（匹配 naabu CLI -timeout 10s）
-		ScanType:      opts.ScanType,
-		Silent:        true,
-		PortThreshold: opts.PortThreshold, // 使用 Naabu 原生端口阈值参数
-		ExcludeCDN:    opts.ExcludeCDN,    // 排除 CDN/WAF，仅扫描 80,443 端口
-		Retries:       opts.Retries,       // 重试次数
-		WarmUpTime:    opts.WarmUpTime,    // 预热时间
-		Threads:       opts.Workers,       // 工作线程数
-		Verify:        opts.Verify,        // TCP验证
-		OnResult: func(hr *result.HostResult) {
-			mu.Lock()
-			defer mu.Unlock()
-
-			if thresholdExceeded {
-				return
-			}
-
-			if opts.PortThreshold > 0 && len(assets) >= opts.PortThreshold {
-				thresholdExceeded = true
-				return
-			}
-
-			// hr.Host 是原始输入（可能是域名），hr.IP 是解析后的 IP 地址
-			originalHost := hr.Host
-			resolvedIP := hr.IP
-
-			logInfo("Naabu: OnResult callback, original=%s, resolved=%s, ports=%d", originalHost, resolvedIP, len(hr.Ports))
-
-			// 判断原始输入是域名还是 IP
-			originalIsIP := net.ParseIP(originalHost) != nil
-
-			// Host 字段：保持原始输入（域名或 IP）
-			host := originalHost
-
-			// 预先查询 IP 地理位置（同一 IP 只查询一次，避免多端口重复查询）
-			var resolvedLocation string
-			if resolvedIP != "" {
-				locStr, err := ipLocator.Locate(resolvedIP)
-				resolvedLocation = geolocation.NormalizeLocation(locStr)
-				logInfo("IP地理位置查询: ip=%s, raw=%s, normalized=%s, err=%v", resolvedIP, locStr, resolvedLocation, err)
-			} else if originalIsIP {
-				locStr, err := ipLocator.Locate(originalHost)
-				resolvedLocation = geolocation.NormalizeLocation(locStr)
-				logInfo("IP地理位置查询(originalIP): ip=%s, raw=%s, normalized=%s, err=%v", originalHost, locStr, resolvedLocation, err)
-			}
-
-			for _, port := range hr.Ports {
-				asset := &Asset{
-					Authority: utils.BuildTargetWithPort(host, port.Port),
-					Host:      host,
-					Port:      port.Port,
-					Category:  getCategory(host),
-				}
-
-				// 填充 IP 信息（使用预先查询的地理位置结果）
-				if resolvedIP != "" {
-					if strings.Contains(resolvedIP, ":") {
-						// IPv6
-						asset.IPV6 = []IPInfo{{IP: resolvedIP, Location: resolvedLocation}}
-					} else {
-						// IPv4
-						asset.IPV4 = []IPInfo{{IP: resolvedIP, Location: resolvedLocation}}
-					}
-				} else if originalIsIP {
-					asset.IPV4 = []IPInfo{{IP: originalHost, Location: resolvedLocation}}
-				}
-
-				assets = append(assets, asset)
-				foundPorts = append(foundPorts, fmt.Sprintf("%d", port.Port))
-
-				// 实时推送发现的存活端口作为有效原因，包含探测方式(SYN/CONNECT等)
-				if resolvedIP != "" && !originalIsIP {
-					logInfo("发现存活端口: %s:%d -> IP: %s (通过 %s 探测)", host, port.Port, resolvedIP, opts.ScanType)
-				} else {
-					logInfo("发现存活端口: %s:%d (通过 %s 探测)", host, port.Port, opts.ScanType)
-				}
-			}
-		},
+func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr, topPorts string, opts *NaabuOptions) ([]*Asset, bool) {
+	args := []string{
+		"-host", target,
+		"-json",
+		"-silent",
+		"-rate", strconv.Itoa(opts.Rate),
+		"-timeout", fmt.Sprintf("%ds", opts.Timeout),
+		"-retries", strconv.Itoa(opts.Retries),
+		"-warm-up-time", strconv.Itoa(opts.WarmUpTime),
+		"-threads", strconv.Itoa(opts.Workers),
 	}
-
-	// 只有明确要求跳过主机发现时才设置（避免默认值干扰）
+	if portsStr != "" {
+		args = append(args, "-p", portsStr)
+	}
+	if topPorts != "" {
+		args = append(args, "-top-ports", topPorts)
+	}
+	if opts.ScanType == "s" {
+		args = append(args, "-s")
+	} else {
+		args = append(args, "-c")
+	}
 	if opts.SkipHostDiscovery {
-		options.SkipHostDiscovery = true
+		args = append(args, "-Pn")
 	}
-
-	// 设置排除的目标
+	if opts.ExcludeCDN {
+		args = append(args, "-ec")
+	}
 	if opts.ExcludeHosts != "" {
-		options.ExcludeIps = opts.ExcludeHosts
+		args = append(args, "-eh", opts.ExcludeHosts)
+	}
+	if opts.Verify {
+		args = append(args, "-verify")
+	}
+	if opts.PortThreshold > 0 {
+		args = append(args, "-port-threshold", strconv.Itoa(opts.PortThreshold))
 	}
 
-	// 打印完整的naabu配置
-	logInfo("Naabu config: Host=%v, Ports=%s, TopPorts=%s, Rate=%d, Timeout=%v, ScanType=%s, Silent=%v, PortThreshold=%d, SkipHostDiscovery=%v, ExcludeCDN=%v, ExcludeIps=%s, Retries=%d, WarmUpTime=%d, Threads=%d, Verify=%v",
-		options.Host, options.Ports, options.TopPorts, options.Rate, options.Timeout, options.ScanType, options.Silent, options.PortThreshold, options.SkipHostDiscovery, options.ExcludeCDN, options.ExcludeIps, options.Retries, options.WarmUpTime, options.Threads, options.Verify)
-
-	logInfo("Naabu: creating runner for %s", target)
-	naabuRunner, err := runner.NewRunner(&options)
+	// 输出到临时文件
+	tmpFile, err := os.CreateTemp("", "naabu-*.json")
 	if err != nil {
-		logWarn("Naabu: failed to create runner for %s: %v", target, err)
-		return assets, false
+		return nil, false
 	}
-	defer naabuRunner.Close()
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
 
-	// 运行扫描
-	logInfo("Naabu: starting enumeration for %s", target)
-	err = naabuRunner.RunEnumeration(targetCtx)
-	logInfo("Naabu: enumeration completed for %s, err=%v, foundPorts=%d", target, err, len(foundPorts))
+	args = append(args, "-o", tmpPath)
 
-	// 检查扫描结果
-	if err != nil {
-		errStr := err.Error()
-		// 检查是否是端口阈值超过导致的跳过
-		if strings.Contains(errStr, "threshold") || strings.Contains(errStr, "skipping") {
-			thresholdExceeded = true
-			logWarn("Naabu: %s exceeded port threshold (%d), results discarded", target, opts.PortThreshold)
-			// 清空结果，不保存到数据库
-			mu.Lock()
-			assets = nil
-			foundPorts = nil
-			mu.Unlock()
-		} else if strings.Contains(errStr, "no valid ipv4 or ipv6 targets") {
-			// DNS解析失败：记录主机，后续阶段跳过
-			s.mu.Lock()
-			s.dnsFailedHosts = append(s.dnsFailedHosts, target)
-			s.mu.Unlock()
-			logWarn("Naabu: %s DNS resolution failed, skipping in subsequent phases", target)
-		} else if targetCtx.Err() == context.DeadlineExceeded {
-			// 超时：保留已识别的结果
-			logWarn("Naabu: %s timeout, keeping %d ports found", target, len(assets))
-		} else if ctx.Err() == nil {
-			logWarn("Naabu: %s error: %v", target, err)
+	logx.Infof("Naabu(CLI): %s %s", ToolConfigs["naabu"].BinaryName, strings.Join(args, " "))
+
+	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
+		Timeout: time.Duration(opts.Timeout + 30) * time.Second,
+	})
+	_ = res
+
+	// 读取 JSON 输出文件
+	content, readErr := os.ReadFile(tmpPath)
+	if readErr != nil {
+		logx.Infof("[WARN] Naabu(CLI): failed to read output file: %v", readErr)
+		return nil, false
+	}
+
+	var assets []*Asset
+	var foundPorts []string
+	hostPortCount := 0
+
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var hostResult NaabuHostResult
+		if err := json.Unmarshal([]byte(line), &hostResult); err != nil {
+			continue
+		}
+		for _, p := range hostResult.Ports {
+			if p.Status == "open" {
+				hostPortCount++
+				if opts.PortThreshold > 0 && hostPortCount > opts.PortThreshold {
+					return nil, true
+				}
+				locStr, _ := ipLocator.Locate(hostResult.IP)
+				location := geolocation.NormalizeLocation(locStr)
+				asset := &Asset{
+					Authority: utils.BuildTargetWithPort(hostResult.Host, p.Port),
+					Host:      hostResult.Host,
+					Port:      p.Port,
+					Category:  getCategory(hostResult.Host),
+				}
+				if hostResult.IP != "" {
+					if strings.Contains(hostResult.IP, ":") {
+						asset.IPV6 = []IPInfo{{IP: hostResult.IP, Location: location}}
+					} else {
+						asset.IPV4 = []IPInfo{{IP: hostResult.IP, Location: location}}
+					}
+				}
+				assets = append(assets, asset)
+				foundPorts = append(foundPorts, strconv.Itoa(p.Port))
+			}
 		}
 	}
 
-	// 额外检查：如果端口数超过阈值，清空结果（仅针对阈值，不影响超时）
-	// 这是为了处理 Naabu 没有返回错误但实际上超过阈值的情况
-	mu.Lock()
-	if !thresholdExceeded && opts.PortThreshold > 0 && len(assets) > opts.PortThreshold {
-		thresholdExceeded = true
-		logWarn("Naabu: %s exceeded port threshold (%d > %d), results discarded", target, len(assets), opts.PortThreshold)
-		assets = nil
-		foundPorts = nil
-	}
-	mu.Unlock()
-
-	// 输出扫描结果日志
 	if len(foundPorts) > 0 {
-		logInfo("Naabu: %s -> %s", target, strings.Join(foundPorts, ","))
+		logx.Infof("Naabu(CLI): %s -> %s", target, strings.Join(foundPorts, ","))
 	} else {
-		logInfo("Naabu: %s -> no open ports found", target)
+		logx.Infof("Naabu(CLI): %s -> no open ports found", target)
 	}
 
-	return assets, thresholdExceeded
+	return assets, false
 }
 
-// optimizePortsForNaabu 优化端口参数格式，避免参数过长
-// naabu 原生支持范围格式（如 1-65535），直接使用比展开更高效
+func (s *NaabuScanner) collectSkippedHosts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]string, len(s.skippedHosts))
+	copy(result, s.skippedHosts)
+	return result
+}
+
+func (s *NaabuScanner) collectDNSFailedHosts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]string, len(s.dnsFailedHosts))
+	copy(result, s.dnsFailedHosts)
+	return result
+}
+
+// optimizePortsForNaabu 优化端口参数
 func optimizePortsForNaabu(portStr string) string {
 	portStr = strings.TrimSpace(portStr)
-
-	// 检查是否包含大范围端口（如 1-65535）
+	if portStr == "top100" {
+		return portsToString(GetTop100Ports())
+	}
+	if portStr == "top1000" {
+		return portsToString(GetTop1000Ports())
+	}
 	parts := strings.Split(portStr, ",")
-
-	// 如果只有一个部分且是范围格式，直接返回
 	if len(parts) == 1 && strings.Contains(parts[0], "-") {
 		return portStr
 	}
-
-	// 检查是否有大范围（超过1000个端口的范围）
 	hasLargeRange := false
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if strings.Contains(part, "-") {
-			rangeParts := strings.Split(part, "-")
-			if len(rangeParts) == 2 {
-				start, _ := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-				end, _ := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			rParts := strings.Split(part, "-")
+			if len(rParts) == 2 {
+				start, _ := strconv.Atoi(strings.TrimSpace(rParts[0]))
+				end, _ := strconv.Atoi(strings.TrimSpace(rParts[1]))
 				if end-start > 1000 {
 					hasLargeRange = true
 					break
@@ -556,13 +397,8 @@ func optimizePortsForNaabu(portStr string) string {
 			}
 		}
 	}
-
-	// 如果有大范围，直接返回原始字符串
 	if hasLargeRange {
 		return portStr
 	}
-
-	// 否则展开为具体端口列表（小范围时更精确）
-	ports := parsePorts(portStr)
-	return portsToString(ports)
+	return portsToString(parsePorts(portStr))
 }

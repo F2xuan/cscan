@@ -23,6 +23,12 @@ type NmapScanner struct {
 	BaseScanner
 }
 
+// logFunc 日志函数类型
+type logFunc func(format string, args ...interface{})
+
+// progressFunc 进度回调函数类型
+type progressFunc func(progress int, message string)
+
 // NewNmapScanner 创建Nmap扫描器
 func NewNmapScanner() *NmapScanner {
 	return &NmapScanner{

@@ -228,7 +228,7 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	if useHttpx {
 		// 使用httpx库进行扫描（不再依赖命令行工具）
 		taskLog("DEBUG", "Using httpx library for fingerprint detection")
-		s.runHttpxLib(ctx, httpAssets, opts, taskLog)
+		if err := RunHttpxLib(ctx, httpAssets, opts, taskLog); err != nil { taskLog("ERROR", "httpx CLI failed: %v", err) }
 	} else {
 		taskLog("DEBUG", "Using builtin method for fingerprint detection")
 	}

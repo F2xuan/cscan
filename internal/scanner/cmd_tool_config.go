@@ -1,0 +1,98 @@
+package scanner
+
+import (
+	"time"
+)
+
+// ToolConfig 各 CLI 工具的固定配置
+// 包含版本、路径、超时、内存限制、输出格式等元信息
+type ToolConfig struct {
+	Name           string
+	BinaryName     string
+	InstallCmd     string
+	FixedVersion   string
+	DefaultTimeout time.Duration
+	MemoryLimitMB  int64
+	JSONOutput     bool
+	SilentOutput   bool
+}
+
+// ToolConfigs 预置所有 CLI 工具的配置
+var ToolConfigs = map[string]ToolConfig{
+	"nuclei": {
+		Name:           "nuclei",
+		BinaryName:     "nuclei",
+		InstallCmd:     "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.9.7",
+		FixedVersion:   "v3.9.7",
+		DefaultTimeout: 10 * time.Minute,
+		MemoryLimitMB:  512,
+		JSONOutput:     true,
+		SilentOutput:   true,
+	},
+	"httpx": {
+		Name:           "httpx",
+		BinaryName:     "httpx",
+		InstallCmd:     "go install github.com/projectdiscovery/httpx/cmd/httpx@v1.10.5",
+		FixedVersion:   "v1.10.5",
+		DefaultTimeout: 5 * time.Minute,
+		MemoryLimitMB:  256,
+		JSONOutput:     true,
+		SilentOutput:   true,
+	},
+	"naabu": {
+		Name:           "naabu",
+		BinaryName:     "naabu",
+		InstallCmd:     "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.7.2",
+		FixedVersion:   "v2.7.2",
+		DefaultTimeout: 15 * time.Minute,
+		MemoryLimitMB:  512,
+		JSONOutput:     true,
+		SilentOutput:   true,
+	},
+	"subfinder": {
+		Name:           "subfinder",
+		BinaryName:     "subfinder",
+		InstallCmd:     "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.15.2",
+		FixedVersion:   "v2.15.2",
+		DefaultTimeout: 10 * time.Minute,
+		MemoryLimitMB:  384,
+		JSONOutput:     true,
+		SilentOutput:   true,
+	},
+	"ffuf": {
+		Name:           "ffuf",
+		BinaryName:     "ffuf",
+		InstallCmd:     "go install github.com/ffuf/ffuf/v2/cmd/ffuf@v2.3.1",
+		FixedVersion:   "v2.3.1",
+		DefaultTimeout: 10 * time.Minute,
+		MemoryLimitMB:  384,
+		JSONOutput:     true,
+		SilentOutput:   false,
+	},
+	"fingerprintx": {
+		Name:           "fingerprintx",
+		BinaryName:     "fingerprintx",
+		InstallCmd:     "go install github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.2.1",
+		FixedVersion:   "v1.2.1",
+		DefaultTimeout: 3 * time.Minute,
+		MemoryLimitMB:  256,
+		JSONOutput:     true,
+		SilentOutput:   false,
+	},
+	"dnsx": {
+		Name:           "dnsx",
+		BinaryName:     "dnsx",
+		InstallCmd:     "go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.5",
+		FixedVersion:   "v1.3.5",
+		DefaultTimeout: 3 * time.Minute,
+		MemoryLimitMB:  128,
+		JSONOutput:     true,
+		SilentOutput:   true,
+	},
+}
+
+// GetToolConfig 获取工具配置
+func GetToolConfig(name string) (ToolConfig, bool) {
+	cfg, ok := ToolConfigs[name]
+	return cfg, ok
+}

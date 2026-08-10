@@ -35,6 +35,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go install -v github.com/boy-hack/ksubdomain/v2/cmd/ksubdomain@latest
 
+# 安装 CLI 扫描工具（固定版本，可重现构建）
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.9.7 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.10.5 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.7.2 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.15.2 && \
+    CGO_ENABLED=0 go install -v github.com/ffuf/ffuf/v2/cmd/ffuf@v2.3.1 && \
+    CGO_ENABLED=1 go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.2.1 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.5
+
 # ============ 运行阶段 ============
 FROM debian:bookworm-slim
 
@@ -64,6 +75,13 @@ COPY --from=builder /app/data ./data/
 # 复制二进制文件
 COPY --from=builder /cscan-worker /cscan-worker
 COPY --from=builder /go/bin/ksubdomain /usr/local/bin/ksubdomain
+COPY --from=builder /go/bin/nuclei /usr/local/bin/nuclei
+COPY --from=builder /go/bin/httpx /usr/local/bin/httpx
+COPY --from=builder /go/bin/naabu /usr/local/bin/naabu
+COPY --from=builder /go/bin/subfinder /usr/local/bin/subfinder
+COPY --from=builder /go/bin/ffuf /usr/local/bin/ffuf
+COPY --from=builder /go/bin/fingerprintx /usr/local/bin/fingerprintx
+COPY --from=builder /go/bin/dnsx /usr/local/bin/dnsx
 
 # 启动脚本（prlimit 提升 fd 上限）
 RUN printf '#!/bin/sh\nexec prlimit --nofile=65535:65535 /cscan-worker "$@"\n' > /start.sh \

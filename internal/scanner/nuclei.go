@@ -1,9 +1,11 @@
 package scanner
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -17,96 +19,114 @@ import (
 	"cscan/pkg/mapping"
 	"cscan/pkg/utils"
 
-	nuclei "github.com/projectdiscovery/nuclei/v3/lib"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 	"github.com/zeromicro/go-zero/core/logx"
-	yamlv2 "gopkg.in/yaml.v2"
 	"gopkg.in/yaml.v3"
 )
 
-// MaxResponseSize 响应内容最大存储大小 (10KB)
-// 响应内容超过10KB时只存储前10KB并标记为截断
-const MaxResponseSize = 10 * 1024
-
 // VulEvidence 漏洞证据结构体
 type VulEvidence struct {
-	MatcherName       string   `json:"matcherName"`       // 匹配器名称 (Req 3.1)
-	ExtractedResults  []string `json:"extractedResults"`  // 提取器结果列表 (Req 3.2)
-	CurlCommand       string   `json:"curlCommand"`       // 可复现的curl命令 (Req 3.3)
-	Request           string   `json:"request"`           // HTTP请求内容 (Req 3.4)
-	Response          string   `json:"response"`          // HTTP响应摘要 (Req 3.5)
-	ResponseTruncated bool     `json:"responseTruncated"` // 响应是否被截断 (Req 3.7)
+	MatcherName       string   `json:"matcherName"`
+	ExtractedResults  []string `json:"extractedResults"`
+	CurlCommand       string   `json:"curlCommand"`
+	Request           string   `json:"request"`
+	Response          string   `json:"response"`
+	ResponseTruncated bool     `json:"responseTruncated"`
 }
 
-// CollectEvidence 从Nuclei ResultEvent收集证据
-func CollectEvidence(event *output.ResultEvent) *VulEvidence {
-	if event == nil {
-		return nil
+func CollectEvidence(request, response, matcherName string, extractedResults, curlCommand []string) *VulEvidence {
+	truncated := false
+	resp := response
+	if len(resp) > MaxResponseSize {
+		resp = resp[:MaxResponseSize]
+		truncated = true
 	}
-
-	evidence := &VulEvidence{
-		MatcherName:       event.MatcherName,
-		ExtractedResults:  event.ExtractedResults,
-		CurlCommand:       event.CURLCommand,
-		Request:           event.Request,
-		Response:          event.Response,
-		ResponseTruncated: false,
+	return &VulEvidence{
+		MatcherName:       matcherName,
+		ExtractedResults:  extractedResults,
+		CurlCommand:       strings.Join(curlCommand, "\n"),
+		Request:           request,
+		Response:          resp,
+		ResponseTruncated: truncated,
 	}
-
-	// 处理响应截断逻辑：超过10KB只存储前10KB
-	if len(evidence.Response) > MaxResponseSize {
-		evidence.Response = evidence.Response[:MaxResponseSize]
-		evidence.ResponseTruncated = true
-	}
-
-	return evidence
 }
 
-// templateMeta 记录每个临时模板文件对应的原始索引和templateId，用于坏模板定位
-type templateMeta struct {
-	index      int
-	templateID string
-	path       string
+// MaxResponseSize 响应内容最大存储大小 (10KB)
+const MaxResponseSize = 10 * 1024
+
+// NucleiResultEvent 对应 nuclei CLI -json 输出的 JSON 行结构
+type NucleiResultEvent struct {
+	TemplateID  string `json:"template-id"`
+	Template    struct {
+		ID   string `json:"id"`
+		Info struct {
+			Name         string `json:"name"`
+			Author       []string `json:"author"`
+			Tags         []string `json:"tags"`
+			Severity     string `json:"severity"`
+			Description  string `json:"description"`
+			Reference    []string `json:"reference"`
+			Remediation  string `json:"remediation"`
+			Classification *struct {
+				CveID      []string `json:"cve-id"`
+				CweID      []string `json:"cwe-id"`
+				CvssScore  float64  `json:"cvss-score"`
+			} `json:"classification,omitempty"`
+			SeverityHolder struct {
+				Severity string `json:"severity"`
+			} `json:"severity_holder,omitempty"`
+		} `json:"info"`
+	} `json:"template,omitempty"`
+	Type            string         `json:"type"`
+	Host            string         `json:"host"`
+	MatchedAt       string         `json:"matched-at"`
+	Matched         bool           `json:"matched"`
+	MatcherName     string         `json:"matcher-name"`
+	ExtractedResults []string      `json:"extracted-results"`
+	CurlCommand     string         `json:"curl-command"`
+	Request         string         `json:"request"`
+	Response        string         `json:"response"`
+	Timestamp       string         `json:"timestamp"`
 }
 
-// NucleiScanner Nuclei扫描器 (使用SDK模式)
+// NucleiScanner Nuclei扫描器 (CLI 模式)
 type NucleiScanner struct {
 	BaseScanner
+	executor *CmdExecutor
 }
 
-// NewNucleiScanner 创建Nuclei扫描器
+// NewNucleiScanner 创建 Nuclei 扫描器
 func NewNucleiScanner() *NucleiScanner {
+	cfg := ToolConfigs["nuclei"]
 	return &NucleiScanner{
 		BaseScanner: BaseScanner{name: "nuclei"},
+		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
 	}
 }
 
 // NucleiOptions Nuclei扫描选项
 type NucleiOptions struct {
-	Templates            []string                 `json:"templates"`        // 模板路径
-	Tags                 []string                 `json:"tags"`             // 标签过滤
-	Severity             string                   `json:"severity"`         // 严重级别: critical,high,medium,low,info,unknown (CSV格式)
-	ExcludeTags          []string                 `json:"excludeTags"`      // 排除标签
-	ExcludeTemplates     []string                 `json:"excludeTemplates"` // 排除模板
-	RateLimit            int                      `json:"rateLimit"`        // 速率限制
-	Concurrency          int                      `json:"concurrency"`      // 并发数
-	Timeout              int                      `json:"timeout"`          // 总超时时间(秒)，由调用方根据目标数量计算
-	TargetTimeout        int                      `json:"targetTimeout"`    // 单个目标超时时间(秒)，默认600秒
-	Retries              int                      `json:"retries"`          // 重试次数
-	AutoScan             bool                     `json:"autoScan"`         // 基于自定义标签映射自动扫描
-	AutomaticScan        bool                     `json:"automaticScan"`    // 基于Wappalyzer技术的自动扫描（nuclei -as）
-	TagMappings          map[string][]string      `json:"tagMappings"`      // 应用名称到Nuclei标签的映射
-	CustomTemplates      []string                 `json:"customTemplates"`  // 自定义模板内容(YAML)
-	CustomPocOnly        bool                     `json:"customPocOnly"`    // 只使用自定义POC
-	NucleiTemplates      []string                 `json:"nucleiTemplates"`  // 从数据库加载的Nuclei模板内容
-	CustomHeaders        []string                 `json:"customHeaders"`    // 自定义HTTP头部，格式: "Header: Value"
-	ForceScan            bool                     `json:"forceScan"`        // 强制扫描：不跳过非HTTP资产，直接对所有资产进行POC扫描
-	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`                // 发现漏洞时的回调函数
+	Templates            []string                 `json:"templates"`
+	Tags                 []string                 `json:"tags"`
+	Severity             string                   `json:"severity"`
+	ExcludeTags          []string                 `json:"excludeTags"`
+	ExcludeTemplates     []string                 `json:"excludeTemplates"`
+	RateLimit            int                      `json:"rateLimit"`
+	Concurrency          int                      `json:"concurrency"`
+	Timeout              int                      `json:"timeout"`
+	TargetTimeout        int                      `json:"targetTimeout"`
+	Retries              int                      `json:"retries"`
+	AutoScan             bool                     `json:"autoScan"`
+	AutomaticScan        bool                     `json:"automaticScan"`
+	TagMappings          map[string][]string      `json:"tagMappings"`
+	CustomTemplates      []string                 `json:"customTemplates"`
+	CustomPocOnly        bool                     `json:"customPocOnly"`
+	NucleiTemplates      []string                 `json:"nucleiTemplates"`
+	CustomHeaders        []string                 `json:"customHeaders"`
+	ForceScan            bool                     `json:"forceScan"`
+	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`
 }
 
-// Validate 验证 NucleiOptions 配置是否有效
-// 实现 ScannerOptions 接口
+// Validate 验证配置
 func (o *NucleiOptions) Validate() error {
 	if o.RateLimit < 0 {
 		return fmt.Errorf("rateLimit must be non-negative, got %d", o.RateLimit)
@@ -123,25 +143,22 @@ func (o *NucleiOptions) Validate() error {
 	if o.Retries < 0 {
 		return fmt.Errorf("retries must be non-negative, got %d", o.Retries)
 	}
-	// 验证 severity 格式
 	if o.Severity != "" {
 		validSeverities := map[string]bool{
 			"critical": true, "high": true, "medium": true,
 			"low": true, "info": true, "unknown": true,
 		}
-		severities := strings.Split(o.Severity, ",")
-		for _, s := range severities {
+		for _, s := range strings.Split(o.Severity, ",") {
 			s = strings.TrimSpace(strings.ToLower(s))
 			if !validSeverities[s] {
-				return fmt.Errorf("invalid severity '%s', must be one of: critical, high, medium, low, info, unknown", s)
+				return fmt.Errorf("invalid severity '%s'", s)
 			}
 		}
 	}
 	return nil
 }
 
-// Scan 执行Nuclei扫描
-// OPTIMIZATION: Refactored to use ScanBatch for parallel target scanning.
+// Scan 执行 Nuclei 扫描
 func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
 		WorkspaceId:     config.WorkspaceId,
@@ -149,15 +166,14 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		Vulnerabilities: make([]*Vulnerability, 0),
 	}
 
-	// 1. Prepare Options - 使用自适应参数
 	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NucleiOptions{
 		Severity:      "critical,high,medium",
-		RateLimit:     adaptive.NucleiRateLimit,   // 自适应: 低配50, 中配100, 高配150
-		Concurrency:   adaptive.NucleiConcurrency, // 自适应: 低配5, 中配15, 高配25
-		Timeout:       600,                        // Global Timeout
-		TargetTimeout: 600,                        // Per-target Timeout
-		Retries:       adaptive.NucleiRetries,     // 自适应: 低配1, 中配1, 高配1
+		RateLimit:     adaptive.NucleiRateLimit,
+		Concurrency:   adaptive.NucleiConcurrency,
+		Timeout:       600,
+		TargetTimeout: 600,
+		Retries:       adaptive.NucleiRetries,
 	}
 	if config.Options != nil {
 		if o, ok := config.Options.(*NucleiOptions); ok {
@@ -165,42 +181,23 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		}
 	}
 
-	// 当调用方未指定并发/速率时，使用自适应调度器的推荐值
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = adaptive.NucleiConcurrency
 	}
 	if opts.RateLimit <= 0 {
 		opts.RateLimit = adaptive.NucleiRateLimit
 	}
-	if opts.Retries <= 0 {
-		opts.Retries = adaptive.NucleiRetries
-	}
-
-	// 超时默认值处理：
-	// TargetTimeout 为单目标超时，Timeout 为整批扫描的全局超时。
-	// 调用方（如 PocScanExecutor）通常只设置 TargetTimeout，这里需要补齐默认值，
-	// 避免 Timeout 为零值导致 ScanBatch 回退到错误的 60s 超时。
 	if opts.TargetTimeout <= 0 {
 		opts.TargetTimeout = 600
 	}
 	if opts.Timeout <= 0 {
-		// 全局超时默认不小于单目标超时，ScanBatch 会根据目标数量进一步调整
 		opts.Timeout = opts.TargetTimeout
 	}
-
-	// Safety cap for template concurrency
 	if opts.Concurrency > 50 {
 		opts.Concurrency = 50
 	}
 
-	// 2. Prepare Targets
-	var targets []string
-	if len(config.Targets) > 0 {
-		targets = config.Targets
-	} else {
-		targets = s.prepareTargets(config.Assets, opts.ForceScan, config.TaskLogger)
-	}
-
+	targets := prepareTargets(config.Assets, opts.ForceScan, config.TaskLogger)
 	if len(targets) == 0 {
 		logx.Info("No targets for nuclei scan")
 		if config.TaskLogger != nil {
@@ -209,796 +206,328 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		return result, nil
 	}
 
-	// 3. Auto-Tag Generation (Logic preserved)
 	if opts.AutoScan && opts.TagMappings != nil {
-		if autoTags := s.generateAutoTags(config.Assets, opts.TagMappings); len(autoTags) > 0 {
+		if autoTags := generateAutoTags(config.Assets, opts.TagMappings); len(autoTags) > 0 {
 			opts.Tags = append(opts.Tags, autoTags...)
 		}
 	}
 	if opts.AutomaticScan {
-		if wappTags := s.generateWappalyzerAutoTags(config.Assets); len(wappTags) > 0 {
+		if wappTags := generateWappalyzerAutoTags(config.Assets); len(wappTags) > 0 {
 			opts.Tags = append(opts.Tags, wappTags...)
 		}
 	}
 	opts.Tags = utils.UniqueStrings(opts.Tags)
 
-	// 4. EXECUTION OPTIMIZATION: Use Batch Scan instead of Serial Loop
-	// This enables Nuclei's internal scheduler to handle HostConcurrency
-	logx.Infof("Nuclei: Starting batch scan for %d targets (Parallel Mode)", len(targets))
+	logx.Infof("Nuclei: Starting scan for %d targets (CLI mode)", len(targets))
 
-	vuls, err := s.ScanBatch(ctx, targets, opts, config.TaskLogger)
+	customTemplatePaths, err := s.prepareTemplates(opts)
 	if err != nil {
-		return result, err
+		return nil, fmt.Errorf("prepare templates: %w", err)
 	}
 
-	result.Vulnerabilities = vuls
+	seen := make(map[string]bool)
+	for _, target := range targets {
+		vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, config.TaskLogger)
+		if err != nil {
+			logx.Errorf("Nuclei: scan error for %s: %v", target, err)
+			continue
+		}
+		for _, vul := range vuls {
+			vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
+			if !seen[vulKey] {
+				seen[vulKey] = true
+				result.Vulnerabilities = append(result.Vulnerabilities, vul)
+				if opts.OnVulnerabilityFound != nil {
+					opts.OnVulnerabilityFound(vul)
+				}
+			}
+		}
+	}
+
+	logx.Infof("Nuclei: Completed, found %d vulnerabilities", len(result.Vulnerabilities))
 	return result, nil
 }
 
-// nucleiScanError 统一的Nuclei扫描错误处理
-type nucleiScanError struct {
-	target  string
-	phase   string
-	err     error
-	timeout bool
-}
-
-func (e *nucleiScanError) Error() string {
-	if e.timeout {
-		return fmt.Sprintf("nuclei %s timeout for %s", e.phase, e.target)
-	}
-	return fmt.Sprintf("nuclei %s failed for %s: %v", e.phase, e.target, e.err)
-}
-
-// logScanError 统一的错误日志处理
-func logScanError(err *nucleiScanError, taskLogger func(level, format string, args ...interface{})) {
-	if err.timeout {
-		logx.Infof("Nuclei: %s timeout for %s", err.phase, err.target)
-		if taskLogger != nil {
-			taskLogger("WARN", "POC %s timeout", err.phase)
-		}
-	} else {
-		logx.Errorf("Nuclei %s error for %s: %v", err.phase, err.target, err.err)
-		if taskLogger != nil {
-			taskLogger("ERROR", "POC %s error: %v", err.phase, err.err)
-		}
-	}
-}
-
-// scanSingleTarget 扫描单个目标
-func (s *NucleiScanner) scanSingleTarget(ctx context.Context, target string, opts *NucleiOptions, customTemplatePaths []string, _ []string, taskLogger func(level, format string, args ...interface{})) []*Vulnerability {
-	var vuls []*Vulnerability
-	startTime := time.Now()
-
-	// 创建独立的context避免任务间相互影响
-	engineCtx, engineCancel := context.WithTimeout(context.Background(), time.Duration(opts.TargetTimeout)*time.Second)
-	defer engineCancel()
-
-	// 初始化引擎
-	ne, err := s.initNucleiEngine(engineCtx, opts, customTemplatePaths, target, taskLogger)
-	if err != nil {
-		return vuls
-	}
-	defer ne.Close()
-
-	// 获取实际加载的模板数量
-	loadedTemplates := ne.GetTemplates()
-	if len(loadedTemplates) == 0 {
-		logx.Errorf("No templates loaded for %s", target)
-		if taskLogger != nil {
-			taskLogger("ERROR", "POC不可用: 模板加载失败")
-		}
-		return vuls
-	}
-	if taskLogger != nil {
-		taskLogger("INFO", "  Loaded %d templates (filtered by severity)", len(loadedTemplates))
-	}
-
-	// 加载目标并执行扫描
-	ne.LoadTargets([]string{target}, false)
-	vuls = s.executeNucleiScan(ctx, engineCtx, ne, target, opts, loadedTemplates, taskLogger, startTime)
-
-	return vuls
-}
-
-// initNucleiEngine 初始化Nuclei引擎 - 提取公共逻辑
-func (s *NucleiScanner) initNucleiEngine(ctx context.Context, opts *NucleiOptions, customTemplatePaths []string, target string, taskLogger func(level, format string, args ...interface{})) (*nuclei.NucleiEngine, error) {
-	nucleiOpts := s.buildNucleiOptions(opts, customTemplatePaths, 1)
-
-	logx.Debugf("Creating nuclei engine for %s with timeout %ds", target, opts.TargetTimeout)
-	ne, err := nuclei.NewNucleiEngineCtx(ctx, nucleiOpts...)
-	if err != nil {
-		logScanError(&nucleiScanError{target: target, phase: "engine init", err: err}, taskLogger)
-		return nil, err
-	}
-
-	// 启用请求/响应存储
-	if engineOpts := ne.Options(); engineOpts != nil {
-		engineOpts.StoreResponse = true
-	}
-
-	// 加载模板
-	if err := ne.LoadAllTemplates(); err != nil {
-		ne.Close()
-		logScanError(&nucleiScanError{target: target, phase: "template load", err: err}, taskLogger)
-		return nil, err
-	}
-
-	return ne, nil
-}
-
-// executeNucleiScan 执行Nuclei扫描 - 提取扫描逻辑
-func (s *NucleiScanner) executeNucleiScan(ctx, engineCtx context.Context, ne *nuclei.NucleiEngine, target string, opts *NucleiOptions, loadedTemplates []*templates.Template, taskLogger func(level, format string, args ...interface{}), startTime time.Time) []*Vulnerability {
-	var vuls []*Vulnerability
-	templateCount := len(loadedTemplates)
-	scannedCount := 0
-	foundCount := 0
-	seenTemplates := make(map[string]bool)
-
-	// 监听父context取消
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			logx.Infof("Nuclei: parent context canceled for %s", target)
-			if taskLogger != nil {
-				taskLogger("WARN", "POC scan interrupted: %v", ctx.Err())
-			}
-		case <-done:
-		}
-	}()
-	defer close(done)
-
-	// 执行扫描
-	err := ne.ExecuteCallbackWithCtx(engineCtx, func(event *output.ResultEvent) {
-		scannedCount++
-		if event.Matched != "" {
-			vulKey := event.TemplateID + ":" + event.MatcherName
-			if !seenTemplates[vulKey] {
-				seenTemplates[vulKey] = true
-				foundCount++
-				if taskLogger != nil {
-					if event.MatcherName != "" {
-						// 抽取并格式化有效原因详细信息
-						reason := s.extractMatchedReason(event)
-						taskLogger("INFO", "  [%d] ✓ %s:%s [%s] - 原因: %s", scannedCount, event.TemplateID, event.MatcherName, event.Info.SeverityHolder.Severity.String(), reason)
-					} else {
-						reason := s.extractMatchedReason(event)
-						taskLogger("INFO", "  [%d] ✓ %s [%s] - 原因: %s", scannedCount, event.TemplateID, event.Info.SeverityHolder.Severity.String(), reason)
-					}
-				}
-				if vul := s.convertResult(event); vul != nil {
-					vuls = append(vuls, vul)
-				}
-			}
-		} else if taskLogger != nil && scannedCount%50 == 0 {
-			taskLogger("INFO", "  [%d] Scanning... %d vuls found", scannedCount, foundCount)
-		}
-	})
-
-	// 处理扫描结果
-	s.handleScanResult(err, engineCtx, target, opts, taskLogger, scannedCount, templateCount, foundCount, startTime)
-
-	return vuls
-}
-
-// handleScanResult 处理扫描结果 - 统一错误处理
-func (s *NucleiScanner) handleScanResult(err error, engineCtx context.Context, target string, _ *NucleiOptions, taskLogger func(level, format string, args ...interface{}), scannedCount, _, foundCount int, startTime time.Time) {
-	elapsed := int(time.Since(startTime).Seconds())
-
-	if err != nil || engineCtx.Err() == context.DeadlineExceeded {
-		logScanError(&nucleiScanError{
-			target:  target,
-			phase:   "scan",
-			err:     err,
-			timeout: engineCtx.Err() == context.DeadlineExceeded,
-		}, taskLogger)
-	} else if engineCtx.Err() == context.Canceled {
-		if taskLogger != nil {
-			taskLogger("WARN", "POC scan canceled")
-		}
-	}
-
-	// 输出统计 - 使用实际执行的模板数作为完成数
-	// 注意：scannedCount 是回调触发次数，可能小于 templateCount
-	// 因为某些模板可能因协议不匹配、条件不满足或超时而被跳过
-	if taskLogger != nil {
-		taskLogger("INFO", "  Completed: %d templates, %d vuls, %ds", scannedCount, foundCount, elapsed)
-	}
-}
-
-// ScanBatch 批量扫描多个目标（使用单个Nuclei引擎实例）
-// 适用于使用同一个POC扫描大量目标的场景
-func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *NucleiOptions, taskLogger func(level, format string, args ...interface{})) (vuls []*Vulnerability, err error) {
-	seen := make(map[string]bool)
-	startTime := time.Now()
-
-	if len(targets) == 0 {
-		return vuls, nil
-	}
-
-	// 日志辅助函数
+// ScanBatch 对一批目标 URL 执行批量 POC 扫描（CLI 模式）
+// 兼容旧 SDK 时代的调用接口：注入自定义 POC 模板，逐目标运行 nuclei CLI，
+// 聚合漏洞并通过 OnVulnerabilityFound 回调实时上报
+func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *NucleiOptions, taskLogger func(level, format string, args ...interface{})) ([]*Vulnerability, error) {
 	taskLog := func(level, format string, args ...interface{}) {
 		if taskLogger != nil {
 			taskLogger(level, format, args...)
 		}
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			stack := string(debug.Stack())
-			taskLog("ERROR", "Nuclei batch scan panic recovered: %v, stack: %s", r, stack)
-			logx.Errorf("[Nuclei] batch scan panic recovered: %v, stack: %s", r, stack)
-			err = fmt.Errorf("nuclei batch scan panic recovered: %v", r)
-		}
-	}()
-
-	taskLog("INFO", "Batch scan: %d targets", len(targets))
-
-	// 处理自定义POC - 获取缓存或写入缓存
-	var customTemplatePaths []string
-	var templateMetas []templateMeta
-
-	// 合并 CustomTemplates 和 NucleiTemplates 为统一的模板列表
-	allTemplateContents := make([]string, 0, len(opts.CustomTemplates)+len(opts.NucleiTemplates))
-	allTemplateContents = append(allTemplateContents, opts.CustomTemplates...)
-	allTemplateContents = append(allTemplateContents, opts.NucleiTemplates...)
-
-	if len(allTemplateContents) > 0 {
-		cache := getTemplateCache()
-		cache.EvictStale()
-
-		taskLog("INFO", "Preparing %d POC templates (custom=%d, nuclei=%d)", len(allTemplateContents), len(opts.CustomTemplates), len(opts.NucleiTemplates))
-		for i, content := range allTemplateContents {
-			// 1. 廉价的YAML预校验
-			templateID, err := preValidateTemplate(content)
-			if err != nil {
-				taskLog("WARN", "Skip bad template index=%d: %v", i, err)
-				continue
-			}
-
-			// 2. 深度反序列化排雷（隔离 Nuclei 协程崩溃漏洞）
-			if err := safeDeepParseTemplate(content); err != nil {
-				logx.Errorf("Deep template panic intercepted for %s: %v", templateID, err)
-				taskLog("WARN", "Skip panic-inducing template index=%d templateId=%s: %v", i, templateID, err)
-				continue
-			}
-
-			// 3. 从缓存获取或写入
-			path, err := cache.GetOrWrite(content, templateID)
-			if err != nil {
-				logx.Errorf("Failed to write custom template %d (%s): %v", i, templateID, err)
-				taskLog("ERROR", "Failed to cache POC template index=%d templateId=%s: %v", i, templateID, err)
-				continue
-			}
-
-			customTemplatePaths = append(customTemplatePaths, path)
-			templateMetas = append(templateMetas, templateMeta{index: i, templateID: templateID, path: path})
-		}
-		taskLog("INFO", "Processed %d usable POC templates", len(customTemplatePaths))
+	if len(targets) == 0 {
+		return nil, nil
 	}
 
+	// 默认自适应参数补足
+	adaptive := GetGlobalAdaptiveConfig()
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = adaptive.NucleiConcurrency
+	}
+	if opts.RateLimit <= 0 {
+		opts.RateLimit = adaptive.NucleiRateLimit
+	}
+	if opts.TargetTimeout <= 0 {
+		opts.TargetTimeout = 600
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = opts.TargetTimeout
+	}
+	if opts.Retries <= 0 {
+		opts.Retries = adaptive.NucleiRetries
+	}
+	if opts.Concurrency > 50 {
+		opts.Concurrency = 50
+	}
+
+	taskLog("INFO", "Batch scan: %d targets (CLI mode)", len(targets))
+
+	customTemplatePaths, err := s.prepareTemplates(opts)
+	if err != nil {
+		return nil, fmt.Errorf("prepare templates: %w", err)
+	}
 	if len(customTemplatePaths) == 0 {
 		taskLog("ERROR", "No usable POC templates loaded")
 		return nil, fmt.Errorf("no usable POC templates")
 	}
 
-	// 设置超时时间：
-	// 优先使用调用方指定的全局 Timeout；若未指定，则基于单目标超时 TargetTimeout
-	// 和目标数量动态计算，确保单个目标至少能获得 TargetTimeout 的扫描预算，
-	// 避免回退到过短的 60s 导致扫描被提前中断。
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		perTarget := opts.TargetTimeout
-		if perTarget <= 0 {
-			perTarget = 600
-		}
-		// 总超时 = 目标数 × 单目标超时（Nuclei 内部并发执行，这是一个宽松的上限）
-		timeout = len(targets) * perTarget
-		if timeout < perTarget {
-			timeout = perTarget
-		}
-		if timeout > 3600 {
-			timeout = 3600
-		}
-	}
-
-	// 使用独立context初始化引擎，避免引擎初始化（含坏模板二分查找）
-	// 消耗扫描超时预算。引擎初始化最长允许5分钟。
-	initCtx, initCancel := context.WithTimeout(context.Background(), 300*time.Second)
-	defer initCancel()
-
-	// 消除双重引擎初始化，调用一次即可构建并加载好引擎
-	taskLog("INFO", "Initializing Nuclei engine (1-pass)...")
-	ne, customTemplatePaths, templateMetas, err := s.buildAndLoadEngine(
-		initCtx, customTemplatePaths, templateMetas, opts, len(targets), taskLog,
-	)
-	if err != nil {
-		taskLog("ERROR", "Failed to construct running nuclei engine: %v", err)
-		return nil, err
-	}
-	defer ne.Close()
-
-	loadedTemplates := ne.GetTemplates()
-	if len(loadedTemplates) == 0 {
-		taskLog("WARN", "No templates loaded after filtering")
-		return vuls, nil
-	}
-	taskLog("INFO", "Loaded %d templates", len(loadedTemplates))
-
-	// 批量加载所有目标
-	taskLog("INFO", "Loading %d targets...", len(targets))
-	ne.LoadTargets(targets, false)
-
-	// 引擎初始化完成，创建带超时的扫描context
-	// 此时开始计算扫描超时，确保初始化耗时不会侵蚀扫描时间
-	engineCtx, engineCancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-	defer engineCancel()
-
-	// 统计变量
-	scannedCount := 0
-	foundCount := 0
-
-	// 监听父context取消
-	done := make(chan struct{})
-	go func() {
+	var allVuls []*Vulnerability
+	seen := make(map[string]bool)
+	for _, target := range targets {
 		select {
 		case <-ctx.Done():
-			logx.Infof("Nuclei batch scan: parent context canceled")
-			taskLog("WARN", "Scan interrupted")
-			engineCancel()
-		case <-done:
-			return
+			return allVuls, ctx.Err()
+		default:
 		}
-	}()
-	defer close(done)
-
-	// 执行扫描
-	scanStartTime := time.Now()
-	initDuration := scanStartTime.Sub(startTime).Seconds()
-	taskLog("INFO", "Starting batch scan (timeout: %ds, engine init took %.1fs)...", timeout, initDuration)
-
-	totalWork := len(customTemplatePaths) * len(targets)
-	matcherStatusEnabled := totalWork <= 50_000
-
-	// 智能进度回调机制
-	if !matcherStatusEnabled {
-		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-engineCtx.Done():
-					return
-				case <-ticker.C:
-					taskLog("INFO", "  Scanning... %d vuls found (%.0fs elapsed)", foundCount, time.Since(startTime).Seconds())
-				case <-done:
-					return
-				}
-			}
-		}()
-	}
-
-	err = ne.ExecuteCallbackWithCtx(engineCtx, func(event *output.ResultEvent) {
-		// 只有 MatcherStatus 开启的情况下，回调才是按个触发的；否则只会在成功匹配时触发
-		if matcherStatusEnabled {
-			scannedCount++
+		vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, taskLogger)
+		if err != nil {
+			taskLog("WARN", "Nuclei scan error for %s: %v", target, err)
+			continue
 		}
-
-		// 判断是否匹配成功
-		if event.Matched != "" {
-			if !matcherStatusEnabled {
-				// MatcherStatus关闭时，只有漏洞触发回调，进度只能近似或忽略
-				scannedCount++
-			}
-			vulKey := fmt.Sprintf("%s:%s:%s", event.Host, event.TemplateID, event.MatcherName)
+		for _, vul := range vuls {
+			vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
 			if !seen[vulKey] {
 				seen[vulKey] = true
-				foundCount++
-
-				taskLog("INFO", "[%d] ✓ %s - %s [%s]", foundCount, event.Host, event.TemplateID, event.Info.SeverityHolder.Severity.String())
-
-				vul := s.convertResult(event)
-				if vul != nil {
-					vuls = append(vuls, vul)
-					// 实时回调
-					if opts.OnVulnerabilityFound != nil {
-						opts.OnVulnerabilityFound(vul)
-					}
+				allVuls = append(allVuls, vul)
+				if opts.OnVulnerabilityFound != nil {
+					opts.OnVulnerabilityFound(vul)
 				}
 			}
-		} else if matcherStatusEnabled {
-			// 每1000个任务显示进度 (MatcherStatus 开启时)
-			if scannedCount%1000 == 0 {
-				taskLog("INFO", "[%d] Scanning... %d vuls found", scannedCount, foundCount)
-			}
-		}
-	})
-
-	elapsed := time.Since(startTime).Seconds()
-	scanElapsed := time.Since(scanStartTime).Seconds()
-
-	if err != nil {
-		if engineCtx.Err() == context.DeadlineExceeded {
-			taskLog("WARN", "Scan timeout after %.0fs (scan: %.0fs)", elapsed, scanElapsed)
-		} else if engineCtx.Err() == context.Canceled {
-			taskLog("WARN", "Scan canceled after %.0fs (scan: %.0fs)", elapsed, scanElapsed)
-		} else {
-			taskLog("ERROR", "Scan error: %v", err)
 		}
 	}
 
-	taskLog("INFO", "Batch scan completed: %d targets, %d vuls found, %.0fs (scan: %.0fs)", len(targets), foundCount, elapsed, scanElapsed)
+	taskLog("INFO", "Batch scan completed, %d targets, %d vuls", len(targets), len(allVuls))
+	return allVuls, nil
+}
 
+func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, opts *NucleiOptions, templatePaths []string, taskLogger func(level, format string, args ...interface{})) ([]*Vulnerability, error) {
+	if len(templatePaths) == 0 {
+		return nil, fmt.Errorf("no templates available")
+	}
+
+	templateDir := ""
+	if len(templatePaths) > 0 {
+		templateDir = filepath.Dir(templatePaths[0])
+	}
+
+	args := []string{
+		"-target", target,
+		"-json",
+		"-silent",
+		"-timeout", fmt.Sprintf("%d", opts.TargetTimeout),
+		"-retries", fmt.Sprintf("%d", opts.Retries),
+		"-rate-limit", fmt.Sprintf("%d", opts.RateLimit),
+		"-concurrency", fmt.Sprintf("%d", opts.Concurrency),
+		"-bulk-size", "25",
+		"-disable-update-check",
+	}
+	if templateDir != "" {
+		args = append(args, "-t", templateDir)
+	}
+	if len(opts.Tags) > 0 {
+		args = append(args, "-tags", strings.Join(opts.Tags, ","))
+	}
+	if opts.Severity != "" {
+		args = append(args, "-severity", opts.Severity)
+	}
+	for _, header := range opts.CustomHeaders {
+		args = append(args, "-header", header)
+	}
+
+	taskLogger("INFO", "Nuclei CLI: scanning %s (templates=%d, concurrency=%d, rate=%d)",
+		target, len(templatePaths), opts.Concurrency, opts.RateLimit)
+
+	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
+		Timeout: time.Duration(opts.TargetTimeout + 30) * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("nuclei execution: %w", err)
+	}
+
+	var vuls []*Vulnerability
+	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var event NucleiResultEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if !event.Matched {
+			continue
+		}
+		vul := s.convertCLIResult(&event, target)
+		if vul != nil {
+			vuls = append(vuls, vul)
+			taskLogger("INFO", "  Found: %s - %s [%s]",
+				event.TemplateID, event.Template.Info.Name, event.Template.Info.Severity)
+		}
+	}
+
+	taskLogger("INFO", "Nuclei: %s -> %d vulnerabilities", target, len(vuls))
 	return vuls, nil
 }
 
-// prepareTargets 准备目标URL列表
-// 当 forceScan=true 时，不跳过非HTTP资产，直接将所有资产转换为扫描目标
-// 当 forceScan=false 时（默认），跳过非HTTP资产，只扫描HTTP服务
-func (s *NucleiScanner) prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, format string, args ...interface{})) []string {
-	targets := make([]string, 0, len(assets))
-	seen := make(map[string]bool)
-	skipped := 0
-	// 记录每个被跳过资产的详情，用于日志输出
-	var skippedDetails []string
-
-	for _, asset := range assets {
-		// 判断是否为HTTP资产
-		isHTTP := asset.IsHTTP || IsHTTPService(asset.Service, asset.Port)
-
-		// 非强制扫描模式下，跳过非HTTP资产
-		if !forceScan && !isHTTP {
-			skipped++
-			detail := fmt.Sprintf("%s:%d (service=%s)", asset.Host, asset.Port, asset.Service)
-			skippedDetails = append(skippedDetails, detail)
-			logx.Debugf("Skipping non-HTTP asset: %s (service: %s, isHttp: %v)", detail, asset.Service, asset.IsHTTP)
-			continue
-		}
-
-		// 确定协议方案
-		scheme := "http"
-		if asset.Service == "https" || asset.Port == 443 || asset.Port == 8443 {
-			scheme = "https"
-		}
-
-		// 强制扫描模式下，如果资产不是HTTP服务，记录提示日志
-		if forceScan && !isHTTP {
-			logx.Infof("Force scan enabled: treating non-HTTP asset %s:%d as HTTP target", asset.Host, asset.Port)
-		}
-
-		// 构建目标URL，如果资产有 Path 字段，包含在目标URL中
-		// 例如：用户输入 http://example.com/api/v1/，POC扫描应该针对该路径
-		var target string
-		if asset.Path != "" && asset.Path != "/" {
-			// 有路径的情况：scheme://host:port/path
-			path := asset.Path
-			if !strings.HasPrefix(path, "/") {
-				path = "/" + path
-			}
-			target = fmt.Sprintf("%s://%s:%d%s", scheme, asset.Host, asset.Port, path)
-		} else {
-			// 无路径的情况：scheme://host:port
-			target = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
-		}
-
-		if !seen[target] {
-			seen[target] = true
-			targets = append(targets, target)
-		}
-	}
-
-	// 将跳过统计写入任务日志（关键日志，不能遗漏）
-	if skipped > 0 {
-		logx.Infof("Nuclei: skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
-		if taskLogger != nil {
-			if forceScan {
-				taskLogger("INFO", "Force scan enabled: processing %d assets (non-HTTP assets will also be scanned)", len(targets))
-			} else {
-				taskLogger("INFO", "Skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
-				// 如果被跳过的资产数量不多，输出详细信息帮助排查
-				if len(skippedDetails) <= 10 {
-					taskLogger("INFO", "Skipped non-HTTP assets: %s", strings.Join(skippedDetails, ", "))
-				} else {
-					taskLogger("INFO", "Skipped non-HTTP assets (first 10): %s", strings.Join(skippedDetails[:10], ", "))
-				}
-			}
-		}
-	} else if forceScan && len(assets) > 0 {
-		// 强制扫描且没有跳过任何资产时，也输出一条确认日志
-		if taskLogger != nil {
-			taskLogger("INFO", "Force scan enabled: all %d assets will be scanned", len(assets))
-		}
-	}
-
-	return targets
-}
-
-// buildNucleiOptions 构建Nuclei SDK选项
-// 所有模板都应该从数据库获取，不使用本地模板目录
-func (s *NucleiScanner) buildNucleiOptions(opts *NucleiOptions, customTemplatePaths []string, targetCount int) []nuclei.NucleiSDKOptions {
-	var nucleiOpts []nuclei.NucleiSDKOptions
-
-	// 智能进度回调：如果 模板数×目标数 > 阈值，则关闭 EnableMatcherStatus，
-	// 避免回调风暴。由外部用定时器汇报进度。
-	const matcherStatusThreshold = 5000
-	totalWork := len(customTemplatePaths) * targetCount
-	if totalWork <= matcherStatusThreshold {
-		nucleiOpts = append(nucleiOpts, nuclei.EnableMatcherStatus())
-	} else {
-		logx.Infof("Large scan detected (%d templates x %d targets), disabling MatcherStatus to save CPU", len(customTemplatePaths), targetCount)
-	}
-
-	// 禁用自动更新检查，避免启动时下载模板
-	nucleiOpts = append(nucleiOpts, nuclei.DisableUpdateCheck())
-
-	// 判断是否有模板（从数据库获取的模板）
-	hasTemplates := len(customTemplatePaths) > 0
-
-	if hasTemplates {
-		// 使用从数据库获取的模板
-		nucleiOpts = append(nucleiOpts, nuclei.WithTemplatesOrWorkflows(nuclei.TemplateSources{
-			Templates: customTemplatePaths,
-		}))
-		logx.Infof("Using %d templates from database", len(customTemplatePaths))
-	} else {
-		// 没有POC，记录警告
-		logx.Errorf("No templates provided! POC scan requires templates from database.")
-	}
-
-	// 注意：不再设置 severity 过滤器
-	// 模板已经在数据库查询时按 severity 过滤过了，Nuclei 引擎不应该再次过滤
-	// 这样可以确保 "Loaded X POC templates" 和 "Loaded X templates" 数量一致
-
-	// 并发配置
-	if opts.Concurrency > 0 {
-		nucleiOpts = append(nucleiOpts, nuclei.WithConcurrency(nuclei.Concurrency{
-			TemplateConcurrency:           opts.Concurrency,
-			HostConcurrency:               opts.Concurrency,
-			HeadlessHostConcurrency:       5,
-			HeadlessTemplateConcurrency:   5,
-			JavascriptTemplateConcurrency: 5,
-			TemplatePayloadConcurrency:    10,
-			ProbeConcurrency:              50,
-		}))
-	}
-
-	// 速率限制
-	if opts.RateLimit > 0 {
-		nucleiOpts = append(nucleiOpts, nuclei.WithGlobalRateLimit(opts.RateLimit, 1))
-	}
-
-	// 自定义HTTP头部
-	if len(opts.CustomHeaders) > 0 {
-		nucleiOpts = append(nucleiOpts, nuclei.WithHeaders(opts.CustomHeaders))
-		logx.Infof("Using %d custom headers", len(opts.CustomHeaders))
-	}
-
-	return nucleiOpts
-}
-
-func (s *NucleiScanner) extractMatchedReason(event *output.ResultEvent) string {
-	if event == nil {
-		return "无匹配信息"
-	}
-
-	var reason string
-	if len(event.ExtractedResults) > 0 {
-		reason = "提取到特征: " + strings.Join(event.ExtractedResults, ", ")
-	} else if len(event.MatcherName) > 0 {
-		reason = "规则命中: " + event.MatcherName
-	} else {
-		reason = "基于请求响应特征匹配模板"
-	}
-
-	if event.Matched != "" {
-		reason += fmt.Sprintf(" (触点: %s)", event.Matched)
-	}
-
-	return reason
-}
-
-// convertResult 转换Nuclei结果为漏洞对象
-func (s *NucleiScanner) convertResult(event *output.ResultEvent) *Vulnerability {
+func (s *NucleiScanner) convertCLIResult(event *NucleiResultEvent, target string) *Vulnerability {
 	if event == nil {
 		return nil
 	}
 
-	// 优先从 Matched URL 解析 host 和 port（实际漏洞URL）
-	// 如果 Matched 为空，则回退到 Host
-	var host string
-	var port int
-	if event.Matched != "" {
-		host, port = s.parseHostPort(event.Matched)
-	} else {
-		host, port = s.parseHostPort(event.Host)
+	host, port := parseHostPort(event.MatchedAt)
+	if host == "" {
+		host, port = parseHostPort(target)
 	}
 
-	resultDesc := event.Info.Name
-	if event.Info.Description != "" {
-		resultDesc += "\n" + event.Info.Description
+	resultDesc := event.Template.Info.Name
+	if event.Template.Info.Description != "" {
+		resultDesc += "\n" + event.Template.Info.Description
 	}
 	if len(event.ExtractedResults) > 0 {
 		resultDesc += "\nExtracted: " + strings.Join(event.ExtractedResults, ", ")
 	}
 
-	// 收集证据
-	evidence := CollectEvidence(event)
+	response := event.Response
+	if len(response) > MaxResponseSize {
+		response = response[:MaxResponseSize]
+	}
 
-	// 构建漏洞对象
-	tags := event.Info.Tags.ToSlice()
-	logx.Infof("[convertResult] poc=%s matched=%s vulName=%q tags=%v", event.TemplateID, event.Matched, event.Info.Name, tags)
 	vul := &Vulnerability{
-		Authority: utils.BuildTargetWithPort(host, port),
-		Host:      host,
-		Port:      port,
-		Url:       event.Matched,
-		PocFile:   event.TemplateID,
-		Source:    "nuclei",
-		Severity:  event.Info.SeverityHolder.Severity.String(),
-		Result:    resultDesc,
-		VulName:   event.Info.Name,
-		Tags:      tags,
+		Authority:        utils.BuildTargetWithPort(host, port),
+		Host:             host,
+		Port:             port,
+		Url:              event.MatchedAt,
+		PocFile:          event.TemplateID,
+		Source:           "nuclei",
+		Severity:         event.Template.Info.Severity,
+		Result:           resultDesc,
+		VulName:          event.Template.Info.Name,
+		Tags:             event.Template.Info.Tags,
+		MatcherName:      event.MatcherName,
+		ExtractedResults: event.ExtractedResults,
+		CurlCommand:      event.CurlCommand,
+		Request:          event.Request,
+		Response:         response,
 	}
 
-	// 关联模板知识库信息 (Requirement 1.4)
-	// 从模板info.classification提取CVE/CWE/CVSS信息
-	if event.Info.Classification != nil {
-		vul.CvssScore = event.Info.Classification.CVSSScore
-		// CVE ID - 可能是单个或多个
-		cveIds := event.Info.Classification.CVEID.ToSlice()
-		if len(cveIds) > 0 {
-			vul.CveId = cveIds[0] // 取第一个CVE ID
+	if event.Template.Info.Classification != nil {
+		vul.CvssScore = event.Template.Info.Classification.CvssScore
+		if len(event.Template.Info.Classification.CveID) > 0 {
+			vul.CveId = event.Template.Info.Classification.CveID[0]
 		}
-		// CWE ID - 可能是单个或多个
-		cweIds := event.Info.Classification.CWEID.ToSlice()
-		if len(cweIds) > 0 {
-			vul.CweId = cweIds[0] // 取第一个CWE ID
+		if len(event.Template.Info.Classification.CweID) > 0 {
+			vul.CweId = event.Template.Info.Classification.CweID[0]
 		}
 	}
-
-	// 关联参考链接
-	if event.Info.Reference != nil {
-		vul.References = event.Info.Reference.ToSlice()
+	if len(event.Template.Info.Reference) > 0 {
+		vul.References = event.Template.Info.Reference
 	}
-
-	// 关联修复建议
-	if event.Info.Remediation != "" {
-		vul.Remediation = event.Info.Remediation
-	}
-
-	// 添加证据信息
-	if evidence != nil {
-		vul.MatcherName = evidence.MatcherName
-		vul.ExtractedResults = evidence.ExtractedResults
-		vul.CurlCommand = evidence.CurlCommand
-		vul.Request = evidence.Request
-		vul.Response = evidence.Response
-		vul.ResponseTruncated = evidence.ResponseTruncated
-	}
+	vul.Remediation = event.Template.Info.Remediation
 
 	return vul
 }
 
-// parseHostPort 从URL解析主机和端口
-func (s *NucleiScanner) parseHostPort(rawURL string) (string, int) {
-	if !strings.Contains(rawURL, "://") {
-		rawURL = "http://" + rawURL
+func (s *NucleiScanner) prepareTemplates(opts *NucleiOptions) ([]string, error) {
+	allTemplateContents := make([]string, 0, len(opts.CustomTemplates)+len(opts.NucleiTemplates))
+	allTemplateContents = append(allTemplateContents, opts.CustomTemplates...)
+	allTemplateContents = append(allTemplateContents, opts.NucleiTemplates...)
+
+	if len(allTemplateContents) == 0 {
+		return nil, nil
 	}
 
-	u, err := url.Parse(rawURL)
+	cache := getTemplateCache()
+	cache.EvictStale()
+
+	var paths []string
+	for i, content := range allTemplateContents {
+		templateID, err := preValidateTemplate(content)
+		if err != nil {
+			logx.Infof("[WARN] Skip bad template index=%d: %v", i, err)
+			continue
+		}
+		path, err := cache.GetOrWrite(content, templateID)
+		if err != nil {
+			logx.Errorf("Failed to write template %d (%s): %v", i, templateID, err)
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+// ValidatePocTemplate 验证POC模板（CLI 模式）
+func ValidatePocTemplate(content string) (err error) {
+	if content == "" {
+		return fmt.Errorf("POC内容不能为空")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("POC加载panic: %v", r)
+			logx.Errorf("[Nuclei] ValidatePocTemplate panic recovered: %v, stack: %s", r, string(debug.Stack()))
+		}
+	}()
+
+	tmpDir, err := os.MkdirTemp("", "nuclei-validate-*")
 	if err != nil {
-		return s.parseHostPortSimple(rawURL)
+		return fmt.Errorf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	templatePath := filepath.Join(tmpDir, "template.yaml")
+	if err := os.WriteFile(templatePath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("写入临时文件失败: %v", err)
 	}
 
-	host := u.Hostname()
-	port := 80
-
-	if u.Port() != "" {
-		if p, err := strconv.Atoi(u.Port()); err == nil {
-			port = p
-		}
-	} else if u.Scheme == "https" {
-		port = 443
+	executor := NewCmdExecutor("nuclei", 256, 30*time.Second)
+	args := []string{
+		"-target", "http://example.com",
+		"-t", tmpDir,
+		"-silent",
+		"-timeout", "10",
+		"-disable-update-check",
 	}
-
-	return host, port
+	_, execErr := executor.Execute(context.Background(), args, ExecuteOpts{Timeout: 30 * time.Second})
+	if execErr != nil {
+		return fmt.Errorf("POC验证失败: %w", execErr)
+	}
+	return nil
 }
 
-// parseHostPortSimple 简单解析主机和端口
-func (s *NucleiScanner) parseHostPortSimple(hostPort string) (string, int) {
-	hostPort = strings.TrimPrefix(hostPort, "http://")
-	hostPort = strings.TrimPrefix(hostPort, "https://")
+// --- Helper types and functions ---
 
-	if idx := strings.Index(hostPort, "/"); idx != -1 {
-		hostPort = hostPort[:idx]
-	}
-
-	if idx := strings.LastIndex(hostPort, ":"); idx != -1 {
-		host := hostPort[:idx]
-		port := 80
-		if p, err := strconv.Atoi(hostPort[idx+1:]); err == nil {
-			port = p
-		}
-		return host, port
-	}
-
-	return hostPort, 80
+type templateMeta struct {
+	index      int
+	templateID string
+	path       string
 }
 
-// generateAutoTags 根据资产的应用信息生成Nuclei标签（基于自定义标签映射）
-func (s *NucleiScanner) generateAutoTags(assets []*Asset, tagMappings map[string][]string) []string {
-	tagSet := make(map[string]bool)
-
-	for _, asset := range assets {
-		logx.Debugf("Asset %s:%d apps: %v", asset.Host, asset.Port, asset.App)
-		for _, app := range asset.App {
-			appName := parseAppName(app)
-			appNameLower := strings.ToLower(appName)
-
-			logx.Debugf("Parsed app name: '%s' -> '%s'", app, appName)
-
-			for mappedApp, tags := range tagMappings {
-				if strings.ToLower(mappedApp) == appNameLower {
-					logx.Infof("Matched app '%s' -> tags: %v", appName, tags)
-					for _, tag := range tags {
-						tagSet[tag] = true
-					}
-					break
-				}
-			}
-		}
-	}
-
-	tags := make([]string, 0, len(tagSet))
-	for tag := range tagSet {
-		tags = append(tags, tag)
-	}
-	return tags
-}
-
-// generateWappalyzerAutoTags 根据资产的应用信息生成Nuclei标签（基于Wappalyzer内置映射，类似nuclei -as）
-func (s *NucleiScanner) generateWappalyzerAutoTags(assets []*Asset) []string {
-	tagSet := make(map[string]bool)
-
-	for _, asset := range assets {
-		logx.Debugf("Asset %s:%d apps: %v", asset.Host, asset.Port, asset.App)
-		for _, app := range asset.App {
-			appName := parseAppName(app)
-			appNameLower := strings.ToLower(appName)
-
-			// 使用内置的Wappalyzer到Nuclei标签映射
-			if tags, ok := mapping.WappalyzerNucleiMapping[appNameLower]; ok {
-				logx.Infof("Wappalyzer auto-scan matched '%s' -> tags: %v", appName, tags)
-				for _, tag := range tags {
-					tagSet[tag] = true
-				}
-			}
-		}
-	}
-
-	tags := make([]string, 0, len(tagSet))
-	for tag := range tagSet {
-		tags = append(tags, tag)
-	}
-	return tags
-}
-
-// parseAppName 解析应用名称，去除版本号和来源标识
-func parseAppName(app string) string {
-	appName := app
-	// 先去掉 [source] 后缀
-	if idx := strings.Index(appName, "["); idx > 0 {
-		appName = appName[:idx]
-	}
-	// 再去掉 :version 后缀
-	if idx := strings.Index(appName, ":"); idx > 0 {
-		appName = appName[:idx]
-	}
-	return strings.TrimSpace(appName)
-}
-
-// preValidateTemplate 廉价结构检查，在写盘前过滤坏模板（~10-50μs/模板）
 func preValidateTemplate(content string) (templateID string, err error) {
 	trimmed := strings.TrimSpace(content)
 	if len(trimmed) < 30 {
@@ -1023,21 +552,6 @@ func preValidateTemplate(content string) (templateID string, err error) {
 	return wrapper.Id, nil
 }
 
-// safeDeepParseTemplate 深度模拟 Nuclei 底层解析过程并包裹 recover
-// 用于在引擎开启独立 goroutine 加载前，提前在主协程引爆因 govaluate 表达式缺陷导致的 Panic
-func safeDeepParseTemplate(content string) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("go-evaluate panic recovered: %v", r)
-		}
-	}()
-
-	var t templates.Template
-	err = yamlv2.UnmarshalStrict([]byte(content), &t)
-	return err
-}
-
-// templateFileCache 基于内容哈希的模板文件缓存
 type templateFileCache struct {
 	mu      sync.RWMutex
 	baseDir string
@@ -1117,7 +631,6 @@ func (c *templateFileCache) EvictStale() {
 	}
 }
 
-// extractTemplateId 从模板YAML内容中提取模板ID
 func extractTemplateId(content string) string {
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
@@ -1130,228 +643,196 @@ func extractTemplateId(content string) string {
 	return ""
 }
 
-// tryBuildRealEngine 构建用于实际扫描的引擎，内置 panic 保护
-// 成功时返回可直接用于 ExecuteCallbackWithCtx 的引擎
-func (s *NucleiScanner) tryBuildRealEngine(
-	ctx context.Context, paths []string, opts *NucleiOptions, targetCount int,
-) (engine *nuclei.NucleiEngine, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("engine panic: %v", r)
-			if engine != nil {
-				engine.Close()
-				engine = nil
-			}
+func parseAppName(app string) string {
+	appName := app
+	if idx := strings.Index(appName, "["); idx > 0 {
+		appName = appName[:idx]
+	}
+	if idx := strings.Index(appName, ":"); idx > 0 {
+		appName = appName[:idx]
+	}
+	return strings.TrimSpace(appName)
+}
+
+func prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, format string, args ...interface{})) []string {
+	targets := make([]string, 0, len(assets))
+	seen := make(map[string]bool)
+	skipped := 0
+	var skippedDetails []string
+
+	for _, asset := range assets {
+		isHTTP := asset.IsHTTP || IsHTTPService(asset.Service, asset.Port)
+		if !forceScan && !isHTTP {
+			skipped++
+			detail := fmt.Sprintf("%s:%d (service=%s)", asset.Host, asset.Port, asset.Service)
+			skippedDetails = append(skippedDetails, detail)
+			logx.Debugf("Skipping non-HTTP asset: %s", detail)
+			continue
 		}
-	}()
-	nucleiOpts := s.buildNucleiOptions(opts, paths, targetCount) // 带完整配置
-	engine, err = nuclei.NewNucleiEngineCtx(ctx, nucleiOpts...)
-	if err != nil {
-		return nil, err
-	}
-	if eo := engine.Options(); eo != nil {
-		eo.StoreResponse = true
-	}
-	if err = engine.LoadAllTemplates(); err != nil {
-		engine.Close()
-		return nil, err
-	}
-	return engine, nil
-}
 
-// buildAndLoadEngine 编排引擎创建和模板加载，包含异常回退
-func (s *NucleiScanner) buildAndLoadEngine(
-	ctx context.Context, paths []string, metas []templateMeta,
-	opts *NucleiOptions, targetCount int, taskLog func(string, string, ...interface{}),
-) (engine *nuclei.NucleiEngine, cleanPaths []string, cleanMetas []templateMeta, err error) {
-	if len(paths) == 0 {
-		return nil, nil, nil, fmt.Errorf("no templates provided")
-	}
-
-	// 尝试直接构建真正引擎（正常路径：1 次引擎创建）
-	engine, err = s.tryBuildRealEngine(ctx, paths, opts, targetCount)
-	if err == nil {
-		return engine, paths, metas, nil
-	}
-
-	// 失败：二分查找坏模板（沿用 binarySearchBadTemplates 的隔离逻辑）
-	taskLog("WARN", "Engine init failed (%v), isolating bad templates...", err)
-	cleanPaths, cleanMetas = s.isolateBadTemplates(ctx, paths, metas, opts, taskLog)
-	if len(cleanPaths) == 0 {
-		return nil, nil, nil, fmt.Errorf("no loadable templates after filtering")
-	}
-
-	// 用清理后的模板重建
-	engine, err = s.tryBuildRealEngine(ctx, cleanPaths, opts, targetCount)
-	return engine, cleanPaths, cleanMetas, err
-}
-
-// isolateBadTemplates 定位并隔离坏模板
-func (s *NucleiScanner) isolateBadTemplates(ctx context.Context, paths []string, metas []templateMeta, opts *NucleiOptions, taskLog func(string, string, ...interface{})) ([]string, []templateMeta) {
-	badSet := make(map[string]bool)
-	s.binarySearchBadTemplates(ctx, paths, metas, opts, taskLog, badSet)
-
-	if len(badSet) == 0 {
-		taskLog("WARN", "Binary search found no single bad template, falling back to sequential validation")
-		return s.sequentialFilter(ctx, paths, metas, opts, taskLog)
-	}
-
-	var goodPaths []string
-	var goodMetas []templateMeta
-	for i, p := range paths {
-		if !badSet[p] {
-			goodPaths = append(goodPaths, p)
-			if i < len(metas) {
-				goodMetas = append(goodMetas, metas[i])
-			}
+		scheme := "http"
+		if asset.Service == "https" || asset.Port == 443 || asset.Port == 8443 {
+			scheme = "https"
 		}
-	}
 
-	taskLog("INFO", "Template filtering done: %d good, %d bad removed", len(goodPaths), len(badSet))
-
-	if len(goodPaths) > 0 && !s.tryLoadTemplates(ctx, goodPaths, opts) {
-		taskLog("WARN", "Filtered templates still fail to load, falling back to sequential validation")
-		return s.sequentialFilter(ctx, goodPaths, goodMetas, opts, taskLog)
-	}
-
-	return goodPaths, goodMetas
-}
-
-// tryLoadTemplates 尝试用给定路径创建 Nuclei 引擎并加载模板，成功返回 true
-// 内部 recover panic，不会向上传播
-func (s *NucleiScanner) tryLoadTemplates(ctx context.Context, paths []string, _ *NucleiOptions) (ok bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			logx.Errorf("[Nuclei] tryLoadTemplates panic recovered: %v", r)
-			ok = false
-		}
-	}()
-
-	testCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	nucleiOpts := []nuclei.NucleiSDKOptions{
-		nuclei.WithTemplatesOrWorkflows(nuclei.TemplateSources{
-			Templates: paths,
-		}),
-		nuclei.DisableUpdateCheck(),
-	}
-
-	ne, err := nuclei.NewNucleiEngineCtx(testCtx, nucleiOpts...)
-	if err != nil {
-		return false
-	}
-	defer ne.Close()
-
-	if err := ne.LoadAllTemplates(); err != nil {
-		return false
-	}
-
-	return true
-}
-
-// binarySearchBadTemplates 二分法递归查找坏模板，结果写入 badSet
-func (s *NucleiScanner) binarySearchBadTemplates(ctx context.Context, paths []string, metas []templateMeta, opts *NucleiOptions, taskLog func(string, string, ...interface{}), badSet map[string]bool) {
-	// 递归终止：单个模板
-	if len(paths) == 1 {
-		if !s.tryLoadTemplates(ctx, paths, opts) {
-			badSet[paths[0]] = true
-			tid := "unknown"
-			if len(metas) > 0 {
-				tid = metas[0].templateID
+		var target string
+		if asset.Path != "" && asset.Path != "/" {
+			path := asset.Path
+			if !strings.HasPrefix(path, "/") {
+				path = "/" + path
 			}
-			taskLog("ERROR", "Bad template found: index=%d, templateId=%s, path=%s", metas[0].index, tid, paths[0])
-			logx.Errorf("[Nuclei] Bad template isolated: index=%d, templateId=%s, path=%s", metas[0].index, tid, paths[0])
-		}
-		return
-	}
-
-	// 如果整批能加载，说明这批没问题
-	if s.tryLoadTemplates(ctx, paths, opts) {
-		return
-	}
-
-	// 这批有问题，二分继续
-	mid := len(paths) / 2
-	s.binarySearchBadTemplates(ctx, paths[:mid], metas[:mid], opts, taskLog, badSet)
-	s.binarySearchBadTemplates(ctx, paths[mid:], metas[mid:], opts, taskLog, badSet)
-}
-
-// sequentialFilter 逐个验证模板，返回可加载的模板列表（最后手段，较慢）
-func (s *NucleiScanner) sequentialFilter(ctx context.Context, paths []string, metas []templateMeta, opts *NucleiOptions, taskLog func(string, string, ...interface{})) ([]string, []templateMeta) {
-	var goodPaths []string
-	var goodMetas []templateMeta
-
-	for i, p := range paths {
-		if s.tryLoadTemplates(ctx, []string{p}, opts) {
-			goodPaths = append(goodPaths, p)
-			if i < len(metas) {
-				goodMetas = append(goodMetas, metas[i])
-			}
+			target = fmt.Sprintf("%s://%s:%d%s", scheme, asset.Host, asset.Port, path)
 		} else {
-			tid := "unknown"
-			if i < len(metas) {
-				tid = metas[i].templateID
-			}
-			taskLog("ERROR", "Bad template (sequential): index=%d, templateId=%s", i, tid)
+			target = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
+		}
+
+		if !seen[target] {
+			seen[target] = true
+			targets = append(targets, target)
 		}
 	}
 
-	taskLog("INFO", "Sequential filter done: %d good, %d bad", len(goodPaths), len(paths)-len(goodPaths))
-	return goodPaths, goodMetas
+	if skipped > 0 {
+		logx.Infof("Nuclei: skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
+		if taskLogger != nil {
+			if forceScan {
+				taskLogger("INFO", "Force scan enabled: processing %d assets", len(targets))
+			} else {
+				taskLogger("INFO", "Skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
+				if len(skippedDetails) <= 10 {
+					taskLogger("INFO", "Skipped non-HTTP assets: %s", strings.Join(skippedDetails, ", "))
+				} else {
+					taskLogger("INFO", "Skipped non-HTTP assets (first 10): %s", strings.Join(skippedDetails[:10], ", "))
+				}
+			}
+		}
+	} else if forceScan && len(assets) > 0 && taskLogger != nil {
+		taskLogger("INFO", "Force scan enabled: all %d assets will be scanned", len(assets))
+	}
+
+	return targets
 }
 
-// ValidatePocTemplate 验证POC模板是否有效
-// 使用Nuclei SDK加载模板，检查是否能正确解析
-func ValidatePocTemplate(content string) (err error) {
-	if content == "" {
-		return fmt.Errorf("POC内容不能为空")
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("POC加载panic: %v", r)
-			logx.Errorf("[Nuclei] ValidatePocTemplate panic recovered: %v, stack: %s", r, string(debug.Stack()))
+func generateAutoTags(assets []*Asset, tagMappings map[string][]string) []string {
+	tagSet := make(map[string]bool)
+	for _, asset := range assets {
+		for _, app := range asset.App {
+			appName := parseAppName(app)
+			for mappedApp, tags := range tagMappings {
+				if strings.ToLower(mappedApp) == strings.ToLower(appName) {
+					for _, tag := range tags {
+						tagSet[tag] = true
+					}
+					break
+				}
+			}
 		}
-	}()
+	}
+	tags := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	return tags
+}
 
-	// 创建临时文件
-	tempDir, err := os.MkdirTemp("", "nuclei-validate-*")
+func generateWappalyzerAutoTags(assets []*Asset) []string {
+	tagSet := make(map[string]bool)
+	for _, asset := range assets {
+		for _, app := range asset.App {
+			appName := parseAppName(app)
+			if tags, ok := mapping.WappalyzerNucleiMapping[strings.ToLower(appName)]; ok {
+				for _, tag := range tags {
+					tagSet[tag] = true
+				}
+			}
+		}
+	}
+	tags := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
+func parseHostPort(rawURL string) (string, int) {
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "http://" + rawURL
+	}
+	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("创建临时目录失败: %v", err)
+		return parseHostPortSimple(rawURL)
 	}
-	defer os.RemoveAll(tempDir)
-
-	templatePath := filepath.Join(tempDir, "template.yaml")
-	if err := os.WriteFile(templatePath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("写入临时文件失败: %v", err)
+	host := u.Hostname()
+	port := 80
+	if u.Port() != "" {
+		if p, err := strconv.Atoi(u.Port()); err == nil {
+			port = p
+		}
+	} else if u.Scheme == "https" {
+		port = 443
 	}
+	return host, port
+}
 
-	// 创建Nuclei引擎验证模板
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	ne, err := nuclei.NewNucleiEngineCtx(ctx,
-		nuclei.WithTemplatesOrWorkflows(nuclei.TemplateSources{
-			Templates: []string{templatePath},
-		}),
-		nuclei.DisableUpdateCheck(),
-	)
-	if err != nil {
-		return fmt.Errorf("POC格式错误: %v", err)
+func parseHostPortSimple(hostPort string) (string, int) {
+	hostPort = strings.TrimPrefix(hostPort, "http://")
+	hostPort = strings.TrimPrefix(hostPort, "https://")
+	if idx := strings.Index(hostPort, "/"); idx != -1 {
+		hostPort = hostPort[:idx]
 	}
-	defer ne.Close()
-
-	// 尝试加载模板
-	if err := ne.LoadAllTemplates(); err != nil {
-		return fmt.Errorf("POC加载失败: %v", err)
+	if idx := strings.LastIndex(hostPort, ":"); idx != -1 {
+		host := hostPort[:idx]
+		port := 80
+		if p, err := strconv.Atoi(hostPort[idx+1:]); err == nil {
+			port = p
+		}
+		return host, port
 	}
+	return hostPort, 80
+}
 
-	// 检查是否成功加载了模板
-	templates := ne.GetTemplates()
-	if len(templates) == 0 {
-		return fmt.Errorf("POC无效: 未能加载任何模板，请检查YAML格式和必填字段(id, info, requests等)")
+func extractMatchedReason(event *NucleiResultEvent) string {
+	if event == nil {
+		return "无匹配信息"
 	}
+	var reason string
+	if len(event.ExtractedResults) > 0 {
+		reason = "提取到特征: " + strings.Join(event.ExtractedResults, ", ")
+	} else if event.MatcherName != "" {
+		reason = "规则命中: " + event.MatcherName
+	} else {
+		reason = "基于请求响应特征匹配模板"
+	}
+	if event.Matched {
+		reason += fmt.Sprintf(" (触点: %s)", event.MatchedAt)
+	}
+	return reason
+}
 
-	return nil
+type nucleiScanError struct {
+	target  string
+	phase   string
+	err     error
+	timeout bool
+}
+
+func (e *nucleiScanError) Error() string {
+	if e.timeout {
+		return fmt.Sprintf("nuclei %s timeout for %s", e.phase, e.target)
+	}
+	return fmt.Sprintf("nuclei %s failed for %s: %v", e.phase, e.target, e.err)
+}
+
+func logScanError(err *nucleiScanError, taskLogger func(level, format string, args ...interface{})) {
+	if err.timeout {
+		logx.Infof("Nuclei: %s timeout for %s", err.phase, err.target)
+		if taskLogger != nil {
+			taskLogger("WARN", "POC %s timeout", err.phase)
+		}
+	} else {
+		logx.Errorf("Nuclei %s error for %s: %v", err.phase, err.target, err.err)
+		if taskLogger != nil {
+			taskLogger("ERROR", "POC %s error: %v", err.phase, err.err)
+		}
+	}
 }

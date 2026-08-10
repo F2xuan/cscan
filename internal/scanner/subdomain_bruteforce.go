@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -19,7 +20,6 @@ import (
 	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
 
-	"github.com/projectdiscovery/dnsx/libs/dnsx"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -375,17 +375,14 @@ func (s *SubdomainBruteforceScanner) parseWordlist(content string) []string {
 	return words
 }
 
-// bruteforceWithDnsxSDK 使用dnsx SDK进行暴力破解
-// wildcardIPs 参数可选，如果传入nil则会自动检测泛解析
+// bruteforceWithDnsxSDK 使用 dnsx CLI 进行暴力破解
+// wildcardIPs 参数可选，如果传入 nil 则会自动检测泛解析
 func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDK(ctx context.Context, domain string, wordlist []string, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) ([]string, error) {
 	return s.bruteforceWithDnsxSDKAndWildcard(ctx, domain, wordlist, opts, nil, taskLog)
 }
 
-// bruteforceWithDnsxSDKAndWildcard 使用dnsx SDK进行暴力破解，支持传入预检测的泛解析IP
+// bruteforceWithDnsxSDKAndWildcard 使用 dnsx CLI 进行暴力破解，支持传入预检测的泛解析 IP
 func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx context.Context, domain string, wordlist []string, opts *SubdomainBruteforceOptions, predetectedWildcardIPs map[string]bool, taskLog func(level, format string, args ...interface{})) ([]string, error) {
-	var subdomains []string
-	var mu sync.Mutex
-
 	// 泛解析检测（如果没有预检测结果）
 	var wildcardIPs map[string]bool
 	if opts.WildcardFilter || opts.WildcardDetect {
@@ -400,90 +397,96 @@ func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx contex
 		}
 	}
 
-	// 创建dnsx客户端
-	dnsxOpts := dnsx.DefaultOptions
-	dnsxOpts.MaxRetries = 3
-
-	// 设置自定义解析器
-	if len(opts.Resolvers) > 0 {
-		dnsxOpts.BaseResolvers = opts.Resolvers
-	}
-
-	dnsClient, err := dnsx.New(dnsxOpts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dnsx client: %v", err)
-	}
-
-	// 并发控制
-	concurrent := opts.Concurrent
-	if concurrent <= 0 {
-		concurrent = 50
-	}
-
-	taskChan := make(chan string, concurrent)
-	var wg sync.WaitGroup
-
-	processed := 0
-	total := len(wordlist)
-
-	// 启动工作协程
-	for i := 0; i < concurrent; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for word := range taskChan {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					subdomain := fmt.Sprintf("%s.%s", word, domain)
-
-					// 使用dnsx SDK进行DNS查询
-					result, err := dnsClient.Lookup(subdomain)
-					if err != nil || len(result) == 0 {
-						continue
-					}
-
-					// 泛解析过滤
-					if (opts.WildcardFilter || opts.WildcardDetect) && len(wildcardIPs) > 0 {
-						isWildcard := true
-						for _, ip := range result {
-							if !wildcardIPs[ip] {
-								isWildcard = false
-								break
-							}
-						}
-						if isWildcard {
-							continue
-						}
-					}
-
-					mu.Lock()
-					subdomains = append(subdomains, subdomain)
-					mu.Unlock()
-				}
-			}
-		}()
-	}
-
-	// 发送任务
+	// 构建 word.domain 目标列表
+	subdomainCandidates := make([]string, 0, len(wordlist))
 	for _, word := range wordlist {
 		select {
 		case <-ctx.Done():
-			close(taskChan)
-			wg.Wait()
-			return subdomains, ctx.Err()
-		case taskChan <- word:
-			processed++
-			if processed%1000 == 0 {
-				taskLog("INFO", "Bruteforce: progress %d/%d", processed, total)
-			}
+			return nil, ctx.Err()
+		default:
 		}
+		subdomainCandidates = append(subdomainCandidates, fmt.Sprintf("%s.%s", word, domain))
 	}
 
-	close(taskChan)
-	wg.Wait()
+	// 写入临时目标文件
+	tmpFile, err := os.CreateTemp("", "dnsx-brute-*.txt")
+	if err != nil {
+		return nil, fmt.Errorf("create targets file: %w", err)
+	}
+	for _, sub := range subdomainCandidates {
+		tmpFile.WriteString(sub + "\n")
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
 
+	// 构建 dnsx CLI 参数
+	args := []string{
+		"-l", tmpPath,
+		"-json",
+		"-silent",
+		"-a", "-aaaa",
+		"-timeout", fmt.Sprintf("%d", opts.Timeout),
+		"-retries", "3",
+		"-disable-update-check",
+	}
+	if len(opts.Resolvers) > 0 {
+		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
+	}
+
+	// 通过 DnsxScanner 的 executor 执行 CLI
+	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
+	// 超时按目标数量估算，最少 60s
+	timeout := time.Duration(len(subdomainCandidates)*opts.Timeout+60) * time.Second
+	res, err := executor.Execute(ctx, args, ExecuteOpts{Timeout: timeout})
+	if err != nil {
+		return nil, fmt.Errorf("dnsx execution: %w", err)
+	}
+
+	// 批量解析结果
+	resolvedMap := make(map[string][]string)
+	scanner := newLineScanner(res.Stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var dr struct {
+			Host string   `json:"host"`
+			IP   []string `json:"ip"`
+		}
+		if err := json.Unmarshal([]byte(line), &dr); err != nil {
+			continue
+		}
+		if dr.Host == "" || len(dr.IP) == 0 {
+			continue
+		}
+		resolvedMap[dr.Host] = dr.IP
+	}
+
+	// 泛解析过滤并收集子域名
+	var subdomains []string
+	for _, sub := range subdomainCandidates {
+		ips, ok := resolvedMap[sub]
+		if !ok || len(ips) == 0 {
+			continue
+		}
+		if (opts.WildcardFilter || opts.WildcardDetect) && len(wildcardIPs) > 0 {
+			isWildcard := true
+			for _, ip := range ips {
+				if !wildcardIPs[ip] {
+					isWildcard = false
+					break
+				}
+			}
+			if isWildcard {
+				continue
+			}
+		}
+		subdomains = append(subdomains, sub)
+	}
+
+	taskLog("INFO", "Bruteforce: dnsx resolved %d/%d candidate subdomains", len(subdomains), len(subdomainCandidates))
 	return subdomains, nil
 }
 
@@ -893,16 +896,9 @@ func (s *SubdomainBruteforceScanner) checkTakeover(ctx context.Context, client *
 	return result
 }
 
-// detectWildcard 检测泛解析
+// detectWildcard 检测泛解析（使用 dnsx CLI）
 func (s *SubdomainBruteforceScanner) detectWildcard(domain string) map[string]bool {
 	wildcardIPs := make(map[string]bool)
-
-	// 创建dnsx客户端用于泛解析检测
-	dnsClient, err := dnsx.New(dnsx.DefaultOptions)
-	if err != nil {
-		logx.Errorf("Failed to create dnsx client for wildcard detection: %v", err)
-		return wildcardIPs
-	}
 
 	// 使用随机字符串测试泛解析
 	testSubdomains := []string{
@@ -911,129 +907,181 @@ func (s *SubdomainBruteforceScanner) detectWildcard(domain string) map[string]bo
 		fmt.Sprintf("nonexistent-%d.%s", utils.RandomInt(100000, 999999), domain),
 	}
 
-	for _, subdomain := range testSubdomains {
-		result, err := dnsClient.Lookup(subdomain)
-		if err == nil && len(result) > 0 {
-			for _, ip := range result {
-				wildcardIPs[ip] = true
-			}
+	// 写入临时目标文件
+	tmpFile, err := os.CreateTemp("", "dnsx-wildcard-*.txt")
+	if err != nil {
+		logx.Errorf("Failed to create wildcard targets file: %v", err)
+		return wildcardIPs
+	}
+	for _, sub := range testSubdomains {
+		tmpFile.WriteString(sub + "\n")
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	args := []string{
+		"-l", tmpPath,
+		"-json",
+		"-silent",
+		"-a",
+		"-timeout", "5",
+		"-retries", "1",
+		"-disable-update-check",
+	}
+
+	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
+	res, err := executor.Execute(context.Background(), args, ExecuteOpts{Timeout: 30 * time.Second})
+	if err != nil {
+		logx.Errorf("Failed to run dnsx for wildcard detection: %v", err)
+		return wildcardIPs
+	}
+
+	scanner := newLineScanner(res.Stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var dr struct {
+			Host string   `json:"host"`
+			IP   []string `json:"ip"`
+		}
+		if err := json.Unmarshal([]byte(line), &dr); err != nil {
+			continue
+		}
+		for _, ip := range dr.IP {
+			wildcardIPs[ip] = true
 		}
 	}
 
 	return wildcardIPs
 }
 
-// resolveDomains 使用dnsx进行DNS解析子域名
+// resolveDomains 使用 dnsx CLI 批量解析子域名
 func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains []string, concurrent int, taskLog func(level, format string, args ...interface{})) []*Asset {
-	var assets []*Asset
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+	if len(domains) == 0 {
+		return nil
+	}
 
 	if concurrent <= 0 {
 		concurrent = 50
 	}
 
-	// 创建dnsx客户端
-	dnsxOpts := dnsx.DefaultOptions
-	dnsxOpts.MaxRetries = 3
-	dnsClient, err := dnsx.New(dnsxOpts)
+	// 写入临时目标文件
+	tmpFile, err := os.CreateTemp("", "dnsx-resolve-*.txt")
 	if err != nil {
-		logx.Errorf("Failed to create dnsx client for resolution: %v", err)
-		return assets
+		logx.Errorf("Failed to create resolve targets file: %v", err)
+		return nil
+	}
+	for _, d := range domains {
+		tmpFile.WriteString(d + "\n")
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	args := []string{
+		"-l", tmpPath,
+		"-json",
+		"-silent",
+		"-a", "-aaaa",
+		"-timeout", "5",
+		"-retries", "3",
+		"-disable-update-check",
 	}
 
-	taskChan := make(chan string, concurrent)
-	skippedLoopback := 0
-	var skippedMu sync.Mutex
-
-	for i := 0; i < concurrent; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for domain := range taskChan {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					// 使用dnsx进行DNS解析
-					result, err := dnsClient.Lookup(domain)
-					if err != nil || len(result) == 0 {
-						continue
-					}
-
-					// 过滤回环地址：如果所有IP都是127.0.0.1等回环地址，跳过该域名
-					allLoopback := true
-					for _, ip := range result {
-						parsedIP := net.ParseIP(ip)
-						if parsedIP != nil && !parsedIP.IsLoopback() {
-							allLoopback = false
-							break
-						}
-					}
-					if allLoopback {
-						skippedMu.Lock()
-						skippedLoopback++
-						skippedMu.Unlock()
-						continue
-					}
-
-					asset := &Asset{
-						Authority: domain,
-						Host:      domain,
-						Category:  "domain",
-					}
-
-					for _, ip := range result {
-						parsedIP := net.ParseIP(ip)
-						if parsedIP == nil {
-							continue
-						}
-						// 跳过回环地址
-						if parsedIP.IsLoopback() {
-							continue
-						}
-						if ip4 := parsedIP.To4(); ip4 != nil {
-							locStr, _ := ipLocator.Locate(ip4.String())
-							location := geolocation.NormalizeLocation(locStr)
-							asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: location})
-						} else {
-							locStr, _ := ipLocator.Locate(parsedIP.String())
-							location := geolocation.NormalizeLocation(locStr)
-							asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String(), Location: location})
-						}
-					}
-
-					// 使用dnsx查询CNAME
-					cname, err := net.LookupCNAME(domain)
-					if err == nil && cname != domain+"." {
-						asset.CName = strings.TrimSuffix(cname, ".")
-					}
-
-					mu.Lock()
-					assets = append(assets, asset)
-					mu.Unlock()
-				}
-			}
-		}()
+	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
+	// 超时按目标数量估算，最少 60s
+	timeout := time.Duration(len(domains)*5+60) * time.Second
+	res, err := executor.Execute(ctx, args, ExecuteOpts{Timeout: timeout})
+	if err != nil {
+		logx.Errorf("Failed to run dnsx for resolution: %v", err)
+		return nil
 	}
 
-	resolved := 0
-	for _, domain := range domains {
-		select {
-		case <-ctx.Done():
-			close(taskChan)
-			wg.Wait()
-			return assets
-		case taskChan <- domain:
-			resolved++
-			if resolved%100 == 0 && taskLog != nil {
-				taskLog("INFO", "Bruteforce DNS resolved: %d/%d", resolved, len(domains))
-			}
+	ipLocator := geolocation.NewIPLocator()
+	resolvedMap := make(map[string][]string)
+	scanner := newLineScanner(res.Stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var dr struct {
+			Host string   `json:"host"`
+			IP   []string `json:"ip"`
+		}
+		if err := json.Unmarshal([]byte(line), &dr); err != nil {
+			continue
+		}
+		if dr.Host != "" && len(dr.IP) > 0 {
+			resolvedMap[dr.Host] = dr.IP
 		}
 	}
 
-	close(taskChan)
-	wg.Wait()
+	var assets []*Asset
+	skippedLoopback := 0
+	resolved := 0
+	total := len(domains)
+
+	for _, domain := range domains {
+		select {
+		case <-ctx.Done():
+			return assets
+		default:
+		}
+		ips, ok := resolvedMap[domain]
+		if !ok || len(ips) == 0 {
+			continue
+		}
+		resolved++
+
+		// 过滤回环地址：如果所有 IP 都是回环地址，跳过该域名
+		allLoopback := true
+		for _, ip := range ips {
+			parsedIP := net.ParseIP(ip)
+			if parsedIP != nil && !parsedIP.IsLoopback() {
+				allLoopback = false
+				break
+			}
+		}
+		if allLoopback {
+			skippedLoopback++
+			continue
+		}
+
+		asset := &Asset{
+			Authority: domain,
+			Host:      domain,
+			Category:  "domain",
+		}
+
+		for _, ip := range ips {
+			parsedIP := net.ParseIP(ip)
+			if parsedIP == nil || parsedIP.IsLoopback() {
+				continue
+			}
+			if ip4 := parsedIP.To4(); ip4 != nil {
+				locStr, _ := ipLocator.Locate(ip4.String())
+				asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: geolocation.NormalizeLocation(locStr)})
+			} else {
+				locStr, _ := ipLocator.Locate(parsedIP.String())
+				asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String(), Location: geolocation.NormalizeLocation(locStr)})
+			}
+		}
+
+		// CNAME 查询（使用标准库）
+		if cname, err := net.LookupCNAME(domain); err == nil && cname != domain+"." {
+			asset.CName = strings.TrimSuffix(cname, ".")
+		}
+
+		assets = append(assets, asset)
+
+		if resolved%100 == 0 && taskLog != nil {
+			taskLog("INFO", "Bruteforce DNS resolved: %d/%d", resolved, total)
+		}
+	}
 
 	// 输出跳过的回环地址域名数量
 	if skippedLoopback > 0 && taskLog != nil {

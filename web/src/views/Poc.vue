@@ -927,8 +927,7 @@
           striped-flow
         />
         <div class="progress-info">
-          <span v-if="downloadStatus === 'pending'">{{ $t('poc.downloadPreparing') }}</span>
-          <span v-else-if="downloadStatus === 'downloading'">{{ $t('poc.downloadInProgress') }}</span>
+          <span v-if="downloadStatus === 'downloading'">{{ $t('poc.downloadInProgress') }}</span>
           <span v-else-if="downloadStatus === 'extracting'">{{ $t('poc.extracting') }}</span>
           <span v-else-if="downloadStatus === 'completed'">{{ $t('poc.downloadCompleted') }}</span>
           <span v-else-if="downloadStatus === 'failed'" class="error-text">{{ downloadError }}</span>
@@ -968,7 +967,7 @@
       
       <template #footer>
         <template v-if="downloadStatus === 'completed'">
-          <el-button type="primary" @click="handleDownloadComplete">{{ $t('poc.done') }}</el-button>
+          <el-button type="primary" @click="handleUploadComplete">{{ $t('poc.done') }}</el-button>
         </template>
         <template v-else-if="downloadStatus === 'failed'">
           <el-button @click="resetDownloadDialog">{{ $t('poc.retry') }}</el-button>
@@ -1346,7 +1345,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check, Search, Loading, CircleCheck, CircleClose, Close } from '@element-plus/icons-vue'
-import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax, batchValidatePoc } from '@/api/poc'
+import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax, batchValidatePoc } from '@/api/poc'
 import { DEFAULT_AI_CONFIG, loadAIConfig, chat, extractYamlBlock } from '@/utils/aiClient'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
@@ -1405,19 +1404,15 @@ const forceImport = ref(false)
 const templateContentDialogVisible = ref(false)
 const currentTemplate = ref({})
 
-// 下载模板库
+// 同步模板（上传ZIP）
 const downloadTemplateDialogVisible = ref(false)
 const downloadTemplateLoading = ref(false)
-const downloadTemplateForce = ref(false)
-const downloadTaskId = ref('')
 const downloadProgress = ref(0)
-const downloadStatus = ref('') // pending/downloading/extracting/completed/failed
+const downloadStatus = ref('') // extracting/downloading/completed/failed
 const downloadTemplateCount = ref(0)
 const downloadError = ref('')
-const syncTabActive = ref('upload')
 const selectedZipFile = ref(null)
 const zipUploadRef = ref(null)
-let downloadStatusTimer = null
 
 // 标签映射
 const tagMappings = ref([])
@@ -1776,34 +1771,16 @@ function handleOpenDownloadDialog() {
   downloadTemplateDialogVisible.value = true
 }
 
-async function handleSyncCommand(command) {
-  if (command === 'download') {
-    // 显示下载对话框
-    resetDownloadDialog()
-    downloadTemplateDialogVisible.value = true
-  } else if (command === 'local') {
-    forceImport.value = false
-    folderInputRef.value?.click()
-  }
-}
-
-// 重置下载对话框状态
+// 重置上传对话框状态
 function resetDownloadDialog() {
-  downloadTemplateForce.value = false
   downloadTemplateLoading.value = false
-  downloadTaskId.value = ''
   downloadProgress.value = 0
   downloadStatus.value = ''
   downloadTemplateCount.value = 0
   downloadError.value = ''
   selectedZipFile.value = null
-  syncTabActive.value = 'upload'
   if (zipUploadRef.value) {
     zipUploadRef.value.clearFiles()
-  }
-  if (downloadStatusTimer) {
-    clearInterval(downloadStatusTimer)
-    downloadStatusTimer = null
   }
 }
 
@@ -1871,15 +1848,15 @@ async function handleUploadZip() {
     // 批量同步到数据库
     downloadStatus.value = 'downloading'
     downloadProgress.value = 70
-    
+
     const batchSize = 200
     let successCount = 0
-    
+
     for (let i = 0; i < yamlFiles.length; i += batchSize) {
       const batch = yamlFiles.slice(i, i + batchSize)
       const res = await syncNucleiTemplates({
         templates: batch,
-        force: i === 0 && downloadTemplateForce.value
+        force: i === 0
       })
       if (res.code === 0) {
         successCount += res.successCount || batch.length
@@ -1900,104 +1877,13 @@ async function handleUploadZip() {
   }
 }
 
-// 下载Nuclei模板库
-async function handleDownloadTemplates() {
-  try {
-    downloadTemplateLoading.value = true
-    downloadStatus.value = 'pending'
-    downloadProgress.value = 0
-    
-    const res = await downloadNucleiTemplates({
-      force: downloadTemplateForce.value
-    })
-    
-    if (res.code === 0 && res.taskId) {
-      downloadTaskId.value = res.taskId
-      // 开始轮询状态
-      startPollingStatus()
-    } else {
-      downloadStatus.value = 'failed'
-      downloadError.value = res.msg || '启动下载失败'
-      downloadTemplateLoading.value = false
-    }
-  } catch (error) {
-    console.error('下载模板库失败:', error)
-    downloadStatus.value = 'failed'
-    downloadError.value = error.message || '未知错误'
-    downloadTemplateLoading.value = false
-  }
-}
-
-// 开始轮询下载状态
-function startPollingStatus() {
-  if (downloadStatusTimer) {
-    clearInterval(downloadStatusTimer)
-  }
-  
-  downloadStatusTimer = setInterval(async () => {
-    try {
-      const res = await getDownloadStatus(downloadTaskId.value)
-      if (res.code === 0) {
-        downloadStatus.value = res.status
-        downloadProgress.value = res.progress
-        downloadTemplateCount.value = res.templateCount
-        
-        if (res.status === 'completed' || res.status === 'failed') {
-          clearInterval(downloadStatusTimer)
-          downloadStatusTimer = null
-          downloadTemplateLoading.value = false
-          
-          if (res.status === 'failed') {
-            downloadError.value = res.error || '下载失败'
-          }
-        }
-      } else if (res.code === 404) {
-        // 任务不存在
-        clearInterval(downloadStatusTimer)
-        downloadStatusTimer = null
-        downloadStatus.value = 'failed'
-        downloadError.value = '任务已过期'
-        downloadTemplateLoading.value = false
-      }
-    } catch (error) {
-      console.error('查询下载状态失败:', error)
-    }
-  }, 1000) // 每秒查询一次
-}
-
-// 下载完成后同步到数据库
-async function handleDownloadComplete() {
-  // 如果是上传ZIP方式，已经同步完成，直接关闭并刷新
-  if (syncTabActive.value === 'upload') {
-    downloadTemplateDialogVisible.value = false
-    resetDownloadDialog()
-    ElMessage.success(t('poc.syncSuccess'))
-    loadNucleiTemplateCategories()
-    loadNucleiTemplates()
-    return
-  }
-  
-  // 在线下载方式，需要触发同步
+// 上传完成后关闭对话框并刷新模板列表
+function handleUploadComplete() {
   downloadTemplateDialogVisible.value = false
   resetDownloadDialog()
-  
-  syncLoading.value = true
-  try {
-    const res = await syncNucleiTemplates({ force: false })
-    if (res.code === 0) {
-      ElMessage.success(t('poc.syncStarted'))
-      setTimeout(() => {
-        loadNucleiTemplateCategories()
-        loadNucleiTemplates()
-      }, 2000)
-    } else {
-      ElMessage.error(res.msg || t('poc.syncFailed'))
-    }
-  } catch (error) {
-    ElMessage.error(t('poc.syncFailed') + ': ' + (error.message || ''))
-  } finally {
-    syncLoading.value = false
-  }
+  ElMessage.success(t('poc.syncSuccess'))
+  loadNucleiTemplateCategories()
+  loadNucleiTemplates()
 }
 
 // 处理文件夹选择
@@ -3135,11 +3021,6 @@ onUnmounted(() => {
   if (globalBatchPollTimer) {
     clearInterval(globalBatchPollTimer)
     globalBatchPollTimer = null
-  }
-  // 清理下载状态轮询
-  if (downloadStatusTimer) {
-    clearInterval(downloadStatusTimer)
-    downloadStatusTimer = null
   }
 })
 

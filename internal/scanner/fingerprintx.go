@@ -1,40 +1,40 @@
 package scanner
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/netip"
-	"sync"
+	"strings"
 	"time"
 
-	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
-	"github.com/praetorian-inc/fingerprintx/pkg/scan"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// FingerprintxScanner fingerprintx 扫描器
-// 使用 fingerprintx SDK 进行端口服务识别
+// FingerprintxScanner fingerprintx 扫描器 (CLI 模式)
 type FingerprintxScanner struct {
 	BaseScanner
+	executor *CmdExecutor
 }
 
 // NewFingerprintxScanner 创建 fingerprintx 扫描器
 func NewFingerprintxScanner() *FingerprintxScanner {
+	cfg := ToolConfigs["fingerprintx"]
 	return &FingerprintxScanner{
 		BaseScanner: BaseScanner{name: "fingerprintx"},
+		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
 	}
 }
 
 // FingerprintxOptions fingerprintx 扫描选项
 type FingerprintxOptions struct {
-	Timeout     int  `json:"timeout"`     // 单个目标超时时间(秒)，默认10秒
-	Concurrency int  `json:"concurrency"` // 并发数，默认10
-	UDP         bool `json:"udp"`         // 是否扫描UDP端口
-	FastMode    bool `json:"fastMode"`    // 快速模式，减少探测深度
+	Timeout     int  `json:"timeout"`
+	Concurrency int  `json:"concurrency"`
+	UDP         bool `json:"udp"`
+	FastMode    bool `json:"fastMode"`
 }
 
-// Validate 验证 FingerprintxOptions 配置是否有效
+// Validate 验证配置
 func (o *FingerprintxOptions) Validate() error {
 	if o.Timeout < 0 {
 		return fmt.Errorf("timeout must be non-negative, got %d", o.Timeout)
@@ -45,16 +45,25 @@ func (o *FingerprintxOptions) Validate() error {
 	return nil
 }
 
+// FxResult fingerprintx CLI JSON 输出结构
+type FxResult struct {
+	Host       string                 `json:"host"`
+	IP         string                 `json:"ip"`
+	Port       int                    `json:"port"`
+	Protocol   string                 `json:"protocol"`
+	Version    string                 `json:"version,omitempty"`
+	Banner     string                 `json:"banner,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // Scan 执行 fingerprintx 扫描
 func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	// 解析配置
 	opts := &FingerprintxOptions{
 		Timeout:     10,
-		Concurrency: 1, // 默认串行扫描，由 Worker 并发控制
+		Concurrency: 1,
 		UDP:         false,
 		FastMode:    false,
 	}
-
 	if config.Options != nil {
 		switch v := config.Options.(type) {
 		case *FingerprintxOptions:
@@ -66,253 +75,165 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 		}
 	}
 
-	// 验证配置
 	if err := opts.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid options: %w", err)
 	}
-
-	// 限制最大并发数，避免过度并发
 	if opts.Concurrency > 5 {
 		logx.Infof("Fingerprintx concurrency %d exceeds maximum 5, limiting to 5", opts.Concurrency)
 		opts.Concurrency = 5
 	}
 
-	// 日志辅助函数
-	taskLog := func(level, format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger(level, format, args...)
-		}
-	}
-
-	// 如果没有资产，返回空结果
 	if len(config.Assets) == 0 {
-		logx.Info("No assets to scan with fingerprintx")
-		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
-			Assets:      []*Asset{},
-		}, nil
+		return &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
-	logx.Infof("Fingerprintx: scanning %d assets, timeout=%ds, concurrency=%d",
-		len(config.Assets), opts.Timeout, opts.Concurrency)
-	taskLog("INFO", "Fingerprintx: scanning %d assets, timeout=%ds, concurrency=%d",
-		len(config.Assets), opts.Timeout, opts.Concurrency)
-
-	// 执行扫描
-	identifiedAssets := s.runFingerprintx(ctx, config.Assets, opts, taskLog, config.OnProgress)
+	logx.Infof("Fingerprintx(CLI): scanning %d assets", len(config.Assets))
+	identifiedAssets := s.runFingerprintxCLI(ctx, config.Assets, opts, config.TaskLogger, config.OnProgress)
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
-		Assets:      identifiedAssets,
+		WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+		Assets: identifiedAssets,
 	}, nil
 }
 
-// runFingerprintx 运行 fingerprintx 扫描
-func (s *FingerprintxScanner) runFingerprintx(
-	ctx context.Context,
-	assets []*Asset,
-	opts *FingerprintxOptions,
+func (s *FingerprintxScanner) runFingerprintxCLI(ctx context.Context, assets []*Asset, opts *FingerprintxOptions,
 	taskLog func(level, format string, args ...interface{}),
 	onProgress func(int, string),
 ) []*Asset {
-	var (
-		identifiedAssets []*Asset
-		mu               sync.Mutex
-		wg               sync.WaitGroup
-		completed        int32
-		totalAssets      = len(assets)
-	)
+	const batchSize = 20
+	var identifiedAssets []*Asset
+	total := len(assets)
+	completed := 0
 
-	// 创建任务通道
-	taskChan := make(chan *Asset, opts.Concurrency)
+	for batchStart := 0; batchStart < total; batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > total {
+			batchEnd = total
+		}
+		batch := assets[batchStart:batchEnd]
 
-	// 启动工作协程
-	for i := 0; i < opts.Concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for asset := range taskChan {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					// 执行单个资产扫描
-					result := s.scanSingleAsset(ctx, asset, opts, taskLog)
-
-					mu.Lock()
-					identifiedAssets = append(identifiedAssets, result)
-					completed++
-					currentCompleted := int(completed)
-					mu.Unlock()
-
-					// 更新进度
-					if onProgress != nil {
-						progress := currentCompleted * 100 / totalAssets
-						onProgress(progress, fmt.Sprintf("Scanned %d/%d assets", currentCompleted, totalAssets))
-					}
-				}
-			}
-		}()
-	}
-
-	// 分发任务
-	for _, asset := range assets {
-		select {
-		case <-ctx.Done():
-			close(taskChan)
-			wg.Wait()
+		if ctx.Err() != nil {
 			return identifiedAssets
-		case taskChan <- asset:
+		}
+
+		batchAssets := s.scanBatch(ctx, batch, opts, taskLog)
+		identifiedAssets = append(identifiedAssets, batchAssets...)
+		completed = batchEnd
+
+		if onProgress != nil {
+			progress := completed * 100 / total
+			onProgress(progress, fmt.Sprintf("Scanned %d/%d assets", completed, total))
 		}
 	}
 
-	close(taskChan)
-	wg.Wait()
-
-	logx.Infof("Fingerprintx: completed scanning %d assets", len(identifiedAssets))
+	logx.Infof("Fingerprintx(CLI): completed scanning %d assets", len(identifiedAssets))
 	return identifiedAssets
 }
 
-// scanSingleAsset 扫描单个资产
-func (s *FingerprintxScanner) scanSingleAsset(
-	ctx context.Context,
-	asset *Asset,
-	opts *FingerprintxOptions,
+func (s *FingerprintxScanner) scanBatch(ctx context.Context, assets []*Asset, opts *FingerprintxOptions,
 	taskLog func(level, format string, args ...interface{}),
-) *Asset {
-	// 创建超时上下文
-	scanCtx, cancel := context.WithTimeout(ctx, time.Duration(opts.Timeout)*time.Second)
-	defer cancel()
+) []*Asset {
+	var targets []string
+	for _, asset := range assets {
+		targets = append(targets, fmt.Sprintf("%s:%d", asset.Host, asset.Port))
+	}
 
-	// 解析 IP 地址和端口
-	addrPort, err := netip.ParseAddrPort(fmt.Sprintf("%s:%d", asset.Host, asset.Port))
+	args := []string{"-json", "-timeout", fmt.Sprintf("%d", opts.Timeout)}
+	if opts.FastMode {
+		args = append(args, "-fast")
+	}
+	args = append(args, targets...)
+
+	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
+		Timeout: time.Duration(opts.Timeout+10) * time.Second,
+	})
 	if err != nil {
-		// 如果是域名，尝试解析
-		logx.Debugf("Failed to parse address %s:%d, trying as hostname: %v", asset.Host, asset.Port, err)
-		// 对于域名，使用 0.0.0.0 作为占位符
-		addrPort, _ = netip.ParseAddrPort(fmt.Sprintf("0.0.0.0:%d", asset.Port))
-	}
-
-	// 构建目标
-	target := plugins.Target{
-		Address: addrPort,
-		Host:    asset.Host,
-	}
-
-	// 创建 fingerprintx 扫描配置
-	fxConfig := scan.Config{
-		DefaultTimeout: time.Duration(opts.Timeout) * time.Second,
-		FastMode:       opts.FastMode,
-	}
-
-	// 执行扫描
-	var results []plugins.Service
-	if opts.UDP {
-		results, err = scan.UDPScan([]plugins.Target{target}, fxConfig)
-	} else {
-		results, err = scan.ScanTargets([]plugins.Target{target}, fxConfig)
-	}
-
-	if err != nil {
-		// 扫描失败，保留原始资产信息
-		if scanCtx.Err() == context.DeadlineExceeded {
-			taskLog("WARN", "Fingerprintx: %s:%d timeout", asset.Host, asset.Port)
-		} else {
-			logx.Debugf("Fingerprintx scan error for %s:%d: %v", asset.Host, asset.Port, err)
+		logx.Debugf("Fingerprintx(CLI): scan error: %v", err)
+		for _, asset := range assets {
+			asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
 		}
-		// 设置 IsHTTP 字段
-		asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
-		return asset
+		return assets
 	}
 
-	// 更新资产信息
-	if len(results) > 0 {
-		result := results[0]
-
-		// 更新服务名称
-		if result.Protocol != "" {
-			asset.Service = result.Protocol
+	resultMap := make(map[string]*FxResult)
+	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
 		}
+		var fxr FxResult
+		if err := json.Unmarshal([]byte(line), &fxr); err != nil {
+			continue
+		}
+		key := fmt.Sprintf("%s:%d", fxr.Host, fxr.Port)
+		resultMap[key] = &fxr
+	}
 
-		// 更新服务版本信息
-		if result.Version != "" {
-			// 构建产品信息字符串
-			productInfo := result.Protocol
-			if result.Version != "" {
-				productInfo += ":" + result.Version
+	for _, asset := range assets {
+		key := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
+		if fxr, ok := resultMap[key]; ok {
+			if fxr.Protocol != "" {
+				asset.Service = fxr.Protocol
 			}
-
-			// 添加到 App 列表（如果不存在）
-			found := false
-			for _, app := range asset.App {
-				if app == productInfo {
-					found = true
-					break
+			if fxr.Version != "" {
+				productInfo := fxr.Protocol
+				if fxr.Version != "" {
+					productInfo += ":" + fxr.Version
+				}
+				found := false
+				for _, app := range asset.App {
+					if app == productInfo {
+						found = true
+						break
+					}
+				}
+				if !found {
+					asset.App = append(asset.App, productInfo)
 				}
 			}
-			if !found {
-				asset.App = append(asset.App, productInfo)
-			}
-		}
-
-		// 更新 Banner 信息
-		if len(result.Raw) > 0 {
-			// 限制 Banner 长度
-			maxBannerLen := 1024
-			if len(result.Raw) > maxBannerLen {
-				asset.Banner = string(result.Raw[:maxBannerLen]) + "...[truncated]"
-			} else {
-				asset.Banner = string(result.Raw)
-			}
-		}
-
-		// 如果有元数据，添加到 Banner
-		metadata := result.Metadata()
-		if metadata != nil {
-			metadataStr := formatMetadata(metadata)
-			if metadataStr != "" {
-				if asset.Banner != "" {
-					asset.Banner += "\n" + metadataStr
+			if len(fxr.Banner) > 0 {
+				maxBannerLen := 1024
+				if len(fxr.Banner) > maxBannerLen {
+					asset.Banner = fxr.Banner[:maxBannerLen] + "...[truncated]"
 				} else {
-					asset.Banner = metadataStr
+					asset.Banner = fxr.Banner
+				}
+			}
+			if fxr.Metadata != nil {
+				metadataStr := formatMetadataMap(fxr.Metadata)
+				if metadataStr != "" {
+					if asset.Banner != "" {
+						asset.Banner += "\n" + metadataStr
+					} else {
+						asset.Banner = metadataStr
+					}
 				}
 			}
 		}
-
-		logx.Debugf("Fingerprintx identified %s:%d: service=%s, version=%s",
-			asset.Host, asset.Port, result.Protocol, result.Version)
+		asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
 	}
 
-	// 设置 IsHTTP 字段
-	asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
-
-	return asset
+	return assets
 }
 
-// formatMetadata 格式化元数据
-func formatMetadata(metadata plugins.Metadata) string {
+// formatMetadataMap 格式化 metadata map 为字符串
+func formatMetadataMap(metadata map[string]interface{}) string {
 	if metadata == nil {
 		return ""
 	}
-
-	// 尝试 JSON 序列化
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return ""
 	}
-
-	// 如果是空对象，返回空字符串
 	if string(data) == "{}" || string(data) == "null" {
 		return ""
 	}
-
 	return string(data)
 }
 
 // CheckFingerprintxAvailable 检查 fingerprintx 是否可用
-// 由于使用 SDK，总是返回 true
 func CheckFingerprintxAvailable() bool {
 	return true
 }

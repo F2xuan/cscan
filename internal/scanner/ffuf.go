@@ -2,140 +2,52 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
+	"time"
 
-	"github.com/ffuf/ffuf/v2/pkg/ffuf"
-	"github.com/ffuf/ffuf/v2/pkg/filter"
-	"github.com/ffuf/ffuf/v2/pkg/input"
-	"github.com/ffuf/ffuf/v2/pkg/runner"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// debugRunner 是一个封装了原始 Runner 的组件，用来截获每一个请求结果并打印调试日志
-type debugRunner struct {
-	runner   ffuf.RunnerProvider
-	conf     *ffuf.Config
-	logDebug func(string, ...interface{})
-}
-
-func (r *debugRunner) Execute(req *ffuf.Request) (ffuf.Response, error) {
-	resp, err := r.runner.Execute(req)
-	if err == nil {
-		inputData := ""
-		if req.Input != nil {
-			if val, ok := req.Input["FUZZ"]; ok {
-				inputData = string(val)
-			}
-		}
-
-		matched := false
-		matchReason := ""
-		mm := r.conf.MatcherManager
-
-		// 检查 Matchers (必须匹配才能进入下一步)
-		matchers := mm.GetMatchers()
-		if len(matchers) == 0 {
-			// 如果没有任何 Matcher，默认全部允许
-			matched = true
-			matchReason = "none(all allowed)"
-		} else {
-			for name, m := range matchers {
-				matchedOk, _ := m.Filter(&resp)
-				if matchedOk {
-					matched = true
-					matchReason = name
-					if r.conf.MatcherMode == "or" {
-						break
-					}
-				} else if r.conf.MatcherMode == "and" {
-					matched = false
-					break
-				}
-			}
-		}
-
-		if !matched {
-			r.logDebug("[FFuf Debug] 路径: %s (FUZZ: %s) - 响应码: %d, 大小: %d, 字数: %d, 行数: %d -> [无效] 未匹配任何 Matcher (可能是状态码等不符)",
-				req.Url, inputData, resp.StatusCode, resp.ContentLength, resp.ContentWords, resp.ContentLines)
-			return resp, err
-		}
-
-		// 检查 Filters (如果命中 Filter，则丢弃)
-		filtered := false
-		filterReason := ""
-
-		filters := mm.GetFilters()
-		for name, f := range filters {
-			filterOk, _ := f.Filter(&resp)
-			if filterOk {
-				filtered = true
-				filterReason = name
-				if r.conf.FilterMode == "or" {
-					break
-				}
-			} else if r.conf.FilterMode == "and" {
-				filtered = false
-				break
-			}
-		}
-
-		if filtered {
-			r.logDebug("[FFuf Debug] 路径: %s (FUZZ: %s) - 响应码: %d, 大小: %d, 字数: %d, 行数: %d -> [无效] 触发过滤规则: %s",
-				req.Url, inputData, resp.StatusCode, resp.ContentLength, resp.ContentWords, resp.ContentLines, filterReason)
-		} else {
-			r.logDebug("[FFuf Debug] 路径: %s (FUZZ: %s) - 响应码: %d, 大小: %d, 字数: %d, 行数: %d -> [有效] 匹配成功，已放行 (Matcher: %s)",
-				req.Url, inputData, resp.StatusCode, resp.ContentLength, resp.ContentWords, resp.ContentLines, matchReason)
-		}
-	}
-	return resp, err
-}
-
-func (r *debugRunner) Prepare(input map[string][]byte, req *ffuf.Request) (ffuf.Request, error) {
-	return r.runner.Prepare(input, req)
-}
-
-func (r *debugRunner) Dump(req *ffuf.Request) ([]byte, error) {
-	return r.runner.Dump(req)
-}
-
-// FFufScanner 基于 ffuf SDK 的目录扫描器
+// FFufScanner 基于 CLI 的目录扫描器
 type FFufScanner struct {
 	BaseScanner
+	executor *CmdExecutor
 }
 
 // NewFFufScanner 创建 ffuf 目录扫描器
 func NewFFufScanner() *FFufScanner {
+	cfg := ToolConfigs["ffuf"]
 	return &FFufScanner{
 		BaseScanner: BaseScanner{name: "ffuf"},
+		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
 	}
 }
 
 // FFufOptions ffuf 扫描选项
 type FFufOptions struct {
-	Paths           []string `json:"paths"`           // 要扫描的路径列表（字典内容）
-	Threads         int      `json:"threads"`         // 并发线程数
-	Timeout         int      `json:"timeout"`         // 单个请求超时(秒)
-	Extensions      []string `json:"extensions"`      // 文件扩展名
-	FollowRedirect  bool     `json:"followRedirect"`  // 是否跟随重定向
-	AutoCalibration bool     `json:"autoCalibration"` // 自动校准（anti soft-404）
-	StatusCodes     []int    `json:"statusCodes"`     // 有效状态码列表
-	FilterSize      string   `json:"filterSize"`      // 按响应大小过滤
-	FilterWords     string   `json:"filterWords"`     // 按单词数过滤
-	FilterLines     string   `json:"filterLines"`     // 按行数过滤
-	FilterRegex     string   `json:"filterRegex"`     // 按正则过滤
-	MatcherMode     string   `json:"matcherMode"`     // 匹配模式 and/or
-	FilterMode      string   `json:"filterMode"`      // 过滤模式 and/or
-	Rate            int      `json:"rate"`            // 每秒请求速率限制
-	Recursion       bool     `json:"recursion"`       // 递归扫描
-	RecursionDepth  int      `json:"recursionDepth"`  // 递归深度
+	Paths           []string `json:"paths"`
+	Threads         int      `json:"threads"`
+	Timeout         int      `json:"timeout"`
+	Extensions      []string `json:"extensions"`
+	FollowRedirect  bool     `json:"followRedirect"`
+	AutoCalibration bool     `json:"autoCalibration"`
+	StatusCodes     []int    `json:"statusCodes"`
+	FilterSize      string   `json:"filterSize"`
+	FilterWords     string   `json:"filterWords"`
+	FilterLines     string   `json:"filterLines"`
+	FilterRegex     string   `json:"filterRegex"`
+	MatcherMode     string   `json:"matcherMode"`
+	FilterMode      string   `json:"filterMode"`
+	Rate            int      `json:"rate"`
+	Recursion       bool     `json:"recursion"`
+	RecursionDepth  int      `json:"recursionDepth"`
 }
 
-// Validate 验证 FFufOptions 配置
+// Validate 验证配置
 func (o *FFufOptions) Validate() error {
 	if o.Threads < 0 {
 		return fmt.Errorf("threads must be non-negative, got %d", o.Threads)
@@ -146,391 +58,167 @@ func (o *FFufOptions) Validate() error {
 	return nil
 }
 
-// cscanOutput 自定义 ffuf OutputProvider，收集结果到内存
-type cscanOutput struct {
-	results  []ffuf.Result
-	rawByURL map[string]*dirScanRaw // 按URL保存ffuf SDK原生dump的原始报文
-	mu       sync.Mutex
-	config   *ffuf.Config
-}
-
-// dirScanRaw 保存目录扫描单条结果的原始请求/响应（来自ffuf SDK的httputil.Dump*，无额外流量）
-type dirScanRaw struct {
-	RequestRaw  string
-	ResponseRaw string
-}
-
-func newCscanOutput(conf *ffuf.Config) *cscanOutput {
-	return &cscanOutput{
-		results:  make([]ffuf.Result, 0),
-		rawByURL: make(map[string]*dirScanRaw),
-		config:   conf,
-	}
-}
-
-func (o *cscanOutput) Banner()                                 {}
-func (o *cscanOutput) Finalize() error                         { return nil }
-func (o *cscanOutput) Progress(status ffuf.Progress)           {}
-func (o *cscanOutput) Info(infostring string)                  {}
-func (o *cscanOutput) Error(errstring string)                  {}
-func (o *cscanOutput) Raw(output string)                       {}
-func (o *cscanOutput) Warning(warnstring string)               {}
-func (o *cscanOutput) PrintResult(res ffuf.Result)             {}
-func (o *cscanOutput) SaveFile(filename, format string) error  { return nil }
-func (o *cscanOutput) Reset()                                  {}
-func (o *cscanOutput) Cycle()                                  {}
-func (o *cscanOutput) SetCurrentResults(results []ffuf.Result) { o.results = results }
-
-func (o *cscanOutput) Result(resp ffuf.Response) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	// 从 Input 中获取 FUZZ 关键字值
-	inputData := ""
-	if resp.Request != nil && resp.Request.Input != nil {
-		if fuzzVal, ok := resp.Request.Input["FUZZ"]; ok {
-			inputData = string(fuzzVal)
-		}
-	}
-
-	// 获取重定向地址
-	redirectLocation := ""
-	if resp.Request != nil {
-		if locHeaders, ok := resp.Headers["Location"]; ok && len(locHeaders) > 0 {
-			redirectLocation = locHeaders[0]
-		}
-	}
-
-	result := ffuf.Result{
-		Input:            resp.Request.Input,
-		StatusCode:       resp.StatusCode,
-		ContentLength:    resp.ContentLength,
-		ContentWords:     resp.ContentWords,
-		ContentLines:     resp.ContentLines,
-		ContentType:      resp.ContentType,
-		RedirectLocation: redirectLocation,
-		Duration:         resp.Duration,
-		Host:             resp.Request.Host,
-	}
-
-	// 构建完整 URL
-	if resp.Request != nil {
-		result.Url = resp.Request.Url
-	} else if inputData != "" {
-		result.Url = strings.Replace(o.config.Url, "FUZZ", inputData, 1)
-	}
-
-	// 直接使用ffuf SDK原生Dump的Request/Response Raw（已由SimpleRunner填充，无额外HTTP流量）
-	var reqRaw, respRaw string
-	if resp.Request != nil {
-		reqRaw = resp.Request.Raw
-	}
-	respRaw = resp.Raw
-	// 响应体可能超过MAX_DOWNLOAD_SIZE被截断或为空，做必要截断避免Mongo文档过大
-	if len(respRaw) > maxDirScanRawSize {
-		respRaw = respRaw[:maxDirScanRawSize]
-	}
-	if result.Url != "" && (reqRaw != "" || respRaw != "") {
-		o.rawByURL[result.Url] = &dirScanRaw{RequestRaw: reqRaw, ResponseRaw: respRaw}
-	}
-
-	o.results = append(o.results, result)
-}
-
-// maxDirScanRawSize 单条原始报文最大保留字节数（防止Mongo文档膨胀）
-const maxDirScanRawSize = 64 * 1024
-
-func (o *cscanOutput) GetCurrentResults() []ffuf.Result {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.results
+// FFufCLIResult ffuf CLI JSON 输出结构
+type FFufCLIResult struct {
+	Url             string `json:"url"`
+	StatusCode      int    `json:"status_code"`
+	ContentLength   int64  `json:"length"`
+	ContentWords    int64  `json:"words"`
+	ContentLines    int64  `json:"lines"`
+	ContentType     string `json:"content_type"`
+	RedirectLocation string `json:"redirectlocation"`
+	DurationMs      int64  `json:"duration"`
 }
 
 // Scan 执行目录扫描
 func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	// 默认配置
+	result := &ScanResult{
+		WorkspaceId: config.WorkspaceId,
+		MainTaskId:  config.MainTaskId,
+	}
+
 	opts := &FFufOptions{
 		Threads:         50,
 		Timeout:         10,
 		FollowRedirect:  false,
 		AutoCalibration: true,
 	}
-
-	// 日志函数
-	logInfo := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("INFO", format, args...)
-			return // 已由 TaskLogger 统一输出，避免双写
-		}
-		logx.Infof(format, args...)
-	}
-	logWarn := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("WARN", format, args...)
-			return // 已由 TaskLogger 统一输出，避免双写
-		}
-		// 修复 M3：原 logx.Infof 导致 WARN 日志以 INFO 级别落盘，无法按级别过滤
-		logx.Errorf(format, args...)
-	}
-	logDebug := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("DEBUG", format, args...)
-			return // 已由 TaskLogger 统一输出，避免双写
-		}
-		// logx 默认不输出 Debug 级别，保留 Infof 让用户可按需开启
-		// 这里保持 logx.Infof 是有意为之：避免无 TaskLogger 时 DEBUG 日志静默丢失
-		logx.Infof(format, args...)
-	}
-
-	onProgress := config.OnProgress
-
-	// 从配置中提取选项
 	if config.Options != nil {
 		if v, ok := config.Options.(*FFufOptions); ok {
 			opts = v
 		}
 	}
 
-	// 验证路径列表
+	logInfo := func(format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger("INFO", format, args...)
+			return
+		}
+		logx.Infof(format, args...)
+	}
+	logWarn := func(format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger("WARN", format, args...)
+			return
+		}
+		logx.Errorf(format, args...)
+	}
+
 	if len(opts.Paths) == 0 {
 		logWarn("[FFuf] 未提供扫描路径")
-		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
-		}, nil
+		return result, nil
 	}
 
-	// 获取目标列表
-	targets := s.collectTargets(config, logInfo, logDebug)
+	targets := s.collectTargets(config, logInfo, func(string, ...interface{}) {})
 	if len(targets) == 0 {
 		logWarn("[FFuf] 无有效目标")
-		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
-		}, nil
+		return result, nil
 	}
 
-	logInfo("[FFuf] 开始目录扫描，目标数: %d，路径数: %d，自动校准: %v", len(targets), len(opts.Paths), opts.AutoCalibration)
-
-	// 写入字典到临时文件
 	wordlistFile, err := s.writeWordlistFile(opts.Paths)
 	if err != nil {
 		return nil, fmt.Errorf("创建字典临时文件失败: %w", err)
 	}
 	defer os.Remove(wordlistFile)
 
-	// 逐目标扫描
+	logInfo("[FFuf] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
+
 	var allAssets []*Asset
 	for i, target := range targets {
 		select {
 		case <-ctx.Done():
 			return &ScanResult{
-				WorkspaceId: config.WorkspaceId,
-				MainTaskId:  config.MainTaskId,
-				Assets:      allAssets,
+				WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+				Assets: allAssets,
 			}, ctx.Err()
 		default:
 		}
 
 		logInfo("[FFuf] 扫描目标 %d/%d: %s", i+1, len(targets), target)
-
-		assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logInfo, logDebug)
+		assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logInfo, func(string, ...interface{}) {})
 		if err != nil {
 			logWarn("[FFuf] 扫描目标 %s 失败: %v", target, err)
 			continue
 		}
-
 		allAssets = append(allAssets, assets...)
 		logInfo("[FFuf] 目标 %s 发现 %d 个有效路径", target, len(assets))
 
-		if onProgress != nil {
+		if config.OnProgress != nil {
 			progress := (i + 1) * 100 / len(targets)
-			onProgress(progress, fmt.Sprintf("已完成 %d/%d 个目标", i+1, len(targets)))
+			config.OnProgress(progress, fmt.Sprintf("已完成 %d/%d 个目标", i+1, len(targets)))
 		}
 	}
 
 	logInfo("[FFuf] 目录扫描完成，共发现 %d 个有效路径", len(allAssets))
-
-	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
-		Assets:      allAssets,
-	}, nil
+	result.Assets = allAssets
+	return result, nil
 }
 
-// scanTarget 对单个目标执行 ffuf 扫描
 func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logInfo, logDebug func(string, ...interface{})) ([]*Asset, error) {
-	// 创建子 context 用于控制单个目标的扫描
 	scanCtx, scanCancel := context.WithCancel(ctx)
 	defer scanCancel()
 
-	// 构建 ffuf Config
-	confVal := ffuf.NewConfig(scanCtx, scanCancel)
-	conf := &confVal
+	baseURL := strings.TrimSuffix(target, "/") + "/FUZZ"
 
-	// 基本配置
-	conf.Url = strings.TrimSuffix(target, "/") + "/FUZZ"
-	conf.Method = "GET"
-	conf.Threads = opts.Threads
-	conf.Timeout = opts.Timeout
-	conf.Noninteractive = true
-	conf.Quiet = true
-	conf.IgnoreWordlistComments = true
+	args := []string{
+		"-u", baseURL,
+		"-w", wordlistFile,
+		"-of", "json",
+		"-t", fmt.Sprintf("%d", opts.Threads),
+		"-timeout", fmt.Sprintf("%d", opts.Timeout),
+		"-mc", "200,204,301,302,307,401,403,405,500",
+	}
 
-	// 跟随重定向
-	conf.FollowRedirects = opts.FollowRedirect
-
-	// 速率限制
+	if opts.FollowRedirect {
+		args = append(args, "-r")
+	}
+	if opts.Recursion {
+		args = append(args, "-recursion", "-recursion-depth", fmt.Sprintf("%d", opts.RecursionDepth))
+	}
 	if opts.Rate > 0 {
-		conf.Rate = int64(opts.Rate)
+		args = append(args, "-rate", fmt.Sprintf("%d", opts.Rate))
+	}
+	for _, ext := range opts.Extensions {
+		args = append(args, "-e", strings.TrimPrefix(ext, "."))
 	}
 
-	// 递归扫描
-	conf.Recursion = opts.Recursion
-	if opts.RecursionDepth > 0 {
-		conf.RecursionDepth = opts.RecursionDepth
+	// 输出到临时文件
+	tmpFile, err := os.CreateTemp("", "ffuf-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("create output file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	args = append(args, "-o", tmpPath)
+
+	logInfo("[FFuf] executing ffuf for %s", target)
+
+	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
+		Timeout: time.Duration(opts.Timeout*2) * time.Second,
+	})
+	_ = res
+	if err != nil {
+		return nil, fmt.Errorf("ffuf execution: %w", err)
 	}
 
-	// 自动校准
-	conf.AutoCalibration = opts.AutoCalibration
-	if opts.AutoCalibration {
-		conf.AutoCalibrationPerHost = true
-		conf.AutoCalibrationStrategies = []string{"basic", "advanced"}
+	// 读取 JSON 输出
+	content, readErr := os.ReadFile(tmpPath)
+	if readErr != nil {
+		return nil, fmt.Errorf("read ffuf output: %w", readErr)
 	}
 
-	// 扩展名（规范化：去空白、去除重复、统一以"."开头，ffuf需要形如".php,.jsp"）
-	if len(opts.Extensions) > 0 {
-		seen := make(map[string]struct{}, len(opts.Extensions))
-		normalized := make([]string, 0, len(opts.Extensions))
-		for _, ext := range opts.Extensions {
-			e := strings.TrimSpace(ext)
-			if e == "" {
-				continue
-			}
-			if !strings.HasPrefix(e, ".") {
-				e = "." + e
-			}
-			e = strings.ToLower(e)
-			if _, ok := seen[e]; ok {
-				continue
-			}
-			seen[e] = struct{}{}
-			normalized = append(normalized, e)
-		}
-		if len(normalized) > 0 {
-			conf.Extensions = normalized
-		}
+	var ffufResults []FFufCLIResult
+	if err := json.Unmarshal(content, &ffufResults); err != nil {
+		return nil, fmt.Errorf("parse ffuf results: %w", err)
 	}
 
-	// 输入模式
-	conf.InputMode = "clusterbomb"
-	conf.InputProviders = []ffuf.InputProviderConfig{
-		{
-			Name:    "wordlist",
-			Keyword: "FUZZ",
-			Value:   wordlistFile,
-		},
-	}
-
-	// Headers
-	conf.Headers = map[string]string{
-		"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-		"Connection":      "keep-alive",
-	}
-
-	// 关键：设置 OutputDirectory 非空以触发 ffuf SimpleRunner 自动 DumpRequestOut/DumpResponse
-	// 填充 req.Raw 和 resp.Raw。我们的 cscanOutput.SaveFile 返回 nil，不会产生任何磁盘写入，
-	// 且 DumpRequestOut/DumpResponse 复用的是已发送的 http.Request/Response，**不会产生额外HTTP流量**。
-	conf.OutputDirectory = os.TempDir()
-
-	// 创建 MatcherManager 并配置过滤器/匹配器
-	mm := filter.NewMatcherManager()
-
-	// 设置匹配模式
-	if opts.MatcherMode != "" {
-		conf.MatcherMode = opts.MatcherMode
-	}
-	if opts.FilterMode != "" {
-		conf.FilterMode = opts.FilterMode
-	}
-
-	// 添加状态码验证规则
-	if len(opts.StatusCodes) > 0 {
-		var sc []string
-		for _, c := range opts.StatusCodes {
-			sc = append(sc, strconv.Itoa(c))
-		}
-		scStr := strings.Join(sc, ",")
-		if err := mm.AddMatcher("status", scStr); err != nil {
-			logDebug("[FFuf] 添加状态码匹配失败: %v", err)
-		}
-	} else {
-		// 默认 ffuf 状态码
-		_ = mm.AddMatcher("status", "200,204,301,302,307,401,403,405,500")
-	}
-
-	// 添加用户自定义过滤器
-	if opts.FilterSize != "" {
-		if err := mm.AddFilter("size", opts.FilterSize, true); err != nil {
-			logDebug("[FFuf] 添加大小过滤器失败: %v", err)
-		}
-	}
-	if opts.FilterWords != "" {
-		if err := mm.AddFilter("word", opts.FilterWords, true); err != nil {
-			logDebug("[FFuf] 添加单词数过滤器失败: %v", err)
-		}
-	}
-	if opts.FilterLines != "" {
-		if err := mm.AddFilter("line", opts.FilterLines, true); err != nil {
-			logDebug("[FFuf] 添加行数过滤器失败: %v", err)
-		}
-	}
-	if opts.FilterRegex != "" {
-		if err := mm.AddFilter("regexp", opts.FilterRegex, true); err != nil {
-			logDebug("[FFuf] 添加正则过滤器失败: %v", err)
-		}
-	}
-
-	conf.MatcherManager = mm
-
-	// 创建 custom OutputProvider
-	output := newCscanOutput(conf)
-
-	// 创建 InputProvider
-	inputProvider, inputErr := input.NewInputProvider(conf)
-	if inputErr.ErrorOrNil() != nil {
-		return nil, fmt.Errorf("创建输入提供器失败: %w", inputErr.ErrorOrNil())
-	}
-
-	// 创建 Runner
-	simpleRunner := runner.NewSimpleRunner(conf, false)
-	debuggableRunner := &debugRunner{
-		runner:   simpleRunner,
-		conf:     conf,
-		logDebug: logDebug,
-	}
-
-	// 创建 Job
-	job := ffuf.NewJob(conf)
-	job.Input = inputProvider
-	job.Runner = debuggableRunner
-	job.Output = output
-
-	// 执行扫描（Start 是阻塞调用，无返回值）
-	job.Start()
-
-	// 收集结果
-	results := output.GetCurrentResults()
-	logInfo("[FFuf] 目标 %s 扫描完成，原始结果: %d 条", target, len(results))
-
-	// 转换为 Asset
-	return s.convertResults(target, results, output.rawByURL), nil
+	return s.convertResults(target, ffufResults), nil
 }
 
 // convertResults 将 ffuf 结果转换为 Asset 列表
-func (s *FFufScanner) convertResults(target string, results []ffuf.Result, rawByURL map[string]*dirScanRaw) []*Asset {
+func (s *FFufScanner) convertResults(target string, results []FFufCLIResult) []*Asset {
 	assets := make([]*Asset, 0, len(results))
 
 	parsedTarget, err := url.Parse(target)
@@ -539,13 +227,11 @@ func (s *FFufScanner) convertResults(target string, results []ffuf.Result, rawBy
 	}
 
 	for _, r := range results {
-		// 解析结果 URL
-		resultURL := r.Url
-		if resultURL == "" {
+		if r.Url == "" {
 			continue
 		}
 
-		parsedURL, err := url.Parse(resultURL)
+		parsedURL, err := url.Parse(r.Url)
 		if err != nil {
 			continue
 		}
@@ -562,7 +248,6 @@ func (s *FFufScanner) convertResults(target string, results []ffuf.Result, rawBy
 		if authority == "" {
 			authority = parsedTarget.Host
 		}
-
 		hostname := parsedURL.Hostname()
 		if hostname == "" {
 			hostname = parsedTarget.Hostname()
@@ -582,20 +267,11 @@ func (s *FFufScanner) convertResults(target string, results []ffuf.Result, rawBy
 			ContentType:   r.ContentType,
 			ContentWords:  r.ContentWords,
 			ContentLines:  r.ContentLines,
-			Duration:      r.Duration.Milliseconds(),
+			Duration:      r.DurationMs,
 		}
 
-		// 处理重定向
 		if r.RedirectLocation != "" {
 			asset.Title = r.RedirectLocation
-		}
-
-		// 填充原始请求/响应
-		if rawByURL != nil {
-			if raw, ok := rawByURL[resultURL]; ok && raw != nil {
-				asset.RequestRaw = raw.RequestRaw
-				asset.ResponseRaw = raw.ResponseRaw
-			}
 		}
 
 		assets = append(assets, asset)
@@ -615,14 +291,12 @@ func (s *FFufScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(
 				if asset.Port == 443 || strings.HasPrefix(asset.Service, "https") {
 					scheme = "https"
 				}
-
 				var baseURL string
 				if (scheme == "http" && asset.Port == 80) || (scheme == "https" && asset.Port == 443) {
 					baseURL = fmt.Sprintf("%s://%s", scheme, asset.Host)
 				} else {
 					baseURL = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
 				}
-
 				if asset.Path != "" && asset.Path != "/" {
 					path := strings.TrimSuffix(asset.Path, "/")
 					baseURL = baseURL + path
@@ -630,7 +304,7 @@ func (s *FFufScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(
 				}
 				targets = append(targets, baseURL)
 			} else {
-				logDebug("[FFuf] 跳过非HTTP资产: %s:%d (service: %s, isHttp: %v)", asset.Host, asset.Port, asset.Service, asset.IsHTTP)
+				logDebug("[FFuf] 跳过非HTTP资产: %s:%d", asset.Host, asset.Port)
 			}
 		}
 	} else if len(config.Targets) > 0 {
@@ -639,7 +313,6 @@ func (s *FFufScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(
 		targets = strings.Split(config.Target, "\n")
 	}
 
-	// 规范化
 	for i, t := range targets {
 		targets[i] = normalizeURL(t)
 	}
@@ -660,7 +333,6 @@ func (s *FFufScanner) writeWordlistFile(paths []string) (string, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// 去掉开头的 /，ffuf 会自动拼接
 		line = strings.TrimPrefix(line, "/")
 		if _, err := fmt.Fprintln(tmpFile, line); err != nil {
 			os.Remove(tmpFile.Name())
@@ -670,3 +342,4 @@ func (s *FFufScanner) writeWordlistFile(paths []string) (string, error) {
 
 	return tmpFile.Name(), nil
 }
+

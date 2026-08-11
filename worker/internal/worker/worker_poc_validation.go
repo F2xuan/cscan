@@ -575,4 +575,3 @@ func (w *Worker) savePocValidationResult(ctx context.Context, taskId, batchId st
 		w.taskLog(taskId, LevelError, "Failed to save POC validation result: %v", err)
 	}
 }
-

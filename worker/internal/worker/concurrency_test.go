@@ -11,57 +11,15 @@ import (
 
 func newTestWorker(concurrency int) *Worker {
 	return &Worker{
-		config:            WorkerConfig{Name: "test-worker", Concurrency: concurrency},
-		logger:            NewWorkerLoggerLocal("test-worker"),
-		adaptiveScheduler: NewAdaptiveScheduler(DefaultAdaptiveSchedulerConfig(concurrency)),
-		taskChan:          make(chan *scheduler.TaskInfo, concurrency),
-		stopChan:          make(chan struct{}),
-		executorCount:     concurrency,
+		config:        WorkerConfig{Name: "test-worker", Concurrency: concurrency},
+		logger:        NewWorkerLoggerLocal("test-worker"),
+		taskChan:      make(chan *scheduler.TaskInfo, concurrency),
+		stopChan:      make(chan struct{}),
+		executorCount: concurrency,
 	}
 }
 
-func TestApplyConcurrencyIncreaseSyncsAllComponents(t *testing.T) {
-	w := newTestWorker(5)
-
-	w.applyConcurrency(20)
-
-	assert.Equal(t, 20, w.config.Concurrency)
-	assert.Equal(t, 20, w.adaptiveScheduler.GetCurrentConcurrency())
-	// isRunning=false 时不补启协程
-	assert.Equal(t, 5, w.executorCount)
-}
-
-func TestApplyConcurrencyDecrease(t *testing.T) {
-	w := newTestWorker(10)
-
-	w.applyConcurrency(2)
-
-	assert.Equal(t, 2, w.config.Concurrency)
-	assert.Equal(t, 2, w.adaptiveScheduler.GetCurrentConcurrency())
-	// 协程数不缩减，由限流门自然收敛
-	assert.Equal(t, 10, w.executorCount)
-}
-
-func TestApplyConcurrencyRejectsInvalidValues(t *testing.T) {
-	w := newTestWorker(5)
-
-	w.applyConcurrency(0)
-	assert.Equal(t, 5, w.config.Concurrency)
-
-	w.applyConcurrency(-3)
-	assert.Equal(t, 5, w.config.Concurrency)
-}
-
-func TestApplyConcurrencyNoopWhenUnchanged(t *testing.T) {
-	w := newTestWorker(5)
-
-	w.applyConcurrency(5)
-
-	assert.Equal(t, 5, w.config.Concurrency)
-	assert.Equal(t, 5, w.executorCount)
-}
-
-func TestApplyConcurrencySpawnsExecutorsWhenRunning(t *testing.T) {
+func TestApplyConcurrencyIncreaseSpawnsExecutorsWhenRunning(t *testing.T) {
 	w := newTestWorker(3)
 	w.isRunning = true
 
@@ -84,16 +42,21 @@ func TestApplyConcurrencySpawnsExecutorsWhenRunning(t *testing.T) {
 	}
 }
 
-func TestAdaptiveSchedulerSetMaxConcurrencyRaisesCurrent(t *testing.T) {
-	s := NewAdaptiveScheduler(DefaultAdaptiveSchedulerConfig(5))
+func TestApplyConcurrencyNoopWhenUnchanged(t *testing.T) {
+	w := newTestWorker(5)
 
-	s.SetMaxConcurrency(20)
-	assert.Equal(t, 20, s.GetCurrentConcurrency())
+	w.applyConcurrency(5)
 
-	s.SetMaxConcurrency(3)
-	assert.Equal(t, 3, s.GetCurrentConcurrency())
+	assert.Equal(t, 5, w.config.Concurrency)
+	assert.Equal(t, 5, w.executorCount)
+}
 
-	// 非法值不生效
-	s.SetMaxConcurrency(0)
-	assert.Equal(t, 3, s.GetCurrentConcurrency())
+func TestApplyConcurrencyRejectsInvalidValues(t *testing.T) {
+	w := newTestWorker(5)
+
+	w.applyConcurrency(0)
+	assert.Equal(t, 5, w.config.Concurrency)
+
+	w.applyConcurrency(-3)
+	assert.Equal(t, 5, w.config.Concurrency)
 }

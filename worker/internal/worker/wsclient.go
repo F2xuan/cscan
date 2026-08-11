@@ -19,17 +19,17 @@ import (
 // ==================== WebSocket Message Types ====================
 
 const (
-	WSTypeAuth           = "AUTH"            // 认证请求
-	WSTypeAuthOK         = "AUTH_OK"         // 认证成功
-	WSTypeAuthFail       = "AUTH_FAIL"       // 认证失败
-	WSTypePing           = "PING"            // 心跳请求
-	WSTypePong           = "PONG"            // 心跳响应
-	WSTypeLog            = "LOG"             // 日志消息
-	WSTypeLogBatch       = "LOG_BATCH"       // 批量日志消息
-	WSTypeControl        = "CONTROL"         // 控制信号
-	WSTypeLogSyncReq     = "LOG_SYNC_REQ"    // API 请求 Worker 同步日志
-	WSTypeLogSyncResp    = "LOG_SYNC_RESP"   // Worker 返回同步日志数据
-	WSTypeLogSyncAck     = "LOG_SYNC_ACK"    // API 确认日志已写入文件
+	WSTypeAuth        = "AUTH"          // 认证请求
+	WSTypeAuthOK      = "AUTH_OK"       // 认证成功
+	WSTypeAuthFail    = "AUTH_FAIL"     // 认证失败
+	WSTypePing        = "PING"          // 心跳请求
+	WSTypePong        = "PONG"          // 心跳响应
+	WSTypeLog         = "LOG"           // 日志消息
+	WSTypeLogBatch    = "LOG_BATCH"     // 批量日志消息
+	WSTypeControl     = "CONTROL"       // 控制信号
+	WSTypeLogSyncReq  = "LOG_SYNC_REQ"  // API 请求 Worker 同步日志
+	WSTypeLogSyncResp = "LOG_SYNC_RESP" // Worker 返回同步日志数据
+	WSTypeLogSyncAck  = "LOG_SYNC_ACK"  // API 确认日志已写入文件
 )
 
 // WSMessage WebSocket消息结构
@@ -794,7 +794,6 @@ func (c *WorkerWSClient) handleControl(payload json.RawMessage) {
 	}
 }
 
-
 // ==================== Send Methods ====================
 
 // sendMessage 发送消息（内部方法�?
@@ -813,9 +812,6 @@ func (c *WorkerWSClient) sendMessage(msg *WSMessage) error {
 		return fmt.Errorf("send buffer full")
 	}
 }
-
-
-
 
 // ==================== Log Sync Handlers ====================
 

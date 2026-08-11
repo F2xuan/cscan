@@ -17,16 +17,16 @@ import (
 // ResultQueue 本地结果队列
 // API 不可用时将任务结果持久化到本地文件，API 恢复后自动重放
 type ResultQueue struct {
-	mu          sync.Mutex
-	dir         string         // 队列文件目录
-	maxSize     int            // 最大文件数量
-	replayFn    func(ctx context.Context, req *TaskResultReq) error          // 重放函数
-	replayVulFn func(ctx context.Context, req *VulResultReq) error           // 漏洞重放函数
-	replayJSFn  func(ctx context.Context, req *SaveJSFinderResultReq) error  // JS结果重放函数
+	mu           sync.Mutex
+	dir          string                                                      // 队列文件目录
+	maxSize      int                                                         // 最大文件数量
+	replayFn     func(ctx context.Context, req *TaskResultReq) error         // 重放函数
+	replayVulFn  func(ctx context.Context, req *VulResultReq) error          // 漏洞重放函数
+	replayJSFn   func(ctx context.Context, req *SaveJSFinderResultReq) error // JS结果重放函数
 	replayCertFn func(ctx context.Context, req *SaveCertResultReq) error     // 证书结果重放函数
-	stopChan    chan struct{}
-	stopOnce    sync.Once
-	logger      func(level, format string, args ...interface{})
+	stopChan     chan struct{}
+	stopOnce     sync.Once
+	logger       func(level, format string, args ...interface{})
 
 	// perQueueSeq 在同一进程内单调递增,消除同毫秒内多次入队导致的文件名碰撞
 	// 修复 H1:原文件名 {millisecond}_{mainTaskId[:8]}_vul_{rand4}.json 在同毫秒+同任务+crypto_rand 失败返回 0 时会覆盖,静默丢漏洞结果
@@ -56,7 +56,7 @@ type queuedJSResult struct {
 // queuedCertResult 证书采集结果队列条目
 // 修复 P0：证书结果与资产/漏洞对称处理，API 不可用时本地持久化，恢复后重放
 type queuedCertResult struct {
-	EnqueueTime time.Time       `json:"enqueueTime"`
+	EnqueueTime time.Time          `json:"enqueueTime"`
 	Request     *SaveCertResultReq `json:"request"`
 }
 

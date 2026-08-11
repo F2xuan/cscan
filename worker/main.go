@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,6 +21,9 @@ import (
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stat"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"
 )
 
 var (
@@ -27,7 +31,7 @@ var (
 	serverAddr  = flag.String("s", getEnvOrDefault("CSCAN_SERVER", "http://localhost:8888"), "API server address (e.g., http://192.168.1.100:8888)")
 	workerName  = flag.String("n", getEnvOrDefault("CSCAN_NAME", ""), "worker name (default: hostname-pid)")
 	concurrency = flag.Int("c", getEnvIntOrDefault("CSCAN_CONCURRENCY", deriveConcurrencyFromMemory()), "concurrency")
-	installKey  = flag.String("k", getEnvOrDefault("CSCAN_KEY", ""), "install key for authentication")
+	installKey  = flag.String("k", getEnvOrDefault("CSCAN_KEY", getEnvOrDefault("CSCAN_WORKER_KEY", "")), "install key for authentication")
 )
 
 // Version 编译期注入的版本号（Dockerfile 经 -ldflags "-X main.Version=${VERSION}" 注入）
@@ -56,8 +60,8 @@ func getEnvIntOrDefault(key string, defaultVal int) int {
 // 又避免低配环境因 Chrome 标签数过多触发 OOM。详见 README「资源配置」。
 func deriveConcurrencyFromMemory() int {
 	const (
-		perTabMB   = 384  // headless Chrome 单标签 + 扫描器常驻开销经验值
-		utilFactor = 0.6  // 内存利用率上限，预留余量应对突发
+		perTabMB   = 384 // headless Chrome 单标签 + 扫描器常驻开销经验值
+		utilFactor = 0.6 // 内存利用率上限，预留余量应对突发
 		minConc    = 1
 		maxConc    = 16
 	)
@@ -187,6 +191,36 @@ func validateInstallKey(apiServer, key, name string) error {
 	return lastErr
 }
 
+// connectWorkerMongo 仅用于 Worker 直连 MongoDB 写入资产，使用独享连接池。
+func connectWorkerMongo(uri string) (*mongo.Client, *mongo.Database) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	clientOptions := options.Client().
+		ApplyURI(uri).
+		SetMaxPoolSize(20).
+		SetMinPoolSize(2).
+		SetMaxConnecting(5)
+
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		logx.Errorf("[Worker][MongoDirect] connect failed: %v", err)
+		return nil, nil
+	}
+	if err := client.Ping(ctx, nil); err != nil {
+		logx.Errorf("[Worker][MongoDirect] ping failed: %v", err)
+		_ = client.Disconnect(context.Background())
+		return nil, nil
+	}
+
+	dbName := "cscan"
+	if cs, err := connstring.Parse(uri); err == nil && cs.Database != "" {
+		dbName = cs.Database
+	}
+	logx.Infof("[Worker][MongoDirect] connected, db=%s, pool=%d", dbName, 20)
+	return client, client.Database(dbName)
+}
+
 func main() {
 	flag.Parse()
 	// CSCAN_CONCURRENCY 未显式设置时，按内存上限自动推导并发，便于低配防 OOM、高配提吞吐
@@ -194,13 +228,15 @@ func main() {
 		logx.Infof("🔧 CSCAN_CONCURRENCY 未设置，按容器内存上限自动推导并发数: %d", *concurrency)
 	}
 	logx.MustSetup(logx.LogConf{
-		ServiceName:         "cscan-worker",
-		Mode:                "console",           // 开启控制台颜色
-		Encoding:            "plain",             // 纯文本格式
-		TimeFormat:          "15:04:05",          // 简洁时间格式
-		Level:               "info",              // 日志级别
-		Stat:                false,               // 关闭资源统计
-		MaxContentLength:    uint32(getEnvIntOrDefault("CSCAN_WORKER_LOG_MAX_CONTENT_LENGTH", 4096)), // 6/29 OOM 修复：单条日志最大4KB，截断超长内容（如完整HTTP响应体）；可通过环境变量调整
+		ServiceName: "cscan-worker",
+		Mode:        "console",  // 开启控制台颜色
+		Encoding:    "plain",    // 纯文本格式
+		TimeFormat:  "15:04:05", // 简洁时间格式
+		Level:       "info",     // 日志级别
+		Stat:        false,      // 关闭资源统计
+		// 6/29 OOM 修复：单条日志最大 4KB，截断超长内容（如完整 HTTP 响应体）；
+		// 可通过环境变量 CSCAN_WORKER_LOG_MAX_CONTENT_LENGTH 调整
+		MaxContentLength: uint32(getEnvIntOrDefault("CSCAN_WORKER_LOG_MAX_CONTENT_LENGTH", 4096)),
 	})
 	// 禁用额外的统计输出
 	stat.DisableLog()
@@ -252,8 +288,18 @@ func main() {
 		}
 		logx.Info("✅ Identity verified successfully")
 	}
+
 	// 获取本机IP
 	ip := worker.GetLocalIP()
+
+	// 直连 MongoDB 用于扫描结果写入
+	var mongoClient *mongo.Client
+	var mongoDB *mongo.Database
+	if mongoURI := os.Getenv("CSCAN_MONGO_URI"); mongoURI != "" {
+		mongoClient, mongoDB = connectWorkerMongo(mongoURI)
+	} else {
+		logx.Info("[Worker][MongoDirect] CSCAN_MONGO_URI not set; direct writes disabled")
+	}
 
 	config := worker.WorkerConfig{
 		Name:        name,
@@ -268,6 +314,10 @@ func main() {
 	if err != nil {
 		logx.Errorf("❌ Create worker failed: %v", err)
 		os.Exit(1)
+	}
+
+	if mongoDB != nil {
+		w.SetMongoDB(mongoClient, mongoDB)
 	}
 
 	// 启动Worker

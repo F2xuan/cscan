@@ -12,12 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"cscan/pkg/utils"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
+	"cscan/pkg/utils"
 
 	"github.com/projectdiscovery/wappalyzergo"
 	"github.com/zeromicro/go-zero/core/logx"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // WorkerConfig Worker配置
@@ -82,11 +83,12 @@ type Worker struct {
 	wappalyzerClient *wappalyzer.Wappalyze
 	wappalyzerOnce   sync.Once
 
-	// 自适应调度器（新版智能调度）
-	adaptiveScheduler *AdaptiveScheduler
-
 	// 本地结果队列（API 不可用时持久化任务结果）
 	resultQueue *ResultQueue
+
+	// MongoDB 直连（用于扫描结果直接写入，绕过 HTTP API）
+	mongoClient *mongo.Client
+	mongoDB     *mongo.Database
 
 	// 活跃任务的日志记录器（维持 buffer 生命周期）
 	taskLoggers sync.Map // mainTaskId -> *TaskLoggerWS
@@ -274,15 +276,15 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	w := &Worker{
-		ctx:              ctx,
-		cancel:           cancel,
-		config:           config,
-		httpClient:       httpClient,
-		scanners:         make(map[string]scanner.Scanner),
-		taskChan:         make(chan *scheduler.TaskInfo, config.Concurrency),
-		resultChan:       make(chan *scanner.ScanResult, 100),
-		stopChan:         make(chan struct{}),
-		logger:           NewWorkerLoggerLocal(config.Name), // 使用本地日志
+		ctx:        ctx,
+		cancel:     cancel,
+		config:     config,
+		httpClient: httpClient,
+		scanners:   make(map[string]scanner.Scanner),
+		taskChan:   make(chan *scheduler.TaskInfo, config.Concurrency),
+		resultChan: make(chan *scanner.ScanResult, 100),
+		stopChan:   make(chan struct{}),
+		logger:     NewWorkerLoggerLocal(config.Name), // 使用本地日志
 	}
 
 	// Phase 2: 按需启用客户端优先级队列管理器
@@ -322,23 +324,12 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	})
 
 	// 设置Worker信息请求处理函数
-	// 创建自适应调度器（新版智能调度）
-	adaptiveConfig := DefaultAdaptiveSchedulerConfig(config.Concurrency)
-	w.adaptiveScheduler = NewAdaptiveScheduler(adaptiveConfig)
-	w.adaptiveScheduler.SetLogger(func(level, format string, args ...interface{}) {
-		w.logger.Info("[Scheduler] "+format, args...)
-	})
 
 	// 注册扫描器
 	w.registerScanners()
 
 	// 初始化 IP 地理位置服务
 	w.initGeolocation()
-
-	// 初始化自适应扫描配置（根据系统硬件自动调整扫描器参数）
-	adaptiveCfg := scanner.GetGlobalAdaptiveConfig()
-	logx.Infof("[Worker] Adaptive scan config initialized: profile=%s, CPU=%d cores, Mem=%d MB",
-		adaptiveCfg.Profile, adaptiveCfg.CPUCores, adaptiveCfg.TotalMemoryMB)
 
 	// 加载HTTP服务映射配置
 	w.loadHttpServiceMappings()
@@ -366,6 +357,12 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	})
 
 	return w, nil
+}
+
+// SetMongoDB 设置 MongoDB 直连实例，用于扫描结果直接写入
+func (w *Worker) SetMongoDB(client *mongo.Client, db *mongo.Database) {
+	w.mongoClient = client
+	w.mongoDB = db
 }
 
 // handleControlSignal 处理控制信号
@@ -441,8 +438,8 @@ func (w *Worker) handleWorkerControl(action, param string) {
 	}
 }
 
-// applyConcurrency 应用新的并发数：同步配置、资源管理器与自适应调度器，按需补启执行协程
-// 调小并发时由调度器限流门自然收敛，多余协程保持空闲
+// applyConcurrency 应用新的并发数：同步配置，按需补启执行协程
+// 调小并发时由任务拉取门限自然收敛，多余协程保持空闲
 func (w *Worker) applyConcurrency(newConcurrency int) {
 	if newConcurrency < 1 {
 		return
@@ -461,10 +458,6 @@ func (w *Worker) applyConcurrency(newConcurrency int) {
 		w.executorCount = newConcurrency
 	}
 	w.mu.Unlock()
-
-	if w.adaptiveScheduler != nil {
-		w.adaptiveScheduler.SetMaxConcurrency(newConcurrency)
-	}
 
 	for i := 0; i < spawn; i++ {
 		w.wg.Add(1)
@@ -504,24 +497,6 @@ func (w *Worker) ClearTaskControlSignal(taskId string) {
 	}
 }
 
-// GetSchedulerStats 获取调度器统计信息
-func (w *Worker) GetSchedulerStats() *SchedulerStats {
-	if w.adaptiveScheduler != nil {
-		stats := w.adaptiveScheduler.GetStats()
-		return &stats
-	}
-	return nil
-}
-
-// GetScannerConfigRecommendation 获取扫描器配置建议
-func (w *Worker) GetScannerConfigRecommendation() *ScannerConfigRecommendation {
-	if w.adaptiveScheduler != nil {
-		config := w.adaptiveScheduler.GetScannerConfig()
-		return &config
-	}
-	return nil
-}
-
 // registerScanners 注册扫描器
 func (w *Worker) registerScanners() {
 	w.scanners["portscan"] = scanner.NewPortScanner()
@@ -542,11 +517,6 @@ func (w *Worker) registerScanners() {
 // Start 启动Worker
 func (w *Worker) Start() {
 	w.isRunning = true
-
-	// 启动自适应调度器
-	if w.adaptiveScheduler != nil {
-		w.adaptiveScheduler.Start()
-	}
 
 	// 启动本地结果队列
 	if w.resultQueue != nil {
@@ -876,17 +846,6 @@ func (w *Worker) pullTask() bool {
 		return false
 	}
 
-	// 使用自适应调度器检查是否可以接受新任务
-	// Phase 3 清理：移除 ResourceManager fallback（adaptiveScheduler 总是非 nil）
-	if w.adaptiveScheduler != nil {
-		if !w.adaptiveScheduler.CanAcceptTask() {
-			return false
-		}
-	} else if w.isCPUOverloaded() {
-		// adaptiveScheduler 未初始化时回退到简单 CPU 检查（仅测试场景）
-		return false
-	}
-
 	// 通过 HTTP 接口获取任务
 	resp, err := w.httpClient.CheckTask(ctx)
 	if err != nil {
@@ -953,11 +912,6 @@ func (w *Worker) recoverOrphanedTasks() {
 func (w *Worker) Stop() {
 	w.isRunning = false
 
-	// 停止自适应调度器
-	if w.adaptiveScheduler != nil {
-		w.adaptiveScheduler.Stop()
-	}
-
 	// 停止本地结果队列
 	if w.resultQueue != nil {
 		w.resultQueue.Stop()
@@ -980,6 +934,16 @@ func (w *Worker) Stop() {
 	}
 
 	w.wg.Wait()
+
+	// 关闭 MongoDB 直连连接池（在途写入已随 wg.Wait 结束）
+	if w.mongoClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := w.mongoClient.Disconnect(ctx); err != nil {
+			logx.Errorf("[Worker][MongoDirect] disconnect failed: %v", err)
+		}
+	}
+
 	w.logger.Info("Worker %s stopped", w.config.Name)
 }
 
@@ -1156,12 +1120,6 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// 添加函数入口日志
 	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s", task.TaskId, task.MainTaskId)
 
-	// 获取资源槽位（使用自适应调度器）
-	// Phase 3 清理：移除 ResourceManager fallback（adaptiveScheduler 总是非 nil）
-	if w.adaptiveScheduler != nil {
-		w.adaptiveScheduler.AcquireSlot()
-	}
-
 	w.mu.Lock()
 	w.taskStarted++
 	w.mu.Unlock()
@@ -1191,12 +1149,6 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 		// 清理任务日志记录器，flush 残余缓冲
 		w.cleanupTaskLogger(task.TaskId)
-
-		// 释放资源槽位（使用自适应调度器）
-		// Phase 3 清理：移除 ResourceManager fallback
-		if w.adaptiveScheduler != nil {
-			w.adaptiveScheduler.ReleaseSlot()
-		}
 	}()
 
 	// 兜底递增子任务计数器：正常流程中每个模块完成时已递增，此 defer 仅在异常退出（STOP/致命错误/panic）时补递增。

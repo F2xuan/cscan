@@ -96,31 +96,16 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 	}
 	w.mu.Unlock()
 
-	// 获取调度器状态
-	var schedulerMode string
-	var effectiveConcurrency int
-	var isThrottled bool
-	if w.adaptiveScheduler != nil {
-		schedulerMode = w.adaptiveScheduler.GetCurrentMode().String()
-		effectiveConcurrency = w.adaptiveScheduler.GetCurrentConcurrency()
-		isThrottled = w.adaptiveScheduler.IsThrottled()
-	} else {
-		effectiveConcurrency = w.config.Concurrency
-	}
-
 	// 通过 HTTP 接口发送心跳
 	resp, err := w.httpClient.Heartbeat(ctx, &HeartbeatReq{
-		WorkerName:           w.config.Name,
-		IP:                   w.config.IP,
-		CpuLoad:              cpuLoad,
-		MemUsed:              memUsed,
-		TaskStartedNumber:    int32(w.taskStarted),
-		TaskExecutedNumber:   int32(w.taskExecuted),
-		IsDaemon:             false,
-		Concurrency:          w.config.Concurrency,
-		SchedulerMode:        schedulerMode,
-		EffectiveConcurrency: effectiveConcurrency,
-		IsThrottled:          isThrottled,
+		WorkerName:         w.config.Name,
+		IP:                 w.config.IP,
+		CpuLoad:            cpuLoad,
+		MemUsed:            memUsed,
+		TaskStartedNumber:  int32(w.taskStarted),
+		TaskExecutedNumber: int32(w.taskExecuted),
+		IsDaemon:           false,
+		Concurrency:        w.config.Concurrency,
 	})
 
 	if err != nil {

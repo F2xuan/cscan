@@ -15,11 +15,11 @@ import (
 
 // FileLogEntry 日志条目，写入本地 JSONL 文件
 type FileLogEntry struct {
-	Ts       string `json:"ts"`
-	Level    string `json:"level"`
-	Worker   string `json:"worker"`
-	TaskId   string `json:"taskId,omitempty"`
-	Msg      string `json:"msg"`
+	Ts     string `json:"ts"`
+	Level  string `json:"level"`
+	Worker string `json:"worker"`
+	TaskId string `json:"taskId,omitempty"`
+	Msg    string `json:"msg"`
 }
 
 // FileLogger 将日志写入本地 JSONL 文件（按日轮转），作为日志事实源
@@ -44,8 +44,8 @@ func NewFileLogger(logDir, workerName string) *FileLogger {
 	fl := &FileLogger{
 		logDir:     logDir,
 		workerName: workerName,
-		retention:  7,                  // 默认保留 7 天
-		maxBytes:   500 * 1024 * 1024,  // 默认总容量上限 500MB
+		retention:  7,                 // 默认保留 7 天
+		maxBytes:   500 * 1024 * 1024, // 默认总容量上限 500MB
 	}
 	_ = os.MkdirAll(logDir, 0o755)
 	return fl
@@ -289,11 +289,11 @@ func NewLogSyncReader(logDir string) *LogSyncReader {
 
 // SyncReadResult 同步读取结果
 type SyncReadResult struct {
-	Filename string          `json:"filename"`   // 当前读取的文件名
-	Logs     []FileLogEntry  `json:"logs"`       // 读取到的日志
-	NewOffset int64          `json:"newOffset"`  // 读取后的新偏移
-	HasMore  bool            `json:"hasMore"`    // 是否还有更多数据
-	NextFile string          `json:"nextFile"`   // 下一个待读文件（跨日续读）
+	Filename  string         `json:"filename"`  // 当前读取的文件名
+	Logs      []FileLogEntry `json:"logs"`      // 读取到的日志
+	NewOffset int64          `json:"newOffset"` // 读取后的新偏移
+	HasMore   bool           `json:"hasMore"`   // 是否还有更多数据
+	NextFile  string         `json:"nextFile"`  // 下一个待读文件（跨日续读）
 }
 
 // ReadFrom 从指定游标位置读取最多 maxLines 条日志

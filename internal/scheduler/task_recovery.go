@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strconv"
 	"time"
 
@@ -44,10 +43,6 @@ type TaskExecutionInfo struct {
 // 修复历史问题：原恢复时用 time.Now().Unix() 作 score，高优先级任务恢复后降级为 Normal
 // 允许 scheduler 为 nil（向后兼容），此时退化为时间戳 score
 func NewTaskRecoveryManager(rdb *redis.Client, ctx context.Context, scheduler *Scheduler) *TaskRecoveryManager {
-	// 根据系统配置自适应调整任务超时时间
-	// 低配机器扫描速度慢，需要更长的超时时间避免误判超时
-	taskTimeout := adaptiveTaskTimeout()
-
 	return &TaskRecoveryManager{
 		rdb:                rdb,
 		ctx:                ctx,
@@ -57,23 +52,12 @@ func NewTaskRecoveryManager(rdb *redis.Client, ctx context.Context, scheduler *S
 		taskWorkerKey:      "cscan:task:worker",
 		workerHeartbeatKey: "cscan:worker:",
 		checkInterval:      30 * time.Second, // 每30秒检查一次
-		taskTimeout:        taskTimeout,      // 自适应超时
+		taskTimeout:        15 * time.Minute, // 固定超时
 		logger:             logx.WithContext(ctx),
 		scheduler:          scheduler,
 	}
 }
 
-// adaptiveTaskTimeout 根据系统硬件配置计算任务超时时间
-func adaptiveTaskTimeout() time.Duration {
-	cpuCores := runtime.NumCPU()
-	if cpuCores <= 4 {
-		return 20 * time.Minute // 低配：20分钟
-	}
-	if cpuCores <= 8 {
-		return 15 * time.Minute // 中配：15分钟
-	}
-	return 10 * time.Minute // 高配：10分钟（原始值）
-}
 
 // retryCountKey 返回任务重试计数的独立 Redis key
 // 修复 M-04：原 RetryCount 存储在 execInfo JSON 中，recoverTask 的 GET→修改→SET

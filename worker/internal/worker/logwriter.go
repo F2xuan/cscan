@@ -188,7 +188,6 @@ func InitGlobalFileLogger(logDir, workerName string) {
 	globalFileLogger = NewFileLogger(logDir, workerName)
 }
 
-
 // UpdateGlobalFileLoggerWorkerName 更新全局文件日志器的 worker 名称（rename 后调用）
 func UpdateGlobalFileLoggerWorkerName(name string) {
 	if globalFileLogger != nil {

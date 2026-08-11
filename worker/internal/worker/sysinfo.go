@@ -18,6 +18,13 @@ func GetCPULoad() float64 {
 	return 0
 }
 
+// LoadAvgInfo 负载信息
+type LoadAvgInfo struct {
+	Load1  float64
+	Load5  float64
+	Load15 float64
+}
+
 // MemoryInfo 内存信息快照
 type MemoryInfo struct {
 	TotalMB       uint64  // 总内存(MB)

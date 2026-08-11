@@ -171,7 +171,7 @@ func (m *TaskQueueManager) Enqueue(task *scheduler.TaskInfo, priority TaskPriori
 		// 队列已满，尝试丢弃低优先级任务
 		if !m.dropLowPriorityTaskLocked() {
 			atomic.AddInt64(&m.totalDropped, 1)
-			m.log("WARN", "Task queue full, dropping task %s", task.TaskId)
+			m.log("ERROR", "[CRITICAL] Task queue full (size=%d), DROPPING task %s - task will be LOST", currentSize, task.TaskId)
 			return false
 		}
 	}

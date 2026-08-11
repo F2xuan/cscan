@@ -196,12 +196,9 @@ type HeartbeatReq struct {
 	MemUsed            float64 `json:"memUsed"`
 	TaskStartedNumber  int32   `json:"taskStartedNumber"`
 	TaskExecutedNumber int32   `json:"taskExecutedNumber"`
+	SubCommandRunning  int     `json:"subCommandRunning,omitempty"`
 	IsDaemon           bool    `json:"isDaemon"`
 	Concurrency        int     `json:"concurrency"`
-	// 智能调度器状态
-	SchedulerMode        string `json:"schedulerMode,omitempty"`        // 调度模式
-	EffectiveConcurrency int    `json:"effectiveConcurrency,omitempty"` // 实际生效的并发数
-	IsThrottled          bool   `json:"isThrottled,omitempty"`          // 是否限流
 }
 
 // HeartbeatResp 心跳响应
@@ -1178,21 +1175,21 @@ func (c *WorkerHTTPClient) SaveJSFinderResult(ctx context.Context, req *SaveJSFi
 
 // CertResultItem 证书采集结果项（与 scanner.CertResult 对齐）
 type CertResultItem struct {
-	Host         string            `json:"host"`
-	Port         int               `json:"port"`
-	Authority    string            `json:"authority"`
+	Host         string               `json:"host"`
+	Port         int                  `json:"port"`
+	Authority    string               `json:"authority"`
 	Subject      scanner.CertNameInfo `json:"subject"`
-	SubjectDN    string            `json:"subjectDN"`
+	SubjectDN    string               `json:"subjectDN"`
 	Issuer       scanner.CertNameInfo `json:"issuer"`
-	IssuerDN     string            `json:"issuerDN"`
-	SerialNumber string            `json:"serialNumber"`
-	SigAlg       string            `json:"sigAlg"`
-	NotBefore    time.Time         `json:"notBefore"`
-	NotAfter     time.Time         `json:"notAfter"`
-	Version      int               `json:"version"`
-	SANs         []string          `json:"sans,omitempty"`
-	Fingerprints map[string]string `json:"fingerprints,omitempty"`
-	IsSelfSigned bool              `json:"isSelfSigned"`
+	IssuerDN     string               `json:"issuerDN"`
+	SerialNumber string               `json:"serialNumber"`
+	SigAlg       string               `json:"sigAlg"`
+	NotBefore    time.Time            `json:"notBefore"`
+	NotAfter     time.Time            `json:"notAfter"`
+	Version      int                  `json:"version"`
+	SANs         []string             `json:"sans,omitempty"`
+	Fingerprints map[string]string    `json:"fingerprints,omitempty"`
+	IsSelfSigned bool                 `json:"isSelfSigned"`
 }
 
 // SaveCertResultReq 保存证书采集结果请求

@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"cscan/internal/model"
-	"cscan/pkg/mapping"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
+	"cscan/pkg/mapping"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

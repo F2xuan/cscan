@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"cscan/internal/scanner"
 	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
-	"cscan/internal/scanner"
 )
 
 func (w *Worker) initGeolocation() {

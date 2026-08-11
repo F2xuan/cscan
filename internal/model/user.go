@@ -18,27 +18,24 @@ const (
 )
 
 type User struct {
-	Id                 primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Username           string             `bson:"username" json:"username"`
-	Password           string             `bson:"password" json:"-"`
-	Role               string             `bson:"role,omitempty" json:"role"`
-	Status             string             `bson:"status" json:"status"`
-	Avatar             string             `bson:"avatar,omitempty" json:"avatar"`
-	Email              string             `bson:"email,omitempty" json:"email,omitempty"`
-	Phone              string             `bson:"phone,omitempty" json:"phone,omitempty"`
-	ScanConfig         string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
-	LastLoginTime      *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
-	CreateTime         time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime         time.Time          `bson:"update_time" json:"updateTime"`
-	MustChangePassword bool               `bson:"must_change_password,omitempty" json:"mustChangePassword"`
-	OnboardingDone     bool               `bson:"onboarding_done,omitempty" json:"onboardingDone"` // 首次引导是否已完成（T4.2）
+	Id             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Username       string             `bson:"username" json:"username"`
+	Password       string             `bson:"password" json:"-"`
+	Role           string             `bson:"role,omitempty" json:"role"`
+	Status         string             `bson:"status" json:"status"`
+	Avatar         string             `bson:"avatar,omitempty" json:"avatar"`
+	Email          string             `bson:"email,omitempty" json:"email,omitempty"`
+	Phone          string             `bson:"phone,omitempty" json:"phone,omitempty"`
+	ScanConfig     string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
+	LastLoginTime  *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
+	CreateTime     time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime     time.Time          `bson:"update_time" json:"updateTime"`
+	OnboardingDone bool               `bson:"onboarding_done,omitempty" json:"onboardingDone"` // 首次引导是否已完成（T4.2）
 }
 
-const AdminUsername = "admin"
-
-// IsAdmin 判断用户是否为内建管理员账号（状态受保护，禁止禁用/删除）
-func (u *User) IsAdmin() bool {
-	return u != nil && u.Username == AdminUsername
+// IsSuperadmin 判断用户是否为管理员角色（superadmin 或 admin，状态/角色受保护，禁止降级）
+func (u *User) IsSuperadmin() bool {
+	return u != nil && (u.Role == "superadmin" || u.Role == "admin")
 }
 
 type UserModel struct {
@@ -146,9 +143,8 @@ func (m *UserModel) UpdatePassword(ctx context.Context, id string, newPassword s
 		return fmt.Errorf("hash password: %w", err)
 	}
 	update := bson.M{
-		"password":             hashed,
-		"must_change_password": false,
-		"update_time":          time.Now(),
+		"password":    hashed,
+		"update_time": time.Now(),
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
 	return err

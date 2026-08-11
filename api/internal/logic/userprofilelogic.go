@@ -73,8 +73,8 @@ func (l *UserProfileLogic) UserProfileUpdate(req *types.UserProfileUpdateReq) (r
 		return &types.BaseResp{Code: 404, Msg: "用户不存在"}, nil
 	}
 
-	// admin 用户名禁止修改
-	if user.IsAdmin() && req.Username != "" && req.Username != user.Username {
+	// superadmin 用户名禁止修改
+	if user.IsSuperadmin() && req.Username != "" && req.Username != user.Username {
 		return &types.BaseResp{Code: 400, Msg: "管理员用户名不可修改"}, nil
 	}
 
@@ -184,14 +184,14 @@ func (l *UserProfileLogic) UserTokenCreate(req *types.UserTokenCreateReq) (resp 
 	}
 
 	doc := &model.UserToken{
-		UserId:    oid,
-		Name:      req.Name,
-		TokenHash: model.HashPAT(plain),
+		UserId:     oid,
+		Name:       req.Name,
+		TokenHash:  model.HashPAT(plain),
 		PlainToken: plain,
-		Prefix:    model.PATPrefixOf(plain),
-		Scopes:    scopes,
-		ExpiresAt: expiresPtr,
-		Status:    model.StatusEnable,
+		Prefix:     model.PATPrefixOf(plain),
+		Scopes:     scopes,
+		ExpiresAt:  expiresPtr,
+		Status:     model.StatusEnable,
 	}
 	if err := l.svcCtx.UserTokenModel.Insert(l.ctx, doc); err != nil {
 		logx.Errorf("[PAT] insert token failed: %v", err)
@@ -279,7 +279,6 @@ func (l *UserProfileLogic) UserTokenList() (resp *types.UserTokenListResp, err e
 	}
 	return &types.UserTokenListResp{Code: 0, Msg: "success", List: list}, nil
 }
-
 
 // UserTokenSetStatus 切换当前用户指定 PAT 的启用状态（enable / disable）
 func (l *UserProfileLogic) UserTokenSetStatus(req *types.UserTokenSetStatusReq) (resp *types.BaseResp, err error) {

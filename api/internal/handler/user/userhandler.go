@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -59,7 +58,7 @@ func UserListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// UserCreateHandler 创建用户
+// UserCreateHandler 创建用户（管理员权限）
 func UserCreateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.UserCreateReq
@@ -72,6 +71,90 @@ func UserCreateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		resp, err := l.UserCreate(&req)
 		if err != nil {
 			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// RegisterHandler 公开注册（无需登录，首位注册用户自动成为 superadmin）
+func RegisterHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.RegisterReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewUserRegisterLogic(r.Context(), svcCtx)
+		resp, err := l.Register(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// RegistrationConfigGetHandler 获取注册配置（管理员）
+func RegistrationConfigGetHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l := logic.NewRegistrationConfigGetLogic(r.Context(), svcCtx)
+		resp, err := l.Get()
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// RegistrationConfigSaveHandler 保存注册配置（管理员）
+func RegistrationConfigSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.RegistrationConfigSaveReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewRegistrationConfigSaveLogic(r.Context(), svcCtx)
+		resp, err := l.Save(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// UserApproveHandler 用户审核（管理员：pending → enable/disable）
+func UserApproveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.UserApproveReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewUserApproveLogic(r.Context(), svcCtx)
+		resp, err := l.Approve(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// SystemStatusHandler 系统状态检测（公开接口，无需认证）
+// 用于前端检测是否为首次部署：返回 hasUsers=false 时，前端自动切换到注册模式
+func SystemStatusHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l := logic.NewSystemStatusLogic(r.Context(), svcCtx)
+		resp, err := l.Check()
+		if err != nil {
+			httpx.Error(w, err)
 			return
 		}
 		httpx.OkJson(w, resp)
@@ -127,33 +210,6 @@ func UserResetPasswordHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		l := logic.NewUserResetPasswordLogic(r.Context(), svcCtx)
 		resp, err := l.UserResetPassword(&req)
-		if err != nil {
-			response.Error(w, err)
-			return
-		}
-		httpx.OkJson(w, resp)
-	}
-}
-
-// UserFirstLoginResetPasswordHandler 首次登录密码重置（不需要原密码验证）
-// 安全修复:校验当前登录用户只能重置自己的密码,防止越权重置他人密码
-func UserFirstLoginResetPasswordHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req types.UserFirstLoginResetPasswordReq
-		if err := httpx.Parse(r, &req); err != nil {
-			response.ParamError(w, err.Error())
-			return
-		}
-
-		// 从 JWT Context 中获取当前登录用户 ID
-		currentUserId := middleware.GetUserId(r.Context())
-		if currentUserId == "" {
-			response.Error(w, errors.New("未认证"))
-			return
-		}
-
-		l := logic.NewUserFirstLoginResetPasswordLogic(r.Context(), svcCtx)
-		resp, err := l.UserFirstLoginResetPassword(&req, currentUserId)
 		if err != nil {
 			response.Error(w, err)
 			return

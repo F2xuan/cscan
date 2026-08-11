@@ -95,22 +95,22 @@ func TestUserModel_IsAdmin(t *testing.T) {
 		user     *model.User
 		expected bool
 	}{
-		{"admin用户", &model.User{Username: "admin"}, true},
-		{"普通用户", &model.User{Username: "user1"}, false},
+		{"superadmin用户", &model.User{Username: "admin", Role: "superadmin"}, true},
+		{"admin角色用户", &model.User{Username: "user1", Role: "admin"}, true},
+		{"普通用户", &model.User{Username: "user1", Role: "user"}, false},
 		{"nil用户", nil, false},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.user.IsAdmin()
+			result := tc.user.IsSuperadmin()
 			if result != tc.expected {
-				t.Errorf("IsAdmin() = %v, 期望 %v", result, tc.expected)
+				t.Errorf("IsSuperadmin() = %v, 期望 %v", result, tc.expected)
 			}
 		})
 	}
 }
 
-// TestUserListResp_Structure 测试响应结构完整性
 func TestUserListResp_Structure(t *testing.T) {
 	resp := &types.UserListResp{
 		Code:  0,
@@ -184,7 +184,7 @@ func TestUserCreateReq_Validation(t *testing.T) {
 func TestUserUpdateReq_AdminProtection(t *testing.T) {
 	adminUser := &model.User{
 		Username: "admin",
-		Role:     "admin",
+		Role:     "superadmin",
 		Status:   "enable",
 	}
 
@@ -195,30 +195,30 @@ func TestUserUpdateReq_AdminProtection(t *testing.T) {
 		rejectMessage string
 	}{
 		{
-			"尝试修改admin状态",
+			"尝试修改管理员状态",
 			&types.UserUpdateReq{
 				Username: "admin",
-				Role:     "admin",
+				Role:     "superadmin",
 				Status:   "disable",
 			},
 			true,
-			"admin 账号状态不允许修改",
+			"管理员账号状态不允许修改",
 		},
 		{
-			"尝试修改admin角色",
+			"尝试修改管理员角色",
 			&types.UserUpdateReq{
 				Username: "admin",
 				Role:     "user",
 				Status:   "enable",
 			},
 			true,
-			"admin 账号角色不允许修改",
+			"管理员账号角色不允许修改",
 		},
 		{
-			"修改admin其他字段",
+			"修改管理员其他字段",
 			&types.UserUpdateReq{
 				Username: "admin",
-				Role:     "admin",
+				Role:     "superadmin",
 				Status:   "enable",
 				Avatar:   "new-avatar.jpg",
 			},
@@ -233,7 +233,7 @@ func TestUserUpdateReq_AdminProtection(t *testing.T) {
 			statusChanged := tc.req.Status != "" && tc.req.Status != adminUser.Status
 			roleChanged := tc.req.Role != "" && tc.req.Role != adminUser.Role
 
-			shouldReject := adminUser.IsAdmin() && (statusChanged || roleChanged)
+			shouldReject := adminUser.IsSuperadmin() && (statusChanged || roleChanged)
 			if shouldReject != tc.shouldReject {
 				t.Errorf("admin 保护判断错误：期望拒绝=%v，实际=%v", tc.shouldReject, shouldReject)
 			}
@@ -309,4 +309,3 @@ func TestBaseResp_ErrorCodes(t *testing.T) {
 		})
 	}
 }
-

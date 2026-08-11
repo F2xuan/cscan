@@ -7,6 +7,7 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/internal/model"
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -49,7 +50,25 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 		return nil, ErrAuthServiceUnavailable
 	}
 	if !ok {
-		// 真正的认证失败：用户不存在 / 密码错误 / 用户禁用
+		// 认证失败：进一步区分"待审核"/"已禁用"/"密码错误"
+		user, findErr := l.svcCtx.UserModel.FindByUsername(verifyCtx, req.Username)
+		if findErr != nil {
+			l.Logger.Errorf("login find user failed: username=%s err=%v", req.Username, findErr)
+		}
+		if user != nil {
+			if user.Status == "pending" {
+				return &types.LoginResp{
+					Code: 10004,
+					Msg:  "账号待管理员审核",
+				}, nil
+			}
+			if user.Status == model.StatusDisable {
+				return &types.LoginResp{
+					Code: 10003,
+					Msg:  "账号已被禁用",
+				}, nil
+			}
+		}
 		return &types.LoginResp{
 			Code: 401,
 			Msg:  "用户名或密码错误",
@@ -80,14 +99,13 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 	workspaceId := "default"
 
 	return &types.LoginResp{
-		Code:          0,
-		Msg:           "登录成功",
-		Token:         token,
-		UserId:        user.Id.Hex(),
-		Username:      user.Username,
-		Role:          role,
-		WorkspaceId:   workspaceId,
-		NeedChangePwd: user.MustChangePassword,
+		Code:        0,
+		Msg:         "登录成功",
+		Token:       token,
+		UserId:      user.Id.Hex(),
+		Username:    user.Username,
+		Role:        role,
+		WorkspaceId: workspaceId,
 	}, nil
 }
 

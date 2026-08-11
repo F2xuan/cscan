@@ -99,9 +99,18 @@ func (l *UserCreateLogic) UserCreate(req *types.UserCreateReq) (resp *types.Base
 		return &types.BaseResp{Code: 400, Msg: "用户名已存在"}, nil
 	}
 
-	// 创建用户
+	// 首位注册用户自动成为 superadmin（替代内建 admin 账号）
+	total, err := l.svcCtx.UserModel.Count(l.ctx, bson.M{})
+	if err != nil {
+		logx.Errorf("查询用户数量失败: %v", err)
+		return &types.BaseResp{Code: 500, Msg: "系统错误"}, nil
+	}
+
 	role := req.Role
-	if role == "" {
+	if total == 0 {
+		role = "superadmin"
+		logx.Infof("[SECURITY] First user auto-promoted to superadmin: username=%s", req.Username)
+	} else if role == "" {
 		role = "user"
 	}
 	user := &model.User{
@@ -147,13 +156,13 @@ func (l *UserUpdateLogic) UserUpdate(req *types.UserUpdateReq) (resp *types.Base
 		return &types.BaseResp{Code: 404, Msg: "用户不存在"}, nil
 	}
 
-	// admin 账号状态受保护：禁止修改状态
-	if user.IsAdmin() && req.Status != "" && req.Status != user.Status {
-		return &types.BaseResp{Code: 400, Msg: "admin 账号状态不允许修改"}, nil
+	// superadmin 账号状态受保护：禁止修改状态
+	if user.IsSuperadmin() && req.Status != "" && req.Status != user.Status {
+		return &types.BaseResp{Code: 400, Msg: "管理员账号状态不允许修改"}, nil
 	}
-	// admin 账号角色受保护：禁止降级
-	if user.IsAdmin() && req.Role != "" && req.Role != user.Role {
-		return &types.BaseResp{Code: 400, Msg: "admin 账号角色不允许修改"}, nil
+	// superadmin 账号角色受保护：禁止降级
+	if user.IsSuperadmin() && req.Role != "" && req.Role != user.Role {
+		return &types.BaseResp{Code: 400, Msg: "管理员账号角色不允许修改"}, nil
 	}
 
 	// 如果修改用户名，检查是否重复
@@ -302,61 +311,6 @@ func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordR
 	// 同步吊销该用户所有 PAT，保证密码修改后 Token 全部失效
 	if _, err := l.svcCtx.UserTokenModel.RevokeByUserId(l.ctx, user.Id); err != nil {
 		logx.Errorf("[UserResetPassword] revoke user tokens failed: %v", err)
-	}
-
-	return &types.BaseResp{Code: 0, Msg: "密码重置成功"}, nil
-}
-
-// UserFirstLoginResetPasswordLogic 首次登录密码重置逻辑
-type UserFirstLoginResetPasswordLogic struct {
-	logx.Logger
-	ctx    context.Context
-	svcCtx *svc.ServiceContext
-}
-
-func NewUserFirstLoginResetPasswordLogic(ctx context.Context, svcCtx *svc.ServiceContext) *UserFirstLoginResetPasswordLogic {
-	return &UserFirstLoginResetPasswordLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
-}
-
-func (l *UserFirstLoginResetPasswordLogic) UserFirstLoginResetPassword(req *types.UserFirstLoginResetPasswordReq, currentUserId string) (resp *types.BaseResp, err error) {
-	// 安全校验:只能重置自己的密码,防止越权
-	// currentUserId 来自 JWT Context,无法被客户端伪造
-	if currentUserId == "" {
-		return &types.BaseResp{Code: 401, Msg: "未认证"}, nil
-	}
-	if req.Id != currentUserId {
-		return &types.BaseResp{Code: 403, Msg: "只能修改自己的密码"}, nil
-	}
-
-	// 验证新密码强度
-	if err := model.ValidatePasswordStrength(req.NewPassword); err != nil {
-		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil
-	}
-
-	// 检查用户是否存在
-	user, err := l.svcCtx.UserModel.FindById(l.ctx, req.Id)
-	if err != nil {
-		logx.Errorf("查询用户失败: %v", err)
-		return &types.BaseResp{Code: 500, Msg: "系统错误"}, nil
-	}
-	if user == nil {
-		return &types.BaseResp{Code: 404, Msg: "用户不存在"}, nil
-	}
-
-	// 验证用户是否处于必须修改密码状态
-	if !user.MustChangePassword {
-		return &types.BaseResp{Code: 403, Msg: "当前用户不需要修改密码"}, nil
-	}
-
-	// 重置密码（不验证原密码）
-	err = l.svcCtx.UserModel.UpdatePassword(l.ctx, req.Id, req.NewPassword)
-	if err != nil {
-		logx.Errorf("首次登录密码重置失败: %v", err)
-		return &types.BaseResp{Code: 500, Msg: "密码重置失败"}, nil
 	}
 
 	return &types.BaseResp{Code: 0, Msg: "密码重置成功"}, nil

@@ -40,16 +40,36 @@
         </el-table-column>
         <el-table-column prop="status" :label="$t('common.status')" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'enable' ? 'success' : 'danger'">
-              {{ row.status === 'enable' ? $t('common.enabled') : $t('common.disabled') }}
-            </el-tag>
+            <el-tag v-if="row.status === 'enable'" type="success">{{ $t('common.enabled') }}</el-tag>
+            <el-tag
+              v-else-if="row.status === 'pending'"
+              type="warning"
+            >{{ $t('userManagement.status.pending') }}</el-tag>
+            <el-tag v-else type="danger">{{ $t('common.disabled') }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('common.operation')" width="200" fixed="right">
+        <el-table-column :label="$t('common.operation')" width="260" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="showUserDialog(row)">{{ $t('common.edit') }}</el-button>
-            <el-button type="warning" link size="small" @click="showResetPasswordDialog(row)">{{ $t('user.resetPassword') }}</el-button>
-            <el-button type="danger" link size="small" @click="handleDeleteUser(row)">{{ $t('common.delete') }}</el-button>
+            <el-button
+              type="warning"
+              link
+              size="small"
+              @click="showResetPasswordDialog(row)"
+            >{{ $t('user.resetPassword') }}</el-button>
+            <el-button
+              v-if="row.status === 'pending'"
+              type="success"
+              link
+              size="small"
+              @click="handleApproveUser(row)"
+            >{{ $t('userManagement.actions.approve') }}</el-button>
+            <el-button
+              type="danger"
+              link
+              size="small"
+              @click="handleDeleteUser(row)"
+            >{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -66,7 +86,11 @@
     </el-card>
 
     <!-- 用户对话框 -->
-    <el-dialog v-model="userDialogVisible" :title="userForm.id ? $t('user.editUser') : $t('user.newUser')" width="500px">
+    <el-dialog
+      v-model="userDialogVisible"
+      :title="userForm.id ? $t('user.editUser') : $t('user.newUser')"
+      width="500px"
+    >
       <el-form ref="userFormRef" :model="userForm" :rules="userRules" label-width="80px">
         <el-form-item :label="$t('user.avatar')">
           <div class="avatar-updater">
@@ -95,22 +119,28 @@
           <el-input v-model="userForm.password" type="password" :placeholder="$t('user.pleaseEnterPassword')" />
         </el-form-item>
         <el-form-item :label="$t('user.role')" prop="role">
-          <el-select v-model="userForm.role" :placeholder="$t('user.pleaseSelectRole')" :disabled="isAdminRow">
+          <el-select v-model="userForm.role" :placeholder="$t('user.pleaseSelectRole')" :disabled="isSuperadminRow">
             <el-option :label="$t('user.admin')" value="admin" />
             <el-option :label="$t('user.user')" value="user" />
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('common.status')" prop="status">
-          <el-select v-model="userForm.status" :placeholder="$t('user.pleaseSelectStatus')" :disabled="isAdminRow">
+          <el-select v-model="userForm.status" :placeholder="$t('user.pleaseSelectStatus')" :disabled="isSuperadminRow">
             <el-option :label="$t('common.enabled')" value="enable" />
             <el-option :label="$t('common.disabled')" value="disable" />
           </el-select>
-          <div v-if="isAdminRow" class="form-tip">{{ $t('user.adminStatusLockTip', 'admin 账号状态与角色受保护，不允许修改') }}</div>
+          <div v-if="isSuperadminRow" class="form-tip">{{
+            $t('user.adminStatusLockTip', '管理员账号状态与角色受保护，不允许修改')
+          }}</div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="userDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="userSubmitting" @click="handleUserSubmit">{{ $t('common.confirm') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="userSubmitting"
+          @click="handleUserSubmit"
+        >{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
@@ -118,18 +148,37 @@
     <el-dialog v-model="resetPasswordVisible" :title="$t('user.resetPassword')" width="400px">
       <el-form ref="resetFormRef" :model="resetForm" :rules="resetRules" label-width="80px">
         <el-form-item v-if="isResetSelf" :label="$t('user.oldPassword')" prop="oldPassword">
-          <el-input v-model="resetForm.oldPassword" type="password" :placeholder="$t('user.pleaseEnterOldPassword')" show-password />
+          <el-input
+            v-model="resetForm.oldPassword"
+            type="password"
+            :placeholder="$t('user.pleaseEnterOldPassword')"
+            show-password
+          />
         </el-form-item>
         <el-form-item :label="$t('user.newPassword')" prop="newPassword">
-          <el-input v-model="resetForm.newPassword" type="password" :placeholder="$t('user.pleaseEnterNewPassword')" show-password />
+          <el-input
+            v-model="resetForm.newPassword"
+            type="password"
+            :placeholder="$t('user.pleaseEnterNewPassword')"
+            show-password
+          />
         </el-form-item>
         <el-form-item :label="$t('user.confirmPassword')" prop="confirmPassword">
-          <el-input v-model="resetForm.confirmPassword" type="password" :placeholder="$t('user.pleaseConfirmPassword')" show-password />
+          <el-input
+            v-model="resetForm.confirmPassword"
+            type="password"
+            :placeholder="$t('user.pleaseConfirmPassword')"
+            show-password
+          />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="resetPasswordVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="resetting" @click="handleResetPassword">{{ $t('common.confirm') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="resetting"
+          @click="handleResetPassword"
+        >{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -141,8 +190,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
-import { getUserList, createUser, updateUser, deleteUser, resetUserPassword, uploadUserAvatar } from '@/api/auth'
+import {
+  getUserList, createUser, updateUser, deleteUser,
+  resetUserPassword, uploadUserAvatar, approveUser
+} from '@/api/auth'
 import { useUserStore, DEFAULT_AVATAR } from '@/stores/user'
+import { validatePasswordStrength as checkPasswordStrength } from '@/utils/validators'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -181,17 +234,15 @@ const userDialogVisible = ref(false)
 const userSubmitting = ref(false)
 const userFormRef = ref()
 const userForm = ref({ id: '', username: '', password: '', role: 'user', status: 'enable', avatar: '' })
-const isAdminRow = computed(() => userForm.value.username === 'admin')
+const isSuperadminRow = computed(() => userForm.value.role === 'superadmin')
 const avatarPreview = computed(() => userForm.value.avatar || DEFAULT_AVATAR)
 const avatarUploading = ref(false)
 
-// 密码强度校验器
+// 密码强度校验器（复用 utils/validators）
 function validatePasswordStrength(rule, value, callback) {
   if (!value) return callback()
-  if (value.length < 8) return callback(new Error(t('user.passwordMinLength')))
-  if (!/[A-Z]/.test(value)) return callback(new Error(t('user.passwordNeedUpper')))
-  if (!/[a-z]/.test(value)) return callback(new Error(t('user.passwordNeedLower')))
-  if (!/[0-9]/.test(value)) return callback(new Error(t('user.passwordNeedDigit')))
+  const errMsg = checkPasswordStrength(value)
+  if (errMsg) return callback(new Error(errMsg))
   callback()
 }
 
@@ -326,6 +377,27 @@ async function handleDeleteUser(row) {
   } catch (error) {
     if (error !== 'cancel') {
       console.error('删除用户失败:', error)
+    }
+  }
+}
+
+async function handleApproveUser(row) {
+  try {
+    await ElMessageBox.confirm(
+      t('userManagement.confirmApprove'),
+      t('common.tip'),
+      { type: 'success' }
+    )
+    const res = await approveUser({ id: row.id, status: 'enable' })
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('common.operationSuccess'))
+      loadUserList()
+    } else {
+      ElMessage.error(res.msg || t('common.operationFailed'))
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('审核用户失败:', error)
     }
   }
 }

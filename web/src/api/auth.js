@@ -4,6 +4,10 @@ export function login(data) {
   return request.post('/login', data)
 }
 
+export function register(data) {
+  return request.post('/register', data)
+}
+
 export function getUserList(data) {
   return request.post('/user/list', data)
 }
@@ -24,9 +28,18 @@ export function resetUserPassword(data) {
   return request.post('/user/resetPassword', data)
 }
 
-// 首次登录密码重置（不需要原密码验证）
-export function firstLoginResetPassword(data) {
-  return request.post('/user/firstLoginResetPassword', data)
+// ==================== 注册配置 ====================
+export function getRegistrationConfig() {
+  return request.post('/registration/config/get')
+}
+
+export function saveRegistrationConfig(data) {
+  return request.post('/registration/config/save', data)
+}
+
+// ==================== 用户审核 ====================
+export function approveUser(data) {
+  return request.post('/user/approve', data)
 }
 
 // 用户头像上传（multipart）

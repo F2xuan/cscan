@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cscan/internal/model"
+	"cscan/pkg/response"
 
 	"github.com/golang-jwt/jwt/v4"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -37,6 +38,7 @@ type AuthMiddleware struct {
 	UserModel    *model.UserModel
 	PATLookup    PATLookup
 	PATRecorder  PATUsageRecorder
+	RateLimiter  *TokenRateLimiter // PAT 认证限流器（可选）
 }
 
 func NewAuthMiddleware(accessSecret string) *AuthMiddleware {
@@ -50,6 +52,12 @@ func (m *AuthMiddleware) WithPAT(lookup PATLookup, recorder PATUsageRecorder, us
 	m.PATLookup = lookup
 	m.PATRecorder = recorder
 	m.UserModel = userModel
+	return m
+}
+
+// WithRateLimiter 注入限流器，为 PAT 认证路径提供暴力破解防护
+func (m *AuthMiddleware) WithRateLimiter(limiter *TokenRateLimiter) *AuthMiddleware {
+	m.RateLimiter = limiter
 	return m
 }
 
@@ -119,6 +127,22 @@ func (m *AuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 
 func (m *AuthMiddleware) handlePAT(w http.ResponseWriter, r *http.Request, tokenStr string, next http.HandlerFunc) {
 	ctx := r.Context()
+
+	// PAT 认证限流：防止暴力破解
+	if m.RateLimiter != nil {
+		clientKey := tokenStr // 使用 token 本身作为限流 key
+		if len(clientKey) > 32 {
+			clientKey = clientKey[:32] // 避免 key 过长
+		}
+		b := m.RateLimiter.bucket(clientKey)
+		if !b.allow() {
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			response.ErrorWithCode(w, http.StatusTooManyRequests, "PAT认证请求过于频繁")
+			return
+		}
+	}
+
 	uid, role, status, tokenId, scopes, err := m.PATLookup(ctx, tokenStr)
 	if err != nil {
 		unauthorized(w, "Token无效或已过期")

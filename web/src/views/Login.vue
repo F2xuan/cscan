@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="login-container">
     <!-- 主题和语言切换按钮 -->
     <div class="controls">
@@ -13,16 +13,21 @@
         <el-icon v-else><Moon /></el-icon>
       </div>
     </div>
-    
+
     <div :class="['login-box', `style-${themeStore.themeStyle}`]">
       <div class="login-header">
         <h1>{{ brandingStore.displayTitle }}</h1>
-        <p>{{ $t('auth.loginTitle') }}</p>
+        <p v-if="systemHasUsers === false" class="first-deploy-hint">
+          {{ $t('auth.firstDeployHint') }}
+        </p>
+        <p v-else>{{ $t('auth.loginTitle') }}</p>
       </div>
-      <el-form ref="formRef" :model="form" :rules="rules" class="login-form">
+
+      <!-- 登录表单 -->
+      <el-form v-if="!isRegisterMode" ref="loginFormRef" :model="loginForm" :rules="loginRules" class="login-form">
         <el-form-item prop="username">
           <el-input
-            v-model="form.username"
+            v-model="loginForm.username"
             :placeholder="$t('auth.username')"
             prefix-icon="User"
             size="large"
@@ -30,7 +35,7 @@
         </el-form-item>
         <el-form-item prop="password">
           <el-input
-            v-model="form.password"
+            v-model="loginForm.password"
             type="password"
             :placeholder="$t('auth.password')"
             prefix-icon="Lock"
@@ -43,13 +48,67 @@
           <el-button
             type="primary"
             size="large"
-            :loading="loading"
+            :loading="loginLoading"
             class="login-btn"
             @click="handleLogin"
           >
             {{ $t('auth.login') }}
           </el-button>
         </el-form-item>
+        <div class="form-footer">
+          <span class="toggle-text" @click="toggleMode">
+            {{ $t('auth.noAccount') }} <span class="toggle-link">{{ $t('auth.register') }}</span>
+          </span>
+        </div>
+      </el-form>
+
+      <!-- 注册表单 -->
+      <el-form v-else ref="registerFormRef" :model="registerForm" :rules="registerRules" class="login-form">
+        <el-form-item prop="username">
+          <el-input
+            v-model="registerForm.username"
+            :placeholder="$t('auth.username')"
+            prefix-icon="User"
+            size="large"
+          />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            :placeholder="$t('auth.password')"
+            prefix-icon="Lock"
+            size="large"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item prop="confirmPassword">
+          <el-input
+            v-model="registerForm.confirmPassword"
+            type="password"
+            :placeholder="$t('auth.confirmPassword')"
+            prefix-icon="Lock"
+            size="large"
+            show-password
+            @keyup.enter="handleRegister"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button
+            type="primary"
+            size="large"
+            :loading="registerLoading"
+            class="login-btn"
+            @click="handleRegister"
+          >
+            {{ $t('auth.register') }}
+          </el-button>
+        </el-form-item>
+        <div class="form-footer">
+          <span class="toggle-text" @click="toggleMode">
+            {{ $t('auth.hasAccount') }} <span class="toggle-link">{{ $t('auth.login') }}</span>
+          </span>
+        </div>
       </el-form>
     </div>
 
@@ -57,7 +116,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -66,6 +125,7 @@ import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
 import { useBrandingStore } from '@/stores/branding'
 import { Sunny, Moon, Position } from '@element-plus/icons-vue'
+import { register as apiRegister } from '@/api/auth'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -73,37 +133,125 @@ const userStore = useUserStore()
 const themeStore = useThemeStore()
 const localeStore = useLocaleStore()
 const brandingStore = useBrandingStore()
-const formRef = ref()
-const loading = ref(false)
 
-const form = reactive({
+const isRegisterMode = ref(false)
+const loginFormRef = ref()
+const registerFormRef = ref()
+const loginLoading = ref(false)
+const registerLoading = ref(false)
+const systemHasUsers = ref(null) // null=未检测, false=无用户(首次部署), true=已有用户
+
+const loginForm = reactive({
   username: '',
   password: ''
 })
 
-const rules = computed(() => ({
+const registerForm = reactive({
+  username: '',
+  password: '',
+  confirmPassword: ''
+})
+
+// 检测系统是否已有用户（首次部署时自动切换到注册模式）
+async function checkSystemStatus() {
+  try {
+    const res = await fetch('/api/v1/system/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      systemHasUsers.value = data.hasUsers
+      // 首次部署：系统无用户，自动显示注册模式
+      if (data.isFirstDeploy) {
+        isRegisterMode.value = true
+      }
+    }
+  } catch (e) {
+    // 检测失败不影响正常登录流程
+  }
+}
+
+onMounted(() => {
+  // 首次部署检测：系统无用户时自动切换到注册模式
+  checkSystemStatus()
+})
+
+const validateConfirmPassword = (rule, value, callback) => {
+  if (!value) {
+    callback(new Error(t('auth.pleaseConfirmPassword')))
+  } else if (value !== registerForm.password) {
+    callback(new Error(t('auth.passwordMismatch')))
+  } else {
+    callback()
+  }
+}
+
+const loginRules = computed(() => ({
   username: [{ required: true, message: t('auth.pleaseEnterUsername'), trigger: 'blur' }],
   password: [{ required: true, message: t('auth.pleaseEnterPassword'), trigger: 'blur' }]
 }))
 
+const registerRules = computed(() => ({
+  username: [{ required: true, message: t('auth.pleaseEnterUsername'), trigger: 'blur' }],
+  password: [
+    { required: true, message: t('auth.pleaseEnterPassword'), trigger: 'blur' },
+    { min: 8, message: t('user.passwordMinLength'), trigger: 'blur' },
+    { pattern: /[A-Z]/, message: t('user.passwordNeedUpper'), trigger: 'blur' },
+    { pattern: /[a-z]/, message: t('user.passwordNeedLower'), trigger: 'blur' },
+    { pattern: /[0-9]/, message: t('user.passwordNeedDigit'), trigger: 'blur' }
+  ],
+  confirmPassword: [{ validator: validateConfirmPassword, trigger: 'blur' }]
+}))
+
+function toggleMode() {
+  isRegisterMode.value = !isRegisterMode.value
+}
+
 async function handleLogin() {
-  await formRef.value.validate()
-  loading.value = true
+  await loginFormRef.value.validate()
+  loginLoading.value = true
   try {
-    const res = await userStore.login(form)
+    const res = await userStore.login(loginForm)
     if (res.code === 0) {
-      // 首次登录需要修改密码时，先正常进入系统（让浏览器正确保存账号密码），
-      // 再由主框架在进入系统后弹出修改密码提示，避免在登录页中断导致浏览器保存格式异常。
-      if (res.needChangePwd) {
-        sessionStorage.setItem('pendingResetPassword', '1')
-      }
       ElMessage.success(t('auth.loginSuccess'))
       router.push('/dashboard')
+    } else if (res.code === 10004) {
+      ElMessage.warning(t('login.pendingApproval'))
+    } else if (res.code === 10003) {
+      ElMessage.error(t('login.accountDisabled'))
     } else {
       ElMessage.error(res.msg || t('auth.loginFailed'))
     }
   } finally {
-    loading.value = false
+    loginLoading.value = false
+  }
+}
+
+async function handleRegister() {
+  await registerFormRef.value.validate()
+  registerLoading.value = true
+  try {
+    const res = await apiRegister({
+      username: registerForm.username,
+      password: registerForm.password
+    })
+    if (res.code === 0) {
+      ElMessage.success(t('auth.registerSuccess'))
+      // 注册成功后使用 userStore.login 自动登录（保存 token + 加载资料）
+      const loginRes = await userStore.login({
+        username: registerForm.username,
+        password: registerForm.password
+      })
+      if (loginRes.code === 0) {
+        router.push('/dashboard')
+      }
+    } else {
+      ElMessage.error(res.msg || t('auth.registerFailed'))
+    }
+  } finally {
+    registerLoading.value = false
   }
 }
 </script>
@@ -140,17 +288,17 @@ async function handleLogin() {
   color: hsl(var(--muted-foreground));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   transition: all 0.3s;
-  
+
   &:hover {
     transform: scale(1.1);
     border-color: hsl(var(--primary));
     color: hsl(var(--primary));
   }
-  
+
   .el-icon {
     font-size: 18px;
   }
-  
+
   span {
     font-size: 12px;
     font-weight: 600;
@@ -192,24 +340,24 @@ async function handleLogin() {
     border: 1px solid hsl(var(--border));
     box-shadow: none;
     border-radius: 8px;
-    
+
     &:hover {
       border-color: hsl(var(--border));
     }
-    
+
     &.is-focus {
       border-color: hsl(var(--primary));
     }
   }
-  
+
   :deep(.el-input__inner) {
     color: hsl(var(--foreground));
-    
+
     &::placeholder {
       color: hsl(var(--muted-foreground));
     }
   }
-  
+
   :deep(.el-input__prefix) {
     color: hsl(var(--muted-foreground));
   }
@@ -224,11 +372,36 @@ async function handleLogin() {
     font-size: 16px;
     font-weight: 500;
     letter-spacing: 2px;
-    
+
     &:hover {
       background: hsl(var(--primary) / 0.9);
     }
   }
 }
-</style>
 
+.form-footer {
+  text-align: center;
+  margin-top: 8px;
+
+  .toggle-text {
+    font-size: 13px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .toggle-link {
+    color: hsl(var(--primary));
+    cursor: pointer;
+    font-weight: 500;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  :deep(.first-deploy-hint) {
+    color: hsl(var(--primary));
+    font-weight: 500;
+    font-size: 14px;
+  }
+}
+</style>

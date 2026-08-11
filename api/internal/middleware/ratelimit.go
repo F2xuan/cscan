@@ -108,6 +108,16 @@ func (l *TokenRateLimiter) bucket(key string) *tokenBucket {
 	return b
 }
 
+// Bucket 返回指定 key 的限流桶（公开方法，供 AuthMiddleware 调用）
+func (l *TokenRateLimiter) Bucket(key string) *tokenBucket {
+	return l.bucket(key)
+}
+
+// Allow 检查指定 key 是否允许通过（公开方法，供外部直接调用）
+func (b *tokenBucket) Allow() bool {
+	return b.allow()
+}
+
 // Handle 返回限流中间件：在 next 之前校验配额，超限返回 HTTP 429。
 // key 优先级：tokenId > userId > 客户端 IP（与 PAT 认证链对应）。
 func (l *TokenRateLimiter) Handle(next http.HandlerFunc) http.HandlerFunc {

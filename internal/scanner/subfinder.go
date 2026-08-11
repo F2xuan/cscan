@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"cscan/pkg/geolocation"
@@ -23,10 +25,9 @@ type SubfinderScanner struct {
 
 // NewSubfinderScanner 创建 Subfinder 扫描器
 func NewSubfinderScanner() *SubfinderScanner {
-	cfg := ToolConfigs["subfinder"]
 	return &SubfinderScanner{
 		BaseScanner: BaseScanner{name: "subfinder"},
-		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
+		executor:    NewExecutorForTool("subfinder"),
 	}
 }
 
@@ -42,6 +43,7 @@ type SubfinderOptions struct {
 	Recursive          bool                `json:"recursive"`
 	RemoveWildcard     bool                `json:"removeWildcard"`
 	ProviderConfig     map[string][]string `json:"providerConfig"`
+	ProviderConfigFile string              `json:"providerConfigFile"` // 临时 provider config 文件路径
 	ResolveDNS         bool                `json:"resolveDNS"`
 	Concurrent         int                 `json:"concurrent"`
 }
@@ -68,8 +70,9 @@ func (o *SubfinderOptions) Validate() error {
 
 // SubfinderResult subfinder CLI JSON 输出
 type SubfinderResult struct {
-	Host string `json:"host"`
-	Source []string `json:"source,omitempty"`
+	Host   string `json:"host"`
+	Input  string `json:"input,omitempty"`  // 原始输入域名
+	Source string `json:"source,omitempty"` // 数据源名称（string，非数组）
 }
 
 // Scan 执行子域名扫描
@@ -86,7 +89,7 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 		Threads:            10,
 		RateLimit:          0,
 		RemoveWildcard:     true,
-		ResolveDNS:         false,
+		ResolveDNS:         true,
 		Concurrent:         50,
 	}
 	if config.Options != nil {
@@ -114,14 +117,66 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 
 	logx.Infof("Subfinder(CLI): scanning %d domains", len(domains))
 
-	var allAssets []*Asset
+	// 并发 Worker Pool：每个域名一个 subfinder 进程，完成一个补一个
+	concurrency := opts.Concurrent
+	if concurrency <= 0 {
+		concurrency = config.WorkerConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(domains) {
+		concurrency = len(domains)
+	}
+	logx.Infof("Subfinder(CLI): scanning %d domains with %d workers", len(domains), concurrency)
+
+	type domainResult struct {
+		assets []*Asset
+		err    error
+	}
+	targetChan := make(chan string, len(domains))
+	resultChan := make(chan domainResult, len(domains))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for domain := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- domainResult{err: ctx.Err()}
+					return
+				default:
+				}
+				assets, err := s.scanDomain(ctx, domain, opts, config.TaskLogger)
+				resultChan <- domainResult{assets: assets, err: err}
+			}
+		}()
+	}
+
+dispatch:
 	for _, domain := range domains {
-		assets, err := s.scanDomain(ctx, domain, opts, config.TaskLogger)
-		if err != nil {
-			logx.Errorf("Subfinder: error for %s: %v", domain, err)
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case targetChan <- domain:
+		}
+	}
+	close(targetChan)
+
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	var allAssets []*Asset
+	for res := range resultChan {
+		if res.err != nil {
+			logx.Errorf("Subfinder: error for domain: %v", res.err)
 			continue
 		}
-		allAssets = append(allAssets, assets...)
+		allAssets = append(allAssets, res.assets...)
 	}
 
 	// 全局去重
@@ -145,14 +200,17 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	return result, nil
 }
 
-func (s *SubfinderScanner) scanDomain(ctx context.Context, domain string, opts *SubfinderOptions, taskLogger func(level, format string, args ...interface{})) ([]*Asset, error) {
+func (s *SubfinderScanner) scanDomain(
+	ctx context.Context, domain string, opts *SubfinderOptions,
+	taskLogger func(level, format string, args ...interface{}),
+) ([]*Asset, error) {
 	args := []string{
 		"-d", domain,
 		"-json",
 		"-silent",
 		"-timeout", fmt.Sprintf("%d", opts.Timeout),
 		"-max-time", fmt.Sprintf("%d", opts.MaxEnumerationTime),
-		"-threads", fmt.Sprintf("%d", opts.Threads),
+		"-t", fmt.Sprintf("%d", opts.Threads),
 		"-disable-update-check",
 	}
 	if opts.RateLimit > 0 {
@@ -168,7 +226,10 @@ func (s *SubfinderScanner) scanDomain(ctx context.Context, domain string, opts *
 		args = append(args, "-recursive")
 	}
 	if opts.RemoveWildcard {
-		args = append(args, "-rm-wildcards")
+		args = append(args, "-active")
+	}
+	if opts.ProviderConfigFile != "" {
+		args = append(args, "-provider-config", opts.ProviderConfigFile)
 	}
 
 	// 输出到临时文件
@@ -181,7 +242,16 @@ func (s *SubfinderScanner) scanDomain(ctx context.Context, domain string, opts *
 	defer os.Remove(tmpPath)
 	args = append(args, "-o", tmpPath)
 
-	taskLogger("INFO", "Subfinder CLI: scanning %s", domain)
+	providers := make([]string, 0, len(opts.ProviderConfig))
+	for p := range opts.ProviderConfig {
+		providers = append(providers, p)
+	}
+	if len(providers) > 0 {
+		taskLogger("INFO", "Subfinder CLI: providers=%s, config=%s", strings.Join(providers, ","), opts.ProviderConfigFile)
+	} else {
+		taskLogger("INFO", "Subfinder CLI: no providers configured, using default passive sources")
+	}
+	taskLogger("DEBUG", "Subfinder CLI: %s %s", ToolConfigs["subfinder"].BinaryName, strings.Join(args, " "))
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
@@ -193,14 +263,26 @@ func (s *SubfinderScanner) scanDomain(ctx context.Context, domain string, opts *
 		return nil, fmt.Errorf("subfinder exit code %d: %s", res.ExitCode, res.Stderr)
 	}
 
-	// 读取输出文件
+	// 读取输出文件，若为空则回退到 stdout
 	content, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
+		logx.Infof("[WARN] Subfinder(CLI): failed to read output file: %v", readErr)
 		return nil, fmt.Errorf("read output: %w", readErr)
 	}
 
+	var parseSource io.Reader
+	if len(content) > 0 {
+		parseSource = strings.NewReader(string(content))
+	} else if len(res.Stdout) > 0 {
+		logx.Infof("Subfinder(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
+		parseSource = strings.NewReader(res.Stdout)
+	} else {
+		logx.Infof("Subfinder(CLI): no output from file or stdout, returning empty result")
+		return []*Asset{}, nil
+	}
+
 	var assets []*Asset
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	scanner := bufio.NewScanner(parseSource)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -223,7 +305,7 @@ func (s *SubfinderScanner) scanDomain(ctx context.Context, domain string, opts *
 
 		// DNS 解析（如果启用）
 		if opts.ResolveDNS {
-			resolvedIPs := s.resolveDNS([]string{sr.Host})
+			resolvedIPs := s.resolveDNS(ctx, []string{sr.Host})
 			for _, ip := range resolvedIPs {
 				parsedIP := parseIP(ip)
 				if parsedIP == nil {
@@ -271,7 +353,7 @@ func (s *SubfinderScanner) parseDomains(target string) []string {
 	return domains
 }
 
-func (s *SubfinderScanner) resolveDNS(domains []string) []string {
+func (s *SubfinderScanner) resolveDNS(ctx context.Context, domains []string) []string {
 	// 使用 dnsx CLI 进行批量 DNS 解析
 	tmpFile, err := os.CreateTemp("", "dnsx-targets-*.txt")
 	if err != nil {
@@ -291,11 +373,11 @@ func (s *SubfinderScanner) resolveDNS(domains []string) []string {
 		"-silent",
 		"-a", "-aaaa",
 		"-timeout", "5",
-		"-retries", "1",
+		"-retry", "1",
 		"-disable-update-check",
 	}
 
-	res, err := executor.Execute(context.Background(), args, ExecuteOpts{
+	res, err := executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: 5 * time.Minute,
 	})
 	if err != nil {
@@ -303,8 +385,7 @@ func (s *SubfinderScanner) resolveDNS(domains []string) []string {
 	}
 
 	var ips []string
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

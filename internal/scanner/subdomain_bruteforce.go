@@ -188,76 +188,115 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 	}
 	taskLog("INFO", "Bruteforce: loaded %d words from wordlist", len(wordlist))
 
-	// 收集所有子域名和资产
-	var allSubdomains []string
-	var allAssets []*Asset
-	var mu sync.Mutex
 	useKsubdomain := (opts.Engine == "" || opts.Engine == "ksubdomain")
 
+	// 并发 Worker Pool：每个域名一个进程，完成一个补一个
+	concurrency := opts.Concurrent
+	if concurrency <= 0 {
+		concurrency = config.WorkerConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(domains) {
+		concurrency = len(domains)
+	}
+	taskLog("INFO", "Bruteforce: scanning %d domains with %d workers", len(domains), concurrency)
+
+	type domainResult struct {
+		assets       []*Asset
+		subdomains   []string
+		domain       string
+		errorMessage string
+	}
+	targetChan := make(chan string, len(domains))
+	resultChan := make(chan domainResult, len(domains))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for domain := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- domainResult{domain: domain, errorMessage: "canceled"}
+					return
+				default:
+				}
+				taskLog("INFO", "Bruteforce: scanning %s with engine %s", domain, opts.Engine)
+				if useKsubdomain {
+					assets, err := s.bruteforceWithKSubdomainAndParseIP(ctx, domain, wordlist, opts, taskLog)
+					if err != nil {
+						taskLog("WARN", "Bruteforce ksubdomain error for %s: %v", domain, err)
+						resultChan <- domainResult{domain: domain, errorMessage: err.Error()}
+						continue
+					}
+					if opts.RecursiveBrute && len(assets) > 0 {
+						taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
+						var subdomains []string
+						for _, asset := range assets {
+							subdomains = append(subdomains, asset.Host)
+						}
+						recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
+						if len(recursiveSubdomains) > 0 {
+							recursiveAssets := s.resolveDomains(ctx, recursiveSubdomains, opts.Concurrent, taskLog)
+							assets = append(assets, recursiveAssets...)
+						}
+					}
+					taskLog("INFO", "Bruteforce: domain %s returned %d assets", domain, len(assets))
+					resultChan <- domainResult{assets: assets, domain: domain}
+				} else {
+					subdomains, err := s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
+					if err != nil {
+						taskLog("WARN", "Bruteforce dnsx error for %s: %v", domain, err)
+						resultChan <- domainResult{domain: domain, errorMessage: err.Error()}
+						continue
+					}
+					if opts.RecursiveBrute && len(subdomains) > 0 {
+						taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
+						recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
+						subdomains = append(subdomains, recursiveSubdomains...)
+					}
+					taskLog("INFO", "Bruteforce: domain %s returned %d subdomains", domain, len(subdomains))
+					resultChan <- domainResult{subdomains: subdomains, domain: domain}
+				}
+			}
+		}()
+	}
+
+dispatch:
 	for _, domain := range domains {
 		select {
 		case <-ctx.Done():
-			taskLog("INFO", "Bruteforce: canceled by context")
-			return result, ctx.Err()
-		default:
+			break dispatch
+		case targetChan <- domain:
 		}
+	}
+	close(targetChan)
 
-		taskLog("INFO", "Bruteforce: scanning %s with engine %s", domain, opts.Engine)
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
 
-		// 根据引擎选择不同的暴力破解方法
-		if useKsubdomain {
-			// ksubdomain 直接返回带 IP 信息的资产
-			assets, err := s.bruteforceWithKSubdomainAndParseIP(ctx, domain, wordlist, opts, taskLog)
-			if err != nil {
-				taskLog("WARN", "Bruteforce ksubdomain error for %s: %v", domain, err)
-				continue
-			}
+	// 收集结果
+	var allAssets []*Asset
+	var allSubdomains []string
+	var resultMu sync.Mutex
 
-			// 递归爆破（如果启用）
-			if opts.RecursiveBrute && len(assets) > 0 {
-				taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
-				// 提取子域名用于递归
-				var subdomains []string
-				for _, asset := range assets {
-					subdomains = append(subdomains, asset.Host)
-				}
-				recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
-				// 递归结果需要 DNS 解析
-				if len(recursiveSubdomains) > 0 {
-					recursiveAssets := s.resolveDomains(ctx, recursiveSubdomains, opts.Concurrent, taskLog)
-					assets = append(assets, recursiveAssets...)
-				}
-			}
-
-			mu.Lock()
-			allAssets = append(allAssets, assets...)
-			mu.Unlock()
-
-			taskLog("INFO", "Bruteforce: domain %s returned %d assets with IP information", domain, len(assets))
-		} else {
-			// dnsx 返回子域名列表，需要后续 DNS 解析
-			var subdomains []string
-			var err error
-			subdomains, err = s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
-
-			if err != nil {
-				taskLog("WARN", "Bruteforce dnsx error for %s: %v", domain, err)
-				continue
-			}
-
-			// 递归爆破
-			if opts.RecursiveBrute && len(subdomains) > 0 {
-				taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
-				recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
-				subdomains = append(subdomains, recursiveSubdomains...)
-			}
-
-			mu.Lock()
-			allSubdomains = append(allSubdomains, subdomains...)
-			mu.Unlock()
-
-			taskLog("INFO", "Bruteforce: domain %s returned %d subdomains (before global deduplication)", domain, len(subdomains))
+	for res := range resultChan {
+		if res.errorMessage != "" {
+			continue
 		}
+		resultMu.Lock()
+		if len(res.assets) > 0 {
+			allAssets = append(allAssets, res.assets...)
+		}
+		if len(res.subdomains) > 0 {
+			allSubdomains = append(allSubdomains, res.subdomains...)
+		}
+		resultMu.Unlock()
 	}
 
 	// 处理 ksubdomain 的结果（已经包含 IP 信息）
@@ -389,7 +428,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx contex
 		if predetectedWildcardIPs != nil {
 			wildcardIPs = predetectedWildcardIPs
 		} else {
-			wildcardIPs = s.detectWildcard(domain)
+			wildcardIPs = NewDnsxScanner().DetectWildcard(ctx, domain)
 			if len(wildcardIPs) > 0 {
 				taskLog("INFO", "Bruteforce: detected wildcard for %s (%d IPs), will filter wildcard results", domain, len(wildcardIPs))
 				// 注意：不再直接跳过域名，而是在结果中过滤泛解析IP
@@ -427,7 +466,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx contex
 		"-silent",
 		"-a", "-aaaa",
 		"-timeout", fmt.Sprintf("%d", opts.Timeout),
-		"-retries", "3",
+		"-retry", "3",
 		"-disable-update-check",
 	}
 	if len(opts.Resolvers) > 0 {
@@ -515,7 +554,7 @@ func (s *SubdomainBruteforceScanner) recursiveBruteforce(ctx context.Context, ro
 	// 预检测根域名的泛解析（缓存结果，避免重复检测）
 	var rootWildcardIPs map[string]bool
 	if opts.WildcardFilter || opts.WildcardDetect {
-		rootWildcardIPs = s.detectWildcard(rootDomain)
+		rootWildcardIPs = NewDnsxScanner().DetectWildcard(ctx, rootDomain)
 		if len(rootWildcardIPs) > 0 {
 			taskLog("INFO", "Bruteforce: recursive - root domain %s has wildcard (%d IPs), will filter wildcard results", rootDomain, len(rootWildcardIPs))
 			// 注意：不再直接跳过递归爆破，而是在结果中过滤泛解析IP
@@ -896,68 +935,6 @@ func (s *SubdomainBruteforceScanner) checkTakeover(ctx context.Context, client *
 	return result
 }
 
-// detectWildcard 检测泛解析（使用 dnsx CLI）
-func (s *SubdomainBruteforceScanner) detectWildcard(domain string) map[string]bool {
-	wildcardIPs := make(map[string]bool)
-
-	// 使用随机字符串测试泛解析
-	testSubdomains := []string{
-		fmt.Sprintf("wildcard-test-%d.%s", utils.RandomInt(100000, 999999), domain),
-		fmt.Sprintf("random-%d.%s", utils.RandomInt(100000, 999999), domain),
-		fmt.Sprintf("nonexistent-%d.%s", utils.RandomInt(100000, 999999), domain),
-	}
-
-	// 写入临时目标文件
-	tmpFile, err := os.CreateTemp("", "dnsx-wildcard-*.txt")
-	if err != nil {
-		logx.Errorf("Failed to create wildcard targets file: %v", err)
-		return wildcardIPs
-	}
-	for _, sub := range testSubdomains {
-		tmpFile.WriteString(sub + "\n")
-	}
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
-
-	args := []string{
-		"-l", tmpPath,
-		"-json",
-		"-silent",
-		"-a",
-		"-timeout", "5",
-		"-retries", "1",
-		"-disable-update-check",
-	}
-
-	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
-	res, err := executor.Execute(context.Background(), args, ExecuteOpts{Timeout: 30 * time.Second})
-	if err != nil {
-		logx.Errorf("Failed to run dnsx for wildcard detection: %v", err)
-		return wildcardIPs
-	}
-
-	scanner := newLineScanner(res.Stdout)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var dr struct {
-			Host string   `json:"host"`
-			IP   []string `json:"ip"`
-		}
-		if err := json.Unmarshal([]byte(line), &dr); err != nil {
-			continue
-		}
-		for _, ip := range dr.IP {
-			wildcardIPs[ip] = true
-		}
-	}
-
-	return wildcardIPs
-}
-
 // resolveDomains 使用 dnsx CLI 批量解析子域名
 func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains []string, concurrent int, taskLog func(level, format string, args ...interface{})) []*Asset {
 	if len(domains) == 0 {
@@ -987,7 +964,7 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 		"-silent",
 		"-a", "-aaaa",
 		"-timeout", "5",
-		"-retries", "3",
+		"-retry", "3",
 		"-disable-update-check",
 	}
 

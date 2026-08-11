@@ -218,8 +218,12 @@ func (s *BruteScanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 					}
 				}
 
-				// 执行爆破
-				bruteCtx, cancel := context.WithTimeout(ctx, time.Duration(bruteConfig.Timeout*30)*time.Second)
+				// 执行爆破（单凭证尝试超时，避免单次连接 hang 住整个 goroutine）
+				attemptTimeout := time.Duration(bruteConfig.Timeout) * time.Second
+				if attemptTimeout <= 0 {
+					attemptTimeout = 5 * time.Second
+				}
+				bruteCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
 				defer cancel()
 
 				result := s.bruteService(bruteCtx, plugin, asset.Host, asset.Port, usernames, passwords, &bruteConfig, service, taskLogger)

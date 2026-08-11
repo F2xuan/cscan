@@ -1,7 +1,7 @@
 package scanner
 
 import (
-	"bufio"
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -53,39 +53,48 @@ func CollectEvidence(request, response, matcherName string, extractedResults, cu
 // MaxResponseSize 响应内容最大存储大小 (10KB)
 const MaxResponseSize = 10 * 1024
 
-// NucleiResultEvent 对应 nuclei CLI -json 输出的 JSON 行结构
+// NucleiResultEvent 对应 nuclei CLI -jsonl 输出的 JSON 行结构
 type NucleiResultEvent struct {
-	TemplateID  string `json:"template-id"`
-	Template    struct {
-		ID   string `json:"id"`
-		Info struct {
-			Name         string `json:"name"`
-			Author       []string `json:"author"`
-			Tags         []string `json:"tags"`
-			Severity     string `json:"severity"`
-			Description  string `json:"description"`
-			Reference    []string `json:"reference"`
-			Remediation  string `json:"remediation"`
-			Classification *struct {
-				CveID      []string `json:"cve-id"`
-				CweID      []string `json:"cwe-id"`
-				CvssScore  float64  `json:"cvss-score"`
-			} `json:"classification,omitempty"`
-			SeverityHolder struct {
-				Severity string `json:"severity"`
-			} `json:"severity_holder,omitempty"`
-		} `json:"info"`
+	TemplateID       string             `json:"template-id"`
+	TemplateURL      string             `json:"template-url"`
+	TemplatePath     string             `json:"template-path"`
+	Type             string             `json:"type"`
+	Host             string             `json:"host"`
+	Port             string             `json:"port"`
+	Scheme           string             `json:"scheme"`
+	URL              string             `json:"url"`
+	MatchedAt        string             `json:"matched-at"`
+	MatcherStatus    bool               `json:"matcher-status"`
+	MatcherName      string             `json:"matcher-name"`
+	Timestamp        string             `json:"timestamp"`
+	IP               string             `json:"ip"`
+	CurlCommand      string             `json:"curl-command"`
+	Request          string             `json:"request"`
+	Response         string             `json:"response"`
+	ExtractedResults []string           `json:"extracted-results"`
+	Info             NucleiTemplateInfo `json:"info"`
+	Template         struct {
+		ID   string             `json:"id"`
+		Info NucleiTemplateInfo `json:"info"`
 	} `json:"template,omitempty"`
-	Type            string         `json:"type"`
-	Host            string         `json:"host"`
-	MatchedAt       string         `json:"matched-at"`
-	Matched         bool           `json:"matched"`
-	MatcherName     string         `json:"matcher-name"`
-	ExtractedResults []string      `json:"extracted-results"`
-	CurlCommand     string         `json:"curl-command"`
-	Request         string         `json:"request"`
-	Response        string         `json:"response"`
-	Timestamp       string         `json:"timestamp"`
+}
+
+type NucleiTemplateInfo struct {
+	Name           string   `json:"name"`
+	Author         []string `json:"author"`
+	Tags           []string `json:"tags"`
+	Severity       string   `json:"severity"`
+	Description    string   `json:"description"`
+	Reference      []string `json:"reference"`
+	Remediation    string   `json:"remediation"`
+	Classification *struct {
+		CveID     []string `json:"cve-id"`
+		CweID     []string `json:"cwe-id"`
+		CvssScore float64  `json:"cvss-score"`
+	} `json:"classification,omitempty"`
+	SeverityHolder struct {
+		Severity string `json:"severity"`
+	} `json:"severity_holder,omitempty"`
 }
 
 // NucleiScanner Nuclei扫描器 (CLI 模式)
@@ -96,10 +105,9 @@ type NucleiScanner struct {
 
 // NewNucleiScanner 创建 Nuclei 扫描器
 func NewNucleiScanner() *NucleiScanner {
-	cfg := ToolConfigs["nuclei"]
 	return &NucleiScanner{
 		BaseScanner: BaseScanner{name: "nuclei"},
-		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
+		executor:    NewExecutorForTool("nuclei"),
 	}
 }
 
@@ -166,14 +174,13 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		Vulnerabilities: make([]*Vulnerability, 0),
 	}
 
-	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NucleiOptions{
 		Severity:      "critical,high,medium",
-		RateLimit:     adaptive.NucleiRateLimit,
-		Concurrency:   adaptive.NucleiConcurrency,
+		RateLimit:     150,
+		Concurrency:   25,
 		Timeout:       600,
 		TargetTimeout: 600,
-		Retries:       adaptive.NucleiRetries,
+		Retries:       1,
 	}
 	if config.Options != nil {
 		if o, ok := config.Options.(*NucleiOptions); ok {
@@ -182,10 +189,10 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	}
 
 	if opts.Concurrency <= 0 {
-		opts.Concurrency = adaptive.NucleiConcurrency
+		opts.Concurrency = 25
 	}
 	if opts.RateLimit <= 0 {
-		opts.RateLimit = adaptive.NucleiRateLimit
+		opts.RateLimit = 150
 	}
 	if opts.TargetTimeout <= 0 {
 		opts.TargetTimeout = 600
@@ -193,11 +200,17 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	if opts.Timeout <= 0 {
 		opts.Timeout = opts.TargetTimeout
 	}
+	if opts.Retries <= 0 {
+		opts.Retries = 1
+	}
 	if opts.Concurrency > 50 {
 		opts.Concurrency = 50
 	}
 
 	targets := prepareTargets(config.Assets, opts.ForceScan, config.TaskLogger)
+	if len(targets) == 0 && len(config.Targets) > 0 {
+		targets = config.Targets
+	}
 	if len(targets) == 0 {
 		logx.Info("No targets for nuclei scan")
 		if config.TaskLogger != nil {
@@ -225,14 +238,66 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		return nil, fmt.Errorf("prepare templates: %w", err)
 	}
 
-	seen := make(map[string]bool)
+	// 并发 Worker Pool：每个目标一个 nuclei 进程，完成一个补一个
+	concurrency := opts.Concurrency
+	if concurrency <= 0 {
+		concurrency = config.WorkerConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(targets) {
+		concurrency = len(targets)
+	}
+	logx.Infof("Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
+
+	type targetResult struct {
+		vuls []*Vulnerability
+		err  error
+	}
+	targetChan := make(chan string, len(targets))
+	resultChan := make(chan targetResult, len(targets))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for target := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- targetResult{err: ctx.Err()}
+					return
+				default:
+				}
+				vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, config.TaskLogger)
+				resultChan <- targetResult{vuls: vuls, err: err}
+			}
+		}()
+	}
+
+dispatch:
 	for _, target := range targets {
-		vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, config.TaskLogger)
-		if err != nil {
-			logx.Errorf("Nuclei: scan error for %s: %v", target, err)
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case targetChan <- target:
+		}
+	}
+	close(targetChan)
+
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	seen := make(map[string]bool)
+	for res := range resultChan {
+		if res.err != nil {
+			logx.Errorf("Nuclei: scan error: %v", res.err)
 			continue
 		}
-		for _, vul := range vuls {
+		for _, vul := range res.vuls {
 			vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
 			if !seen[vulKey] {
 				seen[vulKey] = true
@@ -262,13 +327,11 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		return nil, nil
 	}
 
-	// 默认自适应参数补足
-	adaptive := GetGlobalAdaptiveConfig()
 	if opts.Concurrency <= 0 {
-		opts.Concurrency = adaptive.NucleiConcurrency
+		opts.Concurrency = 25
 	}
 	if opts.RateLimit <= 0 {
-		opts.RateLimit = adaptive.NucleiRateLimit
+		opts.RateLimit = 150
 	}
 	if opts.TargetTimeout <= 0 {
 		opts.TargetTimeout = 600
@@ -277,7 +340,7 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		opts.Timeout = opts.TargetTimeout
 	}
 	if opts.Retries <= 0 {
-		opts.Retries = adaptive.NucleiRetries
+		opts.Retries = 1
 	}
 	if opts.Concurrency > 50 {
 		opts.Concurrency = 50
@@ -296,18 +359,63 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 
 	var allVuls []*Vulnerability
 	seen := make(map[string]bool)
+
+	// 并发 Worker Pool：每个目标一个 nuclei 进程，完成一个补一个
+	concurrency := opts.Concurrency
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(targets) {
+		concurrency = len(targets)
+	}
+	taskLog("INFO", "Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
+
+	type targetResult struct {
+		vuls []*Vulnerability
+		err  error
+	}
+	targetChan := make(chan string, len(targets))
+	resultChan := make(chan targetResult, len(targets))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for target := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- targetResult{err: ctx.Err()}
+					return
+				default:
+				}
+				vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, taskLogger)
+				resultChan <- targetResult{vuls: vuls, err: err}
+			}
+		}()
+	}
+
+dispatch:
 	for _, target := range targets {
 		select {
 		case <-ctx.Done():
-			return allVuls, ctx.Err()
-		default:
+			break dispatch
+		case targetChan <- target:
 		}
-		vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, taskLogger)
-		if err != nil {
-			taskLog("WARN", "Nuclei scan error for %s: %v", target, err)
+	}
+	close(targetChan)
+
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	for res := range resultChan {
+		if res.err != nil {
+			taskLog("WARN", "Nuclei scan error: %v", res.err)
 			continue
 		}
-		for _, vul := range vuls {
+		for _, vul := range res.vuls {
 			vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
 			if !seen[vulKey] {
 				seen[vulKey] = true
@@ -327,6 +435,9 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 	if len(templatePaths) == 0 {
 		return nil, fmt.Errorf("no templates available")
 	}
+	if taskLogger == nil {
+		taskLogger = func(string, string, ...interface{}) {}
+	}
 
 	templateDir := ""
 	if len(templatePaths) > 0 {
@@ -335,7 +446,7 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 
 	args := []string{
 		"-target", target,
-		"-json",
+		"-jsonl",
 		"-silent",
 		"-timeout", fmt.Sprintf("%d", opts.TargetTimeout),
 		"-retries", fmt.Sprintf("%d", opts.Retries),
@@ -359,17 +470,32 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 
 	taskLogger("INFO", "Nuclei CLI: scanning %s (templates=%d, concurrency=%d, rate=%d)",
 		target, len(templatePaths), opts.Concurrency, opts.RateLimit)
+	taskLogger("INFO", "Nuclei CLI: args=%s", strings.Join(args, " "))
+
+	// 进程超时 = 目标超时 + 30s 缓冲
+	processTimeout := time.Duration(opts.TargetTimeout+30) * time.Second
+	taskLogger("INFO", "Nuclei CLI: ProcessTimeout=%v (target timeout + 30s buffer)", processTimeout)
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
-		Timeout: time.Duration(opts.TargetTimeout + 30) * time.Second,
+		Timeout: processTimeout,
 	})
+	taskLogger("INFO", "Nuclei CLI: target=%s exitCode=%d stdout_len=%d stderr=%q err=%v",
+		target, res.ExitCode, len(res.Stdout), strings.TrimSpace(res.Stderr), err)
 	if err != nil {
-		return nil, fmt.Errorf("nuclei execution: %w", err)
+		taskLogger("WARN", "Nuclei CLI: %s execution error: %v", target, err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	if len(res.Stderr) > 0 {
+		taskLogger("WARN", "Nuclei CLI: %s stderr detail: %s", target, strings.TrimSpace(res.Stderr))
+	}
+	if res.ExitCode != 0 && len(res.Stdout) > 0 {
+		taskLogger("WARN", "Nuclei CLI: %s stdout detail: %s", target, strings.TrimSpace(res.Stdout))
 	}
 
 	var vuls []*Vulnerability
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -377,16 +503,17 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		}
 		var event NucleiResultEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			taskLogger("WARN", "Nuclei CLI: json unmarshal skipped: %v | line=%s", err, line)
 			continue
 		}
-		if !event.Matched {
+		if !event.MatcherStatus {
 			continue
 		}
 		vul := s.convertCLIResult(&event, target)
 		if vul != nil {
 			vuls = append(vuls, vul)
 			taskLogger("INFO", "  Found: %s - %s [%s]",
-				event.TemplateID, event.Template.Info.Name, event.Template.Info.Severity)
+				event.TemplateID, event.Info.Name, event.Info.Severity)
 		}
 	}
 
@@ -399,14 +526,32 @@ func (s *NucleiScanner) convertCLIResult(event *NucleiResultEvent, target string
 		return nil
 	}
 
-	host, port := parseHostPort(event.MatchedAt)
+	matchedAt := event.MatchedAt
+	if matchedAt == "" {
+		matchedAt = event.URL
+	}
+	host, port := parseHostPort(matchedAt)
 	if host == "" {
 		host, port = parseHostPort(target)
 	}
 
-	resultDesc := event.Template.Info.Name
-	if event.Template.Info.Description != "" {
-		resultDesc += "\n" + event.Template.Info.Description
+	info := event.Info
+	if info.Name == "" {
+		info = NucleiTemplateInfo{
+			Name:           event.Template.Info.Name,
+			Tags:           event.Template.Info.Tags,
+			Severity:       event.Template.Info.Severity,
+			Description:    event.Template.Info.Description,
+			Reference:      event.Template.Info.Reference,
+			Remediation:    event.Template.Info.Remediation,
+			Classification: event.Template.Info.Classification,
+			SeverityHolder: event.Template.Info.SeverityHolder,
+		}
+	}
+
+	resultDesc := info.Name
+	if info.Description != "" {
+		resultDesc += "\n" + info.Description
 	}
 	if len(event.ExtractedResults) > 0 {
 		resultDesc += "\nExtracted: " + strings.Join(event.ExtractedResults, ", ")
@@ -421,13 +566,13 @@ func (s *NucleiScanner) convertCLIResult(event *NucleiResultEvent, target string
 		Authority:        utils.BuildTargetWithPort(host, port),
 		Host:             host,
 		Port:             port,
-		Url:              event.MatchedAt,
+		Url:              matchedAt,
 		PocFile:          event.TemplateID,
 		Source:           "nuclei",
-		Severity:         event.Template.Info.Severity,
+		Severity:         info.Severity,
 		Result:           resultDesc,
-		VulName:          event.Template.Info.Name,
-		Tags:             event.Template.Info.Tags,
+		VulName:          info.Name,
+		Tags:             info.Tags,
 		MatcherName:      event.MatcherName,
 		ExtractedResults: event.ExtractedResults,
 		CurlCommand:      event.CurlCommand,
@@ -435,19 +580,19 @@ func (s *NucleiScanner) convertCLIResult(event *NucleiResultEvent, target string
 		Response:         response,
 	}
 
-	if event.Template.Info.Classification != nil {
-		vul.CvssScore = event.Template.Info.Classification.CvssScore
-		if len(event.Template.Info.Classification.CveID) > 0 {
-			vul.CveId = event.Template.Info.Classification.CveID[0]
+	if info.Classification != nil {
+		vul.CvssScore = info.Classification.CvssScore
+		if len(info.Classification.CveID) > 0 {
+			vul.CveId = info.Classification.CveID[0]
 		}
-		if len(event.Template.Info.Classification.CweID) > 0 {
-			vul.CweId = event.Template.Info.Classification.CweID[0]
+		if len(info.Classification.CweID) > 0 {
+			vul.CweId = info.Classification.CweID[0]
 		}
 	}
-	if len(event.Template.Info.Reference) > 0 {
-		vul.References = event.Template.Info.Reference
+	if len(info.Reference) > 0 {
+		vul.References = info.Reference
 	}
-	vul.Remediation = event.Template.Info.Remediation
+	vul.Remediation = info.Remediation
 
 	return vul
 }
@@ -552,11 +697,16 @@ func preValidateTemplate(content string) (templateID string, err error) {
 	return wrapper.Id, nil
 }
 
+const templateCacheMaxSize = 1024
+
 type templateFileCache struct {
 	mu      sync.RWMutex
 	baseDir string
 	entries map[string]*cachedTemplate
+	lruList *list.List
+	lruMap  map[string]*list.Element
 	ttl     time.Duration
+	maxSize int
 }
 
 type cachedTemplate struct {
@@ -578,7 +728,10 @@ func getTemplateCache() *templateFileCache {
 		globalTemplateCache = &templateFileCache{
 			baseDir: baseDir,
 			entries: make(map[string]*cachedTemplate),
+			lruList: list.New(),
+			lruMap:  make(map[string]*list.Element),
 			ttl:     30 * time.Minute,
+			maxSize: templateCacheMaxSize,
 		}
 	})
 	return globalTemplateCache
@@ -596,6 +749,9 @@ func (c *templateFileCache) GetOrWrite(content string, templateID string) (strin
 		if _, err := os.Stat(entry.path); err == nil {
 			c.mu.Lock()
 			entry.lastUsed = time.Now()
+			if elem, ok := c.lruMap[hashStr]; ok {
+				c.lruList.MoveToFront(elem)
+			}
 			c.mu.Unlock()
 			return entry.path, nil
 		}
@@ -607,13 +763,31 @@ func (c *templateFileCache) GetOrWrite(content string, templateID string) (strin
 	}
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Over capacity: evict tail
+	for c.lruList.Len() >= c.maxSize {
+		elem := c.lruList.Back()
+		if elem != nil {
+			oldHash := elem.Value.(string)
+			if oldEntry, ok := c.entries[oldHash]; ok {
+				os.Remove(oldEntry.path)
+				delete(c.entries, oldHash)
+				delete(c.lruMap, oldHash)
+			}
+			c.lruList.Remove(elem)
+		}
+	}
+
+	now := time.Now()
 	c.entries[hashStr] = &cachedTemplate{
 		path:       path,
 		hash:       hashStr,
 		templateID: templateID,
-		lastUsed:   time.Now(),
+		lastUsed:   now,
 	}
-	c.mu.Unlock()
+	elem := c.lruList.PushFront(hashStr)
+	c.lruMap[hashStr] = elem
 
 	return path, nil
 }
@@ -627,6 +801,10 @@ func (c *templateFileCache) EvictStale() {
 		if now.Sub(entry.lastUsed) > c.ttl {
 			os.Remove(entry.path)
 			delete(c.entries, hash)
+			if elem, ok := c.lruMap[hash]; ok {
+				c.lruList.Remove(elem)
+				delete(c.lruMap, hash)
+			}
 		}
 	}
 }
@@ -803,7 +981,7 @@ func extractMatchedReason(event *NucleiResultEvent) string {
 	} else {
 		reason = "基于请求响应特征匹配模板"
 	}
-	if event.Matched {
+	if event.MatcherStatus {
 		reason += fmt.Sprintf(" (触点: %s)", event.MatchedAt)
 	}
 	return reason

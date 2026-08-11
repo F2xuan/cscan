@@ -1,15 +1,13 @@
 package scanner
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/url"
-	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"cscan/pkg/geolocation"
@@ -25,29 +23,28 @@ type HttpxScanner struct {
 
 // NewHttpxScanner 创建 httpx 扫描器
 func NewHttpxScanner() *HttpxScanner {
-	cfg := ToolConfigs["httpx"]
 	return &HttpxScanner{
 		BaseScanner: BaseScanner{name: "httpx"},
-		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
+		executor:    NewExecutorForTool("httpx"),
 	}
 }
 
 // HttpxOptions httpx 扫描选项
 type HttpxOptions struct {
-	Concurrency      int      `json:"concurrency"`
-	Timeout          int      `json:"timeout"`
-	FollowRedirects  bool     `json:"followRedirects"`
-	MaxRedirects     int      `json:"maxRedirects"`
-	TechDetect       bool     `json:"techDetect"`
-	Favicon          bool     `json:"favicon"`
-	ServerHeader     bool     `json:"serverHeader"`
-	ContentType      bool     `json:"contentType"`
-	Body             bool     `json:"body"`
-	StatusCode       bool     `json:"statusCode"`
-	Title            bool     `json:"title"`
-	Screenshot       bool     `json:"screenshot"`
-	OutputIP         bool     `json:"outputIP"`
-	CustomHeaders    []string `json:"customHeaders"`
+	Concurrency     int      `json:"concurrency"`
+	Timeout         int      `json:"timeout"`
+	FollowRedirects bool     `json:"followRedirects"`
+	MaxRedirects    int      `json:"maxRedirects"`
+	TechDetect      bool     `json:"techDetect"`
+	Favicon         bool     `json:"favicon"`
+	ServerHeader    bool     `json:"serverHeader"`
+	ContentType     bool     `json:"contentType"`
+	Body            bool     `json:"body"`
+	StatusCode      bool     `json:"statusCode"`
+	Title           bool     `json:"title"`
+	Screenshot      bool     `json:"screenshot"`
+	OutputIP        bool     `json:"outputIP"`
+	CustomHeaders   []string `json:"customHeaders"`
 }
 
 // Validate 验证配置
@@ -63,23 +60,23 @@ func (o *HttpxOptions) Validate() error {
 
 // HttpxCLIResult httpx CLI JSON 输出结构
 type HttpxCLIResult struct {
-	Input       string   `json:"input"`
-	URL         string   `json:"url"`
-	Scheme      string   `json:"scheme"`
-	Host        string   `json:"host"`
-	Port        string   `json:"port"`
-	StatusCode  int      `json:"status-code"`
-	Title       string   `json:"title"`
-	Technologies []string `json:"tech,omitempty"`
-	WebServer   string   `json:"webserver,omitempty"`
-	ContentType string   `json:"content-type,omitempty"`
-	ContentLength int64  `json:"content-length,omitempty"`
-	ResponseBody string `json:"body,omitempty"`
-	Headers     string   `json:"headers,omitempty"`
-	FaviconMMH3 string   `json:"favicon-mmh3,omitempty"`
-	FaviconData string   `json:"favicon,omitempty"`
-	IP          []string `json:"ip,omitempty"`
-	Chain       []string `json:"chain,omitempty"`
+	Input         string   `json:"input"`
+	URL           string   `json:"url"`
+	Scheme        string   `json:"scheme"`
+	Host          string   `json:"host"`
+	Port          string   `json:"port"`
+	StatusCode    int      `json:"status-code"`
+	Title         string   `json:"title"`
+	Technologies  []string `json:"tech,omitempty"`
+	WebServer     string   `json:"webserver,omitempty"`
+	ContentType   string   `json:"content-type,omitempty"`
+	ContentLength int64    `json:"content-length,omitempty"`
+	ResponseBody  string   `json:"body,omitempty"`
+	Headers       string   `json:"headers,omitempty"`
+	FaviconMMH3   string   `json:"favicon-mmh3,omitempty"`
+	FaviconData   string   `json:"favicon,omitempty"`
+	IP            []string `json:"ip,omitempty"`
+	Chain         []string `json:"chain,omitempty"`
 }
 
 // Scan 执行 httpx 扫描
@@ -117,32 +114,108 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		return result, nil
 	}
 
-	logx.Infof("Httpx(CLI): scanning assets")
-
 	// 构建目标列表
 	targets, targetMap := s.buildTargets(config.Assets)
-
-	// 写入目标文件
-	tmpFile, err := os.CreateTemp("", "httpx-targets-*.txt")
-	if err != nil {
-		return nil, fmt.Errorf("create targets file: %w", err)
+	if len(targets) == 0 {
+		return result, nil
 	}
-	for _, t := range targets {
-		tmpFile.WriteString(t + "\n")
-	}
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
 
+	logx.Infof("Httpx(CLI): scanning %d targets", len(targets))
+
+	// 并发 Worker Pool：每个目标一个 httpx 进程，完成一个补一个
+	concurrency := opts.Concurrency
+	if concurrency <= 0 {
+		concurrency = config.WorkerConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(targets) {
+		concurrency = len(targets)
+	}
+	logx.Infof("Httpx(CLI): using %d workers for %d targets", concurrency, len(targets))
+
+	type scanResult struct {
+		processedAsset *Asset
+		err            error
+	}
+	targetChan := make(chan string, len(targets))
+	resultChan := make(chan scanResult, len(targets))
+	var scanWg sync.WaitGroup
+	var resultMu sync.Mutex
+	processed := make(map[*Asset]bool)
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for target := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- scanResult{err: ctx.Err()}
+					return
+				default:
+				}
+				asset := s.scanSingleTargetCLI(ctx, target, opts, targetMap, &resultMu, processed)
+				if asset != nil {
+					resultChan <- scanResult{processedAsset: asset}
+				} else {
+					resultChan <- scanResult{}
+				}
+				if config.OnTargetDone != nil {
+					if asset != nil {
+						config.OnTargetDone(target, []*Asset{asset})
+					} else {
+						config.OnTargetDone(target, nil)
+					}
+				}
+			}
+		}()
+	}
+
+dispatch:
+	for _, target := range targets {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case targetChan <- target:
+		}
+	}
+	close(targetChan)
+
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	for res := range resultChan {
+		if res.err != nil {
+			logx.Errorf("Httpx(CLI): error: %v", res.err)
+			continue
+		}
+	}
+
+	logx.Infof("Httpx(CLI): completed, updated %d assets", len(processed))
+	return result, nil
+}
+
+// scanSingleTargetCLI 对单个目标执行 httpx CLI 并更新 Asset
+func (s *HttpxScanner) scanSingleTargetCLI(
+	ctx context.Context, target string, opts *HttpxOptions,
+	targetMap map[string]*Asset, resultMu *sync.Mutex, processed map[*Asset]bool,
+) *Asset {
 	args := []string{
-		"-l", tmpPath,
+		"-u", target,
 		"-json",
 		"-silent",
-		"-threads", fmt.Sprintf("%d", opts.Concurrency),
 		"-timeout", fmt.Sprintf("%d", opts.Timeout),
-		"-follow-redirects",
-		"-max-redirects", fmt.Sprintf("%d", opts.MaxRedirects),
 		"-disable-update-check",
+	}
+	if opts.FollowRedirects {
+		args = append(args, "-follow-redirects")
+		if opts.MaxRedirects > 0 {
+			args = append(args, "-max-redirects", fmt.Sprintf("%d", opts.MaxRedirects))
+		}
 	}
 	if opts.TechDetect {
 		args = append(args, "-tech-detect")
@@ -174,25 +247,16 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	for _, h := range opts.CustomHeaders {
 		args = append(args, "-header", h)
 	}
-	if opts.FollowRedirects {
-		args = append(args, "-follow-redirects")
-		if opts.MaxRedirects > 0 {
-			args = append(args, "-max-redirects", fmt.Sprintf("%d", opts.MaxRedirects))
-		}
-	}
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
-		Timeout: time.Duration(opts.Timeout*2) * time.Second,
+		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
 	if err != nil {
-		logx.Errorf("Httpx(CLI): execution error: %v", err)
-		return result, nil
+		logx.Errorf("Httpx(CLI): %s execution error: %v", target, err)
+		return nil
 	}
 
-	// 解析结果并原地更新 Asset
-	processed := make(map[*Asset]bool)
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -203,18 +267,19 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			continue
 		}
 
-		// 匹配到 Asset
 		asset := s.matchAsset(hr, targetMap)
 		if asset == nil {
 			continue
 		}
 
+		resultMu.Lock()
 		if processed[asset] {
+			resultMu.Unlock()
 			continue
 		}
 		processed[asset] = true
+		resultMu.Unlock()
 
-		// 原地更新
 		if hr.Scheme != "" {
 			asset.Service = hr.Scheme
 		}
@@ -251,23 +316,12 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		if len(hr.IP) > 0 {
 			ipLocator := geolocation.NewIPLocator()
 			for _, ipStr := range hr.IP {
-				parsedIP := net.ParseIP(ipStr)
-				if parsedIP == nil {
-					continue
-				}
-				if ip4 := parsedIP.To4(); ip4 != nil {
-					locStr, _ := ipLocator.Locate(ip4.String())
-					asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: geolocation.NormalizeLocation(locStr)})
-				} else {
-					locStr, _ := ipLocator.Locate(parsedIP.String())
-					asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String(), Location: geolocation.NormalizeLocation(locStr)})
-				}
+				appendIPInfo(asset, ipStr, ipLocator)
 			}
 		}
+		return asset
 	}
-
-	logx.Infof("Httpx(CLI): completed, updated %d assets", len(processed))
-	return result, nil
+	return nil
 }
 
 // buildTargets 构建目标列表和映射

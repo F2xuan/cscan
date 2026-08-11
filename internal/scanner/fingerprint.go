@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -150,8 +149,6 @@ func (o *FingerprintOptions) Validate() error {
 
 // Scan 执行指纹识别
 func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	// 解析配置 - 使用自适应参数
-	adaptive := GetGlobalAdaptiveConfig()
 	opts := &FingerprintOptions{
 		Enable:        true,
 		Tool:          "httpx", // 默认使用httpx
@@ -159,9 +156,9 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		Wappalyzer:    true,
 		CustomEngine:  true, // 默认启用自定义指纹引擎
 		Screenshot:    false,
-		Timeout:       adaptive.FingerprintTimeout,     // 自适应: 低配600s, 中配300s, 高配300s
-		TargetTimeout: adaptive.FingerprintTargetTmout, // 自适应: 低配60s, 中配90s, 高配90s
-		Concurrency:   adaptive.FingerprintConcurrency, // 自适应: 低配3, 中配5, 高配5
+		Timeout:       300,
+		TargetTimeout: 90,
+		Concurrency:   5,
 	}
 	if config.Options != nil {
 		switch v := config.Options.(type) {
@@ -228,7 +225,9 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	if useHttpx {
 		// 使用httpx库进行扫描（不再依赖命令行工具）
 		taskLog("DEBUG", "Using httpx library for fingerprint detection")
-		if err := RunHttpxLib(ctx, httpAssets, opts, taskLog); err != nil { taskLog("ERROR", "httpx CLI failed: %v", err) }
+		if err := RunHttpxLib(ctx, httpAssets, opts, taskLog); err != nil {
+			taskLog("ERROR", "httpx CLI failed: %v", err)
+		}
 	} else {
 		taskLog("DEBUG", "Using builtin method for fingerprint detection")
 	}
@@ -236,51 +235,79 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	// 记录已处理的资产索引，用于超时时补充未处理的资产
 	processedSet := make(map[int]bool)
 
-	// 扫描每个目标
-	for i, asset := range httpAssets {
+	// 并发 Worker Pool：每个目标一个指纹识别任务，完成一个补一个
+	concurrency := opts.Concurrency
+	if concurrency <= 0 {
+		concurrency = config.WorkerConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(httpAssets) {
+		concurrency = len(httpAssets)
+	}
+	taskLog("INFO", "Fingerprint: scanning %d assets with %d workers", len(httpAssets), concurrency)
+
+	type fpResult struct {
+		asset *Asset
+		index int
+	}
+	assetChan := make(chan *Asset, len(httpAssets))
+	resultChan := make(chan fpResult, len(httpAssets))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for asset := range assetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- fpResult{asset: asset}
+					return
+				default:
+				}
+				targetCtx, targetCancel := context.WithTimeout(ctx, time.Duration(opts.TargetTimeout)*time.Second)
+				if useHttpx && asset.Title != "" && asset.HttpStatus != "" {
+					s.runAdditionalFingerprint(targetCtx, asset, opts, taskLog)
+				} else {
+					s.fingerprint(targetCtx, asset, opts, taskLog)
+				}
+				if targetCtx.Err() == context.DeadlineExceeded {
+					taskLog("WARN", "Fingerprint: %s timeout", formatAssetTarget(asset))
+				}
+				targetCancel()
+				resultChan <- fpResult{asset: asset}
+			}
+		}()
+	}
+
+dispatch:
+	for _, asset := range httpAssets {
 		select {
 		case <-ctx.Done():
-			taskLog("WARN", "Fingerprint scan timeout after processing %d/%d assets, preserving httpx results for remaining assets", len(processedSet), len(httpAssets))
-			// 超时时，将 httpx 已获取到基本信息但未进行补充扫描的资产也加入结果
-			for j := i; j < len(httpAssets); j++ {
-				remainAsset := httpAssets[j]
-				if remainAsset.Title != "" || remainAsset.HttpStatus != "" || len(remainAsset.App) > 0 {
-					taskLog("DEBUG", "Preserving httpx result for %s:%d (title=%s, apps=%d)", remainAsset.Host, remainAsset.Port, remainAsset.Title, len(remainAsset.App))
-				}
-				result.Assets = append(result.Assets, remainAsset)
-				if config.OnAssetUpdated != nil {
-					config.OnAssetUpdated(remainAsset)
-				}
-			}
-			taskLog("INFO", "Fingerprint: total %d assets preserved after timeout", len(result.Assets))
-			return result, nil
-		default:
-			// 如果使用httpx且已获取到基本信息，只执行附加功能
-			if useHttpx && asset.Title != "" && asset.HttpStatus != "" {
-				taskLog("INFO", "Fingerprint [%d/%d]: %s", i+1, len(httpAssets), formatAssetTarget(asset))
-				targetCtx, targetCancel := context.WithTimeout(ctx, time.Duration(opts.TargetTimeout)*time.Second)
-				s.runAdditionalFingerprint(targetCtx, asset, opts, taskLog)
-				if targetCtx.Err() == context.DeadlineExceeded {
-					taskLog("WARN", "Fingerprint: %s timeout", formatAssetTarget(asset))
-				}
-				targetCancel()
-			} else {
-				// 使用内置方法完整扫描
-				taskLog("INFO", "Fingerprint [%d/%d]: %s", i+1, len(httpAssets), formatAssetTarget(asset))
-				targetCtx, targetCancel := context.WithTimeout(ctx, time.Duration(opts.TargetTimeout)*time.Second)
-				s.fingerprint(targetCtx, asset, opts, taskLog)
-				if targetCtx.Err() == context.DeadlineExceeded {
-					taskLog("WARN", "Fingerprint: %s timeout", formatAssetTarget(asset))
-				}
-				targetCancel()
-			}
-			processedSet[i] = true
-			result.Assets = append(result.Assets, asset)
+			break dispatch
+		case assetChan <- asset:
+		}
+	}
+	close(assetChan)
 
-			// 触发流式更新回调
-			if config.OnAssetUpdated != nil {
-				config.OnAssetUpdated(asset)
-			}
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	completed := 0
+	for res := range resultChan {
+		completed++
+		processedSet[completed] = true
+		result.Assets = append(result.Assets, res.asset)
+		if config.OnAssetUpdated != nil {
+			config.OnAssetUpdated(res.asset)
+		}
+		if config.OnTargetDone != nil {
+			target := fmt.Sprintf("%s:%d", res.asset.Host, res.asset.Port)
+			config.OnTargetDone(target, []*Asset{res.asset})
 		}
 	}
 
@@ -367,6 +394,7 @@ func IsHttpAsset(asset *Asset) bool {
 		checkByIsHTTPFlag,
 		checkByGlobalChecker,
 		checkByNonHttpPorts, // 新增：检查非HTTP端口（优先排除）
+		checkByZeroPort,     // 新增：端口未知且无服务标识时不判定为HTTP
 		checkByDefaultServices,
 		checkByNonHttpServices,
 		checkByCommonPorts,
@@ -429,6 +457,13 @@ func checkByNonHttpServices(asset *Asset) (bool, bool) {
 func checkByCommonPorts(asset *Asset) (bool, bool) {
 	if commonHttpPorts[asset.Port] {
 		return true, true
+	}
+	return false, false
+}
+
+func checkByZeroPort(asset *Asset) (bool, bool) {
+	if asset.Port == 0 && strings.ToLower(asset.Service) == "" {
+		return false, true // 端口未知且无服务标识，不判定为HTTP
 	}
 	return false, false
 }
@@ -682,8 +717,6 @@ func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*
 	}
 	return count
 }
-
-
 
 // getIconHashWithData 获取favicon的hash值和原始数据
 // htmlBody: 可选的HTML body内容，用于解析 <link rel="icon"> 标签发现自定义favicon路径
@@ -981,159 +1014,6 @@ func isValidHttpResponse(resp *http.Response) bool {
 	return validStatusCodes[resp.StatusCode]
 }
 
-// runHttpx 使用httpx进行批量探测
-func (s *FingerprintScanner) runHttpx(ctx context.Context, assets []*Asset, opts *FingerprintOptions) {
-	if len(assets) == 0 {
-		return
-	}
-
-	// 构建目标列表
-	var targets []string
-	targetMap := make(map[string]*Asset)
-	for _, asset := range assets {
-		target := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
-		targets = append(targets, target)
-		targetMap[target] = asset
-	}
-
-	// 构建httpx命令
-	args := []string{
-		"-silent",
-		"-json",
-		"-title",
-		"-status-code",
-		"-tech-detect",
-		"-favicon",
-		"-server",
-		"-content-type",
-		"-irh",                // include response header
-		"-irr",                // include request/response (包含body)
-		"-follow-redirects",   // 跟随重定向
-		"-max-redirects", "5", // 最大重定向次数
-	}
-	if opts.Screenshot {
-		args = append(args, "-screenshot", "-system-chrome")
-	}
-
-	logx.Infof("Executing command: httpx %s", strings.Join(args, " "))
-
-	cmd := exec.CommandContext(ctx, "httpx", args...)
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-
-	if err := cmd.Start(); err != nil {
-		logx.Errorf("httpx start error: %v", err)
-		return
-	}
-
-	// 写入目标
-	go func() {
-		for _, target := range targets {
-			stdin.Write([]byte(target + "\n"))
-		}
-		stdin.Close()
-	}()
-
-	// 解析输出
-	decoder := json.NewDecoder(stdout)
-	for decoder.More() {
-		var result HttpxResult
-		if err := decoder.Decode(&result); err != nil {
-			continue
-		}
-
-		// 优先使用input字段匹配原始目标，避免重定向导致的匹配问题
-		var asset *Asset
-		var key string
-
-		// 首先尝试使用input字段匹配
-		if result.Input != "" {
-			key = result.Input
-			asset = targetMap[key]
-		}
-
-		// 如果input匹配失败，尝试从URL解析
-		if asset == nil {
-			if u, err := url.Parse(result.URL); err == nil {
-				host := u.Hostname()
-				port := u.Port()
-				if port == "" {
-					if u.Scheme == "https" {
-						port = "443"
-					} else {
-						port = "80"
-					}
-				}
-				key = fmt.Sprintf("%s:%s", host, port)
-				asset = targetMap[key]
-			}
-		}
-
-		if asset != nil {
-			// 从URL获取scheme
-			scheme := "http"
-			if u, err := url.Parse(result.URL); err == nil {
-				scheme = u.Scheme
-			}
-			asset.Title = result.Title
-			asset.HttpStatus = fmt.Sprintf("%d", result.StatusCode)
-			asset.Service = scheme
-			if len(result.Technologies) > 0 {
-				// 为httpx识别的应用添加来源标识
-				for _, tech := range result.Technologies {
-					asset.App = append(asset.App, tech+"[httpx]")
-				}
-			}
-			if result.FaviconHash != "" {
-				asset.IconHash = result.FaviconHash
-			}
-			if result.ScreenshotPath != "" {
-				// 读取截图文件并转换为base64
-				asset.Screenshot = readScreenshotAsBase64(result.ScreenshotPath)
-			}
-			// 填充Server字段
-			if result.ServerHeader != "" {
-				asset.Server = result.ServerHeader
-			} else if result.WebServer != "" {
-				asset.Server = result.WebServer
-			}
-			// 填充HttpHeader字段
-			// 优先从Response字段提取完整header（包含所有Set-Cookie）
-			if result.Response != "" {
-				asset.HttpHeader = extractHeadersFromResponse(result.Response)
-			}
-			// 如果Response为空，使用ResponseHeader map，并添加状态行
-			if asset.HttpHeader == "" && len(result.ResponseHeader) > 0 {
-				asset.HttpHeader = formatHttpxHeadersWithStatus(result.ResponseHeader, result.StatusCode)
-			}
-			// 填充HttpBody字段
-			bodyContent := result.ResponseBody
-			asset.HttpBody = bodyContent
-			logx.Debugf("Matched httpx result for %s: title=%s, status=%d", key, result.Title, result.StatusCode)
-		}
-	}
-
-	cmd.Wait()
-}
-
-// HttpxResult httpx JSON输出结构
-type HttpxResult struct {
-	URL            string            `json:"url"`
-	Input          string            `json:"input"`
-	Title          string            `json:"title"`
-	StatusCode     int               `json:"status_code"`
-	Technologies   []string          `json:"tech"`
-	FaviconHash    string            `json:"favicon_hash"`
-	ScreenshotPath string            `json:"screenshot_path"`
-	WebServer      string            `json:"webserver"`
-	ContentLength  int               `json:"content_length"`
-	ResponseHeader map[string]string `json:"header"`
-	ServerHeader   string            `json:"server"`
-	ContentType    string            `json:"content_type"`
-	ResponseBody   string            `json:"body"`
-	Response       string            `json:"response"` // httpx -include-response 输出的字段名
-}
-
 // checkHttpxInstalled 检查httpx是否安装
 func checkHttpxInstalled() bool {
 	cmd := exec.Command("httpx", "-version")
@@ -1362,31 +1242,6 @@ func formatHttpxHeaders(headers map[string]string) string {
 	return sb.String()
 }
 
-// formatHttpxHeadersWithStatus 格式化httpx返回的响应头
-func formatHttpxHeadersWithStatus(headers map[string]string, _ int) string {
-	var sb strings.Builder
-	// 添加headers（不添加状态行，因为无法获取实际的协议版本）
-	for key, value := range headers {
-		sb.WriteString(fmt.Sprintf("%s: %s\n", key, value))
-	}
-	return sb.String()
-}
-
-// extractHeadersFromResponse 从完整HTTP响应中提取header部分
-func extractHeadersFromResponse(response string) string {
-	// HTTP响应格式: 状态行 + headers + 空行 + body
-	// 找到header和body的分隔（空行）
-	idx := strings.Index(response, "\r\n\r\n")
-	if idx == -1 {
-		idx = strings.Index(response, "\n\n")
-	}
-	if idx == -1 {
-		// 没有找到分隔，可能整个都是header
-		return response
-	}
-	return response[:idx]
-}
-
 // parseHttpHeaders 解析HTTP headers字符串为http.Header
 func parseHttpHeaders(headerStr string) http.Header {
 	headers := make(http.Header)
@@ -1425,22 +1280,6 @@ func extractCookiesFromHeader(headerStr string) string {
 		}
 	}
 	return strings.Join(cookies, "; ")
-}
-
-// readScreenshotAsBase64 读取截图文件并返回base64编码
-func readScreenshotAsBase64(filePath string) string {
-	if filePath == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		logx.Errorf("Failed to read screenshot file %s: %v", filePath, err)
-		return ""
-	}
-	if len(data) == 0 {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(data)
 }
 
 // containsAppName 检查应用列表中是否包含指定应用名（忽略来源标识）
@@ -1881,9 +1720,9 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 
 					// 构建指纹匹配数据
 					fpData := &FingerprintData{
-					Title:        extractTitle(ToUTF8(body, "")),
-					Body:         ToUTF8(body, ""),
-					BodyBytes:    body,
+						Title:        extractTitle(ToUTF8(body, "")),
+						Body:         ToUTF8(body, ""),
+						BodyBytes:    body,
 						Headers:      resp.Header,
 						HeaderString: formatHeaders(resp.Header),
 						Server:       resp.Header.Get("Server"),

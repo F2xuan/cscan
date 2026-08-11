@@ -41,11 +41,11 @@ func genTestCert(t *testing.T, notAfter time.Time, dnsNames []string, signWithCA
 		caTmpl := &x509.Certificate{
 			SerialNumber:          big.NewInt(99),
 			Subject:               pkix.Name{CommonName: "TestCA"},
-			NotBefore:              time.Now().Add(-time.Hour),
-			NotAfter:               time.Now().Add(24 * time.Hour),
-			IsCA:                   true,
-			BasicConstraintsValid:  true,
-			KeyUsage:               x509.KeyUsageCertSign,
+			NotBefore:             time.Now().Add(-time.Hour),
+			NotAfter:              time.Now().Add(24 * time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign,
 		}
 		parent = caTmpl
 		signer = caPriv

@@ -31,18 +31,21 @@ type TypedScanner[T ScannerOptions] interface {
 
 // ScanConfig 扫描配置
 type ScanConfig struct {
-	Target      string      `json:"target"`
-	Targets     []string    `json:"targets"`
-	Assets      []*Asset    `json:"assets"`
-	Options     interface{} `json:"options"`
-	WorkspaceId string      `json:"workspaceId"`
-	MainTaskId  string      `json:"mainTaskId"`
+	Target            string      `json:"target"`
+	Targets           []string    `json:"targets"`
+	Assets            []*Asset    `json:"assets"`
+	Options           interface{} `json:"options"`
+	WorkspaceId       string      `json:"workspaceId"`
+	MainTaskId        string      `json:"mainTaskId"`
+	WorkerConcurrency int         `json:"-"` // Worker 自适应并发数，scanner 模块用作 Worker Pool 默认值
 	// TaskLogger 任务日志回调，用于将扫描日志推送到任务日志流
 	TaskLogger func(level, format string, args ...interface{}) `json:"-"`
 	// OnProgress 进度回调，参数为当前进度(0-100)和描述
 	OnProgress func(progress int, message string) `json:"-"`
 	// OnAssetUpdated 局部资产完成更新时的回调事件（用于流式结果更新）
 	OnAssetUpdated func(asset *Asset) `json:"-"`
+	// OnTargetDone 单目标/单命令扫描完成后的回调，参数为已完成的 target 与本次产出资产
+	OnTargetDone func(target string, assets []*Asset) `json:"-"`
 }
 
 // GetTypedOptions 从 ScanConfig 中提取类型安全的选项
@@ -68,7 +71,7 @@ type ScanResult struct {
 	Vulnerabilities []*Vulnerability  `json:"vulnerabilities"`
 	JSFinderResults []*JSFinderResult `json:"jsfinderResults,omitempty"`
 	CertResults     []*CertResult     `json:"certResults,omitempty"`    // 证书采集结果（T2.1 certcheck 扫描器产出，由 T2.2 落库）
-	SkippedHosts    []string          `json:"skippedHosts,omitempty"`    // 因端口阈值超限被跳过的主机列表
+	SkippedHosts    []string          `json:"skippedHosts,omitempty"`   // 因端口阈值超限被跳过的主机列表
 	DNSFailedHosts  []string          `json:"dnsFailedHosts,omitempty"` // DNS解析失败的主机列表
 }
 
@@ -120,18 +123,19 @@ type IPInfo struct {
 
 // Vulnerability 漏洞
 type Vulnerability struct {
-	Authority string   `json:"authority"`
-	Host      string   `json:"host"`
-	Port      int      `json:"port"`
-	Url       string   `json:"url"`
-	PocFile   string   `json:"pocFile"`
-	Source    string   `json:"source"`
-	RiskSource string  `json:"riskSource,omitempty"` // 风险来源（如 auto:cert-expiry / auto:weakpass / auto:info-leak），供风险视图与复验按来源查询
-	Severity  string   `json:"severity"`
-	Extra     string   `json:"extra"`
-	Result    string   `json:"result"`
-	VulName   string   `json:"vulName,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
+	Authority string `json:"authority"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Url       string `json:"url"`
+	PocFile   string `json:"pocFile"`
+	Source    string `json:"source"`
+	// 风险来源（如 auto:cert-expiry / auto:weakpass / auto:info-leak），供风险视图与复验按来源查询
+	RiskSource string   `json:"riskSource,omitempty"`
+	Severity   string   `json:"severity"`
+	Extra      string   `json:"extra"`
+	Result     string   `json:"result"`
+	VulName    string   `json:"vulName,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 
 	// 漏洞知识库关联字段
 	CvssScore   float64  `json:"cvssScore,omitempty"`

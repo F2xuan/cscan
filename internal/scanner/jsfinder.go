@@ -71,7 +71,11 @@ var (
 	jsFinderReIDCard = regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`)
 	jsFinderReJWT    = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b`)
 	// 凭据键名 = 值
-	jsFinderReSecret = regexp.MustCompile(`(?i)(access[_\-]?key|api[_\-]?key|secret[_\-]?key|secret[_\-]?token|app[_\-]?key|app[_\-]?secret|auth[_\-]?token|access[_\-]?token|client[_\-]?secret|private[_\-]?key|aws[_\-]?secret)["'\s:=]+["']?([A-Za-z0-9_\-]{16,256})["']?`)
+	jsFinderReSecret = regexp.MustCompile(
+		`(?i)(access[_\-]?key|api[_\-]?key|secret[_\-]?key|secret[_\-]?token|` +
+			`app[_\-]?key|app[_\-]?secret|auth[_\-]?token|access[_\-]?token|` +
+			`client[_\-]?secret|private[_\-]?key|aws[_\-]?secret)` +
+			`["'\s:=]+["']?([A-Za-z0-9_\-]{16,256})["']?`)
 	// 路由 token 拆分（路径分隔符与常见标点），用于高危路由精确匹配
 	jsFinderReRouteSplit = regexp.MustCompile(`[/?#&=._\-]+`)
 	// camelCase 边界：小写或数字 → 大写
@@ -259,6 +263,9 @@ func (s *JSFinderScanner) collectTargets(assets []*Asset) []*jsFinderTargetCtx {
 		if a == nil {
 			continue
 		}
+		if a.Port == 0 && (a.Service == "" || a.Service == "unknown") {
+			continue // 跳过端口未知且无服务标识的资产
+		}
 		if !a.IsHTTP && !IsHTTPService(a.Service, a.Port) {
 			continue
 		}
@@ -315,8 +322,26 @@ func newJSFinderHTTPClient(timeoutSec int) *http.Client {
 	}
 }
 
+// scanTargetWithTimeout 对单个目标执行扫描（带超时控制）
+func (s *JSFinderScanner) scanTargetWithTimeout(
+	ctx context.Context, t *jsFinderTargetCtx, opts *JSFinderOptions,
+	client *http.Client, logInfo, logWarn func(string, ...interface{}),
+) []*JSFinderResult {
+	targetTimeout := time.Duration(opts.Timeout) * time.Second
+	if targetTimeout <= 0 {
+		targetTimeout = 10 * time.Second
+	}
+	targetCtx, cancel := context.WithTimeout(ctx, targetTimeout)
+	defer cancel()
+
+	return s.scanTarget(targetCtx, t, opts, client, logInfo, logWarn)
+}
+
 // scanTarget 单目标完整流水线
-func (s *JSFinderScanner) scanTarget(ctx context.Context, t *jsFinderTargetCtx, opts *JSFinderOptions, client *http.Client, logInfo, logWarn func(string, ...interface{})) []*JSFinderResult {
+func (s *JSFinderScanner) scanTarget(
+	ctx context.Context, t *jsFinderTargetCtx, opts *JSFinderOptions,
+	client *http.Client, logInfo, logWarn func(string, ...interface{}),
+) []*JSFinderResult {
 	logInfo("[JSFinder] [*] 正在提取 %s 的 JS 链接", t.BaseURL)
 
 	htmlBody, _, err := jsFinderHTTPGet(ctx, client, t.BaseURL, opts.UserAgent, opts.MaxJSSize, "")
@@ -720,7 +745,10 @@ func collectAPIURLs(findings []*jsFinderFinding, baseURL string, max int) []stri
 }
 
 // runUnauthChecks 对发现的 URL 列表执行未授权探测
-func runUnauthChecks(ctx context.Context, client *http.Client, urls []string, opts *JSFinderOptions, logInfo func(string, ...interface{})) []*jsFinderUnauthResult {
+func runUnauthChecks(
+	ctx context.Context, client *http.Client, urls []string,
+	opts *JSFinderOptions, logInfo func(string, ...interface{}),
+) []*jsFinderUnauthResult {
 	results := make([]*jsFinderUnauthResult, 0)
 	var mu sync.Mutex
 
@@ -766,13 +794,13 @@ func runUnauthChecks(ctx context.Context, client *http.Client, urls []string, op
 					logInfo("[JSFinder] [!] 跳过高危路由: %s", u)
 					continue
 				}
-			body, status, err := jsFinderHTTPGet(ctx, client, u, opts.UserAgent, 256*1024, "")
-			if err != nil {
-				continue
-			}
-			// 将响应体规范化为 UTF-8，消除 GBK 页面被当 UTF-8 记录造成的乱码（mojibake）
-			bodyStr := ToUTF8(body, "")
-			low := strings.ToLower(bodyStr)
+				body, status, err := jsFinderHTTPGet(ctx, client, u, opts.UserAgent, 256*1024, "")
+				if err != nil {
+					continue
+				}
+				// 将响应体规范化为 UTF-8，消除 GBK 页面被当 UTF-8 记录造成的乱码（mojibake）
+				bodyStr := ToUTF8(body, "")
+				low := strings.ToLower(bodyStr)
 				if status == 401 || status == 403 || containsKeyword(low, opts.AuthRequiredKeywords) {
 					// 限流输出：前N条正常输出，之后采样输出
 					n := atomic.AddInt64(&negativeCount, 1)

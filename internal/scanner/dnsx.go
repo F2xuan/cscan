@@ -1,17 +1,18 @@
 package scanner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // DnsxScanner DNS 查询扫描器 (CLI 模式)
@@ -22,20 +23,19 @@ type DnsxScanner struct {
 
 // NewDnsxScanner 创建 Dnsx 扫描器
 func NewDnsxScanner() *DnsxScanner {
-	cfg := ToolConfigs["dnsx"]
 	return &DnsxScanner{
 		BaseScanner: BaseScanner{name: "dnsx"},
-		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
+		executor:    NewExecutorForTool("dnsx"),
 	}
 }
 
 // DnsxOptions DNS 扫描选项
 type DnsxOptions struct {
-	Timeout    int      `json:"timeout"`
-	Retries    int      `json:"retries"`
-	Resolvers  []string `json:"resolvers"`
-	WildcardIPs map[string]bool `json:"wildcardIPs"`
-	WildcardFilter bool `json:"wildcardFilter"`
+	Timeout        int             `json:"timeout"`
+	Retries        int             `json:"retries"`
+	Resolvers      []string        `json:"resolvers"`
+	WildcardIPs    map[string]bool `json:"wildcardIPs"`
+	WildcardFilter bool            `json:"wildcardFilter"`
 }
 
 // Validate 验证配置
@@ -65,8 +65,8 @@ func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	}
 
 	opts := &DnsxOptions{
-		Timeout:    5,
-		Retries:    1,
+		Timeout: 5,
+		Retries: 1,
 	}
 	if config.Options != nil {
 		if o, ok := config.Options.(*DnsxOptions); ok {
@@ -80,64 +80,112 @@ func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	} else if config.Target != "" {
 		domains = strings.Split(config.Target, "\n")
 	}
-	for i := range domains {
-		domains[i] = strings.TrimSpace(domains[i])
-		if domains[i] == "" {
-			domains = append(domains[:i], domains[i+1:]...)
+	filtered := domains[:0]
+	for _, d := range domains {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			filtered = append(filtered, d)
 		}
 	}
+	domains = filtered
 
 	if len(domains) == 0 {
 		return result, nil
 	}
 
-	assets, err := s.queryDomains(ctx, domains, opts)
-	if err != nil {
-		return nil, fmt.Errorf("dnsx query: %w", err)
+	// 并发 Worker Pool：每个域名一个 dnsx 进程，完成一个补一个
+	concurrency := config.WorkerConcurrency
+	if concurrency <= 0 {
+		concurrency = 5
 	}
-	result.Assets = assets
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(domains) {
+		concurrency = len(domains)
+	}
+	logx.Infof("Dnsx(CLI): scanning %d domains with %d workers", len(domains), concurrency)
+
+	type queryResult struct {
+		assets []*Asset
+		domain string
+		err    error
+	}
+	targetChan := make(chan string, len(domains))
+	resultChan := make(chan queryResult, len(domains))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for domain := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- queryResult{domain: domain, err: ctx.Err()}
+					return
+				default:
+				}
+				assets, err := s.querySingleDomain(ctx, domain, opts)
+				resultChan <- queryResult{assets: assets, domain: domain, err: err}
+			}
+		}()
+	}
+
+dispatch:
+	for _, domain := range domains {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case targetChan <- domain:
+		}
+	}
+	close(targetChan)
+
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	var allAssets []*Asset
+	for res := range resultChan {
+		if res.err != nil {
+			logx.Errorf("Dnsx: query error for %s: %v", res.domain, res.err)
+			continue
+		}
+		allAssets = append(allAssets, res.assets...)
+	}
+
+	result.Assets = allAssets
 	return result, nil
 }
 
-func (s *DnsxScanner) queryDomains(ctx context.Context, domains []string, opts *DnsxOptions) ([]*Asset, error) {
-	// 写入临时文件
-	tmpFile, err := os.CreateTemp("", "dnsx-targets-*.txt")
-	if err != nil {
-		return nil, err
-	}
-	for _, d := range domains {
-		tmpFile.WriteString(d + "\n")
-	}
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
-
+func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts *DnsxOptions) ([]*Asset, error) {
 	args := []string{
-		"-l", tmpPath,
 		"-json",
 		"-silent",
 		"-a", "-aaaa",
 		"-cname",
 		"-timeout", fmt.Sprintf("%d", opts.Timeout),
-		"-retries", fmt.Sprintf("%d", opts.Retries),
+		"-retry", fmt.Sprintf("%d", opts.Retries),
 		"-disable-update-check",
+		domain,
 	}
 	if len(opts.Resolvers) > 0 {
 		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
 	}
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
-		Timeout: time.Duration(opts.Timeout*len(domains)+30) * time.Second,
+		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("dnsx execution: %w", err)
+		return nil, fmt.Errorf("dnsx execution for %s: %w", domain, err)
 	}
 
 	var assets []*Asset
 	ipLocator := geolocation.NewIPLocator()
 
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -158,17 +206,7 @@ func (s *DnsxScanner) queryDomains(ctx context.Context, domains []string, opts *
 		}
 
 		for _, ipStr := range dr.IP {
-			parsedIP := net.ParseIP(ipStr)
-			if parsedIP == nil {
-				continue
-			}
-			if ip4 := parsedIP.To4(); ip4 != nil {
-				locStr, _ := ipLocator.Locate(ip4.String())
-				asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: geolocation.NormalizeLocation(locStr)})
-			} else {
-				locStr, _ := ipLocator.Locate(parsedIP.String())
-				asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String(), Location: geolocation.NormalizeLocation(locStr)})
-			}
+			appendIPInfo(asset, ipStr, ipLocator)
 		}
 
 		if len(dr.CNAME) > 0 {
@@ -181,22 +219,18 @@ func (s *DnsxScanner) queryDomains(ctx context.Context, domains []string, opts *
 	return assets, nil
 }
 
-// DetectWildcard 检测泛解析（使用 dnsx CLI）
-func (s *DnsxScanner) DetectWildcard(domain string) map[string]bool {
-	wildcardIPs := make(map[string]bool)
-
-	testSubdomains := []string{
-		fmt.Sprintf("wildcard-test-%d.%s", utils.RandomInt(100000, 999999), domain),
-		fmt.Sprintf("random-%d.%s", utils.RandomInt(100000, 999999), domain),
-		fmt.Sprintf("nonexistent-%d.%s", utils.RandomInt(100000, 999999), domain),
-	}
-
-	tmpFile, err := os.CreateTemp("", "dnsx-wildcard-*.txt")
+// runDnsxLookup 将域名写入临时文件后调用 dnsx CLI，解析每行 JSON 为 DnsxResult
+func (s *DnsxScanner) runDnsxLookup(ctx context.Context, domains []string, timeoutSec int) ([]DnsxResult, error) {
+	tmpFile, err := os.CreateTemp("", "dnsx-*.txt")
 	if err != nil {
-		return wildcardIPs
+		return nil, err
 	}
-	for _, d := range testSubdomains {
-		tmpFile.WriteString(d + "\n")
+	for _, d := range domains {
+		if _, err := tmpFile.WriteString(d + "\n"); err != nil {
+			logx.Errorf("[Dnsx] write tmpfile failed: %v", err)
+			tmpFile.Close()
+			return nil, err
+		}
 	}
 	tmpPath := tmpFile.Name()
 	tmpFile.Close()
@@ -208,17 +242,17 @@ func (s *DnsxScanner) DetectWildcard(domain string) map[string]bool {
 		"-silent",
 		"-a",
 		"-timeout", "5",
-		"-retries", "1",
+		"-retry", "1",
 		"-disable-update-check",
 	}
 
-	res, err := s.executor.Execute(context.Background(), args, ExecuteOpts{Timeout: 30 * time.Second})
+	res, err := s.executor.Execute(ctx, args, ExecuteOpts{Timeout: time.Duration(timeoutSec) * time.Second})
 	if err != nil {
-		return wildcardIPs
+		return nil, err
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	var results []DnsxResult
+	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -228,6 +262,27 @@ func (s *DnsxScanner) DetectWildcard(domain string) map[string]bool {
 		if err := json.Unmarshal([]byte(line), &dr); err != nil {
 			continue
 		}
+		results = append(results, dr)
+	}
+
+	return results, nil
+}
+
+// DetectWildcard 检测泛解析（使用 dnsx CLI）
+func (s *DnsxScanner) DetectWildcard(ctx context.Context, domain string) map[string]bool {
+	wildcardIPs := make(map[string]bool)
+
+	testSubdomains := []string{
+		fmt.Sprintf("wildcard-test-%d.%s", utils.RandomInt(100000, 999999), domain),
+		fmt.Sprintf("random-%d.%s", utils.RandomInt(100000, 999999), domain),
+		fmt.Sprintf("nonexistent-%d.%s", utils.RandomInt(100000, 999999), domain),
+	}
+
+	results, err := s.runDnsxLookup(ctx, testSubdomains, 30)
+	if err != nil {
+		return wildcardIPs
+	}
+	for _, dr := range results {
 		for _, ip := range dr.IP {
 			wildcardIPs[ip] = true
 		}
@@ -237,43 +292,14 @@ func (s *DnsxScanner) DetectWildcard(domain string) map[string]bool {
 }
 
 // Lookup DNS 查询单个域名
-func (s *DnsxScanner) Lookup(domain string) ([]string, error) {
-	tmpFile, err := os.CreateTemp("", "dnsx-lookup-*.txt")
-	if err != nil {
-		return nil, err
-	}
-	tmpFile.WriteString(domain + "\n")
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
-
-	args := []string{
-		"-l", tmpPath,
-		"-json",
-		"-silent",
-		"-a",
-		"-timeout", "5",
-		"-retries", "1",
-		"-disable-update-check",
-	}
-
-	res, err := s.executor.Execute(context.Background(), args, ExecuteOpts{Timeout: 15 * time.Second})
+func (s *DnsxScanner) Lookup(ctx context.Context, domain string) ([]string, error) {
+	results, err := s.runDnsxLookup(ctx, []string{domain}, 15)
 	if err != nil {
 		return nil, err
 	}
 
 	var ips []string
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var dr DnsxResult
-		if err := json.Unmarshal([]byte(line), &dr); err != nil {
-			continue
-		}
+	for _, dr := range results {
 		ips = append(ips, dr.IP...)
 	}
 

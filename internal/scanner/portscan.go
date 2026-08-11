@@ -10,6 +10,8 @@ import (
 
 	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // PortScanner 端口扫描器
@@ -26,12 +28,20 @@ func NewPortScanner() *PortScanner {
 
 // PortScanOptions 端口扫描选项
 type PortScanOptions struct {
-	Tool          string `json:"tool"` // tcp, masscan, nmap
-	Ports         string `json:"ports"`
-	Rate          int    `json:"rate"`
-	Timeout       int    `json:"timeout"`
-	Concurrent    int    `json:"concurrent"`
-	PortThreshold int    `json:"portThreshold"` // 开放端口数量阈值，超过则过滤该主机
+	Tool              string `json:"tool"` // tcp, masscan, nmap, naabu
+	Ports             string `json:"ports"`
+	Rate              int    `json:"rate"`              // 每秒发送包数
+	Timeout           int    `json:"timeout"`           // 端口扫描超时时间(秒)
+	Concurrent        int    `json:"concurrent"`        // 并发数
+	PortThreshold     int    `json:"portThreshold"`     // 开放端口数量阈值
+	ScanType          string `json:"scanType"`          // s=SYN, c=CONNECT
+	SkipHostDiscovery bool   `json:"skipHostDiscovery"` // 跳过主机发现 (-Pn)
+	ExcludeCDN        bool   `json:"excludeCDN"`        // 排除 CDN/WAF (-ec)
+	ExcludeHosts      string `json:"excludeHosts"`      // 排除的目标
+	Retries           int    `json:"retries"`           // 重试次数
+	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)
+	Workers           int    `json:"workers"`           // Naabu 内部工作线程
+	Verify            bool   `json:"verify"`            // TCP 验证
 }
 
 // Validate 验证 PortScanOptions 配置是否有效
@@ -52,6 +62,18 @@ func (o *PortScanOptions) Validate() error {
 	if o.PortThreshold < 0 {
 		return fmt.Errorf("portThreshold must be non-negative, got %d", o.PortThreshold)
 	}
+	if o.Retries < 0 {
+		return fmt.Errorf("retries must be non-negative, got %d", o.Retries)
+	}
+	if o.WarmUpTime < 0 {
+		return fmt.Errorf("warmUpTime must be non-negative, got %d", o.WarmUpTime)
+	}
+	if o.Workers < 0 {
+		return fmt.Errorf("workers must be non-negative, got %d", o.Workers)
+	}
+	if o.ScanType != "" && o.ScanType != "s" && o.ScanType != "c" {
+		return fmt.Errorf("scanType must be 's' or 'c', got %s", o.ScanType)
+	}
 	return nil
 }
 
@@ -66,6 +88,9 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		}
 	}
 
+	logx.Infof("PortScanner(CLI): Scan start target=%s opts={tool:%s ports:%s timeout:%d concurrent:%d}",
+		config.Target, opts.Tool, opts.Ports, opts.Timeout, opts.Concurrent)
+
 	// 解析目标
 	targetParseResult := ParseTargetsForPortScan(config.Target)
 	for _, t := range config.Targets {
@@ -73,6 +98,8 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		targetParseResult.WithPort = append(targetParseResult.WithPort, res.WithPort...)
 		targetParseResult.WithoutPort = append(targetParseResult.WithoutPort, res.WithoutPort...)
 	}
+
+	logx.Infof("PortScanner(CLI): parsed targets: withoutPort=%d withPort=%d", len(targetParseResult.WithoutPort), len(targetParseResult.WithPort))
 
 	var cleanTargets []string
 	seenHost := make(map[string]bool)
@@ -106,8 +133,12 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	targets := cleanTargets
 	opts.Ports = portsToString(ports)
 
+	logx.Infof("PortScanner(CLI): final targets=%d ports=%d", len(targets), len(ports))
+
 	// 执行扫描
 	assets := s.scanPorts(ctx, targets, ports, opts)
+
+	logx.Infof("PortScanner(CLI): scan completed, found %d open ports", len(assets))
 
 	return &ScanResult{
 		WorkspaceId: config.WorkspaceId,

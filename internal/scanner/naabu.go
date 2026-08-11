@@ -2,9 +2,11 @@ package scanner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -33,11 +35,10 @@ type NaabuScanner struct {
 
 // NewNaabuScanner 创建Naabu扫描器
 func NewNaabuScanner() *NaabuScanner {
-	cfg := ToolConfigs["naabu"]
 	return &NaabuScanner{
-		BaseScanner: BaseScanner{name: "naabu"},
+		BaseScanner:  BaseScanner{name: "naabu"},
 		skippedHosts: make([]string, 0),
-		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
+		executor:     NewExecutorForTool("naabu"),
 	}
 }
 
@@ -55,6 +56,7 @@ type NaabuOptions struct {
 	WarmUpTime        int    `json:"warmUpTime"`
 	Workers           int    `json:"workers"`
 	Verify            bool   `json:"verify"`
+	AggregatedTimeout int    `json:"aggregatedTimeout"` // 聚合超时（秒），当>0时按目标数分摊为单目标超时
 }
 
 // Validate 验证配置
@@ -74,15 +76,12 @@ func (o *NaabuOptions) Validate() error {
 	return nil
 }
 
-// NaabuHostResult Naabu JSON 输出结构
+// NaabuHostResult Naabu JSON 输出结构（扁平格式，每行一个端口）
 type NaabuHostResult struct {
-	Host string `json:"host"`
-	IP   string `json:"ip"`
-	Ports []struct {
-		Port int    `json:"port"`
-		Proto string `json:"proto"`
-		Status string `json:"status"`
-	} `json:"ports"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	TLS      bool   `json:"tls"`
 }
 
 // Scan 执行Naabu扫描
@@ -92,52 +91,92 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	s.dnsFailedHosts = s.dnsFailedHosts[:0]
 	s.mu.Unlock()
 
-	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NaabuOptions{
-		Ports:         "80,443,8080",
-		Rate:          adaptive.NaabuRate,
-		Timeout:       60,
-		ScanType:      "c",
-		PortThreshold: 0,
-		Retries:       adaptive.NaabuRetries,
-		WarmUpTime:    1,
-		Workers:       adaptive.NaabuWorkers,
-		Verify:        false,
+		Ports:             "80,443,8080",
+		Rate:              3000,
+		Timeout:           120,
+		ScanType:          "c",
+		PortThreshold:     0,
+		Retries:           2,
+		WarmUpTime:        1,
+		Workers:           50,
+		Verify:            false,
+		SkipHostDiscovery: true, // 默认跳过 ICMP 主机发现（域名/CDN 目标 ICMP 几乎总被丢弃）
 	}
 	if config.Options != nil {
 		switch v := config.Options.(type) {
 		case *NaabuOptions:
 			opts = v
 		case *PortScanOptions:
-			if v.Ports != "" { opts.Ports = v.Ports }
-			if v.Rate > 0 { opts.Rate = v.Rate }
-			if v.Timeout > 0 { opts.Timeout = v.Timeout }
-			if v.PortThreshold > 0 { opts.PortThreshold = v.PortThreshold }
+			if v.Ports != "" {
+				opts.Ports = v.Ports
+			}
+			if v.Rate > 0 {
+				opts.Rate = v.Rate
+			}
+			if v.Timeout > 0 {
+				opts.Timeout = v.Timeout
+			}
+			if v.PortThreshold > 0 {
+				opts.PortThreshold = v.PortThreshold
+			}
+			if v.ScanType != "" {
+				opts.ScanType = v.ScanType
+			}
+			opts.SkipHostDiscovery = v.SkipHostDiscovery
+			opts.ExcludeCDN = v.ExcludeCDN
+			opts.ExcludeHosts = v.ExcludeHosts
+			if v.Retries > 0 {
+				opts.Retries = v.Retries
+			}
+			if v.WarmUpTime >= 0 {
+				opts.WarmUpTime = v.WarmUpTime
+			}
+			if v.Workers > 0 {
+				opts.Workers = v.Workers
+			}
+			opts.Verify = v.Verify
 		default:
 			if data, err := json.Marshal(config.Options); err == nil {
 				var portConfig struct {
-					Ports string `json:"ports"`
-					Rate int `json:"rate"`
-					Timeout int `json:"timeout"`
-					PortThreshold int `json:"portThreshold"`
-					ScanType string `json:"scanType"`
-					SkipHostDiscovery bool `json:"skipHostDiscovery"`
-					ExcludeCDN bool `json:"excludeCDN"`
-					ExcludeHosts string `json:"excludeHosts"`
-					Retries int `json:"retries"`
-					WarmUpTime int `json:"warmUpTime"`
-					Workers int `json:"workers"`
-					Verify bool `json:"verify"`
+					Ports             string `json:"ports"`
+					Rate              int    `json:"rate"`
+					Timeout           int    `json:"timeout"`
+					PortThreshold     int    `json:"portThreshold"`
+					ScanType          string `json:"scanType"`
+					SkipHostDiscovery bool   `json:"skipHostDiscovery"`
+					ExcludeCDN        bool   `json:"excludeCDN"`
+					ExcludeHosts      string `json:"excludeHosts"`
+					Retries           int    `json:"retries"`
+					WarmUpTime        int    `json:"warmUpTime"`
+					Workers           int    `json:"workers"`
+					Verify            bool   `json:"verify"`
 				}
 				if err := json.Unmarshal(data, &portConfig); err == nil {
-					if portConfig.Ports != "" { opts.Ports = portConfig.Ports }
-					if portConfig.Rate > 0 { opts.Rate = portConfig.Rate }
-					if portConfig.Timeout > 0 { opts.Timeout = portConfig.Timeout }
-					if portConfig.PortThreshold > 0 { opts.PortThreshold = portConfig.PortThreshold }
-					if portConfig.ScanType != "" { opts.ScanType = portConfig.ScanType }
-					if portConfig.Retries > 0 { opts.Retries = portConfig.Retries }
-					if portConfig.WarmUpTime >= 0 { opts.WarmUpTime = portConfig.WarmUpTime }
-					if portConfig.Workers > 0 { opts.Workers = portConfig.Workers }
+					if portConfig.Ports != "" {
+						opts.Ports = portConfig.Ports
+					}
+					if portConfig.Rate > 0 {
+						opts.Rate = portConfig.Rate
+					}
+					if portConfig.Timeout > 0 {
+						opts.Timeout = portConfig.Timeout
+					}
+					if portConfig.PortThreshold > 0 {
+						opts.PortThreshold = portConfig.PortThreshold
+					}
+					if portConfig.ScanType != "" {
+						opts.ScanType = portConfig.ScanType
+					}
+					if portConfig.Retries > 0 {
+						opts.Retries = portConfig.Retries
+					}
+					if portConfig.WarmUpTime >= 0 {
+						opts.WarmUpTime = portConfig.WarmUpTime
+					}
+					if portConfig.Workers > 0 {
+						opts.Workers = portConfig.Workers
+					}
 					opts.SkipHostDiscovery = portConfig.SkipHostDiscovery
 					opts.ExcludeCDN = portConfig.ExcludeCDN
 					opts.ExcludeHosts = portConfig.ExcludeHosts
@@ -165,7 +204,9 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	originalPorts := opts.Ports
 	ports := parsePorts(opts.Ports)
 	portSet := make(map[int]bool)
-	for _, p := range ports { portSet[p] = true }
+	for _, p := range ports {
+		portSet[p] = true
+	}
 	for _, taskWithPort := range targetParseResult.WithPort {
 		if !seenHost[taskWithPort.Host] {
 			seenHost[taskWithPort.Host] = true
@@ -186,7 +227,31 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		return &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
-	assets, thresholdExceeded := s.runNaabuCLI(ctx, cleanTargets, opts)
+	// 确保 Worker Pool 大小继承 worker 自适应值
+	if opts.Workers <= 0 {
+		opts.Workers = config.WorkerConcurrency
+	}
+
+	// Phase 2：聚合超时透传
+	// 当上层传入 AggregatedTimeout 时，按目标数均摊为单目标超时，
+	// 使 naabu 实际执行语义与 worker 日志中的 timeout=2940s 对齐。
+	aggregatedTimeout := opts.AggregatedTimeout
+	if aggregatedTimeout > 0 && len(cleanTargets) > 0 {
+		perTarget := aggregatedTimeout / len(cleanTargets)
+		if perTarget < 1 {
+			perTarget = 1
+		}
+		if opts.Timeout < 1 {
+			opts.Timeout = 1
+		}
+		if perTarget > opts.Timeout {
+			opts.Timeout = perTarget
+		}
+		logx.Infof("Naabu(CLI): aggregatedTimeout=%ds targets=%d => perTargetTimeout=%ds",
+			aggregatedTimeout, len(cleanTargets), opts.Timeout)
+	}
+
+	assets, thresholdExceeded := s.runNaabuCLI(ctx, config, opts)
 	if thresholdExceeded {
 		return &ScanResult{
 			WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
@@ -199,68 +264,144 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	}, nil
 }
 
-func (s *NaabuScanner) runNaabuCLI(ctx context.Context, targets []string, opts *NaabuOptions) ([]*Asset, bool) {
+func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts *NaabuOptions) ([]*Asset, bool) {
 	var allAssets []*Asset
 	anyThresholdExceeded := false
 
-	var portsStr, topPorts string
+	var portsStr string
 	switch opts.Ports {
-	case "top100":
-		topPorts = "100"
-	case "top1000":
-		topPorts = "1000"
+	case "top100", "top1000":
+		// 交给 Naabu 原生 -tp，不本地展开，避免端口数被展开成 96 等固定值
 	default:
 		portsStr = optimizePortsForNaabu(opts.Ports)
 	}
 
-	totalTargets := len(targets)
-	logx.Infof("Naabu(CLI): scanning %d targets, ports=%s, rate=%d", totalTargets, opts.Ports, opts.Rate)
-
-	for i, target := range targets {
-		select {
-		case <-ctx.Done():
-			return allAssets, anyThresholdExceeded
-		default:
-		}
-
-		assets, thresholdExceeded := s.scanTargetCLI(ctx, target, portsStr, topPorts, opts)
-		if thresholdExceeded {
-			anyThresholdExceeded = true
-			s.mu.Lock()
-			s.skippedHosts = append(s.skippedHosts, target)
-			s.mu.Unlock()
-			continue
-		}
-		allAssets = append(allAssets, assets...)
-		_ = i
+	targetParseResult := ParseTargetsForPortScan(config.Target)
+	for _, t := range config.Targets {
+		res := ParseTargetsForPortScan(t)
+		targetParseResult.WithPort = append(targetParseResult.WithPort, res.WithPort...)
+		targetParseResult.WithoutPort = append(targetParseResult.WithoutPort, res.WithoutPort...)
 	}
 
-	logx.Infof("Naabu(CLI): completed, found %d open ports", len(allAssets))
+	var cleanTargets []string
+	seenHost := make(map[string]bool)
+	for _, host := range targetParseResult.WithoutPort {
+		if !seenHost[host] {
+			seenHost[host] = true
+			cleanTargets = append(cleanTargets, host)
+		}
+	}
+	for _, taskWithPort := range targetParseResult.WithPort {
+		if !seenHost[taskWithPort.Host] {
+			seenHost[taskWithPort.Host] = true
+			cleanTargets = append(cleanTargets, taskWithPort.Host)
+		}
+	}
+
+	totalTargets := len(cleanTargets)
+	concurrency := opts.Workers
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > totalTargets {
+		concurrency = totalTargets
+	}
+
+	type targetResult struct {
+		target            string
+		assets            []*Asset
+		thresholdExceeded bool
+		err               error
+	}
+
+	// 并发 Worker Pool：每个 Worker 从 targetChan 取目标执行，结果写入 resultChan
+	targetChan := make(chan string, totalTargets)
+	resultChan := make(chan targetResult, totalTargets)
+	var scanWg sync.WaitGroup
+
+	// 启动并发 Worker
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for target := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- targetResult{err: ctx.Err()}
+					return
+				default:
+				}
+				assets, thresholdExceeded := s.scanTargetCLI(ctx, target, portsStr, opts)
+				resultChan <- targetResult{
+					target:            target,
+					assets:            assets,
+					thresholdExceeded: thresholdExceeded,
+				}
+			}
+		}()
+	}
+
+	// 分发目标
+dispatch:
+	for _, target := range cleanTargets {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case targetChan <- target:
+		}
+	}
+	close(targetChan)
+
+	// 等待所有 Worker 完成
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	// 收集结果
+	for res := range resultChan {
+		if res.err != nil {
+			logx.Infof("Naabu(CLI): worker error: %v", res.err)
+			continue
+		}
+		if res.thresholdExceeded {
+			anyThresholdExceeded = true
+		}
+		allAssets = append(allAssets, res.assets...)
+		if config.OnTargetDone != nil {
+			config.OnTargetDone(res.target, res.assets)
+		}
+	}
+
+	logx.Infof("Naabu(CLI): completed, found %d open ports across %d targets", len(allAssets), totalTargets)
 	return allAssets, anyThresholdExceeded
 }
 
-func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr, topPorts string, opts *NaabuOptions) ([]*Asset, bool) {
+func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions) ([]*Asset, bool) {
 	args := []string{
 		"-host", target,
 		"-json",
 		"-silent",
 		"-rate", strconv.Itoa(opts.Rate),
-		"-timeout", fmt.Sprintf("%ds", opts.Timeout),
+		"-timeout", strconv.Itoa(opts.Timeout),
 		"-retries", strconv.Itoa(opts.Retries),
 		"-warm-up-time", strconv.Itoa(opts.WarmUpTime),
-		"-threads", strconv.Itoa(opts.Workers),
+		"-c", strconv.Itoa(opts.Workers),
 	}
 	if portsStr != "" {
 		args = append(args, "-p", portsStr)
 	}
-	if topPorts != "" {
-		args = append(args, "-top-ports", topPorts)
+	if opts.Ports == "top100" {
+		args = append(args, "-tp", "100")
+	}
+	if opts.Ports == "top1000" {
+		args = append(args, "-tp", "1000")
 	}
 	if opts.ScanType == "s" {
 		args = append(args, "-s")
-	} else {
-		args = append(args, "-c")
 	}
+	// connect scan is the default in naabu; do not add another -c because
+	// -c is already used for worker concurrency above.
 	if opts.SkipHostDiscovery {
 		args = append(args, "-Pn")
 	}
@@ -288,25 +429,55 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr, topP
 
 	args = append(args, "-o", tmpPath)
 
-	logx.Infof("Naabu(CLI): %s %s", ToolConfigs["naabu"].BinaryName, strings.Join(args, " "))
+	// 计算聚合超时
+	aggregatedTimeout := time.Duration(opts.Timeout+opts.Retries*opts.Timeout) * time.Second
+	logx.Infof("Naabu CLI: AggregatedTimeout=%v for target %s", aggregatedTimeout, target)
+
+	// 进程超时必须大于聚合超时，否则会提前杀进程
+	processTimeout := aggregatedTimeout + 30*time.Second
+	logx.Infof("Naabu CLI: ProcessTimeout=%v (aggregated + 30s buffer)", processTimeout)
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
-		Timeout: time.Duration(opts.Timeout + 30) * time.Second,
+		Timeout: processTimeout,
 	})
-	_ = res
+	if err != nil {
+		logx.Errorf("Naabu(CLI): %s execution failed: %v, stderr=%q", target, err, strings.TrimSpace(res.Stderr))
+		return nil, false
+	}
 
-	// 读取 JSON 输出文件
+	// 读取 JSON 输出文件（进程异常退出时仍尝试读取部分结果）
 	content, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
 		logx.Infof("[WARN] Naabu(CLI): failed to read output file: %v", readErr)
+		if res.ExitCode == 0 {
+			return nil, false
+		}
+		logx.Infof("[WARN] Naabu(CLI): %s exit code %d and failed to read output, returning empty result", target, res.ExitCode)
 		return nil, false
+	}
+
+	// 兼容处理：部分 Naabu 版本在 -json 模式下仍将结果写 stdout，即使指定了 -o
+	var parseSource io.Reader
+	if len(content) > 0 {
+		parseSource = strings.NewReader(string(content))
+	} else if len(res.Stdout) > 0 {
+		logx.Infof("Naabu(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
+		parseSource = bytes.NewReader([]byte(res.Stdout))
+	} else {
+		logx.Infof("Naabu(CLI): no output from file or stdout, returning empty result")
+		return nil, false
+	}
+
+	// 进程异常退出但输出了部分结果，继续解析
+	if res.ExitCode != 0 {
+		logx.Infof("[WARN] Naabu(CLI): %s exit code %d, parsing partial output (%d bytes)", target, res.ExitCode, len(content))
 	}
 
 	var assets []*Asset
 	var foundPorts []string
 	hostPortCount := 0
 
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	scanner := bufio.NewScanner(parseSource)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -315,33 +486,33 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr, topP
 		}
 		var hostResult NaabuHostResult
 		if err := json.Unmarshal([]byte(line), &hostResult); err != nil {
+			logx.Infof("Naabu(CLI): json parse error line=%q err=%v", line, err)
 			continue
 		}
-		for _, p := range hostResult.Ports {
-			if p.Status == "open" {
-				hostPortCount++
-				if opts.PortThreshold > 0 && hostPortCount > opts.PortThreshold {
-					return nil, true
-				}
-				locStr, _ := ipLocator.Locate(hostResult.IP)
-				location := geolocation.NormalizeLocation(locStr)
-				asset := &Asset{
-					Authority: utils.BuildTargetWithPort(hostResult.Host, p.Port),
-					Host:      hostResult.Host,
-					Port:      p.Port,
-					Category:  getCategory(hostResult.Host),
-				}
-				if hostResult.IP != "" {
-					if strings.Contains(hostResult.IP, ":") {
-						asset.IPV6 = []IPInfo{{IP: hostResult.IP, Location: location}}
-					} else {
-						asset.IPV4 = []IPInfo{{IP: hostResult.IP, Location: location}}
-					}
-				}
-				assets = append(assets, asset)
-				foundPorts = append(foundPorts, strconv.Itoa(p.Port))
+		if hostResult.Port <= 0 {
+			continue
+		}
+		hostPortCount++
+		if opts.PortThreshold > 0 && hostPortCount > opts.PortThreshold {
+			return nil, true
+		}
+		locStr, _ := ipLocator.Locate(hostResult.IP)
+		location := geolocation.NormalizeLocation(locStr)
+		asset := &Asset{
+			Authority: utils.BuildTargetWithPort(hostResult.IP, hostResult.Port),
+			Host:      hostResult.IP,
+			Port:      hostResult.Port,
+			Category:  getCategory(hostResult.IP),
+		}
+		if hostResult.IP != "" {
+			if strings.Contains(hostResult.IP, ":") {
+				asset.IPV6 = []IPInfo{{IP: hostResult.IP, Location: location}}
+			} else {
+				asset.IPV4 = []IPInfo{{IP: hostResult.IP, Location: location}}
 			}
 		}
+		assets = append(assets, asset)
+		foundPorts = append(foundPorts, strconv.Itoa(hostResult.Port))
 	}
 
 	if len(foundPorts) > 0 {

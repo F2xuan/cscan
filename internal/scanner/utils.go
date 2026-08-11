@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -291,6 +292,22 @@ func enrichAssetWithDNS(asset *Asset, resolver dnsResolver) *Asset {
 	return asset
 }
 
+// appendIPInfo 解析 IP 字符串并按 IPv4/IPv6 追加到资产的对应字段（含地理位置归一化）
+// 无法解析的 IP 直接忽略
+func appendIPInfo(asset *Asset, ipStr string, locator *geolocation.IPLocator) {
+	parsedIP := net.ParseIP(ipStr)
+	if parsedIP == nil {
+		return
+	}
+	if ip4 := parsedIP.To4(); ip4 != nil {
+		locStr, _ := locator.Locate(ip4.String())
+		asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: geolocation.NormalizeLocation(locStr)})
+	} else {
+		locStr, _ := locator.Locate(ipStr)
+		asset.IPV6 = append(asset.IPV6, IPInfo{IP: ipStr, Location: geolocation.NormalizeLocation(locStr)})
+	}
+}
+
 // containsDomainTLD 检查是否包含常见域名后缀
 func containsDomainTLD(s string) bool {
 	tlds := []string{".com", ".net", ".org", ".cn", ".io", ".co", ".edu", ".gov", ".mil"}
@@ -554,10 +571,10 @@ func ValidateNmapArgs(args string) error {
 		"--min-rate": true, "--max-rate": true,
 		"--min-parallelism": true, "--max-parallelism": true,
 		"--min-hostgroup": true, "--max-hostgroup": true,
-		"--host-timeout": true,
+		"--host-timeout":    true,
 		"--max-rtt-timeout": true, "--min-rtt-timeout": true,
 		"--initial-rtt-timeout": true,
-		"--scan-delay": true, "--max-scan-delay": true,
+		"--scan-delay":          true, "--max-scan-delay": true,
 		"-f": true, "--mtu": true, "-g": true, "--source-port": true,
 		"--data-length": true, "--ip-options": true, "--ttl": true,
 		"--spoof-mac": true, "--badsum": true,

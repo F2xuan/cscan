@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -20,10 +21,9 @@ type FFufScanner struct {
 
 // NewFFufScanner 创建 ffuf 目录扫描器
 func NewFFufScanner() *FFufScanner {
-	cfg := ToolConfigs["ffuf"]
 	return &FFufScanner{
 		BaseScanner: BaseScanner{name: "ffuf"},
-		executor:    NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout),
+		executor:    NewExecutorForTool("ffuf"),
 	}
 }
 
@@ -60,14 +60,14 @@ func (o *FFufOptions) Validate() error {
 
 // FFufCLIResult ffuf CLI JSON 输出结构
 type FFufCLIResult struct {
-	Url             string `json:"url"`
-	StatusCode      int    `json:"status_code"`
-	ContentLength   int64  `json:"length"`
-	ContentWords    int64  `json:"words"`
-	ContentLines    int64  `json:"lines"`
-	ContentType     string `json:"content_type"`
+	Url              string `json:"url"`
+	StatusCode       int    `json:"status_code"`
+	ContentLength    int64  `json:"length"`
+	ContentWords     int64  `json:"words"`
+	ContentLines     int64  `json:"lines"`
+	ContentType      string `json:"content_type"`
 	RedirectLocation string `json:"redirectlocation"`
-	DurationMs      int64  `json:"duration"`
+	DurationMs       int64  `json:"duration"`
 }
 
 // Scan 执行目录扫描
@@ -124,28 +124,74 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	logInfo("[FFuf] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
 
 	var allAssets []*Asset
-	for i, target := range targets {
+
+	// 并发 Worker Pool：每个目标一个 ffuf 进程，完成一个补一个
+	concurrency := opts.Threads
+	if concurrency <= 0 {
+		concurrency = config.WorkerConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 5
+	}
+	if concurrency > len(targets) {
+		concurrency = len(targets)
+	}
+	logInfo("[FFuf] 开始目录扫描，目标数: %d，并发: %d", len(targets), concurrency)
+
+	type scanResult struct {
+		assets []*Asset
+		target string
+		err    error
+	}
+	targetChan := make(chan string, len(targets))
+	resultChan := make(chan scanResult, len(targets))
+	var scanWg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		scanWg.Add(1)
+		go func() {
+			defer scanWg.Done()
+			for target := range targetChan {
+				select {
+				case <-ctx.Done():
+					resultChan <- scanResult{target: target, err: ctx.Err()}
+					return
+				default:
+				}
+				logInfo("[FFuf] 扫描目标: %s", target)
+				assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logInfo, func(string, ...interface{}) {})
+				resultChan <- scanResult{assets: assets, target: target, err: err}
+			}
+		}()
+	}
+
+dispatch:
+	for _, target := range targets {
 		select {
 		case <-ctx.Done():
-			return &ScanResult{
-				WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
-				Assets: allAssets,
-			}, ctx.Err()
-		default:
+			break dispatch
+		case targetChan <- target:
 		}
+	}
+	close(targetChan)
 
-		logInfo("[FFuf] 扫描目标 %d/%d: %s", i+1, len(targets), target)
-		assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logInfo, func(string, ...interface{}) {})
-		if err != nil {
-			logWarn("[FFuf] 扫描目标 %s 失败: %v", target, err)
-			continue
+	go func() {
+		scanWg.Wait()
+		close(resultChan)
+	}()
+
+	completed := 0
+	for res := range resultChan {
+		completed++
+		if res.err != nil {
+			logWarn("[FFuf] 扫描目标 %s 失败: %v", res.target, res.err)
+		} else {
+			allAssets = append(allAssets, res.assets...)
+			logInfo("[FFuf] 目标 %s 发现 %d 个有效路径", res.target, len(res.assets))
 		}
-		allAssets = append(allAssets, assets...)
-		logInfo("[FFuf] 目标 %s 发现 %d 个有效路径", target, len(assets))
-
 		if config.OnProgress != nil {
-			progress := (i + 1) * 100 / len(targets)
-			config.OnProgress(progress, fmt.Sprintf("已完成 %d/%d 个目标", i+1, len(targets)))
+			progress := completed * 100 / len(targets)
+			config.OnProgress(progress, fmt.Sprintf("已完成 %d/%d 个目标", completed, len(targets)))
 		}
 	}
 
@@ -198,19 +244,29 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout*2) * time.Second,
 	})
-	_ = res
 	if err != nil {
 		return nil, fmt.Errorf("ffuf execution: %w", err)
 	}
 
-	// 读取 JSON 输出
+	// 读取 JSON 输出，若为空则回退到 stdout
 	content, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
 		return nil, fmt.Errorf("read ffuf output: %w", readErr)
 	}
 
+	var parseData []byte
+	if len(content) > 0 {
+		parseData = content
+	} else if len(res.Stdout) > 0 {
+		logx.Infof("FFuf(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
+		parseData = []byte(res.Stdout)
+	} else {
+		logx.Infof("FFuf(CLI): no output from file or stdout, returning empty result")
+		return nil, nil
+	}
+
 	var ffufResults []FFufCLIResult
-	if err := json.Unmarshal(content, &ffufResults); err != nil {
+	if err := json.Unmarshal(parseData, &ffufResults); err != nil {
 		return nil, fmt.Errorf("parse ffuf results: %w", err)
 	}
 
@@ -342,4 +398,3 @@ func (s *FFufScanner) writeWordlistFile(paths []string) (string, error) {
 
 	return tmpFile.Name(), nil
 }
-

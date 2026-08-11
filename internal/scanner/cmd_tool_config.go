@@ -22,8 +22,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"nuclei": {
 		Name:           "nuclei",
 		BinaryName:     "nuclei",
-		InstallCmd:     "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.9.7",
-		FixedVersion:   "v3.9.7",
+		InstallCmd:     "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.11.1",
+		FixedVersion:   "v3.11.1",
 		DefaultTimeout: 10 * time.Minute,
 		MemoryLimitMB:  512,
 		JSONOutput:     true,
@@ -32,8 +32,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"httpx": {
 		Name:           "httpx",
 		BinaryName:     "httpx",
-		InstallCmd:     "go install github.com/projectdiscovery/httpx/cmd/httpx@v1.10.5",
-		FixedVersion:   "v1.10.5",
+		InstallCmd:     "go install github.com/projectdiscovery/httpx/cmd/httpx@v1.10.0",
+		FixedVersion:   "v1.10.0",
 		DefaultTimeout: 5 * time.Minute,
 		MemoryLimitMB:  256,
 		JSONOutput:     true,
@@ -42,8 +42,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"naabu": {
 		Name:           "naabu",
 		BinaryName:     "naabu",
-		InstallCmd:     "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.7.2",
-		FixedVersion:   "v2.7.2",
+		InstallCmd:     "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.6.1",
+		FixedVersion:   "v2.6.1",
 		DefaultTimeout: 15 * time.Minute,
 		MemoryLimitMB:  512,
 		JSONOutput:     true,
@@ -52,8 +52,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"subfinder": {
 		Name:           "subfinder",
 		BinaryName:     "subfinder",
-		InstallCmd:     "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.15.2",
-		FixedVersion:   "v2.15.2",
+		InstallCmd:     "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.15.0",
+		FixedVersion:   "v2.15.0",
 		DefaultTimeout: 10 * time.Minute,
 		MemoryLimitMB:  384,
 		JSONOutput:     true,
@@ -62,8 +62,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"ffuf": {
 		Name:           "ffuf",
 		BinaryName:     "ffuf",
-		InstallCmd:     "go install github.com/ffuf/ffuf/v2/cmd/ffuf@v2.3.1",
-		FixedVersion:   "v2.3.1",
+		InstallCmd:     "go install github.com/ffuf/ffuf/v2@v2.2.1",
+		FixedVersion:   "v2.2.1",
 		DefaultTimeout: 10 * time.Minute,
 		MemoryLimitMB:  384,
 		JSONOutput:     true,
@@ -72,8 +72,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"fingerprintx": {
 		Name:           "fingerprintx",
 		BinaryName:     "fingerprintx",
-		InstallCmd:     "go install github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.2.1",
-		FixedVersion:   "v1.2.1",
+		InstallCmd:     "go install github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.1.19",
+		FixedVersion:   "v1.1.19",
 		DefaultTimeout: 3 * time.Minute,
 		MemoryLimitMB:  256,
 		JSONOutput:     true,
@@ -82,8 +82,8 @@ var ToolConfigs = map[string]ToolConfig{
 	"dnsx": {
 		Name:           "dnsx",
 		BinaryName:     "dnsx",
-		InstallCmd:     "go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.5",
-		FixedVersion:   "v1.3.5",
+		InstallCmd:     "go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.0",
+		FixedVersion:   "v1.3.0",
 		DefaultTimeout: 3 * time.Minute,
 		MemoryLimitMB:  128,
 		JSONOutput:     true,
@@ -95,4 +95,10 @@ var ToolConfigs = map[string]ToolConfig{
 func GetToolConfig(name string) (ToolConfig, bool) {
 	cfg, ok := ToolConfigs[name]
 	return cfg, ok
+}
+
+// NewExecutorForTool 按工具名从 ToolConfigs 构造 CmdExecutor
+func NewExecutorForTool(name string) *CmdExecutor {
+	cfg := ToolConfigs[name]
+	return NewCmdExecutor(cfg.BinaryName, cfg.MemoryLimitMB, cfg.DefaultTimeout)
 }

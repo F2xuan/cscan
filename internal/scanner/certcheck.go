@@ -199,4 +199,3 @@ func md5SumBytes(b []byte) [16]byte    { return md5.Sum(b) }
 
 // 保留 strings 引用占位（避免误删后被其他文件引用报错）
 var _ = strings.TrimSpace
-

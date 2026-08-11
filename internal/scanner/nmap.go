@@ -261,8 +261,10 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	targets := cleanTargets
 	opts.Ports = portsToString(ports)
 
+	logx.Infof("Nmap: resolved targets=%v ports=%d concurrent=%d", targets, len(parsePorts(opts.Ports)), opts.Concurrent)
+
 	// 执行nmap扫描
-	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnProgress, logInfo, logWarn, logError)
+	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError)
 
 	return &ScanResult{
 		WorkspaceId: config.WorkspaceId,
@@ -274,7 +276,11 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 // runNmapWithLogger 运行nmap（带日志回调）
 // 优化为每个端口一个进程，通过并发控制降低扫描影响
 // 注意：每个端口使用独立的超时context，不会因为一个端口超时影响其他端口
-func (s *NmapScanner) runNmapWithLogger(ctx context.Context, targets []string, opts *NmapOptions, onProgress func(int, string), logInfo, _ logFunc, logError logFunc) []*Asset {
+func (s *NmapScanner) runNmapWithLogger(
+	ctx context.Context, targets []string, opts *NmapOptions,
+	onTargetDone func(string, []*Asset), onProgress func(int, string),
+	logInfo, _ logFunc, logError logFunc,
+) []*Asset {
 	var assets []*Asset
 	var mu sync.Mutex
 	var finishedCount int32
@@ -312,6 +318,11 @@ func (s *NmapScanner) runNmapWithLogger(ctx context.Context, targets []string, o
 					mu.Lock()
 					assets = append(assets, result...)
 					mu.Unlock()
+				}
+
+				// Phase 4：每个 nmap 端口扫描 cmd 完成后立即回调
+				if onTargetDone != nil {
+					onTargetDone(fmt.Sprintf("port:%d", task.port), result)
 				}
 
 				// 更新进度（原子操作）
@@ -355,8 +366,8 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 
 	args = append(args, targets...)
 
-	// 输出执行命令到日志
-	logInfo("Nmap: executing nmap -Pn -p %d %s", port, strings.Join(targets, " "))
+	// 输出执行命令到日志（降为 DEBUG，避免无结果时产生大量重复日志）
+	logx.Debugf("Nmap: executing nmap -Pn -p %d %s", port, strings.Join(targets, " "))
 
 	// 为单个端口创建独立的超时context，避免一个端口超时导致所有扫描停止
 	// 修复 C-32：原使用 context.Background() 忽略父级 ctx，任务取消时 nmap 不会终止

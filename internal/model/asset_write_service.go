@@ -1,0 +1,405 @@
+package model
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"cscan/pkg/utils"
+
+	"github.com/zeromicro/go-zero/core/logx"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+)
+
+// ScannerAsset 扫描器资产数据传输对象（避免循环依赖）
+type ScannerAsset struct {
+	Authority  string
+	Host       string
+	Port       int
+	Category   string
+	Service    string
+	Server     string
+	Banner     string
+	Title      string
+	App        []string
+	HttpStatus string
+	HttpHeader string
+	HttpBody   string
+	Cert       string
+	IconHash   string
+	IconData   []byte
+	Screenshot string
+	IsCDN      bool
+	CName      string
+	IsCloud    bool
+	IsHTTP     bool
+	IPV4       []ScannerIPInfo
+	IPV6       []ScannerIPInfo
+	Source     string
+}
+
+// ScannerIPInfo IP信息传输对象
+type ScannerIPInfo struct {
+	IP       string
+	Location string
+}
+
+// SaveAssetsResult 资产保存结果
+type SaveAssetsResult struct {
+	TotalAsset      int32
+	NewAsset        int32
+	UpdateAsset     int32
+	AttemptedWrites int32
+	FailedWrites    int
+	FirstWriteErr   error
+}
+
+// AssetWriteService 资产写入服务，封装完整的资产保存业务逻辑
+type AssetWriteService struct {
+	db              *mongo.Database
+	workspaceId     string
+	assetModel      *AssetModel
+	historyModel    *AssetHistoryModel
+	diffModel       *ScanDiffModel
+	targetMetaModel *AssetTargetMetaModel
+}
+
+// NewAssetWriteService 创建资产写入服务
+func NewAssetWriteService(db *mongo.Database, workspaceId string) *AssetWriteService {
+	if workspaceId == "" {
+		workspaceId = "default"
+	}
+	return &AssetWriteService{
+		db:              db,
+		workspaceId:     workspaceId,
+		assetModel:      NewAssetModel(db, workspaceId),
+		historyModel:    NewAssetHistoryModel(db, workspaceId),
+		diffModel:       NewScanDiffModel(db, workspaceId),
+		targetMetaModel: NewAssetTargetMetaModel(db, workspaceId),
+	}
+}
+
+// SaveAssets 保存资产列表（完整业务逻辑从 RPC 层迁移）
+func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID string, assets []*ScannerAsset) (*SaveAssetsResult, error) {
+	if len(assets) == 0 {
+		return &SaveAssetsResult{}, nil
+	}
+
+	var diffs []ScanDiff
+	seenTargets := make(map[string]struct{})
+	var totalAsset, newAsset, updateAsset int32
+	var failedWrites int
+	var firstWriteErr error
+	var attemptedWrites int32
+	now := time.Now()
+
+	for _, pbAsset := range assets {
+		asset := s.mapScannerAssetToModel(pbAsset, mainTaskID, orgID)
+
+		// 如果Source为空，设置默认值
+		if asset.Source == "" {
+			asset.Source = "scan"
+		}
+
+		// 处理IP信息
+		s.processIPInfo(asset, pbAsset)
+
+		// 处理CName
+		if pbAsset.CName != "" {
+			asset.CName = pbAsset.CName
+		}
+
+		// 设置Domain字段
+		if asset.Category == "domain" || !utils.IsIPAddress(asset.Host) {
+			asset.Domain = asset.Host
+		}
+
+		// 尝试继承基础域名的IP和CName
+		s.inheritFromBaseDomain(ctx, asset)
+
+		// 将新资产的 IP/Location 回填到基础域名资产
+		s.backfillLocationToBaseDomain(ctx, asset)
+
+		// 当保存带端口的域名资产时，删除同名的无端口资产
+		s.mergeAndDeleteNoPortAsset(ctx, asset)
+
+		// 检查是否已存在
+		var existing *Asset
+		var err error
+
+		if asset.Port > 0 {
+			existing, err = s.assetModel.FindByHostPort(ctx, asset.Host, asset.Port)
+		} else {
+			existing, err = s.assetModel.FindByAuthorityOnly(ctx, asset.Authority)
+		}
+
+		if err != nil || existing == nil {
+			// 新资产
+			asset.Id = primitive.NewObjectID()
+			asset.CreateTime = now
+			asset.UpdateTime = now
+			asset.IsNewAsset = true
+			asset.IsUpdated = false
+			asset.FirstSeenTime = now
+			asset.LastTaskId = ""
+			asset.FirstSeenTaskId = mainTaskID
+			asset.LastStatusChangeTime = now
+
+			attemptedWrites++
+			if err := s.assetModel.Insert(ctx, asset); err != nil {
+				logx.Errorf("[AssetWriteService] Insert asset failed: %v", err)
+				failedWrites++
+				if firstWriteErr == nil {
+					firstWriteErr = err
+				}
+				continue
+			}
+			newAsset++
+
+			diffs = append(diffs, ScanDiff{
+				TaskId:      mainTaskID,
+				WorkspaceId: s.workspaceId,
+				DiffType:    ScanDiffTypeAsset,
+				ChangeType:  ScanDiffChangeAdded,
+				TargetKey:   asset.Authority,
+				Summary:     asset.Host,
+			})
+		} else {
+			// 更新已存在的资产
+			isDifferentTask := existing.TaskId != mainTaskID
+
+			opts := AssetWriteOptions{
+				TaskId:          mainTaskID,
+				IsDifferentTask: isDifferentTask,
+			}
+			update, changes := BuildAssetUpdateDoc(asset, existing, opts)
+
+			// 只有当任务ID不同时才保存历史记录
+			if isDifferentTask {
+				exists, _ := s.historyModel.ExistsByAssetIdAndTaskId(ctx, existing.Id.Hex(), existing.TaskId)
+				if !exists && len(changes) > 0 {
+					history := SnapshotFromAsset(existing, existing.TaskId, existing.UpdateTime, changes)
+					if err := s.historyModel.Insert(ctx, history); err != nil {
+						logx.Errorf("[AssetWriteService] Insert asset history failed: %v", err)
+					} else {
+						logx.Infof("[AssetWriteService] 保存资产变更历史: assetId=%s, oldTaskId=%s, newTaskId=%s, changes=%d",
+							existing.Id.Hex(), existing.TaskId, mainTaskID, len(changes))
+					}
+				}
+			}
+
+			attemptedWrites++
+			if err := s.assetModel.UpdateWithRaw(ctx, existing.Id.Hex(), update); err != nil {
+				logx.Errorf("[AssetWriteService] Update asset failed: %v", err)
+				failedWrites++
+				if firstWriteErr == nil {
+					firstWriteErr = err
+				}
+				continue
+			}
+
+			if isDifferentTask {
+				updateAsset++
+				if len(changes) > 0 {
+					diffs = append(diffs, ScanDiff{
+						TaskId:      mainTaskID,
+						WorkspaceId: s.workspaceId,
+						DiffType:    ScanDiffTypeAsset,
+						ChangeType:  ScanDiffChangeUpdated,
+						TargetKey:   existing.Authority,
+						Summary:     existing.Host,
+						Changes:     changes,
+					})
+				}
+			}
+		}
+		totalAsset++
+
+		// 登记/刷新顶层资产 meta
+		targetKey := asset.Host + "\x00" + asset.Domain
+		if _, ok := seenTargets[targetKey]; ok {
+			continue
+		}
+		seenTargets[targetKey] = struct{}{}
+		if err := s.targetMetaModel.EnsureForAsset(ctx, s.workspaceId, asset.Host, asset.Domain, nil); err != nil {
+			logx.Errorf("[AssetWriteService] upsert target meta host=%s fail: %v", asset.Host, err)
+			continue
+		}
+
+		tType, tValue := ResolveAssetTarget(asset.Host, asset.Domain)
+		if tType != "" && tValue != "" {
+			targetId := EncodeTargetID(tType, tValue)
+			if err := s.targetMetaModel.UpdateLastScanTime(ctx, targetId, now); err != nil {
+				logx.Errorf("[AssetWriteService] update last_scan_time id=%s fail: %v", targetId, err)
+			}
+		}
+	}
+
+	logx.Infof("[AssetWriteService] SaveAssets: total=%d, new=%d, update=%d, attemptedWrites=%d, failedWrites=%d",
+		totalAsset, newAsset, updateAsset, attemptedWrites, failedWrites)
+
+	// 批量写入变化快照
+	if len(diffs) > 0 {
+		if err := s.diffModel.BatchInsert(ctx, diffs); err != nil {
+			logx.Errorf("[AssetWriteService] [ScanDiff] batch insert failed (task=%s): %v", mainTaskID, err)
+		} else {
+			logx.Infof("[AssetWriteService] [ScanDiff] wrote %d diff records for task=%s", len(diffs), mainTaskID)
+		}
+	}
+
+	// 全部写入失败判定
+	if attemptedWrites > 0 && failedWrites == int(attemptedWrites) {
+		return nil, fmt.Errorf("SaveAssets: %d/%d asset writes failed (sample err: %v)", failedWrites, attemptedWrites, firstWriteErr)
+	}
+
+	return &SaveAssetsResult{
+		TotalAsset:      totalAsset,
+		NewAsset:        newAsset,
+		UpdateAsset:     updateAsset,
+		AttemptedWrites: attemptedWrites,
+		FailedWrites:    failedWrites,
+		FirstWriteErr:   firstWriteErr,
+	}, nil
+}
+
+// mapScannerAssetToModel 将 ScannerAsset 映射为 model.Asset
+func (s *AssetWriteService) mapScannerAssetToModel(sa *ScannerAsset, mainTaskID, orgID string) *Asset {
+	return &Asset{
+		Authority:     sa.Authority,
+		Host:          sa.Host,
+		Port:          sa.Port,
+		Category:      sa.Category,
+		Service:       sa.Service,
+		Title:         sa.Title,
+		App:           sa.App,
+		HttpStatus:    sa.HttpStatus,
+		HttpHeader:    sa.HttpHeader,
+		HttpBody:      sa.HttpBody,
+		IconHash:      sa.IconHash,
+		IconHashBytes: sa.IconData,
+		Screenshot:    sa.Screenshot,
+		Server:        sa.Server,
+		Banner:        sa.Banner,
+		IsHTTP:        sa.IsHTTP,
+		TaskId:        mainTaskID,
+		Source:        sa.Source,
+		OrgId:         orgID,
+	}
+}
+
+// processIPInfo 处理IP信息
+func (s *AssetWriteService) processIPInfo(asset *Asset, sa *ScannerAsset) {
+	if len(sa.IPV4) > 0 {
+		for _, ip := range sa.IPV4 {
+			asset.Ip.IpV4 = append(asset.Ip.IpV4, IPV4{
+				IPName:   ip.IP,
+				Location: ip.Location,
+			})
+		}
+	} else if utils.IsIPv4(asset.Host) {
+		asset.Ip.IpV4 = append(asset.Ip.IpV4, IPV4{
+			IPName: asset.Host,
+		})
+	}
+
+	if len(sa.IPV6) > 0 {
+		for _, ip := range sa.IPV6 {
+			asset.Ip.IpV6 = append(asset.Ip.IpV6, IPV6{
+				IPName:   ip.IP,
+				Location: ip.Location,
+			})
+		}
+	} else if utils.IsIPv6(asset.Host) {
+		asset.Ip.IpV6 = append(asset.Ip.IpV6, IPV6{
+			IPName: asset.Host,
+		})
+	}
+}
+
+// inheritFromBaseDomain 尝试继承基础域名的IP和CName
+func (s *AssetWriteService) inheritFromBaseDomain(ctx context.Context, asset *Asset) {
+	if asset.Port > 0 && len(asset.Ip.IpV4) == 0 && len(asset.Ip.IpV6) == 0 && !utils.IsIPAddress(asset.Host) {
+		baseAsset, _ := s.assetModel.FindByAuthorityOnly(ctx, asset.Host)
+		if baseAsset != nil {
+			asset.Ip = baseAsset.Ip
+			if asset.CName == "" {
+				asset.CName = baseAsset.CName
+			}
+			if asset.Domain == "" {
+				asset.Domain = baseAsset.Domain
+			}
+			if asset.OrgId == "" {
+				asset.OrgId = baseAsset.OrgId
+			}
+		}
+	}
+}
+
+// backfillLocationToBaseDomain 将新资产的 IP/Location 回填到基础域名资产
+func (s *AssetWriteService) backfillLocationToBaseDomain(ctx context.Context, asset *Asset) {
+	if asset.Port > 0 && (len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0) && !utils.IsIPAddress(asset.Host) {
+		baseAsset, _ := s.assetModel.FindByAuthorityOnly(ctx, asset.Host)
+		if baseAsset != nil {
+			needsUpdate := false
+
+			for i, ipv4 := range baseAsset.Ip.IpV4 {
+				if ipv4.Location == "" {
+					for _, newIpv4 := range asset.Ip.IpV4 {
+						if newIpv4.IPName == ipv4.IPName && newIpv4.Location != "" {
+							baseAsset.Ip.IpV4[i].Location = newIpv4.Location
+							needsUpdate = true
+							break
+						}
+					}
+				}
+			}
+
+			for i, ipv6 := range baseAsset.Ip.IpV6 {
+				if ipv6.Location == "" {
+					for _, newIpv6 := range asset.Ip.IpV6 {
+						if newIpv6.IPName == ipv6.IPName && newIpv6.Location != "" {
+							baseAsset.Ip.IpV6[i].Location = newIpv6.Location
+							needsUpdate = true
+							break
+						}
+					}
+				}
+			}
+
+			if needsUpdate {
+				if err := s.assetModel.UpdateWithRaw(ctx, baseAsset.Id.Hex(), bson.M{
+					"$set": bson.M{"ip": baseAsset.Ip},
+				}); err == nil {
+					logx.Infof("[AssetWriteService] 已回填Location到基础域名资产: %s", asset.Host)
+				}
+			}
+		}
+	}
+}
+
+// mergeAndDeleteNoPortAsset 当保存带端口的域名资产时，删除同名的无端口资产
+func (s *AssetWriteService) mergeAndDeleteNoPortAsset(ctx context.Context, asset *Asset) {
+	if asset.Port > 0 && !utils.IsIPAddress(asset.Host) {
+		noPortAsset, err := s.assetModel.FindByAuthorityOnly(ctx, asset.Host)
+		if err == nil && noPortAsset != nil {
+			if asset.CName == "" && noPortAsset.CName != "" {
+				asset.CName = noPortAsset.CName
+			}
+			if asset.Domain == "" && noPortAsset.Domain != "" {
+				asset.Domain = noPortAsset.Domain
+			}
+			if asset.OrgId == "" && noPortAsset.OrgId != "" {
+				asset.OrgId = noPortAsset.OrgId
+			}
+			if len(asset.Ip.IpV4) == 0 && len(asset.Ip.IpV6) == 0 && (len(noPortAsset.Ip.IpV4) > 0 || len(noPortAsset.Ip.IpV6) > 0) {
+				asset.Ip = noPortAsset.Ip
+			}
+
+			if deleteErr := s.assetModel.Delete(ctx, noPortAsset.Id.Hex()); deleteErr == nil {
+				logx.Infof("[AssetWriteService] 已删除同名无端口资产: %s (被 %s:%d 替代)", asset.Host, asset.Host, asset.Port)
+			}
+		}
+	}
+}

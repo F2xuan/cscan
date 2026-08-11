@@ -21,13 +21,6 @@ services:
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
-    # 内存限制可经环境变量注入（见 MEMORY_AUTOTUNE.md）
-    deploy:
-      resources:
-        limits:
-          memory: ${CSCAN_REDIS_MEM_LIMIT:-512M}
-        reservations:
-          memory: ${CSCAN_REDIS_MEM_RESERVATION:-128M}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -47,13 +40,6 @@ services:
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
-    # 内存限制可经环境变量注入（见 MEMORY_AUTOTUNE.md）
-    deploy:
-      resources:
-        limits:
-          memory: ${CSCAN_MONGO_MEM_LIMIT:-2G}
-        reservations:
-          memory: ${CSCAN_MONGO_MEM_RESERVATION:-512M}
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s

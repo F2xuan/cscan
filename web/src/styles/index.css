@@ -76,7 +76,7 @@ html.dark {
   --secondary: 0 0% 15%;
   --secondary-foreground: 0 0% 98%;
   --muted: 0 0% 15%;
-  --muted-foreground: 0 0% 63%;
+  --muted-foreground: 0 0% 70%;
   --accent: 0 0% 15%;
   --accent-foreground: 0 0% 98%;
   --destructive: 0 62.8% 50%;
@@ -84,7 +84,7 @@ html.dark {
   --border: 0 0% 16%;
   --input: 0 0% 20%;
   --ring: 217.2 91.2% 59.8%;
-  
+
   /* 侧边栏 */
   --sidebar: 0 0% 5.5%;
   --sidebar-foreground: 0 0% 93%;
@@ -94,28 +94,31 @@ html.dark {
   --sidebar-accent-foreground: 0 0% 93%;
   --sidebar-border: 0 0% 14%;
   --sidebar-ring: 217.2 91.2% 59.8%;
-  
+
   /* 图表颜色 */
   --chart-1: 217 91% 60%;
   --chart-2: 160 60% 45%;
   --chart-3: 30 80% 55%;
   --chart-4: 280 65% 60%;
   --chart-5: 340 75% 55%;
-  
+
   /* 状态颜色变量 - 暗色模式 */
   --status-success: #4ade80;
   --status-warning: #fbbf24;
   --status-danger: #f87171;
   --status-info: #9ca3af;
   --status-primary: #60a5fa;
-  
+
   /* 代码编辑器/终端背景 - 暗色模式 */
   --code-bg: #1a1a1a;
   --code-text: #e5e5e5;
   --code-border: #333333;
-  
+
   /* 辅助文本颜色 - 暗色模式 */
   --text-muted: #a1a1a1;
+
+  /* 弹出框前景色 - 暗色模式 */
+  --popover-foreground: 0 0% 90%;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -214,12 +217,13 @@ html.style-vercel.dark {
   --foreground: 0 0% 98%;
   --card: 0 0% 7%;
   --popover: 0 0% 10%;
+  --popover-foreground: 0 0% 90%;
   --primary: 217 91% 60%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 10%;
   --secondary-foreground: 0 0% 98%;
   --muted: 0 0% 10%;
-  --muted-foreground: 0 0% 63%;
+  --muted-foreground: 0 0% 70%;
   --accent: 0 0% 10%;
   --accent-foreground: 0 0% 98%;
   --destructive: 358 100% 69%;
@@ -373,12 +377,13 @@ html.style-apple.dark {
   --foreground: 240 11% 96%;
   --card: 240 3% 11%;
   --popover: 240 2% 18%;
+  --popover-foreground: 240 11% 90%;
   --primary: 213 100% 59%;
   --primary-foreground: 0 0% 100%;
   --secondary: 240 3% 11%;
   --secondary-foreground: 240 11% 96%;
   --muted: 240 3% 11%;
-  --muted-foreground: 240 2% 57%;
+  --muted-foreground: 240 2% 70%;
   --accent: 240 3% 11%;
   --accent-foreground: 240 11% 96%;
   --destructive: 3 100% 61%;
@@ -532,12 +537,13 @@ html.style-21th.dark {
   --foreground: 0 0% 100%;
   --card: 0 0% 10%;
   --popover: 0 0% 13%;
+  --popover-foreground: 0 0% 90%;
   --primary: 0 0% 100%;
   --primary-foreground: 0 0% 4%;
   --secondary: 0 0% 12%;
   --secondary-foreground: 0 0% 100%;
   --muted: 0 0% 12%;
-  --muted-foreground: 0 0% 60%;
+  --muted-foreground: 0 0% 70%;
   --accent: 0 0% 12%;
   --accent-foreground: 0 0% 100%;
   --destructive: 0 84% 60%;
@@ -691,12 +697,13 @@ html.style-claude.dark {
   --foreground: 60 7% 94%;
   --card: 60 1% 17%;
   --popover: 60 2% 21%;
+  --popover-foreground: 60 7% 90%;
   --primary: 15 63% 60%;
   --primary-foreground: 0 0% 100%;
   --secondary: 60 2% 20%;
   --secondary-foreground: 60 7% 94%;
   --muted: 60 2% 20%;
-  --muted-foreground: 38 7% 57%;
+  --muted-foreground: 38 7% 70%;
   --accent: 60 2% 20%;
   --accent-foreground: 60 7% 94%;
   --destructive: 15 63% 60%;
@@ -850,12 +857,13 @@ html.style-google.dark {
   --foreground: 216 19% 95%;
   --card: 60 2% 11%;
   --popover: 60 1% 17%;
+  --popover-foreground: 216 19% 90%;
   --primary: 350 97% 58%;
   --primary-foreground: 0 0% 100%;
   --secondary: 60 2% 11%;
   --secondary-foreground: 216 19% 95%;
   --muted: 60 2% 11%;
-  --muted-foreground: 210 6% 63%;
+  --muted-foreground: 210 6% 70%;
   --accent: 60 2% 11%;
   --accent-foreground: 216 19% 95%;
   --destructive: 5 81% 56%;
@@ -1009,12 +1017,13 @@ html.style-minimal.dark {
   --foreground: 0 0% 98%;
   --card: 0 0% 9%;
   --popover: 0 0% 12%;
+  --popover-foreground: 0 0% 90%;
   --primary: 0 0% 98%;
   --primary-foreground: 0 0% 4%;
   --secondary: 240 6% 10%;
   --secondary-foreground: 0 0% 98%;
   --muted: 240 6% 10%;
-  --muted-foreground: 240 5% 65%;
+  --muted-foreground: 240 5% 70%;
   --accent: 240 6% 10%;
   --accent-foreground: 0 0% 98%;
   --destructive: 0 84% 60%;
@@ -1168,12 +1177,13 @@ html.style-motionfit.dark {
   --foreground: 214 32% 91%;
   --card: 0 0% 9%;
   --popover: 0 0% 12%;
+  --popover-foreground: 214 32% 90%;
   --primary: 151 100% 50%;
   --primary-foreground: 0 0% 4%;
   --secondary: 240 6% 10%;
   --secondary-foreground: 214 32% 91%;
   --muted: 240 6% 10%;
-  --muted-foreground: 240 5% 65%;
+  --muted-foreground: 240 5% 70%;
   --accent: 240 6% 10%;
   --accent-foreground: 214 32% 91%;
   --destructive: 0 84% 60%;
@@ -1327,12 +1337,13 @@ html.style-nerv.dark {
   --foreground: 213 100% 98%;
   --card: 240 3% 7%;
   --popover: 240 9% 11%;
+  --popover-foreground: 213 100% 90%;
   --primary: 330 100% 80%;
   --primary-foreground: 240 3% 6%;
   --secondary: 240 6% 9%;
   --secondary-foreground: 213 100% 98%;
   --muted: 240 6% 9%;
-  --muted-foreground: 214 6% 51%;
+  --muted-foreground: 214 6% 70%;
   --accent: 240 6% 9%;
   --accent-foreground: 213 100% 98%;
   --destructive: 0 100% 71%;
@@ -1486,12 +1497,13 @@ html.style-tiktok.dark {
   --foreground: 240 11% 96%;
   --card: 231 23% 11%;
   --popover: 240 14% 14%;
+  --popover-foreground: 240 11% 90%;
   --primary: 348 99% 58%;
   --primary-foreground: 0 0% 100%;
   --secondary: 240 14% 14%;
   --secondary-foreground: 240 11% 96%;
   --muted: 240 14% 14%;
-  --muted-foreground: 231 3% 55%;
+  --muted-foreground: 231 3% 70%;
   --accent: 240 14% 14%;
   --accent-foreground: 240 11% 96%;
   --destructive: 348 99% 58%;
@@ -1645,12 +1657,13 @@ html.style-yuanli.dark {
   --foreground: 220 13% 91%;
   --card: 220 12% 10%;
   --popover: 220 13% 14%;
+  --popover-foreground: 220 13% 88%;
   --primary: 220 100% 61%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 15% 12%;
   --secondary-foreground: 220 13% 91%;
   --muted: 220 15% 12%;
-  --muted-foreground: 221 9% 58%;
+  --muted-foreground: 221 9% 70%;
   --accent: 220 15% 12%;
   --accent-foreground: 220 13% 91%;
   --destructive: 0 84% 60%;
@@ -2650,6 +2663,11 @@ html.dark .el-alert {
   --el-alert-bg-color: hsl(var(--muted));
 }
 
+html.dark .el-alert pre {
+  background: hsl(var(--code-bg)) !important;
+  color: hsl(var(--code-text)) !important;
+}
+
 html.dark .el-alert--info {
   --el-alert-bg-color: hsl(217.2 32.6% 17.5% / 0.5);
 }
@@ -3047,7 +3065,39 @@ html.dark .el-tooltip__popper {
   color: hsl(var(--foreground)) !important;
 }
 
-html.dark .el-tooltip__popper .el-popper__arrow::before {
+/* 扫描引导按钮专用 tooltip：暗色模式下强制白色文字 */
+.scan-guide-tooltip.el-tooltip__popper,
+.scan-guide-tooltip.el-popper {
+  color: #ffffff !important;
+}
+.scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::before,
+.scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::after {
+  border-color: hsl(var(--popover)) !important;
+  background-color: hsl(var(--popover)) !important;
+}
+
+html.dark .scan-guide-tooltip.el-tooltip__popper,
+html.dark .scan-guide-tooltip.el-popper {
+  color: #ffffff !important;
+}
+html.dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::before,
+html.dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::after {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+html[class*='style-'].dark .scan-guide-tooltip.el-tooltip__popper,
+html[class*='style-'].dark .scan-guide-tooltip.el-popper {
+  color: #ffffff !important;
+}
+html[class*='style-'].dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::before,
+html[class*='style-'].dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::after {
+  background-color: hsl(var(--popover)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+html.dark .el-tooltip__popper .el-popper__arrow::before,
+html.dark .el-tooltip__popper .el-popper__arrow::after {
   background-color: hsl(var(--popover)) !important;
   border-color: hsl(var(--border)) !important;
 }
@@ -4239,6 +4289,11 @@ html[class*='style-'].dark .el-step__description {
 html[class*='style-'].dark .el-tooltip__popper {
   background-color: hsl(var(--popover)) !important;
   color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+html[class*='style-'].dark .el-tooltip__popper .el-popper__arrow::before,
+html[class*='style-'].dark .el-tooltip__popper .el-popper__arrow::after {
+  background-color: hsl(var(--popover)) !important;
   border-color: hsl(var(--border)) !important;
 }
 

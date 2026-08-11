@@ -35,8 +35,12 @@ ENV TZ=Asia/Shanghai
 
 # 复制编译产物
 COPY --from=builder /cscan-rpc .
-COPY docker/task.yaml ./etc/
+COPY docker/task.yaml.template ./etc/
+COPY docker/entrypoint-rpc.sh ./
+
+RUN chmod +x ./entrypoint-rpc.sh
 
 EXPOSE 9000
 
+ENTRYPOINT ["./entrypoint-rpc.sh"]
 CMD ["./cscan-rpc", "-f", "etc/task.yaml"]

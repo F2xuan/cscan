@@ -23,7 +23,9 @@ fi
 export JWT_SECRET
 
 # 使用envsubst替换配置文件中的环境变量
-envsubst '${JWT_SECRET}' < /app/etc/cscan-api.yaml.template > /app/etc/cscan-api.yaml
+# 替换所有敏感配置：JWT、Mongo、Redis
+envsubst '${JWT_SECRET} ${CSCAN_MONGO_URI} ${CSCAN_REDIS_PASSWORD}' \
+    < /app/etc/cscan-api.yaml.template > /app/etc/cscan-api.yaml
 
 # 执行传入的命令
 exec "$@"

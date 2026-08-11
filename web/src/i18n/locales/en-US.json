@@ -290,23 +290,31 @@
   "auth": {
     "login": "Login",
     "logout": "Logout",
+    "register": "Register",
     "changePassword": "Change Password",
     "personalCenter": "Personal Center",
     "username": "Username",
     "password": "Password",
+    "confirmPassword": "Confirm Password",
     "loginTitle": "Asset Security Scanning Platform",
+    "firstDeployHint": "First deployment, please register an admin account",
     "loginSuccess": "Login successful",
     "loginFailed": "Login failed",
+    "registerSuccess": "Registration successful",
+    "registerFailed": "Registration failed",
     "sessionExpired": "Session expired, please login again",
     "pleaseEnterUsername": "Please enter username",
     "pleaseEnterPassword": "Please enter password",
-    "pleaseEnterNewPassword": "Please enter new password",
-    "passwordMinLengths": "Password must be at least 6 characters",
+    "pleaseConfirmPassword": "Please confirm password",
+    "passwordMinLength": "Password must be at least 8 characters",
+    "passwordNeedUpper": "Password must contain uppercase letter",
+    "passwordNeedLower": "Password must contain lowercase letter",
+    "passwordNeedDigit": "Password must contain digit",
     "newPassword": "New Password",
-    "confirmPassword": "Confirm Password",
     "passwordMismatch": "The two passwords do not match",
     "passwordResetSuccess": "Password changed successfully",
-    "forceResetTitle": "Please change your password on first login"
+    "noAccount": "Don't have an account?",
+    "hasAccount": "Already have an account?"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2075,6 +2083,8 @@
     "commonOperations": "Common Operations",
     "viewLogs": "View logs:",
     "logs": "View Logs",
+    "workerLogPanel": "Worker Logs",
+    "closeLogPanel": "Close Logs",
     "stopProbe": "Stop probe:",
     "restartProbe": "Restart probe:",
     "updateProbe": "Update probe:",
@@ -2138,7 +2148,13 @@
     "workerNameDesc": "Worker name (optional)",
     "concurrencyDesc": "Concurrency (optional)",
     "autoDerive": "auto (by host memory)",
-    "copyFailed": "Copy failed"
+    "copyFailed": "Copy failed",
+    "mongoAddress": "MongoDB Address",
+    "mongoConnectAddress": "Worker direct DB connection address",
+    "distributedDeploy": "Distributed Deployment",
+    "distributedDeployNote": "When deploying across hosts, ensure the Worker can reach MongoDB; you can also explicitly set CSCAN_MONGO_URI.",
+    "distributedDockerTitle": "Distributed Docker example:",
+    "distributedEnvTitle": "Environment variable example:"
   },
   "settings": {
     "title": "System Settings",
@@ -2231,6 +2247,16 @@
       "statusQuotaExhausted": "Quota Exhausted",
       "statusDisabled": "Disabled",
       "statusEmpty": "No Record"
+    },
+    "registration": {
+      "title": "Registration",
+      "enabled": "Enable Registration",
+      "requireApproval": "Require Approval",
+      "description": "Control new user registration. When disabled, only admins can create users.",
+      "enabledHint": "New users can self-register",
+      "disabledHint": "Registration is closed, only admins can create users",
+      "requireApprovalHint": "New users require admin approval before they can log in",
+      "noApprovalHint": "New users can log in immediately"
     }
   },
   "theme": {
@@ -3081,5 +3107,18 @@
     "notifyConfig": "Notification",
     "reverifyConfig": "Continuous Re-verification",
     "brandingConfig": "Appearance"
+  },
+  "userManagement": {
+    "status": {
+      "pending": "Pending"
+    },
+    "actions": {
+      "approve": "Approve"
+    },
+    "confirmApprove": "Approve this user? After approval, they can log in normally."
+  },
+  "login": {
+    "pendingApproval": "Your account is pending admin approval. Please contact an administrator.",
+    "accountDisabled": "Your account has been disabled. Please contact an administrator."
   }
 }

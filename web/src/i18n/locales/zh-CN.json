@@ -290,23 +290,31 @@
   "auth": {
     "login": "登录",
     "logout": "退出登录",
+    "register": "注册",
     "changePassword": "修改密码",
     "personalCenter": "个人中心",
     "username": "用户名",
     "password": "密码",
+    "confirmPassword": "确认密码",
     "loginTitle": "资产安全扫描平台",
+    "firstDeployHint": "首次部署，请先注册管理员账号",
     "loginSuccess": "登录成功",
     "loginFailed": "登录失败",
+    "registerSuccess": "注册成功",
+    "registerFailed": "注册失败",
     "sessionExpired": "登录已过期，请重新登录",
     "pleaseEnterUsername": "请输入用户名",
     "pleaseEnterPassword": "请输入密码",
-    "pleaseEnterNewPassword": "请输入新密码",
-    "passwordMinLengths": "密码长度不能小于6位",
+    "pleaseConfirmPassword": "请确认密码",
+    "passwordMinLength": "密码长度不能小于8位",
+    "passwordNeedUpper": "密码需包含大写字母",
+    "passwordNeedLower": "密码需包含小写字母",
+    "passwordNeedDigit": "密码需包含数字",
     "newPassword": "新密码",
-    "confirmPassword": "确认密码",
     "passwordMismatch": "两次输入密码不一致",
     "passwordResetSuccess": "密码修改成功",
-    "forceResetTitle": "首次登录请修改密码"
+    "noAccount": "还没有账号？",
+    "hasAccount": "已有账号？"
   },
   "dashboard": {
     "title": "工作台",
@@ -2076,6 +2084,8 @@
     "commonOperations": "常用操作",
     "viewLogs": "查看日志：",
     "logs": "查看日志",
+    "workerLogPanel": "Worker 日志",
+    "closeLogPanel": "关闭日志",
     "stopProbe": "停止探针：",
     "restartProbe": "重启探针：",
     "updateProbe": "更新探针：",
@@ -2123,14 +2133,6 @@
     "refreshFailed": "刷新失败",
     "copiedToClipboard": "已复制到剪贴板",
     "contentEmpty": "内容为空",
-    "healthy": "正常",
-    "warning": "负载较高",
-    "overloaded": "过载",
-    "throttled": "限流中",
-    "modeAggressive": "激进",
-    "modeNormal": "正常",
-    "modeConservative": "保守",
-    "modeCritical": "危急",
     "clickToEditName": "点击编辑名称",
     "clickToEditConcurrency": "点击编辑并发数",
     "setEnvAndStart": "设置环境变量并启动：",
@@ -2139,7 +2141,13 @@
     "workerNameDesc": "Worker名称（可选）",
     "concurrencyDesc": "并发数（可选）",
     "autoDerive": "自动（按本机内存）",
-    "copyFailed": "复制失败"
+    "copyFailed": "复制失败",
+    "mongoAddress": "MongoDB 地址",
+    "mongoConnectAddress": "Worker 直连数据库地址",
+    "distributedDeploy": "分布式部署",
+    "distributedDeployNote": "跨主机部署时，请确保 Worker 能访问 MongoDB；也可显式设置 CSCAN_MONGO_URI。",
+    "distributedDockerTitle": "分布式 Docker 运行示例：",
+    "distributedEnvTitle": "环境变量示例："
   },
   "settings": {
     "title": "系统配置",
@@ -2232,6 +2240,16 @@
       "statusQuotaExhausted": "配额耗尽",
       "statusDisabled": "未启用",
       "statusEmpty": "暂无记录"
+    },
+    "registration": {
+      "title": "注册配置",
+      "enabled": "开放注册",
+      "requireApproval": "需要审核",
+      "description": "控制新用户注册权限。关闭后仅管理员可创建用户。",
+      "enabledHint": "新用户可自助注册",
+      "disabledHint": "注册功能已关闭，仅管理员可创建用户",
+      "requireApprovalHint": "新注册用户需管理员审核通过后才能登录",
+      "noApprovalHint": "新注册用户可直接登录"
     }
   },
   "theme": {
@@ -3082,5 +3100,18 @@
     "notifyConfig": "通知设置",
     "reverifyConfig": "持续复验配置",
     "brandingConfig": "外观配置"
+  },
+  "userManagement": {
+    "status": {
+      "pending": "待审核"
+    },
+    "actions": {
+      "approve": "审核通过"
+    },
+    "confirmApprove": "确定通过审核？通过后用户可正常登录。"
+  },
+  "login": {
+    "pendingApproval": "账号待管理员审核，请联系管理员",
+    "accountDisabled": "账号已被禁用，请联系管理员"
   }
 }

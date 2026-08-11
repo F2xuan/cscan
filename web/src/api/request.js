@@ -17,12 +17,12 @@ request.interceptors.request.use(
   config => {
     const userStore = useUserStore()
 
-    // BUG-001 修复：未登录时，除登录/健康检查等公开接口外，拒绝所有需要认证的请求
-    const publicEndpoints = ['/login', '/health']
+    // 未登录时，除登录/健康检查等公开接口外，拒绝所有需要认证的请求
+    const publicEndpoints = ['/login', '/register', '/health', '/system/status']
     const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint))
 
     if (!userStore.token && !isPublicEndpoint) {
-      console.warn('[Request] Blocked unauthenticated request:', config.url)
+      // 静默拒绝，不输出控制台警告（避免未登录时大量噪音）
       return Promise.reject(new Error('No authentication token'))
     }
 
@@ -47,9 +47,13 @@ const isLoginRequest = (config) => {
   return url === '/login' || url.endsWith('/login')
 }
 
+// 未登录时请求被请求拦截器拒绝的错误码，静默处理避免控制台噪音
+const UNAUTH_ERROR_CODE = 'ERR_CANCELLED_UNAUTH'
+
 request.interceptors.response.use(
   response => {
     const res = response.data
+    // 业务级 401（如 token 过期）：仅对非登录接口执行跳转
     if (res.code === 401) {
       if (isLoginRequest(response.config)) {
         return res
@@ -72,6 +76,10 @@ request.interceptors.response.use(
     return res
   },
   error => {
+    // 静默处理未登录时请求拦截器拒绝的错误，避免控制台/弹窗噪音
+    if (error.message === 'No authentication token') {
+      return Promise.reject(error)
+    }
     if (error.response && error.response.status === 401) {
       if (isLoginRequest(error.config)) {
         const data = error.response.data
@@ -94,11 +102,15 @@ request.interceptors.response.use(
         })
       }
     } else if (error.response && error.response.status === 503) {
-      // 503 服务不可用：基础设施故障（如 MongoDB 宕机），返回结构化错误让调用方区分
-      // 注意：登录接口返回 503 时，绝不能显示"密码错误"，否则会误导用户
+      // 503 服务不可用：基础设施故障（如 MongoDB 宕机）
       const data = error.response.data
-      if (data && typeof data === 'object') {
-        return Promise.resolve(data)
+      if (data && typeof data === 'object' && data.code !== 0) {
+        ElMessage({
+          message: data.msg || t('error.serviceUnavailable'),
+          type: 'error',
+          grouping: true
+        })
+        return Promise.reject(data)
       }
       return Promise.reject(error)
     } else {

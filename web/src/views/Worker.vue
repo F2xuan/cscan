@@ -48,29 +48,23 @@
         <el-table-column prop="taskCount" :label="$t('worker.executedTasks')" width="95" />
         <el-table-column prop="runningCount" :label="$t('worker.runningTasks')" width="90">
           <template #default="{ row }">
-            <el-tag v-if="row.runningCount > 0" type="warning">{{ row.runningCount }}</el-tag>
+            <el-tag v-if="(row.subCommandRunning || row.runningCount) > 0" type="warning">
+              {{ row.subCommandRunning || row.runningCount }}
+            </el-tag>
             <span v-else>0</span>
           </template>
         </el-table-column>
         <el-table-column prop="concurrency" :label="$t('worker.concurrency')" width="110">
           <template #default="{ row }">
             <div class="concurrency-cell">
-              <span 
-                class="editable-name" 
+              <span
+                class="editable-name"
                 @click="openConcurrencyDialog(row)"
                 :title="$t('worker.clickToEditConcurrency')"
               >
-                {{ row.effectiveConcurrency || row.concurrency || 5 }}
+                {{ row.concurrency || 5 }}
                 <el-icon class="edit-icon"><Edit /></el-icon>
               </span>
-              <el-tag 
-                v-if="row.schedulerMode && row.schedulerMode !== 'normal'" 
-                :type="getSchedulerModeType(row.schedulerMode)"
-                size="small"
-                style="margin-left: 4px"
-              >
-                {{ getSchedulerModeText(row.schedulerMode) }}
-              </el-tag>
             </div>
           </template>
         </el-table-column>
@@ -94,7 +88,12 @@
         <el-table-column prop="updateTime" :label="$t('worker.lastResponse')" width="165" />
         <el-table-column :label="$t('common.operation')" width="260" fixed="right">
           <template #default="{ row }">
-            <el-button link size="small" type="info" @click="openLogDialog(row.name)">{{ $t('worker.logs') }}</el-button>
+            <el-button
+              link
+              size="small"
+              type="info"
+              @click="toggleLogPanel(row.name)"
+            >{{ $t('worker.logs') }}</el-button>
             <el-popconfirm
               :title="$t('worker.confirmRestart')"
               :confirm-button-text="$t('common.confirm')"
@@ -102,7 +101,12 @@
               @confirm="restartWorker(row.name)"
             >
               <template #reference>
-                <el-button link size="small" type="warning" :disabled="row.status !== 'running'">{{ $t('worker.restart') }}</el-button>
+                <el-button
+                  link
+                  size="small"
+                  type="warning"
+                  :disabled="row.status !== 'running'"
+                >{{ $t('worker.restart') }}</el-button>
               </template>
             </el-popconfirm>
             <el-popconfirm
@@ -158,12 +162,16 @@
       </el-form>
       <template #footer>
         <el-button @click="concurrencyDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="submitConcurrency" :loading="concurrencyLoading">{{ $t('common.confirm') }}</el-button>
+        <el-button
+          type="primary"
+          @click="submitConcurrency"
+          :loading="concurrencyLoading"
+        >{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- Worker安装对话框 -->
-    <el-dialog v-model="installDialogVisible" :title="$t('worker.installWorkerProbe')" width="800px">
+    <el-dialog v-model="installDialogVisible" :title="$t('worker.installWorkerProbe')" width="860px">
       <div class="install-dialog">
         <el-alert type="success" :closable="false" style="margin-bottom: 20px">
           <template #title>
@@ -175,14 +183,31 @@
           <el-form-item :label="$t('worker.installKey')">
             <div class="key-display">
               <code>{{ installInfo.installKey }}</code>
-              <el-button size="small" @click="copyToClipboard(installInfo.installKey)">{{ $t('common.copy') }}</el-button>
-              <el-button size="small" type="warning" @click="refreshInstallKey" :loading="refreshKeyLoading">{{ $t('common.refreshKey') }}</el-button>
+              <el-button
+                size="small"
+                @click="copyToClipboard(installInfo.installKey)"
+              >{{ $t('common.copy') }}</el-button>
+              <el-button
+                size="small"
+                type="warning"
+                @click="refreshInstallKey"
+                :loading="refreshKeyLoading"
+              >{{ $t('common.refreshKey') }}</el-button>
             </div>
           </el-form-item>
 
           <el-form-item :label="$t('worker.serverAddress')">
             <code class="server-addr-code">{{ installInfo.serverAddr }}</code>
-            <span style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;">（{{ $t('worker.workerConnectAddress') }}）</span>
+            <span
+              style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;"
+            >（{{ $t('worker.workerConnectAddress') }}）</span>
+          </el-form-item>
+
+          <el-form-item :label="$t('worker.mongoAddress')">
+            <code class="server-addr-code">{{ installInfo.mongoUri || 'localhost:27017/cscan' }}</code>
+            <span
+              style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;"
+            >（{{ $t('worker.mongoConnectAddress') }}）</span>
           </el-form-item>
         </el-form>
 
@@ -194,19 +219,28 @@
               <p class="command-title">1. {{ $t('worker.downloadConfig') }}</p>
               <div class="command-box">
                 <code>curl -O {{ installInfo.downloadUrl }}/static/worker-tune.sh</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/worker-tune.sh`)">{{ $t('common.copy') }}</el-button>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(linuxDownloadCmd)"
+                >{{ $t('common.copy') }}</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">2. {{ $t('worker.startProbe') }}</p>
               <div class="command-box">
-                <code>CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} bash worker-tune.sh</code>
-                <el-button size="small" @click="copyToClipboard(`CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} bash worker-tune.sh`)">{{ $t('common.copy') }}</el-button>
+                <code>{{ linuxStartCmd }}</code>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(linuxStartCmd)"
+                >{{ $t('common.copy') }}</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">{{ $t('worker.oneKeyExecute') }}</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.downloadUrl }}/static/worker-tune.sh && CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} bash worker-tune.sh</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/worker-tune.sh && CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} bash worker-tune.sh`)">{{ $t('common.copy') }}</el-button>
+                <code>{{ linuxOneKeyCmd }}</code>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(linuxOneKeyCmd)"
+                >{{ $t('common.copy') }}</el-button>
               </div>
             </div>
           </el-tab-pane>
@@ -238,13 +272,19 @@
               <p class="command-title">1. {{ $t('worker.downloadConfig') }}</p>
               <div class="command-box">
                 <code>curl -O {{ installInfo.downloadUrl }}/static/worker-tune.ps1</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/worker-tune.ps1`)">{{ $t('common.copy') }}</el-button>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(cmdDownloadCmd)"
+                >{{ $t('common.copy') }}</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">2. {{ $t('worker.setEnvAndStart') }}</p>
               <div class="command-box">
-                <code>set CSCAN_SERVER={{ installInfo.serverAddr }} && set CSCAN_KEY={{ installInfo.installKey }} && powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1</code>
-                <el-button size="small" @click="copyToClipboard(`set CSCAN_SERVER=${installInfo.serverAddr} && set CSCAN_KEY=${installInfo.installKey} && powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1`)">{{ $t('common.copy') }}</el-button>
+                <code>{{ cmdStartCmd }}</code>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(cmdStartCmd)"
+                >{{ $t('common.copy') }}</el-button>
               </div>
             </div>
           </el-tab-pane>
@@ -258,14 +298,20 @@
               <p class="command-title">{{ $t('worker.viewLogs') }}</p>
               <div class="command-box small">
                 <code>docker-compose -f docker-compose-worker.yaml logs -f</code>
-                <el-button size="small" @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml logs -f')">{{ $t('common.copy') }}</el-button>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml logs -f')"
+                >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
             <el-col :span="12">
               <p class="command-title">{{ $t('worker.stopProbe') }}</p>
               <div class="command-box small">
                 <code>docker-compose -f docker-compose-worker.yaml down</code>
-                <el-button size="small" @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml down')">{{ $t('common.copy') }}</el-button>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml down')"
+                >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
           </el-row>
@@ -274,14 +320,55 @@
               <p class="command-title">{{ $t('worker.restartProbe') }}</p>
               <div class="command-box small">
                 <code>docker-compose -f docker-compose-worker.yaml restart</code>
-                <el-button size="small" @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml restart')">{{ $t('common.copy') }}</el-button>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml restart')"
+                >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
             <el-col :span="12">
               <p class="command-title">{{ $t('worker.updateProbe') }}</p>
               <div class="command-box small">
-                <code>docker-compose -f docker-compose-worker.yaml pull && docker-compose -f docker-compose-worker.yaml up -d</code>
-                <el-button size="small" @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml pull && docker-compose -f docker-compose-worker.yaml up -d')">{{ $t('common.copy') }}</el-button>
+                <code>{{ updateProbeCmd }}</code>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(updateProbeCmd)"
+                >{{ $t('common.copy') }}</el-button>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <el-divider content-position="left">{{ $t('worker.distributedDeploy') }}</el-divider>
+
+        <div class="command-section">
+          <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+            <template #title>
+              {{ $t('worker.distributedDeployNote') }}
+            </template>
+          </el-alert>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <p class="command-title">{{ $t('worker.distributedDockerTitle') }}</p>
+              <div class="command-box small">
+                <code>{{ dockerRunCmd }}</code>
+                <el-button size="small" @click="copyToClipboard(dockerRunCmd)">{{ $t('common.copy') }}</el-button>
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <p class="command-title">{{ $t('worker.distributedEnvTitle') }}</p>
+              <div class="command-box small">
+                <code>CSCAN_SERVER={{
+                  installInfo.serverAddr
+                }}<br>CSCAN_KEY={{
+                  installInfo.installKey
+                }}<br>CSCAN_MONGO_URI={{
+                  installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
+                }}</code>
+                <el-button
+                  size="small"
+                  @click="copyToClipboard(distributedEnvText)"
+                >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
           </el-row>
@@ -303,46 +390,70 @@
       </template>
     </el-dialog>
 
-    <!-- Worker 日志对话框 -->
-    <el-dialog v-model="logDialogVisible" :title="`${$t('worker.logs')} - ${logDialogWorker}`" width="1000px" @close="closeLogDialog">
-      <div class="log-filter-bar">
-        <el-input v-model="logSearch" :placeholder="$t('container.searchLogs')" clearable size="small" style="width: 200px">
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-        <el-select v-model="logLevelFilter" size="small" style="width: 120px" :placeholder="$t('container.allLevels')">
-          <el-option :label="$t('container.allLevels')" value="all" />
-          <el-option label="ERROR" value="ERROR" />
-          <el-option label="WARN" value="WARN" />
-          <el-option label="INFO" value="INFO" />
-          <el-option label="DEBUG" value="DEBUG" />
-        </el-select>
-        <el-button type="primary" size="small" :loading="logLoading" @click="fetchWorkerLogs">
-          <el-icon style="margin-right: 4px"><Refresh /></el-icon>{{ $t('common.refresh') }}
-        </el-button>
-        <span class="log-count-badge">{{ filteredLogLines.length }} / {{ logLines.length }}</span>
-      </div>
-      <div class="worker-log-container" ref="workerLogBox">
-        <div v-if="!filteredLogLines.length && !logLoading" class="log-empty-state">
-          <el-icon :size="40" style="color: var(--el-text-color-disabled)"><Document /></el-icon>
-          <span>{{ $t('container.noLogs') }}</span>
+    <transition name="el-zoom-in-top">
+      <el-card v-if="workerLogPanelVisible" class="log-panel-card">
+        <div class="log-panel-header">
+          <div class="log-panel-title">
+            <el-icon><Document /></el-icon>
+            <span>{{ $t('worker.logs') }} - {{ logDialogWorker }}</span>
+          </div>
+          <div class="log-panel-actions">
+            <el-input
+              v-model="logSearch"
+              :placeholder="$t('container.searchLogs')"
+              clearable
+              size="small"
+              style="width: 200px"
+            >
+              <template #prefix><el-icon><Search /></el-icon></template>
+            </el-input>
+            <el-select
+              v-model="logLevelFilter"
+              size="small"
+              style="width: 110px"
+              :placeholder="$t('container.allLevels')"
+            >
+              <el-option :label="$t('container.allLevels')" value="all" />
+              <el-option label="ERROR" value="ERROR" />
+              <el-option label="WARN" value="WARN" />
+              <el-option label="INFO" value="INFO" />
+              <el-option label="DEBUG" value="DEBUG" />
+            </el-select>
+            <el-button type="primary" size="small" :loading="logLoading" @click="fetchWorkerLogs">
+              <el-icon style="margin-right: 4px"><Refresh /></el-icon>{{ $t('common.refresh') }}
+            </el-button>
+            <el-button size="small" @click="closeLogPanel">{{ $t('worker.closeLogPanel') }}</el-button>
+          </div>
         </div>
-        <div
-          v-for="(l, idx) in filteredLogLines"
-          :key="idx"
-          class="wlog-line"
-          :class="{ 'wlog-error': l.level === 'ERROR' || l.level === 'FATAL', 'wlog-warn': l.level === 'WARN' || l.level === 'SLOW', 'wlog-debug': l.level === 'DEBUG' }"
-        >
-          <span class="wlog-ln">{{ idx + 1 }}</span>
-          <span class="wlog-level" :class="'wlevel-' + (l.level || 'log').toLowerCase()">{{ l.level || 'LOG' }}</span>
-          <span v-if="l.time" class="wlog-time">{{ l.time }}</span>
-          <span v-if="l.taskId" class="wlog-task" :title="l.taskId">[..{{ l.taskId.slice(-4) }}]</span>
-          <span class="wlog-body">{{ l.body }}</span>
+        <div class="worker-log-container" ref="workerLogBox" :class="{ 'is-dark': isLogDark }">
+          <div v-if="!filteredLogLines.length && !logLoading" class="log-empty-state">
+            <el-icon :size="40" style="color: var(--el-text-color-disabled)"><Document /></el-icon>
+            <span>{{ $t('container.noLogs') }}</span>
+          </div>
+          <div
+            v-for="(l, idx) in filteredLogLines"
+            :key="idx"
+            class="wlog-line"
+            :class="{
+              'wlog-error': l.level === 'ERROR' || l.level === 'FATAL',
+              'wlog-warn': l.level === 'WARN' || l.level === 'SLOW',
+              'wlog-debug': l.level === 'DEBUG'
+            }"
+          >
+            <span class="wlog-ln">{{ idx + 1 }}</span>
+            <span class="wlog-level" :class="'wlevel-' + (l.level || 'log').toLowerCase()">{{ l.level || 'LOG' }}</span>
+            <span v-if="l.time" class="wlog-time">{{ l.time }}</span>
+            <span v-if="l.taskId" class="wlog-task" :title="l.taskId">[..{{ l.taskId.slice(-4) }}]</span>
+            <span class="wlog-body">{{ l.body }}</span>
+          </div>
         </div>
-      </div>
-      <template #footer>
-        <el-button @click="closeLogDialog">{{ $t('common.close') }}</el-button>
-      </template>
-    </el-dialog>
+        <div class="log-panel-footer">
+          <span class="log-count-badge">{{ filteredLogLines.length }} / {{ logLines.length }}</span>
+        </div>
+      </el-card>
+    </transition>
+
+    <!-- 重命名对话框 -->
   </div>
 </template>
 
@@ -352,8 +463,11 @@ import { Refresh, Delete, Edit, RefreshRight, Download, Monitor, Document, Searc
 import { ElMessage } from 'element-plus'
 import request from '@/api/request'
 import { useI18n } from 'vue-i18n'
+import { useThemeStore } from '@/stores/theme'
 
 const { t } = useI18n()
+const themeStore = useThemeStore()
+const isLogDark = computed(() => themeStore.isDark)
 const loading = ref(false)
 const tableData = ref([])
 const autoRefresh = ref(true)
@@ -367,6 +481,7 @@ const installInfo = reactive({
   installKey: '',
   serverAddr: '',    // API 服务地址（Worker 连接用）
   downloadUrl: '',   // 下载地址（当前浏览器地址）
+  mongoUri: '',      // MongoDB 地址（分布式 Worker 直连用）
   commands: {}
 })
 
@@ -384,11 +499,61 @@ const psDownloadCmd = computed(() => {
 })
 
 const psStartCmd = computed(() => {
-  return `$env:CSCAN_SERVER="${installInfo.serverAddr}"; $env:CSCAN_KEY="${installInfo.installKey}"; powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1`
+  return `$env:CSCAN_SERVER="${installInfo.serverAddr}"; `
+    + `$env:CSCAN_KEY="${installInfo.installKey}"; `
+    + 'powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1'
 })
 
 const psOneKeyCmd = computed(() => {
   return `${psDownloadCmd.value}; ${psStartCmd.value}`
+})
+
+// Linux / macOS 命令计算属性
+const linuxDownloadCmd = computed(() => {
+  return `curl -O ${installInfo.downloadUrl}/static/worker-tune.sh`
+})
+
+const linuxStartCmd = computed(() => {
+  return `CSCAN_SERVER=${installInfo.serverAddr} `
+    + `CSCAN_KEY=${installInfo.installKey} bash worker-tune.sh`
+})
+
+const linuxOneKeyCmd = computed(() => {
+  return `${linuxDownloadCmd.value} && ${linuxStartCmd.value}`
+})
+
+// Windows (CMD) 命令计算属性
+const cmdDownloadCmd = computed(() => {
+  return `curl -O ${installInfo.downloadUrl}/static/worker-tune.ps1`
+})
+
+const cmdStartCmd = computed(() => {
+  return `set CSCAN_SERVER=${installInfo.serverAddr} && `
+    + `set CSCAN_KEY=${installInfo.installKey} && `
+    + 'powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1'
+})
+
+// 更新探针命令（docker-compose pull + up）
+const updateProbeCmd = 'docker-compose -f docker-compose-worker.yaml pull '
+  + '&& docker-compose -f docker-compose-worker.yaml up -d'
+
+// 分布式部署环境变量文本（复制到剪贴板用）
+const distributedEnvText = computed(() => {
+  const mongo = installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
+  return `CSCAN_SERVER=${installInfo.serverAddr}\n`
+    + `CSCAN_KEY=${installInfo.installKey}\n`
+    + `CSCAN_MONGO_URI=${mongo}`
+})
+
+// 分布式 docker 部署命令
+const dockerRunCmd = computed(() => {
+  const server = installInfo.serverAddr
+  const key = installInfo.installKey
+  const mongo = installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
+  return `docker run -d --name cscan-worker --network host \
+-e CSCAN_SERVER=${server} -e CSCAN_KEY=${key} \
+-e CSCAN_MONGO_URI=${mongo} \
+registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest`
 })
 
 // 重命名相关
@@ -480,26 +645,6 @@ function getHealthStatusText(status) {
     'throttled': t('worker.throttled')
   }
   return texts[status] || status
-}
-
-function getSchedulerModeType(mode) {
-  const types = {
-    'aggressive': 'success',
-    'normal': '',
-    'conservative': 'warning',
-    'critical': 'danger'
-  }
-  return types[mode] || 'info'
-}
-
-function getSchedulerModeText(mode) {
-  const texts = {
-    'aggressive': t('worker.modeAggressive'),
-    'normal': t('worker.modeNormal'),
-    'conservative': t('worker.modeConservative'),
-    'critical': t('worker.modeCritical')
-  }
-  return texts[mode] || mode
 }
 
 async function deleteWorker(workerName) {
@@ -610,7 +755,7 @@ async function loadInstallCommand() {
   try {
     // 只传主机名，让后端决定端口
     const hostname = window.location.hostname
-    
+
     const res = await request.post('/worker/install/command', { serverAddr: hostname })
     if (res.code === 0) {
       installInfo.installKey = res.installKey
@@ -618,6 +763,7 @@ async function loadInstallCommand() {
       const apiUrl = `http://${res.serverAddr}`
       installInfo.downloadUrl = apiUrl
       installInfo.serverAddr = apiUrl
+      installInfo.mongoUri = res.mongoUri || ''
       installInfo.commands = res.commands || {}
     } else {
       ElMessage.error(res.msg || t('worker.getInstallCommandFailed'))
@@ -690,8 +836,8 @@ function fallbackCopyToClipboard(text) {
   }
 }
 
-// ==================== Worker 日志对话框 ====================
-const logDialogVisible = ref(false)
+// ==================== Worker 日志内联面板 ====================
+const workerLogPanelVisible = ref(false)
 const logDialogWorker = ref('')
 const logLines = ref([])
 const workerLogBox = ref(null)
@@ -754,17 +900,22 @@ function formatLogTime(ts) {
   return parts.length > 1 ? parts[1] : ts
 }
 
-function openLogDialog(workerName) {
+function toggleLogPanel(workerName) {
+  // 如果点击的是同一个 Worker，切换关闭
+  if (workerLogPanelVisible.value && logDialogWorker.value === workerName) {
+    closeLogPanel()
+    return
+  }
   logDialogWorker.value = workerName
-  logDialogVisible.value = true
+  workerLogPanelVisible.value = true
   logLines.value = []
   logSearch.value = ''
   logLevelFilter.value = 'all'
   fetchWorkerLogs()
 }
 
-function closeLogDialog() {
-  logDialogVisible.value = false
+function closeLogPanel() {
+  workerLogPanelVisible.value = false
   logDialogWorker.value = ''
   logLines.value = []
 }
@@ -882,29 +1033,62 @@ function closeLogDialog() {
   }
 }
 
-/* Worker 日志对话框 */
-.log-filter-bar {
+/* ========== Worker 日志内联面板 ========== */
+.log-panel-card {
+  transition: all 0.3s ease;
+  border-top: 2px solid var(--el-color-primary) !important;
+  margin-bottom: 20px;
+}
+.log-panel-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.log-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.log-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
+.log-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  margin-top: 8px;
+}
 .log-count-badge {
-  margin-left: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
+
+/* 日志内容区 (复用 WorkerLogs 视觉) */
 .worker-log-container {
   height: 500px;
   overflow-y: auto;
-  background: #1a1b26;
   border-radius: 6px;
   padding: 8px 0;
   font-family: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Menlo', monospace;
   font-size: 13px;
   line-height: 1.7;
+  /* Light mode (default) */
+  background: #f8f9fc;
+}
+.worker-log-container.is-dark {
+  background: #1a1b26;
 }
 .log-empty-state {
   height: 100%;
@@ -921,7 +1105,13 @@ function closeLogDialog() {
   align-items: baseline;
   gap: 0;
   padding: 2px 12px 2px 0;
-  &:hover { background: rgba(255, 255, 255, 0.04); }
+  transition: background 0.1s;
+  &:nth-child(odd) { background: rgba(0, 0, 0, 0.02); }
+  &:hover { background: rgba(0, 0, 0, 0.05); }
+}
+.worker-log-container.is-dark .wlog-line {
+  &:nth-child(odd) { background: rgba(255, 255, 255, 0.02); }
+  &:hover { background: rgba(255, 255, 255, 0.06); }
 }
 .wlog-ln {
   display: inline-block;
@@ -929,11 +1119,12 @@ function closeLogDialog() {
   min-width: 48px;
   text-align: right;
   padding-right: 10px;
-  color: #565f89;
   font-size: 11px;
   user-select: none;
   flex-shrink: 0;
+  color: #9aa0b8;
 }
+.worker-log-container.is-dark .wlog-ln { color: #565f89; }
 .wlog-level {
   display: inline-block;
   min-width: 48px;
@@ -946,46 +1137,55 @@ function closeLogDialog() {
   flex-shrink: 0;
   letter-spacing: 0.5px;
 }
-.wlevel-error, .wlevel-fatal { color: #fff; background: rgba(247, 118, 142, 0.8); }
-.wlevel-warn, .wlevel-slow { color: #1a1b26; background: rgba(224, 175, 104, 0.85); }
-.wlevel-info { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
-.wlevel-debug { color: #565f89; background: rgba(86, 95, 137, 0.15); }
-.wlevel-log { color: #7aa2f7; background: rgba(122, 162, 247, 0.1); }
+/* Light level badges */
+.wlevel-error, .wlevel-fatal { color: #fff; background: #f56c6c; }
+.wlevel-warn, .wlevel-slow { color: #fff; background: #e6a23c; }
+.wlevel-info { color: #2d7d2d; background: rgba(103, 194, 58, 0.15); }
+.wlevel-debug { color: #606266; background: rgba(144, 147, 153, 0.12); }
+.wlevel-log { color: #3b6ff5; background: rgba(59, 111, 245, 0.08); }
+/* Dark level badges */
+.worker-log-container.is-dark .wlevel-error,
+.worker-log-container.is-dark .wlevel-fatal { color: #fff; background: rgba(247, 118, 142, 0.8); }
+.worker-log-container.is-dark .wlevel-warn,
+.worker-log-container.is-dark .wlevel-slow { color: #1a1b26; background: rgba(224, 175, 104, 0.85); }
+.worker-log-container.is-dark .wlevel-info { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
+.worker-log-container.is-dark .wlevel-debug { color: #565f89; background: rgba(86, 95, 137, 0.15); }
+.worker-log-container.is-dark .wlevel-log { color: #7aa2f7; background: rgba(122, 162, 247, 0.1); }
 .wlog-time {
-  color: #565f89;
   font-size: 12px;
   margin-right: 8px;
   white-space: nowrap;
   flex-shrink: 0;
+  min-width: 110px;
+  color: #9699a3;
 }
+.worker-log-container.is-dark .wlog-time { color: #565f89; }
 .wlog-task {
   display: inline-block;
   padding: 0 5px;
   margin-right: 6px;
   font-size: 11px;
-  color: #7aa2f7;
-  background: rgba(122, 162, 247, 0.1);
+  color: #3b6ff5;
+  background: rgba(59, 111, 245, 0.08);
   border-radius: 3px;
   flex-shrink: 0;
 }
+.worker-log-container.is-dark .wlog-task {
+  color: #7aa2f7;
+  background: rgba(122, 162, 247, 0.1);
+}
 .wlog-body {
-  color: #c0caf5;
+  color: #343b58;
   word-break: break-all;
   white-space: pre-wrap;
   flex: 1;
   min-width: 0;
 }
-.wlog-error .wlog-body { color: #f7768e; }
-.wlog-warn .wlog-body { color: #e0af68; }
-.wlog-debug .wlog-body { color: #565f89; }
-
-/* Light mode */
-:global(html:not(.dark)) .worker-log-container { background: #f8f9fc; }
-:global(html:not(.dark)) .wlog-line:hover { background: rgba(0, 0, 0, 0.03); }
-:global(html:not(.dark)) .wlog-body { color: #343b58; }
-:global(html:not(.dark)) .wlog-error .wlog-body { color: #c64343; }
-:global(html:not(.dark)) .wlog-warn .wlog-body { color: #8f5e15; }
-:global(html:not(.dark)) .wlog-debug .wlog-body { color: #9699a3; }
-:global(html:not(.dark)) .wlog-ln { color: #c0c8d8; }
-:global(html:not(.dark)) .wlog-time { color: #9699a3; }
+.worker-log-container.is-dark .wlog-body { color: #c0caf5; }
+.worker-log-container.is-dark .wlog-error .wlog-body { color: #f7768e; }
+.worker-log-container.is-dark .wlog-warn .wlog-body { color: #e0af68; }
+.worker-log-container.is-dark .wlog-debug .wlog-body { color: #565f89; }
+.wlog-error .wlog-body { color: #c64343; }
+.wlog-warn .wlog-body { color: #8f5e15; }
+.wlog-debug .wlog-body { color: #9699a3; }
 </style>

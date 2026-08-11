@@ -620,14 +620,20 @@ loadLogDates()
 }
 
 /* ========== 亮色模式覆盖 ========== */
-:global(html:not(.dark)) .log-box { background: #f8f9fc; }
-:global(html:not(.dark)) .log-line:nth-child(odd) { background: rgba(0, 0, 0, 0.02); }
-:global(html:not(.dark)) .log-line:hover { background: rgba(0, 0, 0, 0.05); }
-:global(html:not(.dark)) .log-body { color: #343b58; }
-:global(html:not(.dark)) .log-stderr .log-body,
-:global(html:not(.dark)) .log-error .log-body { color: #c64343; }
-:global(html:not(.dark)) .log-warn .log-body { color: #8f5e15; }
-:global(html:not(.dark)) .log-debug .log-body { color: #9699a3; }
-:global(html:not(.dark)) .log-ln { color: #c0c8d8; }
-:global(html:not(.dark)) .log-time { color: #5b8def; }
+:global(html:not(.dark) .log-box) { background: #f8f9fc; }
+:global(html:not(.dark) .log-line:nth-child(odd)) { background: rgba(0, 0, 0, 0.02); }
+:global(html:not(.dark) .log-line:hover) { background: rgba(0, 0, 0, 0.05); }
+:global(html:not(.dark) .log-ln) { color: #9aa0b8; }
+:global(html:not(.dark) .log-time) { color: #3b6ff5; }
+:global(html:not(.dark) .log-level) { color: #fff; }
+:global(html:not(.dark) .level-error) { color: #fff; background: #f56c6c; }
+:global(html:not(.dark) .level-warn) { color: #fff; background: #e6a23c; }
+:global(html:not(.dark) .level-info) { color: #2d7d2d; background: rgba(103, 194, 58, 0.15); }
+:global(html:not(.dark) .level-debug) { color: #606266; background: rgba(144, 147, 153, 0.12); }
+:global(html:not(.dark) .log-container) { color: #3b6ff5; background: rgba(59, 111, 245, 0.08); }
+:global(html:not(.dark) .log-body) { color: #343b58; }
+:global(html:not(.dark) .log-stderr .log-body),
+:global(html:not(.dark) .log-error .log-body) { color: #c64343; }
+:global(html:not(.dark) .log-warn .log-body) { color: #8f5e15; }
+:global(html:not(.dark) .log-debug .log-body) { color: #909399; }
 </style>

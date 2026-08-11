@@ -1,15 +1,13 @@
 <template>
   <div class="reverify-config-page">
-    <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>{{ $t('navigation.reverifyConfig') }}</span>
-        </div>
-      </template>
+    <div class="page-header">
+      <div class="header-content">
+        <h1>{{ $t('navigation.reverifyConfig') }}</h1>
+        <p class="description">{{ $t('reverify.tip') }}</p>
+      </div>
+    </div>
 
-      <el-alert type="info" :closable="false" style="margin-bottom: 20px">
-        <template #title>{{ $t('reverify.tip') }}</template>
-      </el-alert>
+    <el-card>
       <el-form label-width="140px" style="max-width: 680px;" v-loading="reverifyConfigLoading">
         <el-form-item :label="$t('reverify.weakPassEnabled')">
           <el-switch v-model="reverifyConfigForm.weakPassEnabled" />
@@ -20,7 +18,7 @@
           <span class="ap-hint">{{ $t('reverify.exposureHint') }}</span>
         </el-form-item>
 
-        <!-- 复验周期：模仿定时任务调度方式 -->
+        <!-- 复验周期 -->
         <el-form-item :label="$t('reverify.cronSpec')">
           <el-input v-model="reverifyConfigForm.cronSpec" :placeholder="$t('reverify.cronPlaceholder')" style="max-width: 320px">
             <template #append>
@@ -227,7 +225,29 @@ function reverifyStatusTagType(s) {
 </script>
 
 <style scoped>
-.reverify-config-page .card-header {
+.reverify-config-page {
+  padding: 24px;
+  background: hsl(var(--background));
+  min-height: 100vh;
+}
+.page-header {
+  margin-bottom: 24px;
+
+  h1 {
+    font-size: 28px;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    margin: 0 0 8px 0;
+  }
+
+  .description {
+    color: hsl(var(--muted-foreground));
+    font-size: 14px;
+    margin: 0;
+  }
+}
+
+.card-header {
   font-size: 16px;
   font-weight: 500;
 }

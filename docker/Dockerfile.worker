@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl libpcap-dev gcc \
     && rm -rf /var/lib/apt/lists/*
 
+# 国内网络优先用 goproxy.cn，回落到 direct，避免容器内访问 proxy.golang.org 失败
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=off
+
 # 复制依赖文件并下载
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -19,10 +23,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # 复制源代码
 COPY . .
 
-# 下载 ip2region 数据库（编译时准备）
+# 下载 ip2region 数据库（编译时准备，网络失败不影响构建，运行时按需降级）
 RUN mkdir -p /app/data && \
-    curl -sL "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v4.xdb" -o /app/data/ip2region_v4.xdb && \
-    curl -sL "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v6.xdb" -o /app/data/ip2region_v6.xdb
+    (curl -sL --connect-timeout 10 --max-time 60 "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v4.xdb" -o /app/data/ip2region_v4.xdb || true) && \
+    (curl -sL --connect-timeout 10 --max-time 60 "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v6.xdb" -o /app/data/ip2region_v6.xdb || true) && \
+    ls -la /app/data/
 
 # 编译 worker（纯 Go 静态二进制）
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -38,13 +43,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # 安装 CLI 扫描工具（固定版本，可重现构建）
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.9.7 && \
-    CGO_ENABLED=1 go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.10.5 && \
-    CGO_ENABLED=1 go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.7.2 && \
-    CGO_ENABLED=1 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.15.2 && \
-    CGO_ENABLED=0 go install -v github.com/ffuf/ffuf/v2/cmd/ffuf@v2.3.1 && \
-    CGO_ENABLED=1 go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.2.1 && \
-    CGO_ENABLED=1 go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.5
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.11.1 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.10.0 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.6.1 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.15.0 && \
+    CGO_ENABLED=0 go install -v github.com/ffuf/ffuf/v2@v2.2.1 && \
+    CGO_ENABLED=1 go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.1.19 && \
+    CGO_ENABLED=1 go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.0
 
 # ============ 运行阶段 ============
 FROM debian:bookworm-slim

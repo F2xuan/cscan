@@ -121,7 +121,6 @@ cscan/
 │           ├── httpclient.go     # REST 客户端（X-Worker-Key，3 次重试）
 │           ├── task_queue_manager.go # 本地 4 级优先级队列（sync.Cond，满则丢最低）
 │           ├── resultqueue.go    # 本地结果落盘重放（断网恢复，maxSize 2000）
-│           ├── adaptive_scheduler.go # 自适应并发调度（Aggressive/Normal/Conservative/Critical）
 │           ├── worker_heartbeat.go   # 心跳/熔断/CPU 限流/控制轮询
 │           ├── worker_poc_validation.go / worker_fingerprint_validation.go
 │           ├── worker_result_save.go / worker_asset_generation.go
@@ -152,8 +151,7 @@ cscan/
 │   │   ├── fingerprint.go / fingerprintx.go / customfinger.go / httpx_lib.go
 │   │   ├── nuclei.go / brutescan.go / brute/
 │   │   ├── ffuf.go / dirscan.go / jsfinder.go / urlfinder.go
-│   │   ├── certcheck.go / charsetutil.go / adaptive_config.go
-│   │   └── utils.go
+│   │   ├── certcheck.go / charsetutil.go / utils.go
 │   ├── scheduler/                # 任务调度器
 │   │   ├── scheduler.go          # Redis Sorted Set 优先级队列（Lua 原子弹入弹、死信）
 │   │   ├── service.go            # SchedulerService 门面（cron + 复验注入 + 同步）
@@ -517,17 +515,6 @@ test: {
 # Linux/macOS / Git Bash:
 ./scripts/dev.sh
 ```
-脚本执行 `docker-compose -f docker-compose.dev.yaml up -d`，容器启动服务依赖
-（MongoDB :27017 / Redis :6379 ）
-停止：`docker-compose -f docker-compose.dev.yaml down`。
-
-**分步启动命令如下**：
-```bash
-go run rpc/task/task.go -f rpc/task/etc/task.yaml     # 1. 启动 gRPC 服务 (:9000)
-go run api/cscan.go -f api/etc/cscan.yaml             # 2. 启动 HTTP API (:8888)
-cd web && npm install && npm run dev                  # 3. 启动前端 (:7777)，代理 /api → :8888
-go run worker/main.go -s http://localhost:8888        # 4. 启动 Worker
-```
 
 **关键配置文件**：
 | 文件 | 说明 |
@@ -536,13 +523,12 @@ go run worker/main.go -s http://localhost:8888        # 4. 启动 Worker
 | `rpc/task/etc/task.yaml` | RPC 配置：端口 9000 |
 | `docker/cscan-api.yaml` | 容器内 API 配置 |
 | `docker/task.yaml` | 容器内 RPC 配置 |
-| `docker/mongo-init.js` | MongoDB 初始化脚本（admin 初始账号） |
 
 **MongoDB 连接池**：MaxPoolSize=100, MinPoolSize=10, ConnectTimeout=10s
 
 **Redis 连接池**：PoolSize=100, MinIdleConns=10, MaxRetries=3
 
-**Worker 并发推导**：`worker/main.go` 按容器/宿主机内存自动推导（384MB/标签 × 0.6 利用率，clamp [1,16]），可用 `-c` / `CSCAN_CONCURRENCY` 覆盖
+**Worker 并发推导**：`worker/main.go`
 
 ### 5.2 构建命令
 
@@ -624,9 +610,9 @@ go build ./... 2>&1 | Out-File -Encoding ascii build.log
 
 **业务码约定**：本项目 HTTP 状态恒为 200，业务结果放在响应体 `code` 字段（`0`=成功、`400/500`=业务错误）。冒烟断言**必须解析 body 的 `code`**，不能只看 HTTP 状态。
 
-全新 MongoDB 的 `admin` 密码与文档 `123456` 不符（见 `docker/mongo-init.js` 的 bcrypt hash）。自测可两种方式之一：
+全新 MongoDB 无内置用户。自测方式：
 1. **自签 JWT**（推荐，免改库）：用 `CSCAN_JWT_SECRET` 以 HS256 签发含 `userId/username/role` 的 token，`Authorization: Bearer <token>` 调用鉴权路由；
-2. **重置 admin 密码为123456**：`docker exec -i cscan_mongo mongosh cscan` 执行 `db.user.updateOne({username:"admin"},{$set:{password:"$2a$10$Y/T1J1j6tEB9KQI2FlpyNOK3DY2eT54Ml1ukG.dMrbCjMt5Ic7MwK",must_change_password:false}})`。
+2. **注册首用户**：通过登录页注册创建第一个用户，自动获得 superadmin 权限。
 
 #### 5.5.4 浏览器验证（路由遍历 / i18n）
 

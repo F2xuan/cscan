@@ -3,6 +3,13 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = $ScriptDir
 Set-Location $ProjectRoot
 $env:CSCAN_DEV = "1"
+$env:CSCAN_WORKER_KEY = "dev-worker-key"
+
+$logDir = Join-Path $ProjectRoot "log"
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+$ts = Get-Date -Format "yyyyMMdd-HHmmss"
 
 Write-Host "[dev] Starting dependency stack (MongoDB + Redis)..."
 docker-compose -f docker-compose.dev.yaml up -d
@@ -11,12 +18,23 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$rpc = Start-Process -FilePath "go" -ArgumentList "run","rpc/task/task.go","-f","rpc/task/etc/task.yaml" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
-$api = Start-Process -FilePath "go" -ArgumentList "run","api/cscan.go","-f","api/etc/cscan.yaml" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
-$worker = Start-Process -FilePath "go" -ArgumentList "run","worker/main.go","-s","http://localhost:8888" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
-$web = Start-Process -FilePath "cmd" -ArgumentList "/c","cd web && (if not exist node_modules call npm install) && npm run dev" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
+$rpcLog = Join-Path $logDir "rpc-$ts.log"
+$apiLog = Join-Path $logDir "api-$ts.log"
+$workerLog = Join-Path $logDir "worker-$ts.log"
+$webLog = Join-Path $logDir "web-$ts.log"
 
-Write-Host "[dev] Local dev stack started (Deps / RPC / API / Worker / Web). Press Ctrl+C to stop all."
+$rpc = Start-Process -FilePath "cmd" -ArgumentList "/c","go run rpc/task/task.go -f rpc/task/etc/task.yaml > `"$rpcLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
+$api = Start-Process -FilePath "cmd" -ArgumentList "/c","go run api/cscan.go -f api/etc/cscan.yaml > `"$apiLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
+$worker = Start-Process -FilePath "cmd" -ArgumentList "/c","go run worker/main.go -s http://localhost:8888 > `"$workerLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
+$web = Start-Process -FilePath "cmd" -ArgumentList "/c","cd web && (if not exist node_modules call npm install) && npm run dev > `"$webLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
+
+Write-Host "[dev] Local dev stack started (Deps / RPC / API / Worker / Web)"
+Write-Host "[dev] Logs:"
+Write-Host "  RPC   : $rpcLog"
+Write-Host "  API   : $apiLog"
+Write-Host "  Worker: $workerLog"
+Write-Host "  Web   : $webLog"
+Write-Host "[dev] Press Ctrl+C to stop all."
 
 try {
     Wait-Process -Id $rpc.Id, $api.Id, $worker.Id, $web.Id

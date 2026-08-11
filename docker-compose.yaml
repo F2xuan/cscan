@@ -9,32 +9,23 @@ services:
   redis:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/redis:7-alpine
     container_name: cscan_redis
-    command: redis-server --appendonly yes
-    # 缺陷 9（运维，需宿主机配合，compose 无法直接设置）：
-    #   在宿主机执行 `sysctl vm.overcommit_memory=1` 并写入 /etc/sysctl.conf，
-    #   消除 "WARNING Memory overcommit must be enabled" 告警，避免 BGSAVE/fork 失败。
+    command: redis-server --appendonly yes --requirepass ${CSCAN_REDIS_PASSWORD}
     logging: *default-logging
     volumes:
       - cscan_redis_data:/data
     environment:
       - TZ=Asia/Shanghai
+      - REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
     restart: unless-stopped
     networks:
       - cscan_network
-    # 内存限制配置化：可通过环境变量注入（见 README「资源配置」）。未设置时使用默认值。
-    deploy:
-      resources:
-        limits:
-          memory: ${CSCAN_REDIS_MEM_LIMIT:-512M}
-        reservations:
-          memory: ${CSCAN_REDIS_MEM_RESERVATION:-128M}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${CSCAN_REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
 
-  # MongoDB 
+  # MongoDB
   mongodb:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/mongo:6
     container_name: cscan_mongodb
@@ -44,32 +35,11 @@ services:
       - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     environment:
       - TZ=Asia/Shanghai
-      # 缺陷 8（安全，分阶段启用，避免未改应用连接串就中断服务）：
-      # 1) 先用以下变量创建 root 账号（镜像会自动建库）；
-      # 2) 再把应用侧 Mongo.Uri 改为 mongodb://<user>:<pwd>@mongodb:27017/... 后，
-      #    将下方 command 改为 `mongod --auth` 强制鉴权。
-      # - MONGO_INITDB_ROOT_USERNAME=${CSCAN_MONGO_ROOT_USER:-}
-      # - MONGO_INITDB_ROOT_PASSWORD=${CSCAN_MONGO_ROOT_PASSWORD:-}
-    # 缺陷 8（运维）：提高文件描述符上限，消除
-    # "Soft rlimits for open file descriptors too low (currentValue:1024, recommendedMinimum:64000)" 告警
-    ulimits:
-      nofile:
-        soft: 64000
-        hard: 64000
-    # 缺陷 8（运维，需宿主机配合，compose 无法直接设置）：
-    #   THP：宿主机执行 `echo never > /sys/kernel/mm/transparent_hugepage/enabled`
-    #        并写入 /etc/rc.local 或 systemd 持久化。
+      - MONGO_INITDB_ROOT_USERNAME=${CSCAN_MONGO_ROOT_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${CSCAN_MONGO_ROOT_PASSWORD}
     restart: unless-stopped
     networks:
       - cscan_network
-    # 修复 D7：限制 mongo 内存上限，避免 WiredTiger 缓存无节制增长挤占
-    # 其它容器与宿主余量（原 3.6G 远超小机可用内存）。限制值可经环境变量注入。
-    deploy:
-      resources:
-        limits:
-          memory: ${CSCAN_MONGO_MEM_LIMIT:-2G}
-        reservations:
-          memory: ${CSCAN_MONGO_MEM_RESERVATION:-512M}
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -83,11 +53,8 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      # GOMAXPROCS / GOMEMLIMIT 可经环境变量注入；GOMEMLIMIT 为空时由 Go 运行时按 cgroup 自动推导
-      - GOMAXPROCS=${CSCAN_API_GOMAXPROCS:-2}
-      - GOMEMLIMIT=${CSCAN_API_GOMEMLIMIT:-}
-      - CSCAN_JWT_SECRET=${CSCAN_JWT_SECRET}
-      - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY}
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
+      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
     volumes:
       - cscan_api_data:/app/data
       - ./log:/app/log
@@ -102,19 +69,6 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
-    # 修复 D2：缩短容器内 DNS 解析超时（默认 5s×多次），降低 docker 嵌入式
-    # DNS 在宿主机 CPU 紧张时长时间挂起、进而清空 mongo 连接池的窗口。
-    dns_opt:
-      - timeout:2
-      - attempts:2
-    deploy:
-      resources:
-        limits:
-          cpus: '${CSCAN_API_CPU_LIMIT:-2}'
-          memory: ${CSCAN_API_MEM_LIMIT:-1G}
-        reservations:
-          cpus: '${CSCAN_API_CPU_RESERVATION:-0.5}'
-          memory: ${CSCAN_API_MEM_RESERVATION:-256M}
     healthcheck:
       test: ["CMD", "sh", "-c", "wget --quiet --tries=1 --spider http://localhost:8888/health || exit 1"]
       interval: 30s
@@ -129,9 +83,8 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      # GOMAXPROCS / GOMEMLIMIT 可经环境变量注入；GOMEMLIMIT 为空时由 Go 运行时按 cgroup 自动推导
-      - GOMAXPROCS=${CSCAN_RPC_GOMAXPROCS:-2}
-      - GOMEMLIMIT=${CSCAN_RPC_GOMEMLIMIT:-}
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
+      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -140,20 +93,8 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
-    # 修复 D2：缩短容器内 DNS 解析超时，降低 docker 嵌入式 DNS 挂起窗口
-    dns_opt:
-      - timeout:2
-      - attempts:2
-    deploy:
-      resources:
-        limits:
-          cpus: '${CSCAN_RPC_CPU_LIMIT:-2}'
-          memory: ${CSCAN_RPC_MEM_LIMIT:-1G}
-        reservations:
-          cpus: '${CSCAN_RPC_CPU_RESERVATION:-0.5}'
-          memory: ${CSCAN_RPC_MEM_RESERVATION:-256M}
 
-  # CSCAN Web 
+  # CSCAN Web 服务
   cscan-web:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-web:latest
     container_name: cscan_web
@@ -170,52 +111,28 @@ services:
     restart: unless-stopped
     networks:
       - cscan_network
-    deploy:
-      resources:
-        limits:
-          cpus: '${CSCAN_WEB_CPU_LIMIT:-2}'
-          # web(nginx) 内存上限可经环境变量注入
-          memory: ${CSCAN_WEB_MEM_LIMIT:-512M}
-        reservations:
-          cpus: '${CSCAN_WEB_CPU_RESERVATION:-0.5}'
-          memory: ${CSCAN_WEB_MEM_RESERVATION:-128M}
 
-  # CSCAN Worker 默认节点（随主服务一键启动）
+  # CSCAN Worker 默认节点
   cscan-worker:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest
     container_name: cscan_worker
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      # GOMAXPROCS / GOMEMLIMIT 可经环境变量注入；GOMEMLIMIT 为空时由 Go 运行时按 cgroup 自动推导
-      - GOMAXPROCS=${CSCAN_WORKER_GOMAXPROCS:-2}
-      - GOMEMLIMIT=${CSCAN_WORKER_GOMEMLIMIT:-}
       - CSCAN_SERVER=http://cscan-api:8888
       - CSCAN_KEY=${CSCAN_WORKER_KEY}
       - CSCAN_NAME=cscan-default-worker
-      # 并发可经环境变量注入；未设置时 Worker 按容器内存上限自动推导（见 worker/main.go）
-      - CSCAN_CONCURRENCY=${CSCAN_WORKER_CONCURRENCY:-2}
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
     depends_on:
       cscan-api:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - cscan_network
     volumes:
       - cscan_worker_logs:/app/log
-    # 修复 D2：缩短容器内 DNS 解析超时，降低 docker 嵌入式 DNS 挂起窗口
-    dns_opt:
-      - timeout:2
-      - attempts:2
-    deploy:
-      resources:
-        limits:
-          cpus: '${CSCAN_WORKER_CPU_LIMIT:-2}'
-          # 内存上限可经环境变量注入；配合 CSCAN_CONCURRENCY 自动推导，充分利用高配机、避免低配 OOM
-          memory: ${CSCAN_WORKER_MEM_LIMIT:-2G}
-        reservations:
-          cpus: '${CSCAN_WORKER_CPU_RESERVATION:-0.5}'
-          memory: ${CSCAN_WORKER_MEM_RESERVATION:-512M}
 
 volumes:
   cscan_redis_data:

@@ -239,7 +239,15 @@
               </el-icon>
               <template #title>{{ $t('navigation.userManagement') }}</template>
             </el-menu-item>
-            <el-menu-item index="/organization" :title="$t('navigation.organizationManagement')">
+            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
+              index="/registration-config">
+              <el-icon>
+                <UserFilled />
+              </el-icon>
+              <template #title>{{ $t('settings.registration.title') }}</template>
+            </el-menu-item>
+            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
+              index="/organization" :title="$t('navigation.organizationManagement')">
               <el-icon>
                 <OfficeBuilding />
               </el-icon>
@@ -274,7 +282,7 @@
         </div>
         <div class="header-right">
           <!-- 扫描引导 -->
-          <el-tooltip :content="$t('onboarding.scanGuideBtn')" placement="bottom">
+          <el-tooltip :content="$t('onboarding.scanGuideBtn')" placement="bottom" popper-class="scan-guide-tooltip">
             <div class="scan-guide-btn" @click="showOnboarding = true">
               <el-icon>
                 <Aim />
@@ -311,8 +319,6 @@
 
       <!-- 扫描引导弹窗（首次登录自动弹出 + 顶栏按钮手动唤起）-->
       <OnboardingGuide v-if="showOnboarding" @finished="showOnboarding = false" />
-      <!-- 首次登录进入系统后提示修改密码 -->
-      <FirstLoginResetDialog />
     </el-container>
   </el-container>
 </template>
@@ -328,10 +334,14 @@ import { useBrandingStore } from '@/stores/branding'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
-import FirstLoginResetDialog from '@/components/FirstLoginResetDialog.vue'
 import { getOnboardingStatus } from '@/api/auth'
 import { shouldShowOnboarding } from '@/utils/onboarding'
-import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick, Operation } from '@element-plus/icons-vue'
+import {
+  Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection,
+  Fold, Expand, Key, OfficeBuilding, Bell, User, UserFilled, Document,
+  CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick,
+  Operation
+} from '@element-plus/icons-vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -656,6 +666,8 @@ function handleCommand(command) {
       border-radius: 8px;
       cursor: pointer;
       color: hsl(var(--muted-foreground));
+      background: transparent;
+      border: 1px solid transparent;
       transition: all 0.3s;
 
       &:hover {

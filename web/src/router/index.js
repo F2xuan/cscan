@@ -6,11 +6,11 @@ import { useUserStore } from '@/stores/user'
 function lazyLoad(importFn) {
   return () => importFn().catch((err) => {
     if (err.message.includes('Failed to fetch dynamically imported module') ||
-        err.message.includes('Loading chunk') ||
-        err.message.includes('Loading CSS chunk')) {
+      err.message.includes('Loading chunk') ||
+      err.message.includes('Loading CSS chunk')) {
       console.warn('[Router] Chunk load failed, reloading page...', err)
       window.location.reload()
-      return new Promise(() => {})
+      return new Promise(() => { })
     }
     throw err
   })
@@ -29,13 +29,19 @@ const routes = [
     redirect: '/dashboard',
     meta: { requiresAuth: true },
     children: [
+      // 本数组与 MainLayout.vue 侧边栏菜单严格同序、一一对应。
+      // 分节标题与菜单分组同名；
+      // 标注「非菜单」的是仅由页面内 router.push 进入的详情/表单页。
+
+      // ===== 主控台 =====
       {
         path: 'dashboard',
         name: 'Dashboard',
         component: lazyLoad(() => import('@/views/Dashboard.vue')),
         meta: { title: 'menu.Dashboard', icon: 'Odometer' }
       },
-      // ===== 资产管理（顶层资产 + 暴露面 + 风险，全部挂 /asset-management/*）=====
+
+      // ===== 资产管理 =====
       {
         path: 'asset-management',
         name: 'AssetManagement',
@@ -48,13 +54,8 @@ const routes = [
         component: lazyLoad(() => import('@/views/AssetSpaceSearch.vue')),
         meta: { title: 'menu.AssetSpaceSearch', icon: 'Search' }
       },
-      // -------- 暴露面 --------
-      {
-        path: 'asset-management/exposure/screenshot',
-        name: 'ExposureScreenshot',
-        component: lazyLoad(() => import('@/views/Screenshots.vue')),
-        meta: { title: 'menu.ExposureScreenshot', icon: 'Picture' }
-      },
+
+      // ===== 暴露面 =====
       {
         path: 'asset-management/exposure/subdomain',
         name: 'ExposureSubdomain',
@@ -92,6 +93,12 @@ const routes = [
         meta: { title: 'menu.ExposureApp', icon: 'Grid' }
       },
       {
+        path: 'asset-management/exposure/screenshot',
+        name: 'ExposureScreenshot',
+        component: lazyLoad(() => import('@/views/Screenshots.vue')),
+        meta: { title: 'menu.ExposureScreenshot', icon: 'Picture' }
+      },
+      {
         path: 'asset-management/exposure/dir',
         name: 'ExposureDir',
         component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
@@ -103,7 +110,14 @@ const routes = [
         component: lazyLoad(() => import('@/views/AssetManagement/JSFinderPage.vue')),
         meta: { title: 'menu.ExposureJs', icon: 'Document' }
       },
-      // -------- 风险 --------
+
+      // ===== 风险 =====
+      {
+        path: 'asset-management/fingerprint/cert',
+        name: 'CertAsset',
+        component: lazyLoad(() => import('@/views/CertAsset.vue')),
+        meta: { title: 'menu.CertAsset', icon: 'Lock' }
+      },
       {
         path: 'asset-management/risk/sensitive-info',
         name: 'RiskSensitiveInfo',
@@ -116,67 +130,41 @@ const routes = [
         component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
         meta: { title: 'menu.RiskVuln', icon: 'Warning' }
       },
-      {
-        path: 'asset-management/fingerprint/cert',
-        name: 'CertAsset',
-        component: lazyLoad(() => import('@/views/CertAsset.vue')),
-        meta: { title: 'menu.CertAsset', icon: 'Lock' }
-      },
-      {
-        path: 'task/create',
-        name: 'TaskCreate',
-        component: lazyLoad(() => import('@/views/TaskCreate.vue')),
-        meta: { title: 'menu.TaskCreate', icon: 'List', hidden: true }
-      },
-      // BUG-003 修复：添加旧路径重定向，兼容旧书签和外部链接
-      {
-        path: 'task-create',
-        redirect: '/task/create'
-      },
-      {
-        path: 'task/edit/:id',
-        name: 'TaskEdit',
-        component: lazyLoad(() => import('@/views/TaskCreate.vue')),
-        meta: { title: 'menu.TaskEdit', icon: 'List', hidden: true }
-      },
-      {
-        path: 'task/detail',
-        name: 'TaskDetail',
-        component: lazyLoad(() => import('@/views/TaskDetail.vue')),
-        meta: { title: 'menu.TaskDetail', icon: 'List', hidden: true }
-      },
+
+      // ===== 任务管理 =====
       {
         path: 'task',
         name: 'Task',
         component: lazyLoad(() => import('@/views/Task.vue')),
         meta: { title: 'menu.Task', icon: 'List' }
       },
+      // 非菜单：由 Task.vue / AssetManagement.vue 内跳转
+      {
+        path: 'task/create',
+        name: 'TaskCreate',
+        component: lazyLoad(() => import('@/views/TaskCreate.vue')),
+        meta: { title: 'menu.TaskCreate', icon: 'List' }
+      },
+      {
+        path: 'task/edit/:id',
+        name: 'TaskEdit',
+        component: lazyLoad(() => import('@/views/TaskCreate.vue')),
+        meta: { title: 'menu.TaskEdit', icon: 'List' }
+      },
+      {
+        path: 'task/detail',
+        name: 'TaskDetail',
+        component: lazyLoad(() => import('@/views/TaskDetail.vue')),
+        meta: { title: 'menu.TaskDetail', icon: 'List' }
+      },
       {
         path: 'task/template',
         name: 'ScanTemplate',
         component: lazyLoad(() => import('@/views/ScanTemplate.vue')),
-        meta: { title: 'menu.ScanTemplate', icon: 'Document', hidden: true }
-      },
-      {
-        path: 'cron-task',
-        name: 'CronTask',
-        component: lazyLoad(() => import('@/views/CronTask.vue')),
-        meta: { title: 'menu.CronTask', icon: 'Timer' }
-      },
-      {
-        path: 'cron-task/create',
-        name: 'CronTaskCreate',
-        component: lazyLoad(() => import('@/views/CronTaskCreate.vue')),
-        meta: { title: 'menu.CronTaskCreate', icon: 'Timer', hidden: true }
-      },
-      {
-        path: 'cron-task/edit/:id',
-        name: 'CronTaskEdit',
-        component: lazyLoad(() => import('@/views/CronTaskCreate.vue')),
-        meta: { title: 'menu.CronTaskEdit', icon: 'Timer', hidden: true }
+        meta: { title: 'menu.ScanTemplate', icon: 'Document' }
       },
 
-      // ===== 空间引擎（/space-engine/*）=====
+      // ===== 空间引擎 =====
       {
         path: 'space-engine/online-search',
         name: 'SpaceEngineOnlineSearch',
@@ -196,34 +184,31 @@ const routes = [
         meta: { title: 'menu.SpaceEngineCronTask', icon: 'Timer' }
       },
 
-      // 旧路径重定向
+      // ===== 扫描配置 =====
       {
-        path: 'online-search',
-        redirect: '/space-engine/online-search'
+        path: 'cron-task',
+        name: 'CronTask',
+        component: lazyLoad(() => import('@/views/CronTask.vue')),
+        meta: { title: 'menu.CronTask', icon: 'Timer' }
+      },
+      // 非菜单：由 CronTask.vue 内跳转
+      {
+        path: 'cron-task/create',
+        name: 'CronTaskCreate',
+        component: lazyLoad(() => import('@/views/CronTaskCreate.vue')),
+        meta: { title: 'menu.CronTaskCreate', icon: 'Timer' }
       },
       {
-        path: 'worker',
-        name: 'Worker',
-        component: lazyLoad(() => import('@/views/Worker.vue')),
-        meta: { title: 'menu.Worker', icon: 'Connection' }
+        path: 'cron-task/edit/:id',
+        name: 'CronTaskEdit',
+        component: lazyLoad(() => import('@/views/CronTaskCreate.vue')),
+        meta: { title: 'menu.CronTaskEdit', icon: 'Timer' }
       },
       {
-        path: 'worker-logs',
-        name: 'WorkerLogs',
-        component: lazyLoad(() => import('@/views/WorkerLogs.vue')),
-        meta: { title: 'menu.WorkerLogs', icon: 'Document' }
-      },
-      {
-        path: 'blacklist',
-        name: 'Blacklist',
-        component: lazyLoad(() => import('@/views/Blacklist.vue')),
-        meta: { title: 'menu.Blacklist', icon: 'CircleClose' }
-      },
-      {
-        path: 'high-risk-filter',
-        name: 'HighRiskFilter',
-        component: lazyLoad(() => import('@/views/HighRiskFilter.vue')),
-        meta: { title: 'menu.HighRiskFilter', icon: 'Warning' }
+        path: 'settings-subfinder',
+        name: 'SubfinderConfig',
+        component: lazyLoad(() => import('@/views/settings/SubfinderConfig.vue')),
+        meta: { title: 'menu.subdomainConfig', icon: 'Search' }
       },
       {
         path: 'poc',
@@ -238,45 +223,33 @@ const routes = [
         meta: { title: 'menu.Fingerprint', icon: 'Stamp' }
       },
       {
-        path: 'report',
-        name: 'Report',
-        component: lazyLoad(() => import('@/views/Report.vue')),
-        meta: { title: 'menu.Report', icon: 'Document', hidden: true }
+        path: 'blacklist',
+        name: 'Blacklist',
+        component: lazyLoad(() => import('@/views/Blacklist.vue')),
+        meta: { title: 'menu.Blacklist', icon: 'CircleClose' }
+      },
+
+      // ===== AI 配置 / Worker =====
+      {
+        path: 'ai-config',
+        name: 'AIConfig',
+        component: lazyLoad(() => import('@/views/AIConfig.vue')),
+        meta: { title: 'menu.AIConfig', icon: 'MagicStick', roles: ['admin', 'superadmin'] }
       },
       {
-        path: 'user',
-        name: 'User',
-        component: lazyLoad(() => import('@/views/settings/UserManagement.vue')),
-        meta: { title: 'menu.User', icon: 'User', roles: ['admin', 'superadmin'], hidden: true }
+        path: 'worker',
+        name: 'Worker',
+        component: lazyLoad(() => import('@/views/Worker.vue')),
+        meta: { title: 'menu.Worker', icon: 'Connection' }
       },
       {
-        path: 'organization',
-        name: 'Organization',
-        component: lazyLoad(() => import('@/views/settings/OrganizationManagement.vue')),
-        meta: { title: 'menu.Organization', icon: 'OfficeBuilding', hidden: true }
+        path: 'worker-logs',
+        name: 'WorkerLogs',
+        component: lazyLoad(() => import('@/views/WorkerLogs.vue')),
+        meta: { title: 'menu.WorkerLogs', icon: 'Document' }
       },
-      // 旧 /settings?tab=* 入口按 tab 重定向至独立页面
-      {
-        path: 'settings',
-        redirect: (to) => {
-          const map = {
-            onlineapi: '/space-engine/api-config',
-            subfinder: '/settings-subfinder',
-            notify: '/settings-notify',
-            reverify: '/settings-reverify',
-            user: '/user',
-            organization: '/organization',
-            branding: '/settings-branding'
-          }
-          return map[to.query.tab] || '/settings-branding'
-        }
-      },
-      {
-        path: 'settings-subfinder',
-        name: 'SubfinderConfig',
-        component: lazyLoad(() => import('@/views/settings/SubfinderConfig.vue')),
-        meta: { title: 'menu.subdomainConfig', icon: 'Search' }
-      },
+
+      // ===== 高级配置 =====
       {
         path: 'settings-notify',
         name: 'NotifyConfig',
@@ -290,22 +263,52 @@ const routes = [
         meta: { title: 'menu.reverifyConfig', icon: 'Timer' }
       },
       {
+        path: 'high-risk-filter',
+        name: 'HighRiskFilter',
+        component: lazyLoad(() => import('@/views/HighRiskFilter.vue')),
+        meta: { title: 'menu.HighRiskFilter', icon: 'Warning' }
+      },
+
+      // ===== 系统管理 =====
+      {
+        path: 'user',
+        name: 'User',
+        component: lazyLoad(() => import('@/views/settings/UserManagement.vue')),
+        meta: { title: 'menu.User', icon: 'User', roles: ['admin', 'superadmin'] }
+      },
+      {
+        path: 'registration-config',
+        name: 'RegistrationConfig',
+        component: lazyLoad(() => import('@/views/settings/RegistrationConfig.vue')),
+        meta: { title: 'settings.registration.title', icon: 'UserFilled', roles: ['admin', 'superadmin'] }
+      },
+      {
+        path: 'organization',
+        name: 'Organization',
+        component: lazyLoad(() => import('@/views/settings/OrganizationManagement.vue')),
+        meta: { title: 'menu.Organization', icon: 'OfficeBuilding', roles: ['admin', 'superadmin'] }
+      },
+      {
         path: 'settings-branding',
         name: 'BrandingConfig',
         component: lazyLoad(() => import('@/views/settings/BrandingConfig.vue')),
         meta: { title: 'menu.brandingConfig', icon: 'Picture', roles: ['admin', 'superadmin'] }
       },
+
+      // ===== 非菜单页 =====
+      // report：由 Task.vue / TaskDetail.vue 的「查看报告」跳转
+      {
+        path: 'report',
+        name: 'Report',
+        component: lazyLoad(() => import('@/views/Report.vue')),
+        meta: { title: 'menu.Report', icon: 'Document' }
+      },
+      // profile：由顶栏用户下拉菜单跳转
       {
         path: 'profile',
         name: 'Profile',
         component: lazyLoad(() => import('@/views/Profile.vue')),
-        meta: { title: 'menu.Profile', icon: 'User', hidden: true }
-      },
-      {
-        path: 'ai-config',
-        name: 'AIConfig',
-        component: lazyLoad(() => import('@/views/AIConfig.vue')),
-        meta: { title: 'menu.AIConfig', icon: 'MagicStick', roles: ['admin', 'superadmin'] }
+        meta: { title: 'menu.Profile', icon: 'User' }
       },
     ]
   },

@@ -1,4 +1,5 @@
 package logic
+
 import "cscan/internal/model"
 
 import (
@@ -79,11 +80,11 @@ func (l *AssetGroupsLogic) buildAssetGroups(req *types.AssetGroupsReq, workspace
 			group, exists := domainGroups[domain]
 			if !exists {
 				group = &types.AssetGroup{
-					Domain:        domain,
-					Source:        "Auto Discovery",
-					Status:        "finished", // 仅有资产无任务时默认已完成
-					FirstSeen:     row.CreateTime,
-					LatestUpdate:  row.UpdateTime,
+					Domain:       domain,
+					Source:       "Auto Discovery",
+					Status:       "finished", // 仅有资产无任务时默认已完成
+					FirstSeen:    row.CreateTime,
+					LatestUpdate: row.UpdateTime,
 				}
 				domainGroups[domain] = group
 			}
@@ -131,11 +132,11 @@ func (l *AssetGroupsLogic) buildAssetGroups(req *types.AssetGroupsReq, workspace
 				group, exists := domainGroups[domain]
 				if !exists {
 					domainGroups[domain] = &types.AssetGroup{
-						Domain:        domain,
-						Source:        "Auto Discovery",
-						Status:        status,
-						FirstSeen:     task.CreateTime,
-						LatestUpdate:  task.UpdateTime,
+						Domain:       domain,
+						Source:       "Auto Discovery",
+						Status:       status,
+						FirstSeen:    task.CreateTime,
+						LatestUpdate: task.UpdateTime,
 					}
 				} else {
 					group.Status = status

@@ -26,8 +26,8 @@ import (
 	"cscan/internal/model"
 	"cscan/rpc/task/pb"
 
-	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 	"github.com/google/uuid"
+	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -41,17 +41,17 @@ import (
 var fingerprintBatchTasks sync.Map // taskId -> *fingerprintBatchTaskState
 
 type fingerprintBatchTaskState struct {
-	mu          sync.Mutex
-	TaskId      string
-	Url         string
-	Scope       string
-	Total       int64
-	Completed   int64
-	Matched     int64
-	Status      string // running / completed / failed / stopped / stopping
-	Results     []types.MatchedFingerprintInfo
-	StopCh      chan struct{}
-	CreateTime  time.Time
+	mu         sync.Mutex
+	TaskId     string
+	Url        string
+	Scope      string
+	Total      int64
+	Completed  int64
+	Matched    int64
+	Status     string // running / completed / failed / stopped / stopping
+	Results    []types.MatchedFingerprintInfo
+	StopCh     chan struct{}
+	CreateTime time.Time
 }
 
 // isHexString 检查字符串是否为十六进制字符串
@@ -1166,7 +1166,7 @@ type WorkerFingerprintResult struct {
 	Details      string            `json:"details"`
 	Error        string            `json:"error"`
 	MatchedInfos []WorkerMatchedFp `json:"matchedInfos,omitempty"` // 批量验证匹配详情
-	TotalScanned int               `json:"totalScanned,omitempty"`  // 批量验证扫描总数
+	TotalScanned int               `json:"totalScanned,omitempty"` // 批量验证扫描总数
 }
 
 // WorkerMatchedFp Worker返回的批量验证中匹配的指纹信息
@@ -2667,14 +2667,14 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 						TaskId:    asset.TaskId,
 					}
 					existingForHelper := &model.Asset{
-						Id:       asset.Id,
-						TaskId:   asset.TaskId,
+						Id:         asset.Id,
+						TaskId:     asset.TaskId,
 						LastTaskId: asset.LastTaskId,
-						App:      asset.App,
-						Authority: asset.Authority,
-						Host:     asset.Host,
-						Port:     asset.Port,
-						IsHTTP:   asset.IsHTTP,
+						App:        asset.App,
+						Authority:  asset.Authority,
+						Host:       asset.Host,
+						Port:       asset.Port,
+						IsHTTP:     asset.IsHTTP,
 					}
 					opts := model.AssetWriteOptions{
 						TaskId:          asset.TaskId,
@@ -3308,9 +3308,9 @@ func (l *FingerprintBatchValidateLogic) syncValidateResultsToAssets(ctx context.
 		update := bson.M{
 			"$addToSet": bson.M{"app": bson.M{"$each": appNames}},
 			"$set": bson.M{
-				"update":                 true,
+				"update":                  true,
 				"last_status_change_time": now,
-				"update_time":            now,
+				"update_time":             now,
 			},
 		}
 		if isHttp {

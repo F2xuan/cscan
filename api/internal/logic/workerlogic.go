@@ -38,14 +38,11 @@ type WorkerStatus struct {
 	MemUsed            float64         `json:"memUsed"`
 	TaskStartedNumber  int             `json:"taskStartedNumber"`
 	TaskExecutedNumber int             `json:"taskExecutedNumber"`
+	SubCommandRunning  int             `json:"subCommandRunning,omitempty"`
 	Concurrency        int             `json:"concurrency"`
 	RunningTasks       int             `json:"runningTasks"`
 	UpdateTime         string          `json:"updateTime"`
 	Tools              map[string]bool `json:"tools"`
-	// 智能调度器状态
-	SchedulerMode        string `json:"schedulerMode,omitempty"`        // 调度模式
-	EffectiveConcurrency int    `json:"effectiveConcurrency,omitempty"` // 实际生效的并发数
-	IsThrottled          bool   `json:"isThrottled,omitempty"`          // 是否限流
 }
 
 func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
@@ -118,37 +115,37 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 			runningCount = 0
 		}
 
+		subCommandRunning := 0
+		if status.SubCommandRunning > 0 {
+			subCommandRunning = status.SubCommandRunning
+		}
+
 		// 计算健康状态
 		healthStatus := "healthy"
-		if status.IsThrottled {
-			healthStatus = "throttled"
-		} else if status.CPULoad > 85 || status.MemUsed > 90 {
+		if status.CPULoad > 85 || status.MemUsed > 90 {
 			healthStatus = "overloaded"
 		} else if status.CPULoad > 70 || status.MemUsed > 75 {
 			healthStatus = "warning"
 		}
 
-		// 实际生效的并发数（如果调度器未提供，使用配置的并发数）
-		effectiveConcurrency := status.EffectiveConcurrency
-		if effectiveConcurrency <= 0 {
-			effectiveConcurrency = status.Concurrency
+		displayRunning := runningCount
+		if subCommandRunning > runningCount {
+			displayRunning = subCommandRunning
 		}
 
 		list = append(list, types.Worker{
-			Name:                 status.WorkerName,
-			IP:                   status.IP,
-			CPULoad:              status.CPULoad,
-			MemUsed:              status.MemUsed,
-			TaskCount:            status.TaskExecutedNumber,
-			RunningCount:         runningCount,
-			Concurrency:          status.Concurrency,
-			Status:               workerStatus,
-			UpdateTime:           status.UpdateTime,
-			Tools:                status.Tools,
-			SchedulerMode:        status.SchedulerMode,
-			EffectiveConcurrency: effectiveConcurrency,
-			IsThrottled:          status.IsThrottled,
-			HealthStatus:         healthStatus,
+			Name:              status.WorkerName,
+			IP:                status.IP,
+			CPULoad:           status.CPULoad,
+			MemUsed:           status.MemUsed,
+			TaskCount:         status.TaskExecutedNumber,
+			RunningCount:      displayRunning,
+			SubCommandRunning: subCommandRunning,
+			Concurrency:       status.Concurrency,
+			Status:            workerStatus,
+			UpdateTime:        status.UpdateTime,
+			Tools:             status.Tools,
+			HealthStatus:      healthStatus,
 		})
 	}
 

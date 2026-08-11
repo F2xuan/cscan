@@ -18,7 +18,7 @@ Log:
   Mode: console
   Encoding: plain
   TimeFormat: "15:04:05"
-  
+
 Mongo:
   Uri: "mongodb://localhost:27017"
   DbName: "cscan"

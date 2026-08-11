@@ -50,4 +50,3 @@ func keywordOrClause(keywords []string) []interface{} {
 	}
 	return clause
 }
-

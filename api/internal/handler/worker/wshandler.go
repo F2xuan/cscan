@@ -20,17 +20,17 @@ import (
 // ==================== WebSocket Message Types ====================
 
 const (
-	WSTypeAuth           = "AUTH"            // 认证请求
-	WSTypeAuthOK         = "AUTH_OK"         // 认证成功
-	WSTypeAuthFail       = "AUTH_FAIL"       // 认证失败
-	WSTypePing           = "PING"            // 心跳请求
-	WSTypePong           = "PONG"            // 心跳响应
-	WSTypeLog            = "LOG"             // 日志消息
-	WSTypeLogBatch       = "LOG_BATCH"       // 批量日志消息
-	WSTypeControl        = "CONTROL"         // 控制信号
-	WSTypeLogSyncReq     = "LOG_SYNC_REQ"    // API 请求 Worker 同步日志
-	WSTypeLogSyncResp    = "LOG_SYNC_RESP"   // Worker 返回同步日志数据
-	WSTypeLogSyncAck     = "LOG_SYNC_ACK"    // API 确认日志已写入文件
+	WSTypeAuth        = "AUTH"          // 认证请求
+	WSTypeAuthOK      = "AUTH_OK"       // 认证成功
+	WSTypeAuthFail    = "AUTH_FAIL"     // 认证失败
+	WSTypePing        = "PING"          // 心跳请求
+	WSTypePong        = "PONG"          // 心跳响应
+	WSTypeLog         = "LOG"           // 日志消息
+	WSTypeLogBatch    = "LOG_BATCH"     // 批量日志消息
+	WSTypeControl     = "CONTROL"       // 控制信号
+	WSTypeLogSyncReq  = "LOG_SYNC_REQ"  // API 请求 Worker 同步日志
+	WSTypeLogSyncResp = "LOG_SYNC_RESP" // Worker 返回同步日志数据
+	WSTypeLogSyncAck  = "LOG_SYNC_ACK"  // API 确认日志已写入文件
 )
 
 // WSMessage WebSocket消息结构
@@ -66,11 +66,11 @@ type LogSyncReqPayload struct {
 
 // LogSyncRespPayload 日志同步响应载荷（Worker → API）
 type LogSyncRespPayload struct {
-	Filename  string                   `json:"filename"`
-	Logs      []svc.WorkerLogEntry     `json:"logs"`
-	NewOffset int64                    `json:"newOffset"`
-	HasMore   bool                     `json:"hasMore"`
-	NextFile  string                   `json:"nextFile"`
+	Filename  string               `json:"filename"`
+	Logs      []svc.WorkerLogEntry `json:"logs"`
+	NewOffset int64                `json:"newOffset"`
+	HasMore   bool                 `json:"hasMore"`
+	NextFile  string               `json:"nextFile"`
 }
 
 // LogSyncAckPayload 日志同步确认载荷（API → Worker）
@@ -89,18 +89,18 @@ type ControlPayload struct {
 
 // WorkerConnection 单个Worker的WebSocket连接
 type WorkerConnection struct {
-	conn            net.Conn
-	workerName      string
-	svcCtx          *svc.ServiceContext
-	sendChan        chan []byte
-	closeChan       chan struct{}
-	closeOnce       sync.Once
-	lastPing        time.Time
-	mu              sync.RWMutex
+	conn       net.Conn
+	workerName string
+	svcCtx     *svc.ServiceContext
+	sendChan   chan []byte
+	closeChan  chan struct{}
+	closeOnce  sync.Once
+	lastPing   time.Time
+	mu         sync.RWMutex
 
 	// 日志同步游标（记录已成功写入文件的日志位置）
 	syncCursorMu sync.Mutex
-	syncCursor   LogSyncReqPayload // {filename, offset}
+	syncCursor   LogSyncReqPayload        // {filename, offset}
 	syncRespChan chan *LogSyncRespPayload // 同步响应通道
 
 	// 日志同步完成信号（供 TriggerLogSyncAndWait 等待本轮同步落盘，用于刷新时立即拉取最新日志）
@@ -188,8 +188,8 @@ func (wc *WorkerConnection) GetLastPing() time.Time {
 
 // WorkerWSHandler WebSocket处理器
 type WorkerWSHandler struct {
-	svcCtx         *svc.ServiceContext
-	connections    sync.Map // workerName -> *WorkerConnection
+	svcCtx      *svc.ServiceContext
+	connections sync.Map // workerName -> *WorkerConnection
 }
 
 // 错误定义
@@ -1022,4 +1022,3 @@ func extractTaskIdFromChannel(channel string) string {
 }
 
 // ==================== Terminal Output Handling ====================
-

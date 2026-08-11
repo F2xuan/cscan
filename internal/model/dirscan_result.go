@@ -60,7 +60,7 @@ type DirScanResultModel struct {
 }
 
 // NewDirScanResultModel 兼容旧调用方的全局集合模型
-func NewDirScanResultModel(db *mongo.Database) *DirScanResultModel {
+func NewDirScanResultModel(db *mongo.Database, workspaceId ...string) *DirScanResultModel {
 	return &DirScanResultModel{
 		coll: db.Collection("dirscan_result"),
 	}
@@ -230,14 +230,14 @@ func (m *DirScanResultModel) UpsertMany(ctx context.Context, docs []*DirScanResu
 
 			filter := bson.M{"url": doc.URL}
 			setOnInsert := bson.M{
-				"_id":           primitive.NewObjectID(),
-				"workspace_id":  doc.WorkspaceId,
-				"main_task_id":  doc.MainTaskId,
-				"create_time":   doc.CreateTime,
-				"authority":     doc.Authority,
-				"host":          doc.Host,
-				"port":          doc.Port,
-				"path":          doc.Path,
+				"_id":          primitive.NewObjectID(),
+				"workspace_id": doc.WorkspaceId,
+				"main_task_id": doc.MainTaskId,
+				"create_time":  doc.CreateTime,
+				"authority":    doc.Authority,
+				"host":         doc.Host,
+				"port":         doc.Port,
+				"path":         doc.Path,
 			}
 			set := bson.M{
 				"update_time":    now,

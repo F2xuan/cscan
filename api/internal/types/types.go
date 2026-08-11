@@ -35,7 +35,6 @@ type LoginResp struct {
 	Username      string `json:"username"`
 	Role          string `json:"role"`
 	WorkspaceId   string `json:"workspaceId"`
-	NeedChangePwd bool   `json:"needChangePwd"`
 }
 
 type UserInfo struct {
@@ -60,6 +59,40 @@ type UserCreateReq struct {
 	Role     string `json:"role,optional"`
 	Status   string `json:"status"`
 	Avatar   string `json:"avatar,optional"`
+}
+
+// RegisterReq 公开注册请求（无需登录）
+type RegisterReq struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// ==================== 注册配置 ====================
+
+// RegistrationConfig 注册开关配置
+type RegistrationConfig struct {
+	Enabled        bool   `json:"enabled"`
+	RequireApproval bool  `json:"requireApproval"`
+	UpdateTime     string `json:"updateTime"`
+}
+
+// RegistrationConfigResp 注册配置响应
+type RegistrationConfigResp struct {
+	Code    int                  `json:"code"`
+	Msg     string               `json:"msg"`
+	Config  *RegistrationConfig  `json:"config,omitempty"`
+}
+
+// RegistrationConfigSaveReq 保存注册配置请求
+type RegistrationConfigSaveReq struct {
+	Enabled        bool `json:"enabled"`
+	RequireApproval bool `json:"requireApproval"`
+}
+
+// UserApproveReq 用户审核请求
+type UserApproveReq struct {
+	Id     string `json:"id"`
+	Status string `json:"status"` // enable（通过）/ disable（拒绝）
 }
 
 type UserUpdateReq struct {
@@ -89,12 +122,6 @@ type UserDeleteReq struct {
 type UserResetPasswordReq struct {
 	Id          string `json:"id"`
 	OldPassword string `json:"oldPassword,optional"`
-	NewPassword string `json:"newPassword"`
-}
-
-// UserFirstLoginResetPasswordReq 首次登录密码重置请求（不需要原密码验证）
-type UserFirstLoginResetPasswordReq struct {
-	Id          string `json:"id"`
 	NewPassword string `json:"newPassword"`
 }
 
@@ -847,6 +874,14 @@ type UserOnboardingStatusResp struct {
 	Done bool   `json:"done"`
 }
 
+// SystemStatusResp 系统状态响应（首次部署检测）
+type SystemStatusResp struct {
+	Code          int    `json:"code"`
+	Msg           string `json:"msg"`
+	HasUsers      bool   `json:"hasUsers"`      // 是否已有用户
+	IsFirstDeploy bool   `json:"isFirstDeploy"` // 是否为首次部署
+}
+
 type TaskProfile struct {
 	Id          string `json:"id"`
 	Name        string `json:"name"`
@@ -1139,21 +1174,18 @@ type TaskStatResp struct {
 
 // ==================== Worker管理 ====================
 type Worker struct {
-	Name         string          `json:"name"`
-	IP           string          `json:"ip"`
-	CPULoad      float64         `json:"cpuLoad"`
-	MemUsed      float64         `json:"memUsed"`
-	TaskCount    int             `json:"taskCount"`    // 已执行任务数
-	RunningCount int             `json:"runningCount"` // 正在执行任务数
-	Concurrency  int             `json:"concurrency"`  // 并发数
-	Status       string          `json:"status"`
-	UpdateTime   string          `json:"updateTime"`
-	Tools        map[string]bool `json:"tools"` // 工具安装状态
-	// 智能调度器状态
-	SchedulerMode        string `json:"schedulerMode,omitempty"`        // 调度模式: aggressive, normal, conservative, critical
-	EffectiveConcurrency int    `json:"effectiveConcurrency,omitempty"` // 实际生效的并发数
-	IsThrottled          bool   `json:"isThrottled,omitempty"`          // 是否处于限流状态
-	HealthStatus         string `json:"healthStatus,omitempty"`         // 健康状态: healthy, warning, overloaded, throttled
+	Name              string          `json:"name"`
+	IP                string          `json:"ip"`
+	CPULoad           float64         `json:"cpuLoad"`
+	MemUsed           float64         `json:"memUsed"`
+	TaskCount         int             `json:"taskCount"`    // 已执行任务数
+	RunningCount      int             `json:"runningCount"` // 正在执行任务数
+	SubCommandRunning int             `json:"subCommandRunning,omitempty"` // 正在执行的子命令数
+	Concurrency       int             `json:"concurrency"`  // 并发数
+	Status            string          `json:"status"`
+	UpdateTime        string          `json:"updateTime"`
+	Tools             map[string]bool `json:"tools"` // 工具安装状态
+	HealthStatus      string          `json:"healthStatus,omitempty"` // 健康状态: healthy, warning, overloaded
 }
 
 type WorkerListResp struct {
@@ -2214,6 +2246,7 @@ type WorkerInstallCommandReq struct {
 	ServerAddr string `json:"serverAddr,optional"` // API服务地址（可选，默认自动获取）
 	RpcAddr    string `json:"rpcAddr,optional"`    // RPC服务地址（可选，默认自动获取）
 	RedisAddr  string `json:"redisAddr,optional"`  // Redis地址（可选，默认自动获取）
+	MongoUri   string `json:"mongoUri,optional"`   // MongoDB地址（可选，默认自动获取）
 }
 
 // WorkerInstallCommandResp 获取Worker安装命令响应
@@ -2224,6 +2257,7 @@ type WorkerInstallCommandResp struct {
 	ServerAddr string            `json:"serverAddr"` // API服务地址
 	RpcAddr    string            `json:"rpcAddr"`    // RPC服务地址
 	RedisAddr  string            `json:"redisAddr"`  // Redis地址
+	MongoUri   string            `json:"mongoUri"`   // MongoDB地址
 	Commands   map[string]string `json:"commands"`   // 各平台安装命令
 }
 
@@ -2561,8 +2595,10 @@ type WeakpassDictSimple struct {
 
 // WeakpassDictImportReq 导入弱口令字典请求
 type WeakpassDictImportReq struct {
-	Content   string `json:"content"`   // 字典内容（每行一个 "用户名:密码" 或服务分组格式）
-	Format    string `json:"format"`    // 格式: auto（自动检测）, simple（简单格式：用户:密码，每行一个）, grouped（分组格式：[service]\nuser:pass）
+	Content string `json:"content"` // 字典内容（每行一个 "用户名:密码" 或服务分组格式）
+	// 格式: auto（自动检测）, simple（简单格式：用户:密码，每行一个）,
+	// grouped（分组格式：[service]\nuser:pass）
+	Format    string `json:"format"`
 	Name      string `json:"name"`      // 字典名称（可选，用于单字典导入）
 	Service   string `json:"service"`   // 服务类型（可选）
 	MergeSame bool   `json:"mergeSame"` // 是否合并相同名称的字典

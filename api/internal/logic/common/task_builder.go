@@ -8,8 +8,8 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
-	"cscan/pkg/utils"
 	"cscan/internal/scheduler"
+	"cscan/pkg/utils"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"

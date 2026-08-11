@@ -129,12 +129,12 @@ func WorkerLogsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Limit  int    `json:"limit"`  // 返回条数，默认500
-			Worker string `json:"worker"` // 指定 Worker 名称
-			Level  string `json:"level"`  // 过滤日志级别
-			Search string `json:"search"` // 模糊搜索关键词
-			Date   string `json:"date"`   // 指定日期 YYYY-MM-DD，空则取最新
-			Refresh bool  `json:"refresh"` // 是否触发同步（用户点击刷新按钮）
+			Limit   int    `json:"limit"`   // 返回条数，默认500
+			Worker  string `json:"worker"`  // 指定 Worker 名称
+			Level   string `json:"level"`   // 过滤日志级别
+			Search  string `json:"search"`  // 模糊搜索关键词
+			Date    string `json:"date"`    // 指定日期 YYYY-MM-DD，空则取最新
+			Refresh bool   `json:"refresh"` // 是否触发同步（用户点击刷新按钮）
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Limit <= 0 {

@@ -28,14 +28,14 @@ type dirscanBatchTaskState struct {
 	mu          sync.Mutex
 	TaskId      string
 	Total       int64
-	Completed   int64   // 成功研判条数
-	RiskCount   int64   // 有风险条数
-	NoRiskCount int64   // 无风险条数
-	FailedCount int64   // 研判失败条数
-	Status      string  // running/completed/failed/stopped/stopping
+	Completed   int64  // 成功研判条数
+	RiskCount   int64  // 有风险条数
+	NoRiskCount int64  // 无风险条数
+	FailedCount int64  // 研判失败条数
+	Status      string // running/completed/failed/stopped/stopping
 	StopCh      chan struct{}
 	EndTime     time.Time // 任务结束时间（用于TTL清理）
-	consecFail  int32   // 连续AI调用失败次数（原子访问），用于熔断
+	consecFail  int32     // 连续AI调用失败次数（原子访问），用于熔断
 }
 
 func init() {
@@ -654,4 +654,3 @@ func buildDirScanAnalysisPrompt(doc *model.DirScanResult) string {
 {"result": "risk" 或 "no_risk", "reason": "简短说明判断理由，不超过100字"}`)
 	return sb.String()
 }
-

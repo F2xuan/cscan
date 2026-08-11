@@ -38,9 +38,9 @@ func TestHasAnyScanPhaseEnabled(t *testing.T) {
 		{
 			"多个阶段启用",
 			map[string]interface{}{
-				"domainscan":   map[string]interface{}{"enable": true},
-				"fingerprint":  map[string]interface{}{"enable": true},
-				"pocscan":      map[string]interface{}{"enable": true},
+				"domainscan":  map[string]interface{}{"enable": true},
+				"fingerprint": map[string]interface{}{"enable": true},
+				"pocscan":     map[string]interface{}{"enable": true},
 			},
 			true,
 		},
@@ -134,11 +134,11 @@ func TestTaskPriorityValidation(t *testing.T) {
 		priority int
 		isValid  bool
 	}{
-		{0, true},  // background
-		{1, true},  // low
-		{2, true},  // normal
-		{3, true},  // high
-		{4, true},  // urgent
+		{0, true}, // background
+		{1, true}, // low
+		{2, true}, // normal
+		{3, true}, // high
+		{4, true}, // urgent
 		{-1, false},
 		{5, false},
 		{10, false},

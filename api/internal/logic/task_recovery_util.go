@@ -200,6 +200,13 @@ func RecoverWorkerTasks(ctx context.Context, svcCtx *svc.ServiceContext, workerN
 	var recoveredTasks []RecoveredTaskInfo
 
 	for _, taskId := range taskIds {
+		// context 超时或取消时，已恢复的任务保留，不再继续
+		if ctx.Err() != nil {
+			logx.Infof("[WorkerOffline] Recovery cancelled for %s (ctx: %v), returning %d recovered tasks",
+				workerName, ctx.Err(), len(recoveredTasks))
+			return recoveredTasks, nil
+		}
+
 		execKey := "cscan:task:execution:" + taskId
 		execData, err := svcCtx.RedisClient.Get(ctx, execKey).Result()
 		if err != nil {

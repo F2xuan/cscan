@@ -12,8 +12,8 @@ import (
 	"cscan/api/internal/types"
 	"cscan/internal/model"
 
-	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/xuri/excelize/v2"
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
 

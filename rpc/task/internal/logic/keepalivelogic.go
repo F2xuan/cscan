@@ -38,6 +38,7 @@ func (l *KeepAliveLogic) KeepAlive(in *pb.KeepAliveReq) (*pb.KeepAliveResp, erro
 		"memUsed":            in.MemUsed,
 		"taskStartedNumber":  in.TaskStartedNumber,
 		"taskExecutedNumber": in.TaskExecutedNumber,
+		"subCommandRunning":  in.SubCommandRunning,
 		"isDaemon":           in.IsDaemon,
 		"updateTime":         time.Now().Format("2006-01-02 15:04:05"),
 		"status":             "online",

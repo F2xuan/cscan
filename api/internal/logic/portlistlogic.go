@@ -1,4 +1,5 @@
 package logic
+
 import "cscan/internal/model"
 
 import (

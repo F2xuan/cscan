@@ -9,8 +9,8 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
-	"cscan/rpc/task/pb"
 	"cscan/internal/scanner"
+	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -1291,4 +1291,3 @@ func parseAuthor(author interface{}) string {
 		return fmt.Sprintf("%v", author)
 	}
 }
-

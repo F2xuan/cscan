@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"cscan/api/internal/logic"
@@ -159,15 +160,24 @@ func WorkerOfflineHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		logx.Infof("[WorkerOffline] Worker %s offline, deleted from Redis", req.WorkerName)
 
-		// 立即恢复该 Worker 处理中的任务（使用独立 context，不受 HTTP 连接断开影响）
-		recoverCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		recoveredTasks, err := logic.RecoverWorkerTasks(recoverCtx, svcCtx, req.WorkerName)
-		if err != nil {
-			logx.Errorf("[WorkerOffline] Failed to recover tasks for worker %s: %v", req.WorkerName, err)
-		} else if len(recoveredTasks) > 0 {
-			logx.Infof("[WorkerOffline] Worker %s: recovered %d orphaned tasks", req.WorkerName, len(recoveredTasks))
-		}
+		// 立即恢复该 Worker 处理中的任务（异步执行，避免阻塞 HTTP 响应）
+		// 修复：原同步调用 RecoverWorkerTasks 在循环 MongoDB 操作时可能阻塞超过 Worker 的
+		// 3s HTTP 超时，导致 Worker 发送 RST → API 进程崩溃 → 8888 端口短暂不可用。
+		go func(workerName string) {
+			defer func() {
+				if r := recover(); r != nil {
+					logx.Errorf("[WorkerOffline] panic worker=%s err=%v stack=%s", workerName, r, debug.Stack())
+				}
+			}()
+			recoverCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			recoveredTasks, err := logic.RecoverWorkerTasks(recoverCtx, svcCtx, workerName)
+			if err != nil {
+				logx.Errorf("[WorkerOffline] Failed to recover tasks for worker %s: %v", workerName, err)
+			} else if len(recoveredTasks) > 0 {
+				logx.Infof("[WorkerOffline] Worker %s: recovered %d orphaned tasks", workerName, len(recoveredTasks))
+			}
+		}(req.WorkerName)
 
 		httpx.OkJson(w, &WorkerOfflineResp{
 			Code:    0,

@@ -21,20 +21,20 @@ import (
 
 // onlineImportTaskState 在线导入任务状态
 type onlineImportTaskState struct {
-	mu          sync.RWMutex
-	TaskId      string    `json:"taskId"`
-	Status      string    `json:"status"` // running/completed/failed
-	Total       int       `json:"total"`
-	Completed   int       `json:"completed"`
-	Imported    int       `json:"imported"`
-	Skipped     int       `json:"skipped"`
-	ErrorMsg    string    `json:"errorMsg,omitempty"`
-	Platform    string    `json:"platform"`
-	ImportType  string    `json:"importType"` // current/all
-	StartTime   time.Time `json:"startTime"`
-	EndTime     time.Time `json:"endTime,omitempty"`
-	TotalFetched int      `json:"totalFetched"` // ImportAll专用
-	TotalPages  int       `json:"totalPages"`   // ImportAll专用
+	mu           sync.RWMutex
+	TaskId       string    `json:"taskId"`
+	Status       string    `json:"status"` // running/completed/failed
+	Total        int       `json:"total"`
+	Completed    int       `json:"completed"`
+	Imported     int       `json:"imported"`
+	Skipped      int       `json:"skipped"`
+	ErrorMsg     string    `json:"errorMsg,omitempty"`
+	Platform     string    `json:"platform"`
+	ImportType   string    `json:"importType"` // current/all
+	StartTime    time.Time `json:"startTime"`
+	EndTime      time.Time `json:"endTime,omitempty"`
+	TotalFetched int       `json:"totalFetched"` // ImportAll专用
+	TotalPages   int       `json:"totalPages"`   // ImportAll专用
 }
 
 // onlineImportTasks 全局任务存储（taskId -> *onlineImportTaskState）
@@ -250,7 +250,7 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 	totalImport := 0
 	totalSkipped := 0
 	currentPage := 1
-	emptyPageCount := 0  // 连续空页计数（处理API不稳定返回空的情况）
+	emptyPageCount := 0 // 连续空页计数（处理API不稳定返回空的情况）
 	const maxEmptyPages = 2
 	// FOFA请求重试参数（QPS限制1次/秒，错误码45012=请求过快）
 	const maxRateLimitRetries = 3

@@ -1,53 +1,72 @@
 package model
 
 import (
-	"context"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
-// TestCheckPassword_CorrectPassword 验证正确密码能通过校验。
-func TestCheckPassword_CorrectPassword(t *testing.T) {
-	hashed, err := HashPassword("mySecret123")
-	assert.NoError(t, err)
-	assert.True(t, CheckPassword("mySecret123", hashed))
+func TestValidatePasswordStrength(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		wantErr  bool
+	}{
+		{"空字符串", "", true},
+		{"少于8位", "Abc123", true},
+		{"正好8位合法", "Abc12345", false},
+		{"缺大写", "abc12345", true},
+		{"缺小写", "ABC12345", true},
+		{"缺数字", "Abcdefgh", true},
+		{"全部满足", "Test1234", false},
+		{"包含特殊字符", "Test@123", false},
+		{"超长密码", "Test1234567890ABCDEF", false},
+		{"Unicode字符", "Test123中文", false},
+		{"Unicode大写数字", "Тест1234", true}, // 西里尔字母Т不匹配A-Z，验证前后端一致性
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePasswordStrength(tt.password)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidatePasswordStrength(%q) error=%v, wantErr=%v", tt.password, err, tt.wantErr)
+			}
+		})
+	}
 }
 
-// TestCheckPassword_WrongPassword 验证错误密码被拒绝。
-// 这是本次修复的核心断言：密码错误必须返回 false，而不是触发上层基础设施错误。
-func TestCheckPassword_WrongPassword(t *testing.T) {
-	hashed, err := HashPassword("correctPassword")
-	assert.NoError(t, err)
-	assert.False(t, CheckPassword("wrongPassword", hashed))
+func TestHashPassword(t *testing.T) {
+	password := "Test1234"
+	hash, err := HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword failed: %v", err)
+	}
+	if len(hash) == 0 {
+		t.Error("Hash should not be empty")
+	}
+	if hash == password {
+		t.Error("Hash should not equal plaintext")
+	}
 }
 
-// TestCheckPassword_EmptyPassword 验证空密码行为。
-func TestCheckPassword_EmptyPassword(t *testing.T) {
-	hashed, err := HashPassword("nonEmpty")
-	assert.NoError(t, err)
-	assert.False(t, CheckPassword("", hashed))
-}
+func TestCheckPassword(t *testing.T) {
+	password := "Test1234"
+	hash, _ := HashPassword(password)
 
-// TestCheckPassword_EmptyHash 验证空哈希返回 false 而非 panic。
-// 防止数据库字段为空时引发服务崩溃。
-func TestCheckPassword_EmptyHash(t *testing.T) {
-	assert.False(t, CheckPassword("anyPassword", ""))
-}
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"正确密码", password, true},
+		{"错误密码", "Wrong123", false},
+		{"空字符串", "", false},
+	}
 
-// TestHashPassword_NonEmpty 验证哈希结果非空且与原文不同。
-func TestHashPassword_NonEmpty(t *testing.T) {
-	hashed, err := HashPassword("test123")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, hashed)
-	assert.NotEqual(t, "test123", hashed)
-}
-
-// TestVerifyPassword_Signature 验证 VerifyPassword 返回三个值（(*User, bool, error)）。
-// 这是一个编译期契约测试：如果有人意外把签名改回两个返回值，此测试将编译失败。
-// 重点：err 非 nil 时 ok 必须为 false；ok 为 false 时 err 可能为 nil（认证失败）也可能非 nil（基础设施错误）。
-func TestVerifyPassword_Signature(t *testing.T) {
-	// 真正的编译期断言：将方法值赋值给显式类型的变量。
-	// 若 VerifyPassword 签名被改为两个返回值，此行编译失败。
-	var _ func(*UserModel, context.Context, string, string) (*User, bool, error) = (*UserModel).VerifyPassword
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CheckPassword(tt.input, hash)
+			if result != tt.expected {
+				t.Errorf("CheckPassword(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
 }

@@ -438,12 +438,12 @@ func rebuildMetaFromAssets(l *AssetTargetDetailLogic, wsId, targetId string, tTy
 	for _, row := range rows {
 		if rowMatchesTarget(row.Host, row.Domain, tType, tValue) {
 			return &model.AssetTargetMeta{
-				Id:           targetId,
-				WorkspaceId:  wsId,
-				TargetType:   string(tType),
-				TargetValue:  tValue,
-				CreateTime:   row.CreateTime,
-				UpdateTime:   row.UpdateTime,
+				Id:            targetId,
+				WorkspaceId:   wsId,
+				TargetType:    string(tType),
+				TargetValue:   tValue,
+				CreateTime:    row.CreateTime,
+				UpdateTime:    row.UpdateTime,
 				FirstSeenTime: row.CreateTime,
 				LastScanTime:  row.UpdateTime,
 			}

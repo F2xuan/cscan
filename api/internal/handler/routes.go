@@ -95,6 +95,9 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	server.AddRoutes(
 		[]rest.Route{
 			{Method: http.MethodPost, Path: "/api/v1/login", Handler: user.LoginHandler(svcCtx)},
+			{Method: http.MethodPost, Path: "/api/v1/register", Handler: user.RegisterHandler(svcCtx)},
+			// 系统状态检测（首次部署时前端调用，无需认证）
+			{Method: http.MethodPost, Path: "/api/v1/system/status", Handler: user.SystemStatusHandler(svcCtx)},
 			// 全局主题配置（无需认证，所有人可获取）
 			{Method: http.MethodPost, Path: "/api/v1/theme/config/get", Handler: notify.ThemeConfigGetHandler(svcCtx)},
 			// 全局品牌配置（Logo / 标题；登录页也需展示，因此公开可读）
@@ -192,7 +195,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	authRoutes := []rest.Route{
 		// 用户管理（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/user/list", Handler: user.UserListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/user/firstLoginResetPassword", Handler: user.UserFirstLoginResetPasswordHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/resetPassword", Handler: user.UserResetPasswordHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/scanConfig/save", Handler: user.SaveScanConfigHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/scanConfig/get", Handler: user.GetScanConfigHandler(svcCtx)},
@@ -534,6 +536,11 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/user/create", Handler: user.UserCreateHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/update", Handler: user.UserUpdateHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/delete", Handler: user.UserDeleteHandler(svcCtx)},
+		// 用户审核（pending → enable/disable）
+		{Method: http.MethodPost, Path: "/api/v1/user/approve", Handler: user.UserApproveHandler(svcCtx)},
+		// 注册配置管理
+		{Method: http.MethodPost, Path: "/api/v1/registration/config/get", Handler: user.RegistrationConfigGetHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/registration/config/save", Handler: user.RegistrationConfigSaveHandler(svcCtx)},
 		// Worker管理（敏感操作,需要管理员权限）
 		// 安全修复:原放在 authRoutes 中,任意登录用户可获取 install key 或重启/删除 Worker
 		{Method: http.MethodPost, Path: "/api/v1/worker/list", Handler: worker.WorkerListHandler(svcCtx)},

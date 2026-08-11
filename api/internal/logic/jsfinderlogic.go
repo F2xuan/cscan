@@ -500,14 +500,14 @@ type batchTaskState struct {
 	mu          sync.Mutex
 	TaskId      string
 	Total       int64
-	Completed   int64   // 成功研判条数
-	RiskCount   int64   // 有风险条数
-	NoRiskCount int64   // 无风险条数
-	FailedCount int64   // 研判失败条数
-	Status      string  // running/completed/failed/stopped/stopping
+	Completed   int64         // 成功研判条数
+	RiskCount   int64         // 有风险条数
+	NoRiskCount int64         // 无风险条数
+	FailedCount int64         // 研判失败条数
+	Status      string        // running/completed/failed/stopped/stopping
 	StopCh      chan struct{} // 停止信号通道
-	EndTime     time.Time    // 任务结束时间（用于TTL清理）
-	consecFail  int32    // 连续AI调用失败次数（原子访问），用于熔断
+	EndTime     time.Time     // 任务结束时间（用于TTL清理）
+	consecFail  int32         // 连续AI调用失败次数（原子访问），用于熔断
 }
 
 func init() {

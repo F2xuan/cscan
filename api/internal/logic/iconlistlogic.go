@@ -1,4 +1,4 @@
-﻿package logic
+package logic
 
 import (
 	"context"
@@ -268,7 +268,6 @@ func (l *IconListLogic) countNewIconAssets(workspaceId string) (int64, error) {
 	}
 	return total, nil
 }
-
 
 func (l *IconListLogic) IconBatchDelete(req *types.IconBatchDeleteReq) (*types.BaseResp, error) {
 	if len(req.Ids) == 0 {

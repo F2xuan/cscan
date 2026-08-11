@@ -1273,6 +1273,7 @@ type KeepAliveReq struct {
 	TaskExecutedNumber int32                  `protobuf:"varint,5,opt,name=taskExecutedNumber,proto3" json:"taskExecutedNumber,omitempty"`
 	IsDaemon           bool                   `protobuf:"varint,6,opt,name=isDaemon,proto3" json:"isDaemon,omitempty"`
 	Ip                 string                 `protobuf:"bytes,7,opt,name=ip,proto3" json:"ip,omitempty"`
+	SubCommandRunning  int32                  `protobuf:"varint,8,opt,name=subCommandRunning,proto3" json:"subCommandRunning,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1354,6 +1355,13 @@ func (x *KeepAliveReq) GetIp() string {
 		return x.Ip
 	}
 	return ""
+}
+
+func (x *KeepAliveReq) GetSubCommandRunning() int32 {
+	if x != nil {
+		return x.SubCommandRunning
+	}
+	return 0
 }
 
 type KeepAliveResp struct {
@@ -3982,7 +3990,7 @@ const file_task_proto_rawDesc = "" +
 	"\x11SaveVulResultResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x14\n" +
-	"\x05total\x18\x03 \x01(\x05R\x05total\"\xec\x01\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total\"\x9a\x02\n" +
 	"\fKeepAliveReq\x12\x1e\n" +
 	"\n" +
 	"workerName\x18\x01 \x01(\tR\n" +
@@ -3992,7 +4000,8 @@ const file_task_proto_rawDesc = "" +
 	"\x11taskStartedNumber\x18\x04 \x01(\x05R\x11taskStartedNumber\x12.\n" +
 	"\x12taskExecutedNumber\x18\x05 \x01(\x05R\x12taskExecutedNumber\x12\x1a\n" +
 	"\bisDaemon\x18\x06 \x01(\bR\bisDaemon\x12\x0e\n" +
-	"\x02ip\x18\a \x01(\tR\x02ip\"\xd1\x01\n" +
+	"\x02ip\x18\a \x01(\tR\x02ip\x12,\n" +
+	"\x11subCommandRunning\x18\b \x01(\x05R\x11subCommandRunning\"\xd1\x01\n" +
 	"\rKeepAliveResp\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12&\n" +
 	"\x0emanualStopFlag\x18\x02 \x01(\bR\x0emanualStopFlag\x12*\n" +

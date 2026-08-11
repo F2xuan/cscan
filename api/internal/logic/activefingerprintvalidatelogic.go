@@ -122,9 +122,9 @@ func (l *ActiveFingerprintValidateLogic) waitForActiveFingerprintValidateResult(
 
 		if statusData.State == "SUCCESS" || statusData.State == "FAILURE" {
 			var resultWrapper struct {
-				Status string                `json:"status"`
-				Result WorkerActiveFpResult  `json:"result"`
-				Error  string                `json:"error"`
+				Status string               `json:"status"`
+				Result WorkerActiveFpResult `json:"result"`
+				Error  string               `json:"error"`
 			}
 			if err := json.Unmarshal([]byte(statusData.Result), &resultWrapper); err != nil {
 				return &WorkerActiveFpResult{Error: "解析结果失败: " + err.Error()}, nil
@@ -141,9 +141,9 @@ func (l *ActiveFingerprintValidateLogic) waitForActiveFingerprintValidateResult(
 
 // WorkerActiveFpResult Worker返回的主动指纹验证结果
 type WorkerActiveFpResult struct {
-	Matched     bool            `json:"matched"`
+	Matched     bool               `json:"matched"`
 	PathResults []WorkerPathResult `json:"pathResults"`
-	Error       string          `json:"error"`
+	Error       string             `json:"error"`
 }
 
 // WorkerPathResult 单个路径验证结果

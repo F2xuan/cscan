@@ -334,19 +334,19 @@ func (l *IPLogic) IPStat(workspaceId string) (*types.IPStatResp, error) {
 				}
 
 				firstSeen := asset.FirstSeenTime
-					if firstSeen.IsZero() {
-						firstSeen = asset.CreateTime
-					}
-					isNewAsset := !firstSeen.Before(time.Now().AddDate(0, 0, -1))
+				if firstSeen.IsZero() {
+					firstSeen = asset.CreateTime
+				}
+				isNewAsset := !firstSeen.Before(time.Now().AddDate(0, 0, -1))
 
-					for _, ip := range ips {
-						if !ipSet[ip] {
-							ipSet[ip] = true
-							if isNewAsset {
-								newIPs[ip] = true
-							}
+				for _, ip := range ips {
+					if !ipSet[ip] {
+						ipSet[ip] = true
+						if isNewAsset {
+							newIPs[ip] = true
 						}
 					}
+				}
 			}
 		}
 

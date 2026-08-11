@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -420,6 +421,29 @@ func (m *ExecutorTaskModel) Insert(ctx context.Context, doc *ExecutorTask) error
 	doc.CreateTime = time.Now()
 	doc.Status = TaskStatusPending
 	_, err := m.coll.InsertOne(ctx, doc)
+	return err
+}
+
+// UpdateByTaskId 按 task_id 更新执行任务字段（Worker 直连 MongoDB 写回状态/结果）
+func (m *ExecutorTaskModel) UpdateByTaskId(ctx context.Context, taskId string, fields map[string]interface{}) error {
+	if taskId == "" {
+		return errors.New("executor task id cannot be empty")
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	set := bson.M{}
+	for k, v := range fields {
+		set[k] = v
+	}
+	if _, ok := set["end_time"]; !ok {
+		if status, ok := set["status"].(string); ok && (status == TaskStatusSuccess || status == TaskStatusFailure) {
+			set["end_time"] = time.Now()
+		}
+	}
+
+	_, err := m.coll.UpdateOne(ctx, bson.M{"task_id": taskId}, bson.M{"$set": set})
 	return err
 }
 

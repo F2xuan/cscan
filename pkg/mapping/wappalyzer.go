@@ -163,7 +163,8 @@ var WappalyzerNucleiMapping = map[string][]string{
 	"prometheus": {"prometheus"},
 	"zabbix":     {"zabbix"},
 	"nagios":     {"nagios"},
-	"kibana":     {"kibana", "elastic"},
+	"kibana":               {"kibana", "elastic"},
+	"elasticsearch kibana": {"kibana", "elastic"},
 	"splunk":     {"splunk"},
 	"datadog":    {"datadog"},
 

@@ -76,24 +76,6 @@ services:
       retries: 3
       start_period: 40s
 
-  # CSCAN RPC 服务
-  cscan-rpc:
-    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-rpc:latest
-    container_name: cscan_rpc
-    logging: *default-logging
-    environment:
-      - TZ=Asia/Shanghai
-      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
-      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
-    depends_on:
-      redis:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - cscan_network
-
   # CSCAN Web 服务
   cscan-web:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-web:latest
@@ -123,10 +105,14 @@ services:
       - CSCAN_KEY=${CSCAN_WORKER_KEY}
       - CSCAN_NAME=cscan-default-worker
       - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
+      - CSCAN_REDIS_ADDR=redis:6379
+      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
     depends_on:
       cscan-api:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     networks:

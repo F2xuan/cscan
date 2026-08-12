@@ -17,8 +17,10 @@ import (
 	"syscall"
 	"time"
 
+	"cscan/internal/notification"
 	"cscan/worker/internal/worker"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stat"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -191,6 +193,40 @@ func validateInstallKey(apiServer, key, name string) error {
 	return lastErr
 }
 
+// connectWorkerRedis 初始化 Worker 直连 Redis 客户端（用于任务调度层）
+func connectWorkerRedis() *redis.Client {
+	addr := os.Getenv("CSCAN_REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	password := os.Getenv("CSCAN_REDIS_PASSWORD")
+	db := 0
+	if dbStr := os.Getenv("CSCAN_REDIS_DB"); dbStr != "" {
+		if v, err := strconv.Atoi(dbStr); err == nil {
+			db = v
+		}
+	}
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         addr,
+		Password:     password,
+		DB:           db,
+		PoolSize:     20,
+		MinIdleConns: 2,
+		MaxRetries:   3,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		logx.Errorf("[Worker][Redis] ping failed: %v", err)
+		return nil
+	}
+
+	logx.Infof("[Worker][Redis] connected, addr=%s, db=%d", addr, db)
+	return client
+}
+
 // connectWorkerMongo 仅用于 Worker 直连 MongoDB 写入资产，使用独享连接池。
 func connectWorkerMongo(uri string) (*mongo.Client, *mongo.Database) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -292,13 +328,18 @@ func main() {
 	// 获取本机IP
 	ip := worker.GetLocalIP()
 
-	// 直连 MongoDB 用于扫描结果写入
-	var mongoClient *mongo.Client
-	var mongoDB *mongo.Database
-	if mongoURI := os.Getenv("CSCAN_MONGO_URI"); mongoURI != "" {
-		mongoClient, mongoDB = connectWorkerMongo(mongoURI)
-	} else {
-		logx.Info("[Worker][MongoDirect] CSCAN_MONGO_URI not set; direct writes disabled")
+	// 直连 MongoDB 用于扫描结果写入（Phase 1 后为必填项）
+	mongoURI := os.Getenv("CSCAN_MONGO_URI")
+	if mongoURI == "" {
+		logx.Error("❌ Error: CSCAN_MONGO_URI is required for direct MongoDB write")
+		logx.Error("   Please set CSCAN_MONGO_URI environment variable")
+		os.Exit(1)
+	}
+
+	mongoClient, mongoDB := connectWorkerMongo(mongoURI)
+	if mongoDB == nil {
+		logx.Error("❌ Error: Failed to connect to MongoDB")
+		os.Exit(1)
 	}
 
 	config := worker.WorkerConfig{
@@ -316,8 +357,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	if mongoDB != nil {
-		w.SetMongoDB(mongoClient, mongoDB)
+	// 设置 MongoDB 连接（Phase 1 后为必需）
+	w.SetMongoDB(mongoClient, mongoDB)
+
+	// 初始化 Redis 直连（Phase 2：任务调度层直连 Redis）
+	rdb := connectWorkerRedis()
+	if rdb != nil {
+		w.SetRedis(rdb)
+	} else {
+		logx.Error("❌ Error: Failed to connect to Redis, falling back to HTTP scheduling")
+	}
+
+	// 初始化通知服务（Phase 3：任务完成/失败触发通知）
+	if rdb != nil {
+		notifySvc := notification.NewService(mongoDB, rdb)
+		w.SetNotifyService(notifySvc)
+		logx.Info("[Worker] Notification service initialized")
 	}
 
 	// 启动Worker

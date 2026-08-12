@@ -10,7 +10,7 @@ import (
 	"cscan/internal/scheduler"
 )
 
-func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig) []*scanner.Asset {
+func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig, orgId string) []*scanner.Asset {
 	// 添加 panic 恢复机制
 	defer func() {
 		if r := recover(); r != nil {
@@ -34,26 +34,33 @@ func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskIn
 	// 根据工具选择不同的执行逻辑
 	if tool == "fingerprintx" {
 		w.taskLog(task.TaskId, LevelInfo, "Port identify: executing with Fingerprintx")
-		return w.executePortIdentifyWithFingerprintx(ctx, task, assets, config)
+		return w.executePortIdentifyWithFingerprintx(ctx, task, assets, config, orgId)
 	} else {
 		w.taskLog(task.TaskId, LevelInfo, "Port identify: executing with Nmap")
-		return w.executePortIdentifyWithNmap(ctx, task, assets, config)
+		return w.executePortIdentifyWithNmap(ctx, task, assets, config, orgId)
 	}
 }
 
 // executePortIdentifyWithNmap 使用 Nmap 执行端口识别
-func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig) []*scanner.Asset {
+func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig, orgId string) []*scanner.Asset {
 	// 获取超时配置
 	timeout := config.Timeout
 	if timeout <= 0 {
 		timeout = 30 // 默认30秒/主机
 	}
 
-	// 按主机分组
+	// 按主机分组（去重，防止同一端口被 Nmap 重复扫描）
 	hostPorts := make(map[string][]int)
 	hostAssets := make(map[string][]*scanner.Asset)
+	seenPortPerHost := make(map[string]map[int]bool)
 	for _, asset := range assets {
-		hostPorts[asset.Host] = append(hostPorts[asset.Host], asset.Port)
+		if seenPortPerHost[asset.Host] == nil {
+			seenPortPerHost[asset.Host] = make(map[int]bool)
+		}
+		if !seenPortPerHost[asset.Host][asset.Port] {
+			seenPortPerHost[asset.Host][asset.Port] = true
+			hostPorts[asset.Host] = append(hostPorts[asset.Host], asset.Port)
+		}
 		hostAssets[asset.Host] = append(hostAssets[asset.Host], asset)
 	}
 
@@ -108,6 +115,16 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 			return identifiedAssets
 		}
 
+		// naabu/masscan 未识别到端口时跳过 nmap，避免产生大量 "Nmap: no ports to scan" 噪音日志
+		if len(ports) == 0 {
+			w.taskLog(task.TaskId, LevelDebug, "Port identify(nmap): skipping %s, no ports to scan", host)
+			for _, asset := range hostAssets[host] {
+				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
+				identifiedAssets = append(identifiedAssets, asset)
+			}
+			continue
+		}
+
 		// 构建端口字符串
 		portStrs := make([]string, len(ports))
 		for i, p := range ports {
@@ -155,6 +172,8 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
 			}
 			identifiedAssets = append(identifiedAssets, nmapResult.Assets...)
+			// 流式入库：单主机端口识别完成立即保存
+			w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, nmapResult.Assets)
 		} else {
 			// Nmap没有结果时，使用原始资产
 			for _, asset := range hostAssets[host] {
@@ -169,7 +188,7 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 }
 
 // executePortIdentifyWithFingerprintx 使用 Fingerprintx 执行端口识别
-func (w *Worker) executePortIdentifyWithFingerprintx(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig) []*scanner.Asset {
+func (w *Worker) executePortIdentifyWithFingerprintx(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig, orgId string) []*scanner.Asset {
 	// 获取配置
 	timeout := config.Timeout
 	if timeout <= 0 {

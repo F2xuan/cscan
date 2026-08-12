@@ -99,11 +99,6 @@ func (l *WorkerLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
 
-	// DEBUG 级别日志仅本地输出，不写入文件（避免指纹探测等大量 DEBUG 日志）
-	if level == LevelDebug {
-		return
-	}
-
 	// 写入本地文件（事实源），游标同步机制会自动将其传输到 API
 	if l.fileLogger != nil {
 		l.fileLogger.Write(level, "", msg)

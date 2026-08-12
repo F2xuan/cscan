@@ -888,7 +888,16 @@
         "screenshot": "Screenshot",
         "cname": "CNAME",
         "domain": "Domain",
-        "category": "Category"
+        "category": "Category",
+        "labels": "Labels",
+        "app": "Application",
+        "header": "Header",
+        "body": "Body",
+        "cert": "Certificate",
+        "source": "Source",
+        "ip": "IP",
+        "memo": "Memo",
+        "color_tag": "Color Tag"
       }
     },
     "history": {
@@ -1375,7 +1384,13 @@
     "importOption": "Import Option",
     "fileExtensions": "File Extensions",
     "pocTypes": "POC Types",
-    "scanAll": "Scan All"
+    "scanAll": "Scan All",
+    "summarySuffix": "pps",
+    "summaryThreads": "{n} threads",
+    "summaryTimeout": "{n}s",
+    "summaryNoService": "No service",
+    "summaryNoDict": "No dict",
+    "summaryNoPoc": "No POC"
   },
   "onboarding": {
     "title": "Welcome to CSCAN",
@@ -2442,7 +2457,9 @@
     "exportSuccessCount": "Successfully exported {count} records",
     "noDirScanData": "No directory scan data",
     "records": "records",
-    "targets": "targets"
+    "targets": "targets",
+    "noTaskIdHint": "Open a task report from the task list, or use the periodic report above",
+    "goTaskList": "Go to task list"
   },
   "site": {
     "site": "Site",
@@ -2709,6 +2726,7 @@
     "aiAnalyzedRisk": "AI analysis completed: Risk detected",
     "aiAnalyzedNoRisk": "AI analysis completed: No risk",
     "batchAIAnalyze": "Batch AI Analyze",
+    "aiConcurrency": "AI Concurrency (1-5)",
     "batchAIAnalyzeConfirm": "Batch analyze all unanalyzed records. Continue?",
     "batchAnalyzeSelectedConfirm": "Analyze selected {count} records with AI. Continue?",
     "batchAnalyzeFilteredConfirm": "Analyze unanalyzed records under current filter. Continue?",
@@ -2876,6 +2894,7 @@
     "aiAnalyze": "AI Analyze",
     "aiAnalyzing": "Analyzing...",
     "batchAIAnalyze": "Batch AI Analysis",
+    "aiConcurrency": "AI Concurrency (1-5)",
     "batchAIAnalyzeConfirm": "Start batch AI analysis on all pending records? This will call LLM API and may incur costs and take time.",
     "batchAnalyzeSelectedConfirm": "Start batch AI analysis on {count} selected records?",
     "batchAnalyzeFilteredConfirm": "Start batch AI analysis on all pending records matching current filters?",
@@ -2975,6 +2994,7 @@
     "configured": "Configured",
     "notConfigured": "Not Configured",
     "apiKey": "API Key",
+    "account": "Account",
     "apiSecret": "Email",
     "fofaSecretPlaceholder": "Enter Fofa account email",
     "fofaKeyPlaceholder": "Enter Fofa API Key",

@@ -18,6 +18,16 @@
       <!-- 工具栏左侧：批量AI研判+导出 -->
       <template #toolbar-left>
         <div v-if="enableAI" style="display: flex; align-items: center; margin-right: 8px;">
+          <el-input-number
+            v-model="aiConcurrency"
+            :min="1"
+            :max="5"
+            :step="1"
+            :disabled="batchAnalyzing"
+            size="small"
+            style="width: 90px; margin-right: 4px;"
+            :title="$t('dirscan.aiConcurrency')"
+          />
           <el-button
             type="primary"
             :loading="batchAnalyzing && !batchTaskId"
@@ -207,6 +217,7 @@ const selectedRows = computed(() => proTableRef.value?.selectedRows || [])
 // AI研判状态
 const analyzingId = ref('')
 const batchAnalyzing = ref(false)
+const aiConcurrency = ref(1)
 const batchTaskId = ref('')
 const batchTotal = ref(0)
 const batchCompleted = ref(0)
@@ -445,7 +456,7 @@ async function handleSingleAnalyze(row) {
 
 async function handleBatchAnalyze() {
   let confirmMsg = t('dirscan.batchAIAnalyzeConfirm')
-  const params = { workspaceId: props.extraParams?.workspaceId || '' }
+  const params = { workspaceId: props.extraParams?.workspaceId || '', concurrency: aiConcurrency.value }
   const selected = selectedRows.value
   if (selected.length > 0) {
     params.ids = selected.map(r => r.id)

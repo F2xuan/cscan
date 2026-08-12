@@ -191,7 +191,7 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 	}
 	dirscanAIBatchTasks.Store(taskId, state)
 
-	go l.runDirScanBatchAnalysis(taskId, state, pendingDocs)
+	go l.runDirScanBatchAnalysis(taskId, state, pendingDocs, clampAIConcurrency(req.Concurrency))
 
 	return &types.DirScanAIBatchAnalyzeResp{
 		Code: 0, Msg: "批量研判任务已启动", TaskId: taskId, Total: int64(len(pendingDocs)),
@@ -199,7 +199,7 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 }
 
 // runDirScanBatchAnalysis 批量研判实际执行逻辑
-func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatchTaskState, pendingDocs []*model.DirScanResult) {
+func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatchTaskState, pendingDocs []*model.DirScanResult, concurrency int) {
 	bgCtx := context.Background()
 
 	aiCfg, err := l.loadDirScanAIConfigWithCtx(bgCtx, "")
@@ -212,7 +212,6 @@ func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatc
 		return
 	}
 
-	concurrency := 5
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	stopped := int32(0)

@@ -3,20 +3,21 @@
     <!-- 操作栏 -->
     <el-card class="action-card" :body-style="{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }">
       <el-button type="primary" @click="goToCreateTask">
-        <el-icon><Plus /></el-icon>{{ $t('task.newTask') }}
+        <el-icon>
+          <Plus />
+        </el-icon>{{ $t('task.newTask') }}
       </el-button>
       <el-button @click="goToTemplateManage">
-        <el-icon><Document /></el-icon>{{ $t('task.scanTemplate') }}
+        <el-icon>
+          <Document />
+        </el-icon>{{ $t('task.scanTemplate') }}
       </el-button>
-      <el-switch
-        v-model="autoRefresh"
-        style="margin-left: 10px"
-        :active-text="$t('task.autoRefresh')"
-        inactive-text=""
-        @change="handleAutoRefreshChange"
-      />
+      <el-switch v-model="autoRefresh" style="margin-left: 10px" :active-text="$t('task.autoRefresh')" inactive-text=""
+        @change="handleAutoRefreshChange" />
       <el-button :loading="loading" style="margin-left: auto" @click="loadData">
-        <el-icon><Refresh /></el-icon>{{ $t('common.refresh') }}
+        <el-icon>
+          <Refresh />
+        </el-icon>{{ $t('common.refresh') }}
       </el-button>
     </el-card>
 
@@ -25,19 +26,14 @@
       <div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
         <div>
           <el-button type="danger" :disabled="selectedRows.length === 0" @click="handleBatchDelete">
-            <el-icon><Delete /></el-icon>{{ $t('task.batchDelete') }} ({{ selectedRows.length }})
+            <el-icon>
+              <Delete />
+            </el-icon>{{ $t('task.batchDelete') }} ({{ selectedRows.length }})
           </el-button>
         </div>
         <div style="display: flex; gap: 10px;">
-          <el-select 
-            v-model="filterTags" 
-            multiple 
-            filterable 
-            :placeholder="$t('task.filterByTags')" 
-            clearable 
-            style="width: 250px"
-            @change="loadData"
-          >
+          <el-select v-model="filterTags" multiple filterable :placeholder="$t('task.filterByTags')" clearable
+            style="width: 250px" @change="loadData">
             <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
           </el-select>
         </div>
@@ -54,12 +50,14 @@
           </div>
         </template>
         <template #default>
-          <el-table :data="tableData" v-loading="loading && tableData.length > 0" stripe max-height="500" @selection-change="handleSelectionChange">
+          <el-table :data="tableData" v-loading="loading && tableData.length > 0" stripe max-height="500"
+            @selection-change="handleSelectionChange">
             <el-table-column type="selection" width="50" />
             <el-table-column prop="name" :label="$t('task.taskName')" min-width="150">
               <template #default="{ row }">
                 <span>{{ row.name }}</span>
-                <el-tag v-if="row.isCron && row.cronRule" type="info" size="small" effect="plain" style="margin-left: 6px;">
+                <el-tag v-if="row.isCron && row.cronRule" type="info" size="small" effect="plain"
+                  style="margin-left: 6px;">
                   {{ getCronSourceLabel(row) }}
                 </el-tag>
               </template>
@@ -93,577 +91,37 @@
             </el-table-column>
             <el-table-column :label="$t('common.operation')" width="300" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="row.status === 'CREATED' || !row.status" type="success" link size="small" @click="handleStart(row)">{{ $t('task.start') }}</el-button>
-                <el-button v-if="row.status === 'CREATED' || !row.status" type="warning" link size="small" @click="goToEditTask(row)">{{ $t('task.edit') }}</el-button>
-                <el-button v-if="['STARTED', 'PENDING'].includes(row.status)" type="warning" link size="small" @click="handlePause(row)">{{ $t('task.pause') }}</el-button>
-                <el-button v-if="row.status === 'PAUSED'" type="success" link size="small" @click="handleResume(row)">{{ $t('task.resume') }}</el-button>
-                <el-button v-if="['STARTED', 'PAUSED', 'PENDING', 'CREATED', ''].includes(row.status) && row.status !== 'SUCCESS' && row.status !== 'FAILURE' && row.status !== 'STOPPED'" type="danger" link size="small" @click="handleStop(row)">{{ $t('task.stop') }}</el-button>
+                <el-button v-if="row.status === 'CREATED' || !row.status" type="success" link size="small"
+                  @click="handleStart(row)">{{ $t('task.start') }}</el-button>
+                <el-button v-if="row.status === 'CREATED' || !row.status" type="warning" link size="small"
+                  @click="goToEditTask(row)">{{ $t('task.edit') }}</el-button>
+                <el-button v-if="['STARTED', 'PENDING'].includes(row.status)" type="warning" link size="small"
+                  @click="handlePause(row)">{{ $t('task.pause') }}</el-button>
+                <el-button v-if="row.status === 'PAUSED'" type="success" link size="small" @click="handleResume(row)">{{
+                  $t('task.resume') }}</el-button>
+                <el-button
+                  v-if="['STARTED', 'PAUSED', 'PENDING', 'CREATED', ''].includes(row.status) && row.status !== 'SUCCESS' && row.status !== 'FAILURE' && row.status !== 'STOPPED'"
+                  type="danger" link size="small" @click="handleStop(row)">{{ $t('task.stop') }}</el-button>
                 <el-button type="primary" link size="small" @click="showDetail(row)">{{ $t('task.detail') }}</el-button>
                 <el-button type="info" link size="small" @click="showLogs(row)">{{ $t('task.logs') }}</el-button>
                 <el-button type="info" link size="small" @click="viewReport(row)">{{ $t('task.report') }}</el-button>
-                <el-button v-if="['SUCCESS', 'FAILURE', 'STOPPED'].includes(row.status)" type="warning" link size="small" @click="handleRetry(row)">{{ $t('task.retry') }}</el-button>
-                <el-button type="danger" link size="small" @click="handleDelete(row)">{{ $t('task.delete') }}</el-button>
+                <el-button v-if="['SUCCESS', 'FAILURE', 'STOPPED'].includes(row.status)" type="warning" link
+                  size="small" @click="handleRetry(row)">{{ $t('task.retry') }}</el-button>
+                <el-button type="danger" link size="small" @click="handleDelete(row)">{{ $t('task.delete')
+                }}</el-button>
               </template>
             </el-table-column>
           </el-table>
         </template>
       </el-skeleton>
-      <el-pagination
-        v-model:current-page="pagination.page"
-        v-model:page-size="pagination.pageSize"
-        :total="pagination.total"
-        :page-sizes="[20, 50, 100]"
-        layout="total, sizes, prev, pager, next"
-        class="pagination"
-        @size-change="loadData"
-        @current-change="loadData"
-      />
+      <el-pagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize"
+        :total="pagination.total" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next"
+        class="pagination" @size-change="loadData" @current-change="loadData" />
     </el-card>
 
-    <!-- 任务详情侧边栏 - 现代化设计 -->
-    <el-drawer v-model="detailVisible" :title="$t('task.taskDetail')" size="50%" class="task-detail-dialog" destroy-on-close direction="rtl">
-      <!-- 顶部任务概览卡片 -->
-      <div class="detail-header">
-        <div class="detail-header-main">
-          <div class="task-title-row">
-            <h3 class="task-title">{{ currentTask.name }}</h3>
-            <el-tag :type="getStatusType(currentTask.status, currentTask)" size="large" effect="dark" class="status-tag">
-              {{ getStatusText(currentTask) }}
-            </el-tag>
-          </div>
-          <div class="task-target">
-            <el-icon><Aim /></el-icon>
-            <span class="target-text">{{ currentTask.target }}</span>
-          </div>
-        </div>
-        
-        <!-- 进度环形图 -->
-        <div class="progress-circle-wrapper">
-          <el-progress 
-            type="circle" 
-            :percentage="Math.min(currentTask.progress || 0, 100)" 
-            :width="90"
-            :stroke-width="8"
-            :color="getProgressColor(currentTask.status)"
-          >
-            <template #default="{ percentage }">
-              <span class="progress-value">{{ percentage }}%</span>
-            </template>
-          </el-progress>
-          <div class="subtask-info">{{ currentTask.subTaskDone || 0 }}/{{ currentTask.subTaskCount || 0 }}</div>
-        </div>
-      </div>
-
-      <!-- 时间信息卡片 -->
-      <div class="time-cards">
-        <div class="time-card">
-          <el-icon class="time-icon"><Clock /></el-icon>
-          <div class="time-content">
-            <span class="time-label">{{ $t('common.createTime') }}</span>
-            <span class="time-value">{{ currentTask.createTime || '-' }}</span>
-          </div>
-        </div>
-        <div class="time-card">
-          <el-icon class="time-icon"><VideoPlay /></el-icon>
-          <div class="time-content">
-            <span class="time-label">{{ $t('task.startTime') }}</span>
-            <span class="time-value">{{ currentTask.startTime || '-' }}</span>
-          </div>
-        </div>
-        <div class="time-card">
-          <el-icon class="time-icon"><CircleCheck /></el-icon>
-          <div class="time-content">
-            <span class="time-label">{{ $t('task.endTime') }}</span>
-            <span class="time-value">{{ ['SUCCESS', 'FAILURE', 'STOPPED'].includes(currentTask.status) ? (currentTask.endTime || '-') : '-' }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 扫描工作流 -->
-      <ScanWorkflow 
-        v-if="parsedConfig"
-        :config="parsedConfig"
-        :current-phase="currentTask.currentPhase"
-        :status="currentTask.status"
-      />
-
-      <!-- 执行结果 -->
-      <div v-if="currentTask.result" class="result-section">
-        <div class="section-title">
-          <el-icon><Document /></el-icon>
-          <span>{{ $t('task.executionResult') }}</span>
-        </div>
-        <div class="result-content">{{ currentTask.result }}</div>
-      </div>
-      
-      <!-- 扫描配置概览 -->
-      <div v-if="parsedConfig" class="config-section-modern">
-        <div class="section-title">
-          <el-icon><Setting /></el-icon>
-          <span>{{ $t('task.scanConfig') }}</span>
-        </div>
-        
-        <!-- 扫描策略概览卡片 -->
-        <div class="strategy-overview">
-          <div class="strategy-card">
-            <div class="strategy-header">
-              <el-icon class="strategy-icon"><Operation /></el-icon>
-              <span class="strategy-title">{{ $t('task.scanStrategy') }}</span>
-            </div>
-            <div class="strategy-stats">
-              <div class="stat-item">
-                <span class="stat-label">{{ $t('task.enabledModules') }}</span>
-                <span class="stat-value">{{ enabledModulesCount }}/8</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">{{ $t('task.taskSplit') }}</span>
-                <span class="stat-value">{{ parsedConfig.batchSize === 0 ? $t('task.noSplit') : (parsedConfig.batchSize || 50) }}</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">{{ $t('task.currentPhase') }}</span>
-                <span class="stat-value">{{ currentTask.currentPhase || '-' }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 模块开关状态 -->
-        <div class="module-grid">
-          <div class="module-card" :class="{ active: parsedConfig.domainscan?.enable }">
-            <el-icon class="module-icon"><Connection /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.subdomainScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.domainscan?.enable">
-                <span class="detail-item">{{ parsedConfig.domainscan?.subfinder !== false ? 'Subfinder' : '' }}</span>
-                <span class="detail-item" v-if="parsedConfig.domainscan?.subdomainDictIds?.length">{{ $t('task.dictBrute') }}</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.domainscan?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.domainscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.portscan?.enable !== false }">
-            <el-icon class="module-icon"><Monitor /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.portScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.portscan?.enable !== false">
-                <span class="detail-item">{{ parsedConfig.portscan?.tool || 'naabu' }}</span>
-                <span class="detail-item">{{ parsedConfig.portscan?.ports || 'top100' }}</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.portscan?.enable !== false ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.portscan?.enable !== false ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.portidentify?.enable }">
-            <el-icon class="module-icon"><Search /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.portIdentify') }}</span>
-              <div class="module-details" v-if="parsedConfig.portidentify?.enable">
-                <span class="detail-item">{{ parsedConfig.portidentify?.tool || 'nmap' }}</span>
-                <span class="detail-item">{{ parsedConfig.portidentify?.timeout || 60 }}s</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.portidentify?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.portidentify?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.fingerprint?.enable }">
-            <el-icon class="module-icon"><Stamp /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.fingerprintScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.fingerprint?.enable">
-                <span class="detail-item">{{ parsedConfig.fingerprint?.tool === 'httpx' ? 'Httpx' : 'Wappalyzer' }}</span>
-                <span class="detail-item" v-if="parsedConfig.fingerprint?.screenshot">{{ $t('task.screenshot') }}</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.fingerprint?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.fingerprint?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.brutescan?.enable }">
-            <el-icon class="module-icon"><Key /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.weakpassScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.brutescan?.enable">
-                <span class="detail-item" v-if="parsedConfig.brutescan?.services?.length">{{ parsedConfig.brutescan.services.join(', ') }}</span>
-                <span class="detail-item" v-else>{{ $t('task.allServices') }}</span>
-                <span class="detail-item">{{ parsedConfig.brutescan?.threads || 20 }} {{ $t('task.threads') }}</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.brutescan?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.brutescan?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.pocscan?.enable }">
-            <el-icon class="module-icon"><WarnTriangleFilled /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.vulScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.pocscan?.enable">
-                <span class="detail-item">Nuclei</span>
-                <span class="detail-item">{{ parsedConfig.pocscan?.severity || 'critical,high,medium' }}</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.pocscan?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.pocscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.dirscan?.enable }">
-            <el-icon class="module-icon"><FolderOpened /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.dirScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.dirscan?.enable">
-                <span class="detail-item">{{ parsedConfig.dirscan?.threads || 10 }} {{ $t('task.threads') }}</span>
-                <span class="detail-item" v-if="parsedConfig.dirscan?.dictIds?.length">{{ parsedConfig.dirscan.dictIds.length }} {{ $t('task.dicts') }}</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.dirscan?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.dirscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-          <div class="module-card" :class="{ active: parsedConfig.jsfinder?.enable }">
-            <el-icon class="module-icon"><Connection /></el-icon>
-            <div class="module-info">
-              <span class="module-name">{{ $t('task.jsfinderScan') }}</span>
-              <div class="module-details" v-if="parsedConfig.jsfinder?.enable">
-                <span class="detail-item">JSFinder</span>
-              </div>
-            </div>
-            <el-tag :type="parsedConfig.jsfinder?.enable ? 'success' : 'info'" size="small" effect="plain">
-              {{ parsedConfig.jsfinder?.enable ? $t('task.enabled') : $t('task.disabled') }}
-            </el-tag>
-          </div>
-        </div>
-        
-        <!-- 详细配置 - 折叠面板 -->
-        <el-collapse v-model="activeConfigPanels" class="config-collapse">
-          <!-- 子域名扫描配置 -->
-          <el-collapse-item v-if="parsedConfig.domainscan?.enable" name="domainscan">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><Connection /></el-icon>
-                <span>{{ $t('task.subdomainScan') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.useSubfinder') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.subfinder !== false ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.timeout || 300 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.maxEnumTime') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.maxEnumerationTime || 10 }}{{ $t('task.minutes') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.concurrentThreads') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.threads || 10 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.dnsResolve') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.resolveDNS ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.removeWildcard') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.removeWildcard ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.concurrent') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.concurrent || 50 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.rateLimit') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.rateLimit || 0 }} req/s</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.bruteforceEngine') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.bruteforceEngine || 'puredns' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.dictBrute') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.subdomainDictIds?.length ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div v-if="parsedConfig.domainscan?.subdomainDictIds?.length" class="config-item">
-                <span class="config-label">{{ $t('task.dictCount') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan.subdomainDictIds.length }}</span>
-              </div>
-              <div v-if="parsedConfig.domainscan?.bandwidth" class="config-item">
-                <span class="config-label">{{ $t('task.bandwidth') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan.bandwidth }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-          
-          <!-- 端口扫描配置 -->
-          <el-collapse-item v-if="parsedConfig.portscan?.enable !== false" name="portscan">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><Monitor /></el-icon>
-                <span>{{ $t('task.portScan') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.scanTool') }}</span>
-                <span class="config-value highlight">{{ parsedConfig.portscan?.tool || 'naabu' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.portRange') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.ports || 'top100' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.scanRate') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.rate || 1000 }} pps</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.portThreshold') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.portThreshold || 100 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.scanType') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.scanType === 's' ? 'SYN' : 'CONNECT' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.timeout || 60 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.skipHostDiscovery') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.skipHostDiscovery ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.excludeCdnWaf') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.excludeCDN ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.retries') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.retries || 3 }}</span>
-              </div>
-              <div v-if="parsedConfig.portscan?.excludeHosts" class="config-item full-width">
-                <span class="config-label">{{ $t('task.excludeTargets') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan.excludeHosts }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-          
-          <!-- 端口识别配置 -->
-          <el-collapse-item v-if="parsedConfig.portidentify?.enable" name="portidentify">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><Search /></el-icon>
-                <span>{{ $t('task.portIdentify') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.identifyTool') }}</span>
-                <span class="config-value highlight">{{ parsedConfig.portidentify?.tool || 'nmap' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.portidentify?.timeout || 60 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
-                <span class="config-label">{{ $t('task.concurrent') }}</span>
-                <span class="config-value">{{ parsedConfig.portidentify?.concurrency || 10 }}</span>
-              </div>
-              <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
-                <span class="config-label">{{ $t('task.scanUDP') }}</span>
-                <span class="config-value">{{ parsedConfig.portidentify?.udp ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
-                <span class="config-label">{{ $t('task.fastMode') }}</span>
-                <span class="config-value">{{ parsedConfig.portidentify?.fastMode ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div v-if="parsedConfig.portidentify?.args && parsedConfig.portidentify?.tool === 'nmap'" class="config-item full-width">
-                <span class="config-label">{{ $t('task.extraParams') }}</span>
-                <span class="config-value code">{{ parsedConfig.portidentify.args }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-          
-          <!-- 指纹识别配置 -->
-          <el-collapse-item v-if="parsedConfig.fingerprint?.enable" name="fingerprint">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><Stamp /></el-icon>
-                <span>{{ $t('task.fingerprintScan') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.probeTool') }}</span>
-                <el-tag :type="parsedConfig.fingerprint?.tool === 'httpx' ? 'primary' : 'success'" size="small">
-                  {{ parsedConfig.fingerprint?.tool === 'httpx' ? 'Httpx' : 'Wappalyzer' }}
-                </el-tag>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.iconHash') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.iconHash ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.customFingerprint') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.customEngine ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.screenshot') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.screenshot ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.activeScan') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.activeScan ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.targetTimeout || parsedConfig.fingerprint?.timeout || 90 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.concurrent') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.concurrency || 10 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.filterMode') }}</span>
-                <span class="config-value">{{ parsedConfig.fingerprint?.filterMode || 'default' }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-
-          <!-- 弱口令扫描配置 -->
-          <el-collapse-item v-if="parsedConfig.brutescan?.enable" name="brutescan">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><Key /></el-icon>
-                <span>{{ $t('task.weakpassScan') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.targetService') }}</span>
-                <span class="config-value">{{ parsedConfig.brutescan?.services?.length ? parsedConfig.brutescan.services.join(', ') : $t('task.allServices') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.concurrent') }}</span>
-                <span class="config-value">{{ parsedConfig.brutescan?.threads || 20 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.brutescan?.timeout || 5 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.delayMs') }}</span>
-                <span class="config-value">{{ parsedConfig.brutescan?.delayMs || 100 }}ms</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.weakpassDict') }}</span>
-                <span class="config-value">{{ parsedConfig.brutescan?.weakpassDictIds?.length ? (parsedConfig.brutescan.weakpassDictIds.length + ' ' + $t('task.dicts')) : ($t('task.useDefaultDict')) }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.scanStrategy') }}</span>
-                <span class="config-value">{{ parsedConfig.brutescan?.stopOnFirst ? $t('task.stopOnFirstFound') : $t('task.scanAll') }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-
-          <!-- 漏洞扫描配置 -->
-          <el-collapse-item v-if="parsedConfig.pocscan?.enable" name="pocscan">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><WarnTriangleFilled /></el-icon>
-                <span>{{ $t('task.vulScan') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.scanEngine') }}</span>
-                <span class="config-value highlight">Nuclei</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.pocSource') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.customPocOnly ? $t('task.customPocOnly') : $t('task.defaultAndCustom') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.autoScanCustomTag') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.autoScan ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.autoScanBuiltinMapping') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.automaticScan ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.severityLevel') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.severity || 'critical,high,medium' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.targetTimeout') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.targetTimeout || 600 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div v-if="parsedConfig.pocscan?.pocTypes?.length" class="config-item full-width">
-                <span class="config-label">{{ $t('task.pocTypes') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan.pocTypes.join(', ') }}</span>
-              </div>
-              <div v-if="parsedConfig.pocscan?.nucleiTemplateIds?.length" class="config-item full-width">
-                <span class="config-label">{{ $t('task.specifyNucleiTemplate') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan.nucleiTemplateIds.length }} {{ $t('task.templates') }}</span>
-              </div>
-              <div v-if="parsedConfig.pocscan?.customPocIds?.length" class="config-item full-width">
-                <span class="config-label">{{ $t('task.customPocs') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan.customPocIds.length }} {{ $t('task.pocs') }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-          
-          <!-- 目录扫描配置 -->
-          <el-collapse-item v-if="parsedConfig.dirscan?.enable" name="dirscan">
-            <template #title>
-              <div class="collapse-title">
-                <el-icon><FolderOpened /></el-icon>
-                <span>{{ $t('task.dirScan') }}</span>
-              </div>
-            </template>
-            <div class="config-grid">
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.scanTool') }}</span>
-                <span class="config-value highlight">{{ parsedConfig.dirscan?.tool || 'dirsearch' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.concurrent') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan?.threads || parsedConfig.dirscan?.concurrency || 10 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan?.timeout || 10 }}{{ $t('task.seconds') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.followRedirect') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan?.followRedirect ? $t('common.yes') : $t('common.no') }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.statusCodeFilter') }}</span>
-                <span class="config-value">{{ (parsedConfig.dirscan?.statusCodes && parsedConfig.dirscan.statusCodes.length) ? parsedConfig.dirscan.statusCodes.join(',') : '200,204,301,302,307,401,403,405,500' }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.useDict') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' ' + $t('task.dicts')) : $t('task.defaultDict') }}</span>
-              </div>
-              <div v-if="parsedConfig.dirscan?.extensions && parsedConfig.dirscan.extensions.length" class="config-item">
-                <span class="config-label">{{ $t('task.fileExtensions') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan.extensions.join(', ') }}</span>
-              </div>
-              <div v-if="parsedConfig.dirscan?.recursionDepth" class="config-item">
-                <span class="config-label">{{ $t('task.recursionDepth') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan.recursionDepth }}</span>
-              </div>
-            </div>
-          </el-collapse-item>
-        </el-collapse>
-      </div>
-    </el-drawer>
-
     <!-- 新建/编辑任务对话框 - Tab页布局 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('task.editTask') : $t('task.newTask')" width="720px" top="5vh" class="task-dialog">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('task.editTask') : $t('task.newTask')" width="720px"
+      top="5vh" class="task-dialog">
       <el-tabs v-model="activeTab" class="task-tabs">
         <!-- 基本信息 Tab -->
         <el-tab-pane :label="$t('task.basicInfo')" name="basic">
@@ -675,12 +133,14 @@
               <el-input v-model="form.target" type="textarea" :rows="6" :placeholder="$t('task.targetPlaceholder')" />
             </el-form-item>
             <el-form-item :label="$t('task.organization')">
-              <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable style="width: 100%">
+              <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable
+                style="width: 100%">
                 <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
               </el-select>
             </el-form-item>
             <el-form-item :label="$t('task.specifyWorker')">
-              <el-select v-model="form.workers" multiple :placeholder="$t('task.anyWorkerExecute')" clearable style="width: 100%">
+              <el-select v-model="form.workers" multiple :placeholder="$t('task.anyWorkerExecute')" clearable
+                style="width: 100%">
                 <el-option v-for="w in workers" :key="w.name" :label="`${w.name} (${w.ip})`" :value="w.name" />
               </el-select>
             </el-form-item>
@@ -690,7 +150,8 @@
         <!-- 子域名扫描 Tab -->
         <el-tab-pane name="domainscan">
           <template #label>
-            <span>{{ $t('task.subdomainScan') }} <el-tag v-if="form.domainscanEnable" type="success" size="small" style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
+            <span>{{ $t('task.subdomainScan') }} <el-tag v-if="form.domainscanEnable" type="success" size="small"
+                style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
           </template>
           <el-form label-width="120px" class="tab-form">
             <el-form-item :label="$t('task.enable')">
@@ -739,7 +200,8 @@
         <!-- 端口扫描 Tab -->
         <el-tab-pane name="portscan">
           <template #label>
-            <span>{{ $t('task.portScan') }} <el-tag v-if="form.portscanEnable" type="success" size="small" style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
+            <span>{{ $t('task.portScan') }} <el-tag v-if="form.portscanEnable" type="success" size="small"
+                style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
           </template>
           <el-form label-width="100px" class="tab-form">
             <el-form-item :label="$t('task.enable')">
@@ -810,7 +272,8 @@
         <!-- 端口识别 Tab -->
         <el-tab-pane name="portidentify">
           <template #label>
-            <span>{{ $t('task.portIdentify') }} <el-tag v-if="form.portidentifyEnable" type="success" size="small" style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
+            <span>{{ $t('task.portIdentify') }} <el-tag v-if="form.portidentifyEnable" type="success" size="small"
+                style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
           </template>
           <el-form label-width="100px" class="tab-form">
             <el-form-item :label="$t('task.enable')">
@@ -854,7 +317,8 @@
         <!-- 指纹识别 Tab -->
         <el-tab-pane name="fingerprint">
           <template #label>
-            <span>{{ $t('task.fingerprintScan') }} <el-tag v-if="form.fingerprintEnable" type="success" size="small" style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
+            <span>{{ $t('task.fingerprintScan') }} <el-tag v-if="form.fingerprintEnable" type="success" size="small"
+                style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
           </template>
           <el-form label-width="100px" class="tab-form">
             <el-form-item :label="$t('task.enable')">
@@ -893,7 +357,8 @@
         <!-- 漏洞扫描 Tab -->
         <el-tab-pane name="pocscan">
           <template #label>
-            <span>{{ $t('task.vulScan') }} <el-tag v-if="form.pocscanEnable" type="success" size="small" style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
+            <span>{{ $t('task.vulScan') }} <el-tag v-if="form.pocscanEnable" type="success" size="small"
+                style="margin-left:4px">{{ $t('task.enabled') }}</el-tag></span>
           </template>
           <el-form label-width="100px" class="tab-form">
             <el-form-item :label="$t('task.enable')">
@@ -907,8 +372,10 @@
                 <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
               </el-form-item>
               <el-form-item :label="$t('task.autoScan')">
-                <el-checkbox v-model="form.pocscanAutoScan" :disabled="form.pocscanCustomOnly">{{ $t('task.customTagMapping') }}</el-checkbox>
-                <el-checkbox v-model="form.pocscanAutomaticScan" :disabled="form.pocscanCustomOnly">{{ $t('task.webFingerprintAutoMatch') }}</el-checkbox>
+                <el-checkbox v-model="form.pocscanAutoScan" :disabled="form.pocscanCustomOnly">{{
+                  $t('task.customTagMapping') }}</el-checkbox>
+                <el-checkbox v-model="form.pocscanAutomaticScan" :disabled="form.pocscanCustomOnly">{{
+                  $t('task.webFingerprintAutoMatch') }}</el-checkbox>
               </el-form-item>
               <el-form-item :label="$t('task.customPoc')">
                 <el-checkbox v-model="form.pocscanCustomOnly">{{ $t('task.onlyUseCustomPoc') }}</el-checkbox>
@@ -933,52 +400,70 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="dialogVisible = false">{{ $t('common.cancel') }}</el-button>
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">{{ isEdit ? $t('common.save') : $t('task.createTask') }}</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmit">{{ isEdit ? $t('common.save') :
+            $t('task.createTask') }}</el-button>
         </div>
       </template>
     </el-dialog>
 
     <!-- 任务日志对话框 -->
-    <el-dialog v-model="logDialogVisible" :title="$t('task.taskLog')" width="1000px" @close="closeLogDialog">
-      <div class="log-progress" v-if="currentLogTask">
-        <div class="progress-info">
-          <span class="task-name">{{ currentLogTask.name }}</span>
-          <el-tag :type="getStatusType(currentLogTask.status, currentLogTask)" size="small">{{ getStatusText(currentLogTask) }}</el-tag>
+    <!-- 任务日志内联面板 -->
+    <el-card v-if="taskLogPanelVisible" class="task-log-panel-card">
+      <div class="log-panel-header">
+        <div class="log-panel-title">
+          <el-icon>
+            <Document />
+          </el-icon>
+          <span>{{ $t('task.taskLog') }} - {{ currentLogTask?.name }}</span>
+          <el-tag :type="getStatusType(currentLogTask?.status, currentLogTask)" size="small">{{
+            getStatusText(currentLogTask) }}</el-tag>
         </div>
-        <el-progress :percentage="Math.min(currentLogTask.progress || 0, 100)" :status="currentLogTask.status === 'SUCCESS' ? 'success' : (currentLogTask.status === 'FAILURE' ? 'exception' : '')" :stroke-width="12" />
+        <div class="log-panel-actions">
+          <el-input v-model="logSearchKeyword" :placeholder="$t('task.searchLogs')" clearable size="small"
+            style="width: 180px">
+            <template #prefix><el-icon>
+                <Search />
+              </el-icon></template>
+          </el-input>
+          <el-select v-model="logWorkerFilter" :placeholder="$t('task.filterWorker')" clearable size="small"
+            style="width: 150px">
+            <el-option :label="$t('task.allWorkers')" value="" />
+            <el-option v-for="w in logWorkers" :key="w" :label="w" :value="w" />
+          </el-select>
+          <el-select v-model="logLevelFilter" :placeholder="$t('task.filterLevel')" clearable size="small"
+            style="width: 120px">
+            <el-option :label="$t('task.allLevels')" value="" />
+            <el-option label="DEBUG" value="DEBUG" />
+            <el-option label="INFO" value="INFO" />
+            <el-option label="WARN" value="WARN" />
+            <el-option label="ERROR" value="ERROR" />
+          </el-select>
+          <el-checkbox v-model="logIncludeDebug" size="small" @change="refreshLogs">包含 DEBUG</el-checkbox>
+          <el-button type="primary" size="small" :loading="logLoading" @click="refreshLogs">
+            <el-icon style="margin-right: 4px">
+              <Refresh />
+            </el-icon>{{ $t('common.refresh') }}
+          </el-button>
+          <el-button size="small" @click="closeLogPanel">{{ $t('common.close') }}</el-button>
+        </div>
       </div>
-      <div class="log-filter">
-        <el-input v-model="logSearchKeyword" :placeholder="$t('task.searchLogs')" clearable size="small" style="width: 180px; margin-right: 10px">
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-        <el-select v-model="logWorkerFilter" :placeholder="$t('task.filterWorker')" clearable size="small" style="width: 150px">
-          <el-option :label="$t('task.allWorkers')" value="" />
-          <el-option v-for="w in logWorkers" :key="w" :label="w" :value="w" />
-        </el-select>
-        <el-select v-model="logLevelFilter" :placeholder="$t('task.filterLevel')" clearable size="small" style="width: 120px; margin-left: 10px">
-          <el-option :label="$t('task.allLevels')" value="" />
-          <el-option label="DEBUG" value="DEBUG" />
-          <el-option label="INFO" value="INFO" />
-          <el-option label="WARN" value="WARN" />
-          <el-option label="ERROR" value="ERROR" />
-        </el-select>
-        <el-checkbox v-model="logIncludeDebug" size="small" style="margin-left: 14px" @change="refreshLogs">包含 DEBUG 日志</el-checkbox>
-        <span class="log-stats">{{ $t('task.totalLogs', { count: filteredLogs.length }) }}</span>
-      </div>
+      <el-progress v-if="currentLogTask" :percentage="Math.min(currentLogTask.progress || 0, 100)"
+        :status="currentLogTask.status === 'SUCCESS' ? 'success' : (currentLogTask.status === 'FAILURE' ? 'exception' : '')"
+        :stroke-width="8" style="margin-bottom: 10px" />
       <div class="log-container" ref="logContainerRef">
         <div v-if="filteredLogs.length === 0" class="log-empty">{{ $t('task.noLogs') }}</div>
-        <div v-for="(log, index) in filteredLogs" :key="index" class="log-entry" :class="'log-' + log.level.toLowerCase()">
+        <div v-for="(log, index) in filteredLogs" :key="index" class="log-entry"
+          :class="'log-' + log.level.toLowerCase()">
           <span class="log-time">{{ formatLogTime(log.timestamp) }}</span>
           <span class="log-level">[{{ log.level }}]</span>
           <span class="log-worker">{{ log.workerName }}</span>
           <span class="log-message">{{ log.displayMessage }}</span>
         </div>
       </div>
-      <template #footer>
-        <el-button @click="closeLogDialog">{{ $t('common.close') }}</el-button>
-        <el-button type="primary" @click="refreshLogs">{{ $t('common.refresh') }}</el-button>
-      </template>
-    </el-dialog>
+      <div class="log-panel-footer">
+        <span class="log-count-badge">{{ filteredLogs.length }} / {{ taskLogs.length }}</span>
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -987,7 +472,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Search, Clock, VideoPlay, CircleCheck, Document, Setting, Connection, Monitor, Stamp, WarnTriangleFilled, FolderOpened, Grid, Aim, Operation, Key, Refresh } from '@element-plus/icons-vue'
+import { Plus, Delete, Search, Document, Refresh } from '@element-plus/icons-vue'
 import ScanWorkflow from '@/components/ScanWorkflow.vue'
 import { getTaskList, createTask, deleteTask, batchDeleteTask, retryTask, startTask, pauseTask, resumeTask, stopTask, updateTask, getTaskLogs, getWorkerList, saveScanConfig, getScanConfig } from '@/api/task'
 import { validateTargets, formatValidationErrors } from '@/utils/target'
@@ -999,9 +484,8 @@ const { t } = useI18n()
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
-const detailVisible = ref(false)
-const activeConfigPanels = ref([]) // 折叠面板展开状态
-const logDialogVisible = ref(false)
+const taskLogPanelVisible = ref(false)
+const logLoading = ref(false)
 const tableData = ref([])
 const organizations = ref([])
 const workers = ref([])
@@ -1009,7 +493,6 @@ const allTags = ref([]) // 所有标签列表
 const filterTags = ref([]) // 过滤标签
 const formRef = ref()
 const logContainerRef = ref()
-const currentTask = ref({})
 const selectedRows = ref([])
 const autoRefresh = ref(true)
 const activeTab = ref('basic')
@@ -1057,7 +540,7 @@ const form = reactive({
   portidentifyTool: 'nmap',
   portidentifyTimeout: 60,
   portidentifyConcurrency: 10,
-  portidentifyArgs: '-sV -version-intensity 5',
+  portidentifyArgs: '-sV --version-intensity 5',
   portidentifyUDP: false,
   portidentifyFastMode: false,
   portidentifyForceScan: false,
@@ -1093,7 +576,7 @@ const rules = {
 // 判断是否有前序扫描阶段启用（用于控制强制扫描开关的显隐）
 const hasPrePhaseEnabled = computed(() => {
   return form.domainscanEnable || form.portscanEnable ||
-         form.portidentifyEnable || form.fingerprintEnable
+    form.portidentifyEnable || form.fingerprintEnable
 })
 
 const logWorkers = computed(() => {
@@ -1174,17 +657,17 @@ function stopAutoRefresh() { if (refreshTimer) { clearInterval(refreshTimer); re
 async function loadData() {
   loading.value = true
   try {
-    const params = { 
-      page: pagination.page, 
+    const params = {
+      page: pagination.page,
       pageSize: pagination.pageSize
     }
     if (filterTags.value && filterTags.value.length > 0) {
       params.tags = filterTags.value
     }
     const res = await getTaskList(params)
-    if (res.code === 0) { 
+    if (res.code === 0) {
       tableData.value = res.list || []
-      pagination.total = res.total 
+      pagination.total = res.total
       // 收集所有标签
       const tagSet = new Set()
       res.list.forEach(task => {
@@ -1215,12 +698,12 @@ async function loadWorkers() {
 
 function getStatusType(status, row) {
   const map = { CREATED: 'info', PENDING: 'warning', STARTED: 'primary', PAUSED: 'warning', SUCCESS: 'success', FAILURE: 'danger', STOPPED: 'info', REVOKED: 'info' }
-  
+
   // 如果有状态值，直接返回映射
   if (status && map[status]) {
     return map[status]
   }
-  
+
   // 如果状态为空，根据进度推断状态类型
   if (!status && row) {
     if (row.progress >= 100 || (row.subTaskCount > 0 && row.subTaskDone >= row.subTaskCount)) {
@@ -1231,7 +714,7 @@ function getStatusType(status, row) {
     }
     return 'info'
   }
-  
+
   return 'info'
 }
 
@@ -1242,25 +725,6 @@ function getCronSourceLabel(row) {
   if (row.name && row.name.includes('空间引擎')) return '空间引擎'
   if (row.name && row.name.includes('(定时)')) return '定时扫描'
   return '定时任务'
-}
-
-// 获取进度环颜色
-function getProgressColor(status) {
-  // 使用 CSS 变量，通过 getComputedStyle 获取
-  const root = document.documentElement
-  const getVar = (name) => getComputedStyle(root).getPropertyValue(name).trim()
-  
-  const colorMap = {
-    CREATED: getVar('--status-info') || '#909399',
-    PENDING: getVar('--status-warning') || '#E6A23C',
-    STARTED: getVar('--status-primary') || '#409EFF',
-    PAUSED: getVar('--status-warning') || '#E6A23C',
-    SUCCESS: getVar('--status-success') || '#67C23A',
-    FAILURE: getVar('--status-danger') || '#F56C6C',
-    STOPPED: getVar('--status-info') || '#909399',
-    REVOKED: getVar('--status-info') || '#909399'
-  }
-  return colorMap[status] || getVar('--status-primary') || '#409EFF'
 }
 
 // 获取状态显示文本（简化状态显示，不按扫描模块显示）
@@ -1275,12 +739,12 @@ function getStatusText(row) {
     STOPPED: t('task.stopped'),
     REVOKED: t('task.revoked')
   }
-  
+
   // 如果有状态值，直接返回映射
   if (row?.status && statusMap[row.status]) {
     return statusMap[row.status]
   }
-  
+
   // 如果状态为空，根据进度推断状态
   if (!row?.status) {
     if (row?.progress >= 100 || (row?.subTaskCount > 0 && row?.subTaskDone >= row?.subTaskCount)) {
@@ -1291,34 +755,10 @@ function getStatusText(row) {
     }
     return t('task.created')
   }
-  
+
   return row?.status || t('task.unknown')
 }
 
-// 解析任务配置
-const parsedConfig = computed(() => {
-  if (!currentTask.value?.config) return null
-  try {
-    return JSON.parse(currentTask.value.config)
-  } catch (e) {
-    return null
-  }
-})
-
-// 计算启用的模块数量
-const enabledModulesCount = computed(() => {
-  if (!parsedConfig.value) return 0
-  let count = 0
-  if (parsedConfig.value.domainscan?.enable) count++
-  if (parsedConfig.value.portscan?.enable !== false) count++
-  if (parsedConfig.value.portidentify?.enable) count++
-  if (parsedConfig.value.fingerprint?.enable) count++
-  if (parsedConfig.value.brutescan?.enable) count++
-  if (parsedConfig.value.pocscan?.enable) count++
-  if (parsedConfig.value.dirscan?.enable) count++
-  if (parsedConfig.value.jsfinder?.enable) count++
-  return count
-})
 
 function resetForm() {
   Object.assign(form, {
@@ -1420,23 +860,10 @@ function applyConfig(config) {
   })
 }
 
-function showDetail(row) { currentTask.value = row; detailVisible.value = true }
-
-function handleEdit(row) {
-  loadWorkers()
-  isEdit.value = true
-  resetForm()
-  Object.assign(form, { id: row.id, name: row.name, target: row.target, workspaceId: row.workspaceId || '' })
-  // 解析已保存的配置
-  if (row.config) {
-    try {
-      const config = JSON.parse(row.config)
-      applyConfig(config)
-    } catch (e) { console.error('Parse config error:', e) }
-  }
-  activeTab.value = 'basic'
-  dialogVisible.value = true
+function showDetail(row) {
+  router.push({ path: '/task/detail', query: { id: row.id } })
 }
+
 
 function buildConfig() {
   return {
@@ -1566,13 +993,15 @@ async function showLogs(row) {
   currentLogTaskId.value = row.taskId
   currentLogTask.value = { ...row }
   taskLogs.value = []
-  logDialogVisible.value = true
+  taskLogPanelVisible.value = true
+  logLoading.value = false
   // 打开日志对话框时自动刷新一次（纯手动刷新模式，不再自动轮询/SSE）
   await refreshLogs()
 }
 
 async function refreshLogs() {
   if (!currentLogTaskId.value) return
+  logLoading.value = true
   try {
     const task = tableData.value.find(t => t.id === currentLogTask.value?.id)
     if (task) currentLogTask.value = { ...task }
@@ -1584,39 +1013,74 @@ async function refreshLogs() {
       scrollToBottom()
     }
   } catch (err) { console.error('Failed to load task logs:', err) }
+  finally {
+    logLoading.value = false
+  }
 }
 
 function scrollToBottom() {
   setTimeout(() => { if (logContainerRef.value) logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight }, 100)
 }
 
-function closeLogDialog() {
-  logDialogVisible.value = false
+function closeLogPanel() {
+  taskLogPanelVisible.value = false
   currentLogTaskId.value = ''
   currentLogTask.value = null
   taskLogs.value = []
   logWorkerFilter.value = ''
   logLevelFilter.value = ''
+  logLoading.value = false
 }
 </script>
 
 <style lang="scss" scoped>
 .task-page {
-  .action-card { margin-bottom: 20px; }
-  .pagination { margin-top: 20px; justify-content: flex-end; }
-  .form-hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
-  .sub-task-info { font-size: 11px; color: var(--el-text-color-secondary); margin-top: 2px; }
-  .tool-tip { color: var(--el-color-danger); font-size: 12px; }
-  .progress-hint { color: var(--el-text-color-secondary); font-size: 12px; }
+  .action-card {
+    margin-bottom: 20px;
+  }
+
+  .pagination {
+    margin-top: 20px;
+    justify-content: flex-end;
+  }
+
+  .form-hint {
+    margin-left: 10px;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+  }
+
+  .sub-task-info {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    margin-top: 2px;
+  }
+
+  .tool-tip {
+    color: var(--el-color-danger);
+    font-size: 12px;
+  }
+
+  .progress-hint {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+  }
 }
 
 .task-dialog {
-  :deep(.el-dialog__body) { padding: 10px 20px 0; }
+  :deep(.el-dialog__body) {
+    padding: 10px 20px 0;
+  }
 }
 
 .task-tabs {
-  :deep(.el-tabs__header) { margin-bottom: 15px; }
-  :deep(.el-tabs__item) { font-size: 14px; }
+  :deep(.el-tabs__header) {
+    margin-bottom: 15px;
+  }
+
+  :deep(.el-tabs__item) {
+    font-size: 14px;
+  }
 }
 
 .tab-form {
@@ -1629,31 +1093,51 @@ function closeLogDialog() {
   border-top: 1px solid var(--el-border-color-lighter);
 }
 
-.log-progress {
-  margin-bottom: 15px;
-  padding: 12px 15px;
-  background-color: var(--el-fill-color-light);
-  border-radius: 6px;
-  .progress-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
-    .task-name { font-weight: 500; font-size: 14px; }
-  }
+/* ========== 任务日志内联面板 ========== */
+.task-log-panel-card {
+  transition: all 0.3s ease;
+  border-top: 2px solid var(--el-color-primary) !important;
+  margin-bottom: 20px;
 }
 
-.log-filter {
-  margin-bottom: 10px;
+.log-panel-header {
   display: flex;
   align-items: center;
-  .log-stats { margin-left: auto; color: var(--el-text-color-secondary); font-size: 12px; }
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 
-.log-refresh-hint {
-  margin-right: auto;
-  color: var(--el-text-color-secondary);
+.log-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.log-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.log-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  margin-top: 8px;
+}
+
+.log-count-badge {
   font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
 .log-container {
@@ -1667,370 +1151,69 @@ function closeLogDialog() {
   line-height: 1.6;
 }
 
-.log-empty { color: var(--el-text-color-secondary); text-align: center; padding: 20px; }
-.log-entry { padding: 2px 0; white-space: pre-wrap; word-break: break-all; }
-.log-time { color: var(--el-color-success); margin-right: 8px; font-size: 11px; }
-.log-level { font-weight: bold; margin-right: 6px; min-width: 45px; display: inline-block; font-size: 11px; }
-.log-worker { color: var(--el-color-primary); margin-right: 6px; font-size: 11px; }
-.log-message { color: var(--el-text-color-primary); }
-.log-debug .log-level { color: var(--el-text-color-secondary); }
-.log-info .log-level { color: var(--el-color-info); }
-.log-warn .log-level, .log-warning .log-level { color: var(--el-color-warning); }
-.log-error .log-level { color: var(--el-color-danger); }
-
-.config-section {
-  margin-top: 15px;
-  h4 { color: var(--el-text-color-primary); font-weight: 500; }
-}
-
-.config-detail {
-  margin-top: 10px;
-}
-
-/* 任务详情对话框现代化样式 */
-.task-detail-dialog {
-  :deep(.el-dialog__body) {
-    padding: 0 20px 20px;
-    max-height: 70vh;
-    overflow-y: auto;
-  }
-}
-
-.detail-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+.log-empty {
+  color: var(--el-text-color-secondary);
+  text-align: center;
   padding: 20px;
-  background: linear-gradient(135deg, var(--el-fill-color-light) 0%, var(--el-fill-color-lighter) 100%);
-  border-radius: 12px;
-  margin-bottom: 16px;
-  border: 1px solid var(--el-border-color-lighter);
 }
 
-.detail-header-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.task-title-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.task-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.status-tag {
-  font-size: 13px;
-  padding: 6px 12px;
-  border-radius: 6px;
-}
-
-.task-target {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  .el-icon { margin-top: 2px; flex-shrink: 0; }
-  .target-text {
-    word-break: break-all;
-    line-height: 1.5;
-    max-height: 60px;
-    overflow-y: auto;
-  }
-}
-
-.progress-circle-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  .progress-value {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--el-text-color-primary);
-  }
-  .subtask-info {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-}
-
-.time-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.time-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 10px;
-  transition: all 0.2s ease;
-  &:hover {
-    background: var(--el-fill-color-light);
-    transform: translateY(-1px);
-  }
-}
-
-.time-icon {
-  font-size: 20px;
-  color: var(--el-color-primary);
-  flex-shrink: 0;
-}
-
-.time-content {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.time-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.time-value {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.result-section {
-  margin-bottom: 16px;
-  padding: 14px 16px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 10px;
-  border-left: 3px solid var(--el-color-info);
-}
-
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-  margin-bottom: 10px;
-  .el-icon { color: var(--el-color-primary); }
-}
-
-.result-content {
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  line-height: 1.6;
-  max-height: 80px;
-  overflow-y: auto;
+.log-entry {
+  padding: 2px 0;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
-.config-section-modern {
-  background: var(--el-fill-color-lighter);
-  border-radius: 12px;
-  padding: 16px;
-}
-
-.strategy-overview {
-  margin-bottom: 16px;
-}
-
-.strategy-card {
-  background: var(--el-bg-color);
-  border-radius: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
-}
-
-.strategy-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  .strategy-icon {
-    font-size: 18px;
-    color: var(--el-color-primary);
-  }
-  .strategy-title {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--el-text-color-primary);
-  }
-}
-
-.strategy-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  .stat-label {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-  .stat-value {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--el-color-primary);
-  }
-}
-
-.module-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.module-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  background: var(--el-bg-color);
-  border-radius: 8px;
-  border: 1px solid var(--el-border-color-lighter);
-  transition: all 0.2s ease;
-  &.active {
-    border-color: var(--el-color-success);
-    background: var(--el-fill-color-light);
-  }
-}
-
-html.dark .module-card.active {
-  border-color: var(--el-color-success);
-  background: rgba(103, 194, 58, 0.15);
-}
-
-.module-icon {
-  font-size: 20px;
-  color: var(--el-text-color-secondary);
-  flex-shrink: 0;
-  .active & { color: var(--el-color-success); }
-}
-
-.module-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.module-name {
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  font-weight: 500;
-}
-
-.module-details {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  .detail-item {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-    background: var(--el-fill-color-light);
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-}
-
-.batch-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--el-bg-color);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  margin-bottom: 14px;
-  .el-icon { color: var(--el-color-primary); }
-}
-
-.config-collapse {
-  border: none;
-  :deep(.el-collapse-item__header) {
-    background: var(--el-bg-color);
-    border-radius: 8px;
-    padding: 0 12px;
-    height: 44px;
-    border: 1px solid var(--el-border-color-lighter);
-    margin-bottom: 8px;
-    &:hover { background: var(--el-fill-color-light); }
-  }
-  :deep(.el-collapse-item__wrap) {
-    border: none;
-    background: transparent;
-  }
-  :deep(.el-collapse-item__content) {
-    padding: 0 0 12px;
-  }
-}
-
-.collapse-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-  .el-icon { color: var(--el-color-primary); }
-}
-
-.config-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  padding: 12px;
-  background: var(--el-bg-color);
-  border-radius: 8px;
-  border: 1px solid var(--el-border-color-lighter);
-}
-
-.config-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  &.full-width { grid-column: span 4; }
-}
-
-.config-label {
+.log-time {
+  color: var(--el-color-success);
+  margin-right: 8px;
   font-size: 11px;
+}
+
+.log-level {
+  font-weight: bold;
+  margin-right: 6px;
+  min-width: 45px;
+  display: inline-block;
+  font-size: 11px;
+}
+
+.log-worker {
+  color: var(--el-color-primary);
+  margin-right: 6px;
+  font-size: 11px;
+}
+
+.log-message {
+  color: var(--el-text-color-primary);
+}
+
+.log-debug .log-level {
   color: var(--el-text-color-secondary);
 }
 
-.config-value {
-  font-size: 13px;
-  color: var(--el-text-color-primary);
-  font-weight: 500;
-  &.highlight { color: var(--el-color-primary); }
-  &.code {
-    font-family: 'Consolas', 'Monaco', monospace;
-    background: var(--el-fill-color-light);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 12px;
+.log-info .log-level {
+  color: var(--el-color-info);
+}
+
+.log-warn .log-level,
+.log-warning .log-level {
+  color: var(--el-color-warning);
+}
+
+.log-error .log-level {
+  color: var(--el-color-danger);
+}
+
+.config-section {
+  margin-top: 15px;
+
+  h4 {
+    color: var(--el-text-color-primary);
+    font-weight: 500;
   }
+}
+
+.config-detail {
+  margin-top: 10px;
 }
 </style>

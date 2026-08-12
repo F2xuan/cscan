@@ -158,6 +158,12 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 			}
 			newAsset++
 
+			// 记录首次发现历史，确保时间线不为空
+			firstFound := SnapshotFromAsset(asset, mainTaskID, now, nil)
+			if err := s.historyModel.Insert(ctx, firstFound); err != nil {
+				logx.Errorf("[AssetWriteService] Insert first-found history failed: %v", err)
+			}
+
 			diffs = append(diffs, ScanDiff{
 				TaskId:      mainTaskID,
 				WorkspaceId: s.workspaceId,
@@ -285,6 +291,7 @@ func (s *AssetWriteService) mapScannerAssetToModel(sa *ScannerAsset, mainTaskID,
 		IsHTTP:        sa.IsHTTP,
 		TaskId:        mainTaskID,
 		Source:        sa.Source,
+		CName:         sa.CName,
 		OrgId:         orgID,
 	}
 }

@@ -53,6 +53,7 @@ type VulWriteService struct {
 	vulModel     *VulModel
 	assetModel   *AssetModel
 	diffModel    *ScanDiffModel
+	historyModel *AssetHistoryModel
 	assetCache   *AssetCache
 }
 
@@ -72,7 +73,7 @@ func (c *AssetCache) getKey(host string, port int) string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
-func (c *AssetCache) getOrCreate(ctx context.Context, assetModel *AssetModel, host string, port int) *Asset {
+func (c *AssetCache) getOrCreate(ctx context.Context, assetModel *AssetModel, historyModel *AssetHistoryModel, mainTaskID, host string, port int) *Asset {
 	key := c.getKey(host, port)
 	if asset, ok := c.assets[key]; ok {
 		return asset
@@ -97,6 +98,13 @@ func (c *AssetCache) getOrCreate(ctx context.Context, assetModel *AssetModel, ho
 			logx.Errorf("[VulWriteService] Failed to create asset for vul: %v", err)
 			return nil
 		}
+		// 记录首次发现历史，确保时间线不为空
+		if historyModel != nil {
+			firstFound := SnapshotFromAsset(asset, mainTaskID, time.Now(), nil)
+			if err := historyModel.Insert(ctx, firstFound); err != nil {
+				logx.Errorf("[VulWriteService] Insert first-found history failed: %v", err)
+			}
+		}
 		asset, _ = assetModel.FindByHostPort(ctx, host, port)
 	}
 	if asset != nil {
@@ -111,12 +119,13 @@ func NewVulWriteService(db *mongo.Database, workspaceId string) *VulWriteService
 		workspaceId = "default"
 	}
 	return &VulWriteService{
-		db:          db,
-		workspaceId: workspaceId,
-		vulModel:    NewVulModel(db, workspaceId),
-		assetModel:  NewAssetModel(db, workspaceId),
-		diffModel:   NewScanDiffModel(db, workspaceId),
-		assetCache:  NewAssetCache(),
+		db:           db,
+		workspaceId:  workspaceId,
+		vulModel:     NewVulModel(db, workspaceId),
+		assetModel:   NewAssetModel(db, workspaceId),
+		diffModel:    NewScanDiffModel(db, workspaceId),
+		historyModel: NewAssetHistoryModel(db, workspaceId),
+		assetCache:   NewAssetCache(),
 	}
 }
 
@@ -150,7 +159,7 @@ func (s *VulWriteService) SaveVuls(ctx context.Context, mainTaskID string, vuls 
 			}
 		}
 
-		s.assetCache.getOrCreate(ctx, s.assetModel, host, port)
+		s.assetCache.getOrCreate(ctx, s.assetModel, s.historyModel, mainTaskID, host, port)
 
 		vul := &Vul{
 			Authority: pbVul.Authority,
@@ -249,7 +258,7 @@ func (s *VulWriteService) SaveVuls(ctx context.Context, mainTaskID string, vuls 
 		host := parts[0]
 		port, _ := strconv.Atoi(parts[1])
 
-		asset := s.assetCache.getOrCreate(ctx, s.assetModel, host, port)
+		asset := s.assetCache.getOrCreate(ctx, s.assetModel, s.historyModel, mainTaskID, host, port)
 		if asset == nil {
 			continue
 		}

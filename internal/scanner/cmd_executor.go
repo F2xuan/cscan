@@ -19,6 +19,8 @@ type CmdExecutor struct {
 	binaryPath     string
 	memoryLimitMB  int64
 	defaultTimeout time.Duration
+	// presetArgs 每次执行自动前置注入的固定参数（如 -duc 禁用自动更新检查）
+	presetArgs []string
 }
 
 func NewCmdExecutor(binaryPath string, memoryLimitMB int64, defaultTimeout time.Duration) *CmdExecutor {
@@ -26,11 +28,25 @@ func NewCmdExecutor(binaryPath string, memoryLimitMB int64, defaultTimeout time.
 		binaryPath:     binaryPath,
 		memoryLimitMB:  memoryLimitMB,
 		defaultTimeout: defaultTimeout,
+		presetArgs:     presetArgsForBinary(binaryPath),
 	}
+}
+
+// withPresetArgs 将固定注入参数前置到调用方参数之前
+func (e *CmdExecutor) withPresetArgs(args []string) []string {
+	if len(e.presetArgs) == 0 {
+		return args
+	}
+	merged := make([]string, 0, len(e.presetArgs)+len(args))
+	merged = append(merged, e.presetArgs...)
+	merged = append(merged, args...)
+	return merged
 }
 
 func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOpts) (*ExecuteResult, error) {
 	result := &ExecuteResult{}
+
+	args = e.withPresetArgs(args)
 
 	timeout := e.defaultTimeout
 	if opts.Timeout > 0 {
@@ -86,6 +102,8 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 }
 
 func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler func(line string) (bool, error), opts ExecuteOpts) error {
+	args = e.withPresetArgs(args)
+
 	timeout := e.defaultTimeout
 	if opts.Timeout > 0 {
 		timeout = opts.Timeout
@@ -117,6 +135,15 @@ func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler fu
 		stderrPipe.Close()
 		return fmt.Errorf("start: %w", err)
 	}
+
+	// Context watcher: on cancellation, kill process promptly to unblock scanner.Scan()
+	// exec.CommandContext also kills on context done, but explicit kill ensures pipe closes without delay
+	go func() {
+		<-execCtx.Done()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
 
 	done := make(chan error, 1)
 	go func() {
@@ -211,6 +238,24 @@ type ExecuteOpts struct {
 	MemoryLimitMB int64
 	WorkingDir    string
 	Env           []string
+}
+
+// LogResult 记录命令执行结果（Debug 级别，用于排障）
+func (e *CmdExecutor) LogResult(prefix string, result *ExecuteResult, err error) {
+	logx.Debugf("[%s] %s: exit=%d duration=%s err=%v",
+		e.binaryPath, prefix, result.ExitCode, result.Duration, err)
+	if result.Stderr != "" {
+		logx.Debugf("[%s] stderr: %s", e.binaryPath, result.Stderr)
+	}
+	if result.Stdout != "" {
+		// 超长输出只截取前后片段，避免刷屏
+		stdout := result.Stdout
+		const maxLen = 2000
+		if len(stdout) > maxLen {
+			stdout = stdout[:maxLen] + "\n...[truncated]"
+		}
+		logx.Debugf("[%s] stdout: %s", e.binaryPath, stdout)
+	}
 }
 
 // ExecuteResult 执行结果

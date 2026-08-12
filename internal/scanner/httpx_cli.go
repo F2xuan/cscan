@@ -87,7 +87,7 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	}
 
 	opts := &HttpxOptions{
-		Concurrency:     150,
+		Concurrency:     1,
 		Timeout:         10,
 		FollowRedirects: true,
 		MaxRedirects:    5,
@@ -128,6 +128,9 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		concurrency = config.WorkerConcurrency
 	}
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(targets) {
@@ -209,6 +212,7 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		"-json",
 		"-silent",
 		"-timeout", fmt.Sprintf("%d", opts.Timeout),
+		"-threads", fmt.Sprintf("%d", opts.Concurrency),
 		"-disable-update-check",
 	}
 	if opts.FollowRedirects {
@@ -248,6 +252,8 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		args = append(args, "-header", h)
 	}
 
+	logx.Infof("[Httpx] CLI: target=%s args=%s", target, strings.Join(args, " "))
+
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
@@ -255,15 +261,22 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		logx.Errorf("Httpx(CLI): %s execution error: %v", target, err)
 		return nil
 	}
+	s.executor.LogResult("Httpx(CLI): "+target, res, err)
 
 	scanner := newLineScanner(res.Stdout)
+	lineCount := 0
+	parseFailCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		lineCount++
+
 		var hr HttpxCLIResult
 		if err := json.Unmarshal([]byte(line), &hr); err != nil {
+			parseFailCount++
+			logx.Debugf("[Httpx] JSON parse failed for line %d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 
@@ -279,6 +292,9 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		}
 		processed[asset] = true
 		resultMu.Unlock()
+
+		logx.Debugf("[Httpx] matched asset %s:%d from %s (technologies=%v, status=%d, title=%s)",
+			asset.Host, asset.Port, hr.URL, hr.Technologies, hr.StatusCode, hr.Title)
 
 		if hr.Scheme != "" {
 			asset.Service = hr.Scheme
@@ -319,8 +335,11 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 				appendIPInfo(asset, ipStr, ipLocator)
 			}
 		}
+		logx.Debugf("[Httpx] asset updated: %s:%d apps=%v server=%s status=%s",
+			asset.Host, asset.Port, asset.App, asset.Server, asset.HttpStatus)
 		return asset
 	}
+	logx.Debugf("[Httpx] scanSingleTarget target=%s: lines=%d parseFail=%d matched=0", target, lineCount, parseFailCount)
 	return nil
 }
 
@@ -388,7 +407,8 @@ func RunHttpxLib(ctx context.Context, assets []*Asset, opts *FingerprintOptions,
 		FollowRedirects: true,
 		MaxRedirects:    5,
 		TechDetect:      true,
-		Favicon:         opts.Screenshot,
+		Favicon:         true,
+		Screenshot:      opts.Screenshot,
 		ServerHeader:    true,
 		ContentType:     true,
 		StatusCode:      true,

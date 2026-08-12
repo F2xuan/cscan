@@ -6,7 +6,6 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/pkg/response"
-	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
@@ -51,30 +50,20 @@ func WorkerSubTaskDoneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 调用RPC IncrSubTaskDone
-		rpcReq := &pb.IncrSubTaskDoneReq{
-			TaskId:      req.TaskId,
-			MainTaskId:  req.MainTaskId,
-			WorkspaceId: req.WorkspaceId,
-			Phase:       req.Phase,
-			IsCompleted: req.IsCompleted,
-			IncrAmount:  int32(req.IncrAmount),
-		}
-
-		rpcResp, err := svcCtx.TaskRpcClient.IncrSubTaskDone(r.Context(), rpcReq)
+		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.WorkspaceId, req.Phase, req.IncrAmount)
 		if err != nil {
-			logx.Errorf("[WorkerSubTaskDone] RPC IncrSubTaskDone error: %v", err)
+			logx.Errorf("[WorkerSubTaskDone] IncrSubTaskDone error: %v", err)
 			response.Error(w, err)
 			return
 		}
 
 		httpx.OkJson(w, &WorkerSubTaskDoneResp{
 			Code:         0,
-			Msg:          rpcResp.Message,
-			Success:      rpcResp.Success,
-			SubTaskDone:  rpcResp.SubTaskDone,
-			SubTaskCount: rpcResp.SubTaskCount,
-			AllDone:      rpcResp.AllDone,
+			Msg:          result.Message,
+			Success:      result.Success,
+			SubTaskDone:  result.SubTaskDone,
+			SubTaskCount: result.SubTaskCount,
+			AllDone:      result.AllDone,
 		})
 	}
 }

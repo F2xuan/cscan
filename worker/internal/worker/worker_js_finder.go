@@ -70,6 +70,28 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 		Timeout:              timeout,
 		EnableSourcemap:      enableSourcemap,
 		EnableUnauthCheck:    enableUnauthCheck,
+		OnResultFound: func(results []*scanner.JSFinderResult) {
+			// 流式入库：单目标完成后立即保存
+			var schedResults []*JSFinderResultItem
+			for _, r := range results {
+				schedResults = append(schedResults, &JSFinderResultItem{
+					Authority:        r.Authority,
+					Host:             r.Host,
+					Port:             r.Port,
+					URL:              r.URL,
+					Severity:         r.Severity,
+					VulName:          r.VulName,
+					Result:           r.Result,
+					Tags:             r.Tags,
+					MatcherName:      r.MatcherName,
+					ExtractedResults: r.ExtractedResults,
+					CurlCommand:      r.CurlCommand,
+					Request:          r.Request,
+					Response:         r.Response,
+				})
+			}
+			w.saveJSFinderResultDirect(ctx, task.WorkspaceId, task.MainTaskId, schedResults)
+		},
 	}
 
 	jsTaskLogger := func(level, format string, args ...interface{}) {

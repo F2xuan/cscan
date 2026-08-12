@@ -1,26 +1,19 @@
-package logic
+package notification
 
 import (
 	"context"
 
 	"cscan/internal/model"
 	"cscan/pkg/notify"
-	"cscan/rpc/task/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// collectHighRiskInfoShared 收集任务的高危信息（T1.4）。
-// 抽公共函数，消除 incrsubtaskdonelogic.go 与 updatetasklogic.go 两处重复实现（B5）。
-// 在旧逻辑（高危指纹/端口/严重级别/新资产数）基础上，新增：
-//   - 新资产明细 NewAssetList（由 NewAssetNotify 开关门控）
-//   - 新风险明细 NewRisks（由 NewRiskNotify 开关门控，默认开）
-//   - 已修复漏洞数 FixedVulCount（由 FixedNotify 开关门控，默认开）
-//
-// 开关语义：指针类型 nil 视为默认开；旧配置缺字段时行为不变（默认展示明细）。
-// 排序与上限截断在 buildHighRiskDetails 内完成，此处只负责取数与门控。
-func collectHighRiskInfoShared(ctx context.Context, svcCtx *svc.ServiceContext, workspaceId, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
+// collectHighRiskInfo 收集任务的高危信息。
+// 高危结果收集器，独立于 svc.ServiceContext。
+func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
 	hasHighRiskFilter := false
 	hasNewAssetNotify := false
 	newRiskEnabled := false
@@ -59,67 +52,67 @@ func collectHighRiskInfoShared(ctx context.Context, svcCtx *svc.ServiceContext, 
 		HighRiskVulSeverities: make(map[string]int),
 	}
 
-	// 收集高危指纹（从资产的指纹中匹配）
+	assetModel := model.NewAssetModel(db, workspaceId)
+
+	// 高危指纹
 	if len(allFingerprints) > 0 {
-		assetModel := svcCtx.GetAssetModel(workspaceId)
 		assets, err := assetModel.FindByTaskId(ctx, mainTaskId)
 		if err == nil {
-			fingerprintSet := make(map[string]bool)
+			fpSet := make(map[string]bool, len(allFingerprints))
 			for _, fp := range allFingerprints {
-				fingerprintSet[fp] = true
+				fpSet[fp] = true
 			}
-			foundFpSet := make(map[string]bool)
-			for _, asset := range assets {
-				for _, fp := range asset.Fingerprints {
-					if fingerprintSet[fp] && !foundFpSet[fp] {
+			found := make(map[string]bool)
+			for _, a := range assets {
+				for _, fp := range a.Fingerprints {
+					if fpSet[fp] && !found[fp] {
 						info.HighRiskFingerprints = append(info.HighRiskFingerprints, fp)
-						foundFpSet[fp] = true
+						found[fp] = true
 					}
 				}
 			}
 		}
 	}
 
-	// 收集高危端口（从资产的端口中匹配）
+	// 高危端口
 	if len(allPorts) > 0 {
-		assetModel := svcCtx.GetAssetModel(workspaceId)
 		assets, err := assetModel.FindByTaskId(ctx, mainTaskId)
 		if err == nil {
-			portSet := make(map[int]bool)
-			for _, port := range allPorts {
-				portSet[port] = true
+			portSet := make(map[int]bool, len(allPorts))
+			for _, p := range allPorts {
+				portSet[p] = true
 			}
-			foundPortSet := make(map[int]bool)
-			for _, asset := range assets {
-				if portSet[asset.Port] && !foundPortSet[asset.Port] {
-					info.HighRiskPorts = append(info.HighRiskPorts, asset.Port)
-					foundPortSet[asset.Port] = true
+			found := make(map[int]bool)
+			for _, a := range assets {
+				if portSet[a.Port] && !found[a.Port] {
+					info.HighRiskPorts = append(info.HighRiskPorts, a.Port)
+					found[a.Port] = true
 				}
 			}
 		}
 	}
 
-	// 收集高危漏洞统计
+	// 高危漏洞统计
 	if len(allSeverities) > 0 {
-		vulModel := svcCtx.GetVulModel(workspaceId)
+		vulModel := model.NewVulModel(db, workspaceId)
 		vuls, err := vulModel.Find(ctx, bson.M{"task_id": mainTaskId}, 0, 0)
 		if err == nil {
-			severitySet := make(map[string]bool)
+			sevSet := make(map[string]bool, len(allSeverities))
 			for _, s := range allSeverities {
-				severitySet[s] = true
+				sevSet[s] = true
 			}
-			for _, vul := range vuls {
-				if severitySet[vul.Severity] {
-					info.HighRiskVulSeverities[vul.Severity]++
+			for _, v := range vuls {
+				if sevSet[v.Severity] {
+					info.HighRiskVulSeverities[v.Severity]++
 					info.HighRiskVulCount++
 				}
 			}
 		}
 	}
 
-	// 收集新资产数量 + 明细（T1.2 口径：scan_diff 的 added 记录；T1.4 新增明细）
+	// 新资产数量 + 明细
 	if hasNewAssetNotify {
-		diffModel := model.NewScanDiffModel(svcCtx.MongoDB, workspaceId)
+		diffModel := model.NewScanDiffModel(db, workspaceId)
 		if added, err := diffModel.CountByTaskIdAndType(ctx, workspaceId, mainTaskId, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded); err == nil {
 			info.NewAssetCount = int(added)
 		}
@@ -142,9 +135,9 @@ func collectHighRiskInfoShared(ctx context.Context, svcCtx *svc.ServiceContext, 
 		}
 	}
 
-	// 收集新风险明细（T1.4：vul 类 added 记录；weakpass/cert 由 T3.3/T3.4 扩展）
+	// 新风险明细
 	if newRiskEnabled {
-		diffModel := model.NewScanDiffModel(svcCtx.MongoDB, workspaceId)
+		diffModel := model.NewScanDiffModel(db, workspaceId)
 		docs, _, err := diffModel.FindByTaskId(ctx, workspaceId, mainTaskId, model.ScanDiffTypeVul, model.ScanDiffChangeAdded, 1, 0)
 		if err == nil {
 			list := make([]notify.RiskSummary, 0, len(docs))
@@ -161,15 +154,15 @@ func collectHighRiskInfoShared(ctx context.Context, svcCtx *svc.ServiceContext, 
 		}
 	}
 
-	// 收集已修复漏洞数（T1.4：本任务内 status=fixed 的漏洞；T3.3/T3.4 复验将驱动该值）
+	// 已修复漏洞数
 	if fixedEnabled {
-		vulModel := svcCtx.GetVulModel(workspaceId)
+		vulModel := model.NewVulModel(db, workspaceId)
 		if n, err := vulModel.Count(ctx, bson.M{"task_id": mainTaskId, "status": "fixed"}); err == nil {
 			info.FixedVulCount = int(n)
 		}
 	}
 
-	logx.Infof("[HIGH-RISK COLLECT] workspaceId=%s, mainTaskId=%s, newAsset=%d, newAssetList=%d, newRisks=%d, fixedVul=%d",
+	logx.Infof("[Notification] HighRiskInfo collected: workspaceId=%s, mainTaskId=%s, newAsset=%d, newAssetList=%d, newRisks=%d, fixedVul=%d",
 		workspaceId, mainTaskId, info.NewAssetCount, len(info.NewAssetList), len(info.NewRisks), info.FixedVulCount)
 
 	return info

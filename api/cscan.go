@@ -602,6 +602,7 @@ func createAndPushSpaceEngineTask(ctx context.Context, svcCtx *svc.ServiceContex
 	realWorkspaceId := common.GetDefaultWorkspaceId(ctx, svcCtx, workspaceId)
 	assetModel := svcCtx.GetAssetModel(realWorkspaceId)
 	targetMetaModel := svcCtx.GetAssetTargetMetaModel(realWorkspaceId)
+	historyModel := svcCtx.GetAssetHistoryModel(realWorkspaceId)
 
 	// 3) 分页拉取并导入资产
 	pageSize := 100
@@ -764,8 +765,19 @@ PageLoop:
 			if asset.Host == "" {
 				continue
 			}
-			if err := assetModel.Upsert(ctx, asset); err == nil {
+			res, err := assetModel.UpsertWithResult(ctx, asset)
+			if err == nil {
 				totalImport++
+				if res.IsNew {
+					// 记录首次发现历史，确保时间线不为空
+					newAsset, _ := assetModel.FindByAuthorityOnly(ctx, asset.Authority)
+					if newAsset != nil {
+						firstFound := model.SnapshotFromAsset(newAsset, msg.CronTaskId, time.Now(), nil)
+						if histErr := historyModel.Insert(ctx, firstFound); histErr != nil {
+							logx.Errorf("[SpaceEngine] Insert first-found history failed: %v", histErr)
+						}
+					}
+				}
 			}
 			// 同步创建/更新顶层资产（AssetTargetMeta），确保资产出现在资产概览中
 			// 使用 BuildAsset 清理后的 asset.Host（已去除URL前缀和端口）和 asset.Domain

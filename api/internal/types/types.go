@@ -3473,6 +3473,8 @@ type JSFinderAIBatchAnalyzeReq struct {
 	TagsAny     []string `json:"tagsAny,optional"`
 	AIStatus    string   `json:"aiStatus,optional"`
 	AIResult    string   `json:"aiResult,optional"`
+
+	Concurrency int `json:"concurrency,optional"` // AI研判并发数，默认1，最大5
 }
 
 // JSFinderAIBatchAnalyzeResp 批量研判响应（异步，立即返回任务已启动）
@@ -3616,6 +3618,8 @@ type DirScanAIBatchAnalyzeReq struct {
 	Authority   string   `json:"authority,optional"`
 	AIStatus    string   `json:"aiStatus,optional"`
 	AIResult    string   `json:"aiResult,optional"`
+
+	Concurrency int `json:"concurrency,optional"` // AI研判并发数，默认1，最大5
 }
 
 // DirScanAIBatchAnalyzeResp 批量研判响应

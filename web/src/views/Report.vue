@@ -322,8 +322,15 @@
     </div>
     
     <!-- 任务不存在 -->
-    <div v-if="!loading && !reportData" class="empty-container">
+    <div v-if="!loading && !reportData && hasTaskId" class="empty-container">
       <el-empty :description="$t('report.taskNotExist')" />
+    </div>
+
+    <!-- 无 taskId 引导：独立访问 /report 时降级提示 -->
+    <div v-if="!loading && !hasTaskId" class="empty-container">
+      <el-empty :description="$t('report.noTaskIdHint')">
+        <el-button type="primary" @click="goBack">{{ $t('report.goTaskList') }}</el-button>
+      </el-empty>
     </div>
   </div>
 </template>
@@ -358,6 +365,9 @@ const periodicData = ref(null)
 const topPorts = computed(() => (reportData.value?.topPorts || []).slice(0, 5))
 const topServices = computed(() => (reportData.value?.topServices || []).slice(0, 5))
 const topApps = computed(() => (reportData.value?.topApps || []).slice(0, 5))
+
+// 是否携带 taskId（route query）；无 taskId 时降级为仅周期报告视图，不再强制跳转
+const hasTaskId = computed(() => !!route.query.taskId)
 
 const filteredAssets = computed(() => {
   const assets = reportData.value?.assets || []
@@ -399,10 +409,8 @@ onMounted(() => {
   const taskId = route.query.taskId
   if (taskId) {
     loadReport(taskId)
-  } else {
-    ElMessage.error(t('report.missingTaskId'))
-    router.push('/task')
   }
+  // 无 taskId 时降级为仅周期报告视图，不再强制跳转 /task
 })
 
 async function loadReport(taskId) {

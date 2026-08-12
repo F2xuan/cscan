@@ -5,7 +5,6 @@ import (
 
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/rest"
-	"github.com/zeromicro/go-zero/zrpc"
 )
 
 type Config struct {
@@ -18,9 +17,8 @@ type Config struct {
 		Uri    string
 		DbName string
 	}
-	Redis   redis.RedisConf
-	TaskRpc zrpc.RpcClientConf
-	Docker  DockerConfig  `json:",optional"`
+	Redis  redis.RedisConf
+	Docker DockerConfig `json:",optional"`
 }
 
 // DockerConfig Docker 守护连接与容器发现配置

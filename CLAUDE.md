@@ -14,7 +14,6 @@
 | 前端框架 | Vue 3 + Vite + Element Plus | Vue 3.4 / Vite 5 / Element Plus 2.4 |
 | 数据库 | MongoDB + Redis | MongoDB 6 / Redis 7 |
 | 驱动 | mongo-driver v1.17.9 / go-redis v9.19.0 | |
-| RPC 通信 | gRPC + Protobuf | grpc v1.80 |
 | Worker 通信 | gobwas/ws（WebSocket） | gobwas v1.4 |
 | 扫描引擎 | ProjectDiscovery + Nmap/Masscan | nuclei v3.8 / httpx v1.9 / naabu v2.6 / subfinder v2.14 / ffuf / fingerprintx / dnsx |
 | 截图引擎 | Chromedp (Chrome 无头浏览器) | chromedp v0.15 |
@@ -38,22 +37,22 @@
                   │
            [HTTP API (api/) - go-zero REST :8888]
                   │
-      ┌───────────┼────────────┐
-      │           │            │
-[gRPC RPC     [MongoDB]    [Redis]
- (rpc/) :9000]    │            │
-      │       全局集合      [Sorted Set 任务队列 cscan:task:queue
-      │       workspace_id    / Worker 负载 Hash / Pub/Sub 唤醒与 Cron 频道]
-      │       字段隔离       │
-      │              [Scheduler (internal/scheduler/)]
-      │              │  分块 / 优先级 / 负载均衡 / 定时 / 孤儿恢复 / 资产复核
-      │              │
-      │        [Worker nodes (worker/)]  ← Install Key 认证，WebSocket 长连接 + REST
-      │              │
-      │        [Scanner modules (internal/scanner/)]
-      │              │
-      │   ┌────┬─────┼──────┬────────┬───────┬─────┐
-      │ Subfinder Naabu Nmap Httpx Nuclei FFuf Chromedp
+          ┌───────┴────────┐
+          │                │
+      [MongoDB]         [Redis]
+          │                │
+       全局集合     [Sorted Set 任务队列 cscan:task:queue
+       workspace_id   / Worker 负载 Hash / Pub/Sub 唤醒与 Cron 频道]
+       字段隔离        │
+                  [Scheduler (internal/scheduler/)]
+                  │  分块 / 优先级 / 负载均衡 / 定时 / 孤儿恢复 / 资产复核
+                  │
+            [Worker nodes (worker/)]  ← Install Key 认证，WebSocket 长连接 + REST + 直连 MongoDB
+                  │
+            [Scanner modules (internal/scanner/)]
+                  │
+       ┌────┬─────┼──────┬────────┬───────┬─────┐
+  Subfinder Naabu Nmap Httpx Nuclei FFuf Chromedp
 ```
 
 ### 1.4 核心架构模式
@@ -78,7 +77,7 @@
 cscan/
 ├── api/                          # HTTP 服务（go-zero restful 布局）
 │   ├── cscan.go                  # API 服务入口点（服务根 main）
-│   ├── etc/cscan.yaml            # API 配置（端口8888, JWT, MongoDB, Redis, RPC）
+│   ├── etc/cscan.yaml            # API 配置（端口8888, JWT, MongoDB, Redis）
 │   └── internal/
 │       ├── config/config.go      # 配置结构体定义
 │       ├── handler/              # 路由处理器（按资源域分子包）
@@ -103,15 +102,6 @@ cscan/
 │       │   ├── scanresult_service.go / history_service.go
 │       │   └── sync/             # 同步服务（模板/指纹/POC 同步）
 │       └── types/                # 请求/响应类型定义
-├── rpc/                          # gRPC 服务（go-zero service 布局）
-│   └── task/
-│       ├── task.go               # RPC 服务入口（服务根 main，端口 9000）
-│       ├── task.proto            # Protobuf 定义（20 个方法）
-│       ├── pb/                   # 生成的 pb 代码
-│       ├── client/               # 客户端封装
-│       ├── etc/task.yaml         # RPC 配置
-│       └── internal/
-│           ├── config/ logic/ server/ svc/
 ├── worker/                       # Worker 服务（go-zero consumer 布局）
 │   ├── main.go                   # Worker 服务入口（package main，-s/-n/-c/-k）
 │   └── internal/
@@ -184,8 +174,8 @@ cscan/
 │   ├── url/                      # URL 字典（dic.txt、backup.txt、springboot.txt）
 │   └── weakpass/                 # 弱口令默认字典（default-weakpass.txt）
 ├── docker/                       # Docker 配置
-│   ├── Dockerfile.api / Dockerfile.rpc / Dockerfile.worker
-│   ├── cscan-api.yaml / task.yaml  # 容器内配置
+│   ├── Dockerfile.api / Dockerfile.worker
+│   ├── cscan-api.yaml            # 容器内配置
 │   ├── mongo-init.js             # MongoDB 初始化脚本
 │   └── entrypoint.sh             # 容器启动脚本
 ├── web/                          # Vue.js 前端
@@ -201,11 +191,11 @@ cscan/
 │   │   └── tests/                # Vitest 测试
 │   ├── vite.config.js            # Vite 配置（代理、分包、SCSS、test）
 │   └── package.json
-├── docker-compose.yaml           # 生产全栈（redis/mongodb/api/rpc/web/worker + 资源限制）
-├── docker-compose.dev.yaml       # 本地开发全栈（MongoDB + Redis + RPC + API + Web + Worker，本地构建）
+├── docker-compose.yaml           # 生产全栈（redis/mongodb/api/web/worker + 资源限制）
+├── docker-compose.dev.yaml       # 本地开发全栈（MongoDB + Redis，本地构建 API/Worker/Web）
 ├── docker-compose-worker.yaml    # 独立 Worker 探针部署
 ├── scripts/dev.ps1 / dev.sh / dev.bat   # 一键启动开发环境
-├── .github/workflows/build-images.yml   # CI/CD（4 个镜像并行构建推送）
+├── .github/workflows/build-images.yml   # CI/CD（3 个镜像并行构建推送）
 ├── go.mod / go.sum / VERSION / cscan.sh / cscan.bat
 └── README.md / README_EN.md / CLAUDE.md
 ```
@@ -520,9 +510,7 @@ test: {
 | 文件 | 说明 |
 |------|------|
 | `api/etc/cscan.yaml` | API 配置：端口 8888，超时 300s，MaxBytes 100MB，JWT 24h |
-| `rpc/task/etc/task.yaml` | RPC 配置：端口 9000 |
 | `docker/cscan-api.yaml` | 容器内 API 配置 |
-| `docker/task.yaml` | 容器内 RPC 配置 |
 
 **MongoDB 连接池**：MaxPoolSize=100, MinPoolSize=10, ConnectTimeout=10s
 
@@ -533,9 +521,6 @@ test: {
 ### 5.2 构建命令
 
 ```bash
-# Protobuf 代码生成（修改 .proto 文件后必须执行）
-protoc -I rpc/task --go_out=rpc/task/pb --go_opt=paths=source_relative --go-grpc_out=rpc/task/pb --go-grpc_opt=paths=source_relative task.proto
-
 # Go 后端
 go build -o cscan ./api/cscan.go       # 构建 API 服务
 go build -o worker ./worker/            # 构建 Worker
@@ -568,7 +553,7 @@ npm run test:coverage                                 # 覆盖率
 ### 5.4 生产部署
 
 ```bash
-# 全栈部署（redis/mongodb/api/rpc/web/worker 六服务 + 资源限制）
+# 全栈部署（redis/mongodb/api/web/worker 五服务 + 资源限制）
 docker-compose up -d
 
 # 独立 Worker 探针部署
@@ -601,7 +586,7 @@ go build ./... 2>&1 | Out-File -Encoding ascii build.log
 ./scripts/dev.ps1   # 等价于 docker-compose -f docker-compose.dev.yaml up -d --build
 ```
 
-> 脚本容器化启动全部服务（MongoDB + Redis + RPC + API + Web + Worker），本地代码自动构建；
+> 脚本容器化启动全部服务（MongoDB + Redis + API + Web + Worker），本地代码自动构建；
 > 确认上一步的编译没有问题之后即可运行（首次构建需拉取基础镜像并编译，耗时较长）。
 
 健康检查：`curl http://127.0.0.1:8888/health` → `OK`。前端如需浏览器验证：直接访问 `http://localhost:7777`，或 `cd web && npm run dev`（:7777，代理 /api → :8888）。
@@ -632,12 +617,11 @@ go build ./... 2>&1 | Out-File -Encoding ascii build.log
 
 ### 6.2 CI/CD
 
-`.github/workflows/build-images.yml` — 4 个并行 Job：
+`.github/workflows/build-images.yml` — 3 个并行 Job：
 
 | Job | 镜像 | Dockerfile |
 |-----|------|-----------|
 | `build-api` | `cscan-api` | `docker/Dockerfile.api` |
-| `build-rpc` | `cscan-rpc` | `docker/Dockerfile.rpc` |
 | `build-web` | `cscan-web` | `web/Dockerfile`（nginx + 多架构） |
 | `build-worker` | `cscan-worker` | `docker/Dockerfile.worker` |
 

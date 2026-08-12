@@ -14,15 +14,12 @@ import (
 	svcsync "cscan/api/internal/svc/sync"
 	"cscan/internal/model"
 	"cscan/pkg/cache"
-	"cscan/rpc/task/pb"
 	"cscan/internal/scheduler"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/zrpc"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"google.golang.org/grpc"
 )
 
 type ServiceContext struct {
@@ -33,7 +30,6 @@ type ServiceContext struct {
 	// WorkerDefaultKey 默认 Worker 认证密钥（来自环境变量 CSCAN_WORKER_KEY）。
 	// 与 Redis install_key 独立，互不影响。为空时仅校验 Redis install_key。
 	WorkerDefaultKey string
-	TaskRpcClient           pb.TaskServiceClient
 	UserModel               *model.UserModel
 	UserTokenModel          *model.UserTokenModel
 	OrganizationModel       *model.OrganizationModel
@@ -50,6 +46,7 @@ type ServiceContext struct {
 	ScanTemplateModel       *model.ScanTemplateModel
 	CronTaskModel           *model.CronTaskModel
 	WeakpassDictModel       *model.WeakpassDictModel
+	SubfinderProviderModel  *model.SubfinderProviderModel
 
 	// 调度器
 	Scheduler *scheduler.Scheduler
@@ -150,28 +147,12 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 	}
 	logx.Info("Redis connected successfully")
 
-	// 创建RPC客户端（增加消息大小限制到50MB，支持大量指纹数据传输）
-	logx.Infof("Connecting to RPC: %v", c.TaskRpc.Endpoints)
-	rpcClient := zrpc.MustNewClient(c.TaskRpc,
-		zrpc.WithDialOption(grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(50*1024*1024), // 50MB
-			grpc.MaxCallSendMsgSize(50*1024*1024), // 50MB
-		)),
-		// 修复 D3：所有 RPC 调用默认 30s 上限。mongo/redis 抖动时
-		// 调用将快速失败而非无限阻塞（曾出现 CheckTask 阻塞 17 分钟并
-		// 触发 gRPC DeadlineExceeded，进而拖垮 WS 心跳、导致 worker 重启）。
-		// 该 deadline 会随 gRPC 上下文传播到 RPC 服务端，自动取消其底层 DB 操作。
-		zrpc.WithDialOption(grpc.WithTimeout(30*time.Second)),
-	)
-	taskRpcClient := pb.NewTaskServiceClient(rpcClient.Conn())
-
 	svcCtx := &ServiceContext{
 		Config:                  c,
 		MongoClient:             mongoClient,
 		MongoDB:                 mongoDB,
 		RedisClient:             rdb,
 		WorkerDefaultKey:        os.Getenv("CSCAN_WORKER_KEY"),
-		TaskRpcClient:           taskRpcClient,
 		UserModel:               model.NewUserModel(mongoDB),
 		UserTokenModel:          model.NewUserTokenModel(mongoDB),
 		OrganizationModel:       model.NewOrganizationModel(mongoDB),
@@ -188,6 +169,7 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		ScanTemplateModel:       model.NewScanTemplateModel(mongoDB),
 		CronTaskModel:           model.NewCronTaskModel(mongoDB),
 		WeakpassDictModel:       model.NewWeakpassDictModel(mongoDB),
+		SubfinderProviderModel:  model.NewSubfinderProviderModel(mongoDB),
 		Scheduler:               scheduler.NewScheduler(rdb),
 		ScanResultService:       NewScanResultService(mongoDB),
 		HistoryService:          NewHistoryService(mongoDB),

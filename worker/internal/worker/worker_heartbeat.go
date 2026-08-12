@@ -76,11 +76,9 @@ func (w *Worker) sendHeartbeatWithRetry() error {
 
 // doSendHeartbeat 执行心跳发送
 func (w *Worker) doSendHeartbeat(ctx context.Context) error {
-	// 获取系统资源使用情况（复用 sysinfo.go 统一采集函数，快速采样避免阻塞）
 	cpuLoad := GetCPULoad()
 	memUsed := GetMemoryUsage()
 
-	// 确保数值有效
 	if cpuLoad < 0 || cpuLoad > 100 {
 		cpuLoad = 0.0
 	}
@@ -88,15 +86,35 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 		memUsed = 0.0
 	}
 
-	// 计算正在执行的任务数
-	w.mu.Lock()
-	runningTasks := w.taskStarted - w.taskExecuted
-	if runningTasks < 0 {
-		runningTasks = 0
-	}
-	w.mu.Unlock()
+	// 优先使用 Redis 直连
+	if w.schedClient != nil {
+		resp, err := w.schedClient.KeepAliveWithResponse(ctx, cpuLoad, memUsed,
+			w.taskStarted, w.taskExecuted, w.config.Concurrency)
+		if err != nil {
+			return err
+		}
 
-	// 通过 HTTP 接口发送心跳
+		if resp.ManualStopFlag {
+			w.logger.Info("received stop signal, stopping worker...")
+			go func() {
+				w.Stop()
+				os.Exit(0)
+			}()
+		} else if resp.ManualReloadFlag {
+			w.logger.Info("received reload/restart signal, restarting worker...")
+			go func() {
+				w.Stop()
+				os.Exit(0)
+			}()
+		}
+
+		if resp.DesiredConcurrency > 0 {
+			w.applyConcurrency(resp.DesiredConcurrency)
+		}
+		return nil
+	}
+
+	// 回退到 HTTP
 	resp, err := w.httpClient.Heartbeat(ctx, &HeartbeatReq{
 		WorkerName:         w.config.Name,
 		IP:                 w.config.IP,
@@ -107,12 +125,10 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 		IsDaemon:           false,
 		Concurrency:        w.config.Concurrency,
 	})
-
 	if err != nil {
 		return err
 	}
 
-	// 处理控制指令（互斥，仅执行一次 Stop）
 	if resp.ManualStopFlag {
 		w.logger.Info("received stop signal, stopping worker...")
 		go func() {
@@ -127,7 +143,6 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 		}()
 	}
 
-	// 应用管理端持久化的期望并发数（Worker重启后自动恢复，值未变化时为空操作）
 	if resp.DesiredConcurrency > 0 {
 		w.applyConcurrency(resp.DesiredConcurrency)
 	}
@@ -140,9 +155,34 @@ func (w *Worker) sendHeartbeat() {
 	_ = w.sendHeartbeatWithRetry()
 }
 
-// controlPollingLoop HTTP轮询控制信号循环（内部方法，作为WebSocket的备份方案）
+// controlPollingLoop 控制信号循环（内部方法，作为WebSocket的备份方案）
+// 使用 Redis Pub/Sub 订阅 cscan:task:ctrl:* 频道，实时接收控制信号
 func (w *Worker) controlPollingLoop() {
-	ticker := time.NewTicker(5 * time.Second) // 每5秒轮询一次（从2s增加到5s，减少CPU过载时的请求堆积）
+	// 优先使用 Redis Pub/Sub 实时订阅
+	if w.schedClient != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// 监听 stopChan 以取消订阅
+		go func() {
+			select {
+			case <-w.stopChan:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+
+		signalCh := w.schedClient.SubscribeCancel(ctx)
+		for signal := range signalCh {
+			if signal != nil {
+				w.handleControlSignal(signal.TaskId, signal.Action)
+			}
+		}
+		return
+	}
+
+	// 回退到 HTTP 轮询
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -150,23 +190,19 @@ func (w *Worker) controlPollingLoop() {
 		case <-w.stopChan:
 			return
 		case <-ticker.C:
-			// 获取当前正在执行的任务ID列表
 			taskIds := w.getRunningTaskIds()
 			if len(taskIds) == 0 {
 				continue
 			}
 
-			// 通过HTTP轮询获取控制信号（始终执行，作为WebSocket的备份）
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			resp, err := w.httpClient.GetTaskControlSignals(ctx, taskIds)
 			cancel()
 
 			if err != nil {
-				// 轮询失败，静默处理（避免日志刷屏）
 				continue
 			}
 
-			// 处理控制信号
 			for _, signal := range resp.Signals {
 				w.handleControlSignal(signal.TaskId, signal.Action)
 			}

@@ -173,6 +173,10 @@ func (w *Worker) executeBruteScan(ctx context.Context, task *scheduler.TaskInfo,
 		UsernameDict:   usernameDict,
 		PasswordDict:   passwordDict,
 		ServiceDicts:   serviceDicts,
+		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
+			// 流式入库：发现弱口令立即保存
+			w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, []*scanner.Vulnerability{vul})
+		},
 	}
 
 	// 构建扫描器配置
@@ -198,12 +202,6 @@ func (w *Worker) executeBruteScan(ctx context.Context, task *scheduler.TaskInfo,
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "Brute scan error: %v", err)
 		return nil
-	}
-
-	// 保存漏洞结果
-	if len(result.Vulnerabilities) > 0 {
-		w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, result.Vulnerabilities)
-		w.taskLog(task.TaskId, LevelInfo, "Brute scan: saved %d vulnerabilities", len(result.Vulnerabilities))
 	}
 
 	return result.Vulnerabilities

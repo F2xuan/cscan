@@ -24,7 +24,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
-	"cscan/rpc/task/pb"
+	"cscan/internal/scheduler"
 
 	"github.com/google/uuid"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
@@ -1079,22 +1079,38 @@ func (l *FingerprintValidateLogic) FingerprintValidate(req *types.FingerprintVal
 
 	l.Logger.Infof("FingerprintValidate: fingerprintId=%s, name=%s, url=%s", req.Id, fp.Name, req.Url)
 
-	// 通过RPC下发指纹验证任务到Worker
-	rpcReq := &pb.ValidateFingerprintReq{
-		Url:           req.Url,
-		FingerprintId: req.Id,
-	}
-	rpcResp, err := l.svcCtx.TaskRpcClient.ValidateFingerprint(l.ctx, rpcReq)
-	if err != nil {
-		l.Logger.Errorf("FingerprintValidate: RPC call failed: %v", err)
-		return &types.FingerprintValidateResp{Code: 500, Msg: "验证服务调用失败，请确保Worker服务已启动"}, nil
-	}
-	if !rpcResp.Success {
-		return &types.FingerprintValidateResp{Code: 500, Msg: rpcResp.Message}, nil
+	// 检查在线 Worker
+	if err := checkOnlineWorkers(l.ctx, l.svcCtx); err != nil {
+		return &types.FingerprintValidateResp{Code: 500, Msg: err.Error()}, nil
 	}
 
+	// 直接入队指纹验证任务
+	taskId := uuid.New().String()
+	taskConfig := map[string]interface{}{
+		"taskType":      "fingerprint_validate",
+		"url":           req.Url,
+		"fingerprintId": req.Id,
+		"timeout":       30,
+	}
+	configBytes, _ := json.Marshal(taskConfig)
+
+	task := &scheduler.TaskInfo{
+		TaskId:      taskId,
+		MainTaskId:  taskId,
+		WorkspaceId: "default",
+		TaskName:    "指纹验证",
+		Config:      string(configBytes),
+		Priority:    2,
+	}
+
+	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
+		l.Logger.Errorf("FingerprintValidate: push task failed, taskId=%s, error=%v", taskId, err)
+		return &types.FingerprintValidateResp{Code: 500, Msg: "任务下发失败"}, nil
+	}
+
+	persistTaskInfo(l.ctx, l.svcCtx, taskId, taskConfig)
+
 	// 同步等待结果：轮询任务状态（最多30秒）
-	taskId := rpcResp.TaskId
 	result, err := pollFingerprintValidateResult(l.ctx, l.svcCtx, taskId, 30*time.Second)
 	if err != nil {
 		l.Logger.Errorf("FingerprintValidate: wait result failed, taskId=%s, error=%v", taskId, err)
@@ -2353,20 +2369,32 @@ func (l *FingerprintBatchValidateLogic) runActiveFingerprintBatch(ctx context.Co
 				state.mu.Unlock()
 			}()
 
-			rpcReq := &pb.ValidateFingerprintReq{
-				Url:        url,
-				ActiveFpId: afpId,
+			// 直接入队主动指纹验证任务
+			fpTaskId := uuid.New().String()
+			fpTaskConfig := map[string]interface{}{
+				"taskType":   "active_fingerprint_validate",
+				"url":        url,
+				"activeFpId": afpId,
+				"timeout":    60,
 			}
-			rpcResp, err := l.svcCtx.TaskRpcClient.ValidateFingerprint(ctx, rpcReq)
-			if err != nil {
-				l.Logger.Errorf("runActiveFingerprintBatch: RPC failed for %s: %v", afpName, err)
+			fpConfigBytes, _ := json.Marshal(fpTaskConfig)
+
+			fpTask := &scheduler.TaskInfo{
+				TaskId:      fpTaskId,
+				MainTaskId:  fpTaskId,
+				WorkspaceId: "default",
+				TaskName:    "主动指纹验证",
+				Config:      string(fpConfigBytes),
+				Priority:    2,
+			}
+
+			if err := l.svcCtx.Scheduler.PushTask(ctx, fpTask); err != nil {
+				l.Logger.Errorf("runActiveFingerprintBatch: push task failed for %s: %v", afpName, err)
 				return
 			}
-			if !rpcResp.Success {
-				l.Logger.Errorf("runActiveFingerprintBatch: RPC not success for %s: %s", afpName, rpcResp.Message)
-				return
-			}
-			result, perr := pollFingerprintValidateResult(ctx, l.svcCtx, rpcResp.TaskId, 90*time.Second)
+			persistTaskInfo(ctx, l.svcCtx, fpTaskId, fpTaskConfig)
+
+			result, perr := pollFingerprintValidateResult(ctx, l.svcCtx, fpTaskId, 90*time.Second)
 			if perr != nil {
 				l.Logger.Errorf("runActiveFingerprintBatch: poll timeout for %s: %v", afpName, perr)
 				return

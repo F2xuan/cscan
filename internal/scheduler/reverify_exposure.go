@@ -25,7 +25,7 @@ type ReverifyExposureTarget struct {
 //
 // 设计要点（对齐 T3.3 弱口令复验，且匹配实际数据存储架构）：
 //   - 敏感信息发现产物存于独立集合 jsfinder（URL + ExtractedResults）与全局 dirscan_result（URL + StatusCode），
-//     并不写入 vul（deriveRiskSource 不产出 auto:info-leak，且 jsfinder/dirscan 不走 gRPC SaveVulResult）。
+//     并不写入 vul（deriveRiskSource 不产出 auto:info-leak，且 jsfinder/dirscan 不经漏洞上报路径）。
 //     故复验直接探测这些发现集合中的 URL，而非 vul 的 risk_source=auto:info-leak（该路径当前无数据）。
 //   - 探测动作全部由 Worker 执行（R8）：本器只负责到期判定、目标查询与任务入队；
 //     Worker 复验完成后经 /api/v1/worker/reverify/result 回传，由 API 侧完成状态回写、通知与 NextRunTime 回写。

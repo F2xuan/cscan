@@ -366,8 +366,8 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 
 	args = append(args, targets...)
 
-	// 输出执行命令到日志（降为 DEBUG，避免无结果时产生大量重复日志）
-	logx.Debugf("Nmap: executing nmap -Pn -p %d %s", port, strings.Join(targets, " "))
+	// 输出执行命令到日志
+	logx.Infof("[Nmap] CLI: port=%d args=%s", port, strings.Join(args, " "))
 
 	// 为单个端口创建独立的超时context，避免一个端口超时导致所有扫描停止
 	// 修复 C-32：原使用 context.Background() 忽略父级 ctx，任务取消时 nmap 不会终止
@@ -403,6 +403,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	case err := <-done:
 		if err != nil {
 			logError("Nmap: error for port %d: %v (stderr: %s)", port, err, stderr.String())
+			logx.Debugf("[Nmap] port %d stderr: %s", port, stderr.String())
 			return assets
 		}
 		output = stdout.Bytes()
@@ -412,6 +413,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	var nmapRun NmapRun
 	if err := xml.Unmarshal(output, &nmapRun); err != nil {
 		logError("Nmap: xml parse error for port %d: %v", port, err)
+		logx.Debugf("[Nmap] port %d raw XML stdout: %s", port, string(output))
 		return assets
 	}
 
@@ -419,6 +421,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 		// 获取IPv4地址（忽略MAC地址）
 		ip := host.GetIPv4Address()
 		if ip == "" {
+			logx.Debugf("[Nmap] host skipped: empty IPv4 (addresses=%v)", host.Addresses)
 			continue
 		}
 

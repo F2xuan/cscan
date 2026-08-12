@@ -244,6 +244,9 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		concurrency = config.WorkerConcurrency
 	}
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(targets) {
@@ -363,6 +366,9 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	// 并发 Worker Pool：每个目标一个 nuclei 进程，完成一个补一个
 	concurrency := opts.Concurrency
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(targets) {

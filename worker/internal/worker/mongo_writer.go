@@ -2,67 +2,73 @@ package worker
 
 import (
 	"context"
-	"time"
 
 	"cscan/internal/model"
 	"cscan/internal/scanner"
-	"cscan/pkg/utils"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // saveAssetResultDirect 将扫描资产直接写入 MongoDB
-func (w *Worker) saveAssetResultDirect(ctx context.Context, workspaceID, mainTaskID, orgID string, assets []*scanner.Asset) {
+func (w *Worker) saveAssetResultDirect(ctx context.Context, workspaceID, mainTaskID, orgID string, assets []*scanner.Asset) error {
 	if w.mongoDB == nil || len(assets) == 0 {
-		return
+		return nil
 	}
 
-	assetModel := model.NewAssetModel(w.mongoDB, workspaceID)
-	var newCount, updateCount int32
-	for _, asset := range assets {
-		modelAsset := scannerAssetToModel(asset, mainTaskID, orgID)
-		res, err := assetModel.UpsertWithResult(ctx, modelAsset)
-		if err != nil {
-			w.taskLog(mainTaskID, LevelError, "[MongoDirect] upsert asset authority=%s failed: %v", modelAsset.Authority, err)
-			continue
-		}
-		if res != nil && res.IsNew {
-			newCount++
-		} else {
-			updateCount++
-		}
+	// 转换为 ScannerAsset DTO
+	scannerAssets := make([]*model.ScannerAsset, len(assets))
+	for i, asset := range assets {
+		scannerAssets[i] = scannerAssetToDTO(asset)
 	}
-	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] assets saved: total=%d, new=%d, update=%d", len(assets), newCount, updateCount)
+
+	// 调用 AssetWriteService
+	svc := model.NewAssetWriteService(w.mongoDB, workspaceID)
+	result, err := svc.SaveAssets(ctx, mainTaskID, orgID, scannerAssets)
+	if err != nil {
+		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveAssets failed: %v", err)
+		return err
+	}
+
+	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] assets saved: total=%d, new=%d, update=%d",
+		result.TotalAsset, result.NewAsset, result.UpdateAsset)
+	return nil
 }
 
 // saveVulResultDirect 将漏洞结果直接写入 MongoDB
-func (w *Worker) saveVulResultDirect(ctx context.Context, workspaceID, mainTaskID string, vuls []*scanner.Vulnerability) {
+func (w *Worker) saveVulResultDirect(ctx context.Context, workspaceID, mainTaskID string, vuls []*scanner.Vulnerability) error {
 	if w.mongoDB == nil || len(vuls) == 0 {
-		return
+		return nil
 	}
 
-	vulModel := model.NewVulModel(w.mongoDB, workspaceID)
-	for _, vul := range vuls {
-		doc := scannerVulToModel(vul, mainTaskID)
-		if err := vulModel.Insert(ctx, doc); err != nil {
-			w.taskLog(mainTaskID, LevelError, "[MongoDirect] saveVulResult insert failed: %v", err)
-		}
+	// 转换为 ScannerVulnerability DTO
+	scannerVuls := make([]*model.ScannerVulnerability, len(vuls))
+	for i, vul := range vuls {
+		scannerVuls[i] = scannerVulToDTO(vul)
 	}
+
+	// 调用 VulWriteService
+	svc := model.NewVulWriteService(w.mongoDB, workspaceID)
+	result, err := svc.SaveVuls(ctx, mainTaskID, scannerVuls)
+	if err != nil {
+		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveVuls failed: %v", err)
+		return err
+	}
+
+	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] vuls saved: total=%d, new=%d",
+		result.SavedCount, result.NewVulCount)
+	return nil
 }
 
 // saveCertResultsDirect 将证书结果直接写入 MongoDB
-func (w *Worker) saveCertResultsDirect(ctx context.Context, workspaceID, mainTaskID string, certs []*scanner.CertResult) {
+func (w *Worker) saveCertResultsDirect(ctx context.Context, workspaceID, mainTaskID string, certs []*scanner.CertResult) error {
 	if w.mongoDB == nil || len(certs) == 0 {
-		return
+		return nil
 	}
 
-	certModel := model.NewCertModel(w.mongoDB, workspaceID)
-	items := make([]*model.Cert, 0, len(certs))
-	now := time.Now()
-	for _, c := range certs {
-		items = append(items, &model.Cert{
-			WorkspaceId:  workspaceID,
-			TaskId:       mainTaskID,
+	// 转换为 ScannerCert DTO
+	scannerCerts := make([]*model.ScannerCert, len(certs))
+	for i, c := range certs {
+		scannerCerts[i] = &model.ScannerCert{
 			Host:         c.Host,
 			Port:         c.Port,
 			Authority:    c.Authority,
@@ -78,28 +84,30 @@ func (w *Worker) saveCertResultsDirect(ctx context.Context, workspaceID, mainTas
 			SANs:         c.SANs,
 			Fingerprints: c.Fingerprints,
 			IsSelfSigned: c.IsSelfSigned,
-			CreateTime:   now,
-			UpdateTime:   now,
-		})
+		}
 	}
-	if err := certModel.UpsertMany(ctx, items); err != nil {
-		w.taskLog(mainTaskID, LevelError, "[MongoDirect] saveCertResults failed: %v", err)
+
+	// 调用 CertWriteService
+	svc := model.NewCertWriteService(w.mongoDB, workspaceID)
+	if err := svc.SaveCerts(ctx, mainTaskID, scannerCerts); err != nil {
+		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveCerts failed: %v", err)
+		return err
 	}
+
+	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] certs saved: %d certificates", len(certs))
+	return nil
 }
 
 // saveJSFinderResultDirect 将 JSFinder 结果直接写入 MongoDB
-func (w *Worker) saveJSFinderResultDirect(ctx context.Context, workspaceID, mainTaskID string, results []*JSFinderResultItem) {
+func (w *Worker) saveJSFinderResultDirect(ctx context.Context, workspaceID, mainTaskID string, results []*JSFinderResultItem) error {
 	if w.mongoDB == nil || len(results) == 0 {
-		return
+		return nil
 	}
 
-	jsModel := model.NewJSFinderResultModel(w.mongoDB, workspaceID)
-	items := make([]*model.JSFinderResult, 0, len(results))
-	now := time.Now()
-	for _, r := range results {
-		items = append(items, &model.JSFinderResult{
-			WorkspaceId:      workspaceID,
-			MainTaskId:       mainTaskID,
+	// 转换为 ScannerJSFinderResult DTO
+	scannerResults := make([]*model.ScannerJSFinderResult, len(results))
+	for i, r := range results {
+		scannerResults[i] = &model.ScannerJSFinderResult{
 			Authority:        r.Authority,
 			Host:             r.Host,
 			Port:             r.Port,
@@ -113,28 +121,30 @@ func (w *Worker) saveJSFinderResultDirect(ctx context.Context, workspaceID, main
 			CurlCommand:      r.CurlCommand,
 			Request:          r.Request,
 			Response:         r.Response,
-			CreateTime:       now,
-			UpdateTime:       now,
-		})
+		}
 	}
-	if err := jsModel.UpsertMany(ctx, items); err != nil {
-		w.taskLog(mainTaskID, LevelError, "[MongoDirect] saveJSFinderResult failed: %v", err)
+
+	// 调用 JSFinderWriteService
+	svc := model.NewJSFinderWriteService(w.mongoDB, workspaceID)
+	if err := svc.SaveResults(ctx, mainTaskID, scannerResults); err != nil {
+		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveJSFinderResult failed: %v", err)
+		return err
 	}
+
+	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] JS results saved: %d findings", len(results))
+	return nil
 }
 
 // saveDirScanResultsDirect 将目录扫描结果直接写入 MongoDB
-func (w *Worker) saveDirScanResultsDirect(ctx context.Context, workspaceID, mainTaskID string, results []DirScanResultDocument) {
+func (w *Worker) saveDirScanResultsDirect(ctx context.Context, workspaceID, mainTaskID string, results []DirScanResultDocument) error {
 	if w.mongoDB == nil || len(results) == 0 {
-		return
+		return nil
 	}
 
-	dirModel := model.NewDirScanResultModel(w.mongoDB, workspaceID)
-	docs := make([]*model.DirScanResult, 0, len(results))
-	now := time.Now()
-	for _, r := range results {
-		docs = append(docs, &model.DirScanResult{
-			WorkspaceId:   workspaceID,
-			MainTaskId:    mainTaskID,
+	// 转换为 ScannerDirScanResult DTO
+	scannerResults := make([]*model.ScannerDirScanResult, len(results))
+	for i, r := range results {
+		scannerResults[i] = &model.ScannerDirScanResult{
 			Authority:     r.Authority,
 			Host:          r.Host,
 			Port:          r.Port,
@@ -150,15 +160,18 @@ func (w *Worker) saveDirScanResultsDirect(ctx context.Context, workspaceID, main
 			Duration:      r.Duration,
 			Request:       r.Request,
 			Response:      r.Response,
-			CreateTime:    now,
-			UpdateTime:    now,
-			ScanTime:      now,
-			Version:       1,
-		})
+		}
 	}
-	if err := dirModel.InsertMany(ctx, docs); err != nil {
-		w.taskLog(mainTaskID, LevelError, "[MongoDirect] saveDirScanResults failed: %v", err)
+
+	// 调用 DirScanWriteService
+	svc := model.NewDirScanWriteService(w.mongoDB, workspaceID)
+	if err := svc.SaveResults(ctx, mainTaskID, scannerResults); err != nil {
+		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveDirScanResults failed: %v", err)
+		return err
 	}
+
+	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] dir scan results saved: %d paths", len(results))
+	return nil
 }
 
 // updateExecutorTaskDirect 直接更新 MongoDB 中的 executor_task 状态/结果
@@ -177,119 +190,73 @@ func (w *Worker) updateExecutorTaskDirect(ctx context.Context, workspaceID, task
 	}
 }
 
-// scannerAssetToModel 将 scanner.Asset 转换为 model.Asset
-// 字段映射与原 RPC 侧 SaveTaskResult 保持一致（rpc/task/internal/logic/savetaskresultlogic.go）
-func scannerAssetToModel(asset *scanner.Asset, mainTaskID, orgID string) *model.Asset {
-	doc := &model.Asset{
-		Authority:     asset.Authority,
-		Host:          asset.Host,
-		Port:          asset.Port,
-		Category:      asset.Category,
-		Service:       asset.Service,
-		Title:         asset.Title,
-		App:           asset.App,
-		HttpStatus:    asset.HttpStatus,
-		HttpHeader:    asset.HttpHeader,
-		HttpBody:      asset.HttpBody,
-		Cert:          asset.Cert,
-		IconHash:      asset.IconHash,
-		IconHashBytes: asset.IconData,
-		Screenshot:    asset.Screenshot,
-		Server:        asset.Server,
-		Banner:        asset.Banner,
-		IsCDN:         asset.IsCDN,
-		CName:         asset.CName,
-		IsCloud:       asset.IsCloud,
-		IsHTTP:        asset.IsHTTP,
-		TaskId:        mainTaskID,
-		Source:        asset.Source,
-		OrgId:         orgID,
+// scannerAssetToDTO 将 scanner.Asset 转换为 model.ScannerAsset DTO
+func scannerAssetToDTO(asset *scanner.Asset) *model.ScannerAsset {
+	dto := &model.ScannerAsset{
+		Authority:  asset.Authority,
+		Host:       asset.Host,
+		Port:       asset.Port,
+		Category:   asset.Category,
+		Service:    asset.Service,
+		Title:      asset.Title,
+		App:        asset.App,
+		HttpStatus: asset.HttpStatus,
+		HttpHeader: asset.HttpHeader,
+		HttpBody:   asset.HttpBody,
+		IconHash:   asset.IconHash,
+		IconData:   asset.IconData,
+		Screenshot: asset.Screenshot,
+		Server:     asset.Server,
+		Banner:     asset.Banner,
+		IsCDN:      asset.IsCDN,
+		CName:      asset.CName,
+		IsCloud:    asset.IsCloud,
+		IsHTTP:     asset.IsHTTP,
+		Source:     asset.Source,
 	}
 
-	if doc.Source == "" {
-		doc.Source = "scan"
+	// 转换 IP 信息
+	for _, ip := range asset.IPV4 {
+		dto.IPV4 = append(dto.IPV4, model.ScannerIPInfo{
+			IP:       ip.IP,
+			Location: ip.Location,
+		})
 	}
 
-	// IP 信息：扫描器未提供时，若 Host 本身是 IP 则回填
-	if len(asset.IPV4) > 0 {
-		for _, ip := range asset.IPV4 {
-			doc.Ip.IpV4 = append(doc.Ip.IpV4, model.IPV4{
-				IPName:   ip.IP,
-				Location: ip.Location,
-			})
-		}
-	} else if utils.IsIPv4(asset.Host) {
-		doc.Ip.IpV4 = append(doc.Ip.IpV4, model.IPV4{IPName: asset.Host})
+	for _, ip := range asset.IPV6 {
+		dto.IPV6 = append(dto.IPV6, model.ScannerIPInfo{
+			IP:       ip.IP,
+			Location: ip.Location,
+		})
 	}
 
-	if len(asset.IPV6) > 0 {
-		for _, ip := range asset.IPV6 {
-			doc.Ip.IpV6 = append(doc.Ip.IpV6, model.IPV6{
-				IPName:   ip.IP,
-				Location: ip.Location,
-			})
-		}
-	} else if utils.IsIPv6(asset.Host) {
-		doc.Ip.IpV6 = append(doc.Ip.IpV6, model.IPV6{IPName: asset.Host})
-	}
-
-	// Host 非 IP 时视为域名
-	if asset.Category == "domain" || !utils.IsIPAddress(asset.Host) {
-		doc.Domain = asset.Host
-	}
-
-	return doc
+	return dto
 }
 
-func scannerVulToModel(vul *scanner.Vulnerability, mainTaskID string) *model.Vul {
-	doc := &model.Vul{
-		Authority: vul.Authority,
-		Host:      vul.Host,
-		Port:      vul.Port,
-		Url:       vul.Url,
-		PocFile:   vul.PocFile,
-		Source:    vul.Source,
-		Severity:  vul.Severity,
-		Result:    vul.Result,
-		Extra:     vul.Extra,
-		TaskId:    mainTaskID,
+// scannerVulToDTO 将 scanner.Vulnerability 转换为 model.ScannerVulnerability DTO
+func scannerVulToDTO(vul *scanner.Vulnerability) *model.ScannerVulnerability {
+	return &model.ScannerVulnerability{
+		Authority:         vul.Authority,
+		Host:              vul.Host,
+		Port:              vul.Port,
+		Url:               vul.Url,
+		PocFile:           vul.PocFile,
+		Source:            vul.Source,
+		Severity:          vul.Severity,
+		Result:            vul.Result,
+		Extra:             vul.Extra,
+		VulName:           vul.VulName,
+		Tags:              vul.Tags,
+		CvssScore:         vul.CvssScore,
+		CveId:             vul.CveId,
+		CweId:             vul.CweId,
+		Remediation:       vul.Remediation,
+		References:        vul.References,
+		MatcherName:       vul.MatcherName,
+		ExtractedResults:  vul.ExtractedResults,
+		CurlCommand:       vul.CurlCommand,
+		Request:           vul.Request,
+		Response:          vul.Response,
+		ResponseTruncated: vul.ResponseTruncated,
 	}
-	if vul.VulName != "" {
-		doc.VulName = vul.VulName
-	}
-	if len(vul.Tags) > 0 {
-		doc.Tags = vul.Tags
-	}
-	if vul.CvssScore > 0 {
-		doc.CvssScore = vul.CvssScore
-	}
-	if vul.CveId != "" {
-		doc.CveId = vul.CveId
-	}
-	if vul.CweId != "" {
-		doc.CweId = vul.CweId
-	}
-	if vul.Remediation != "" {
-		doc.Remediation = vul.Remediation
-	}
-	if len(vul.References) > 0 {
-		doc.References = vul.References
-	}
-	if vul.MatcherName != "" {
-		doc.MatcherName = vul.MatcherName
-	}
-	if len(vul.ExtractedResults) > 0 {
-		doc.ExtractedResults = vul.ExtractedResults
-	}
-	if vul.CurlCommand != "" {
-		doc.CurlCommand = vul.CurlCommand
-	}
-	if vul.Request != "" {
-		doc.Request = vul.Request
-	}
-	if vul.Response != "" {
-		doc.Response = vul.Response
-	}
-	doc.ResponseTruncated = vul.ResponseTruncated
-	return doc
 }

@@ -90,7 +90,7 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 		RateLimit:          0,
 		RemoveWildcard:     true,
 		ResolveDNS:         true,
-		Concurrent:         50,
+		Concurrent: 1,
 	}
 	if config.Options != nil {
 		if o, ok := config.Options.(*SubfinderOptions); ok {
@@ -123,6 +123,9 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 		concurrency = config.WorkerConcurrency
 	}
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(domains) {
@@ -132,6 +135,7 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 
 	type domainResult struct {
 		assets []*Asset
+		domain string
 		err    error
 	}
 	targetChan := make(chan string, len(domains))
@@ -150,7 +154,7 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 				default:
 				}
 				assets, err := s.scanDomain(ctx, domain, opts, config.TaskLogger)
-				resultChan <- domainResult{assets: assets, err: err}
+			resultChan <- domainResult{assets: assets, domain: domain, err: err}
 			}
 		}()
 	}
@@ -177,6 +181,10 @@ dispatch:
 			continue
 		}
 		allAssets = append(allAssets, res.assets...)
+		// 流式入库：单域名完成后立即回调
+		if config.OnTargetDone != nil && len(res.assets) > 0 {
+			config.OnTargetDone(res.domain, res.assets)
+		}
 	}
 
 	// 全局去重
@@ -251,15 +259,18 @@ func (s *SubfinderScanner) scanDomain(
 	} else {
 		taskLogger("INFO", "Subfinder CLI: no providers configured, using default passive sources")
 	}
-	taskLogger("DEBUG", "Subfinder CLI: %s %s", ToolConfigs["subfinder"].BinaryName, strings.Join(args, " "))
+	taskLogger("INFO", "Subfinder CLI: %s %s", ToolConfigs["subfinder"].BinaryName, strings.Join(args, " "))
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
 	if err != nil {
+		logx.Debugf("[Subfinder] execution error domain=%s err=%v", domain, err)
+		s.executor.LogResult("Subfinder: "+domain, res, err)
 		return nil, fmt.Errorf("subfinder execution: %w", err)
 	}
 	if res.ExitCode != 0 {
+		logx.Debugf("[Subfinder] non-zero exit domain=%s exit=%d stderr=%s", domain, res.ExitCode, strings.TrimSpace(res.Stderr))
 		return nil, fmt.Errorf("subfinder exit code %d: %s", res.ExitCode, res.Stderr)
 	}
 
@@ -284,13 +295,18 @@ func (s *SubfinderScanner) scanDomain(
 	var assets []*Asset
 	scanner := bufio.NewScanner(parseSource)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	lineCount := 0
+	parseFailCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		lineCount++
 		var sr SubfinderResult
 		if err := json.Unmarshal([]byte(line), &sr); err != nil {
+			parseFailCount++
+			logx.Debugf("[Subfinder] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 		if sr.Host == "" {
@@ -324,6 +340,7 @@ func (s *SubfinderScanner) scanDomain(
 		assets = append(assets, asset)
 	}
 
+	logx.Debugf("[Subfinder] domain=%s: lines=%d parseFail=%d assets=%d", domain, lineCount, parseFailCount, len(assets))
 	return assets, nil
 }
 

@@ -5,7 +5,7 @@ MaxBytes: 104857600  # 100MB
 Timeout: 300000      # 5分钟超时 (毫秒)
 
 Log:
-  Level: info
+  Level: debug
   Stat: false
   Mode: console
   Encoding: plain
@@ -26,12 +26,6 @@ Redis:
   Host: "localhost:6379"
   Pass: ""
   Type: node
-
-TaskRpc:
-  Endpoints:
-    - 127.0.0.1:9000
-  Timeout: 30000
-  NonBlock: true  # 非阻塞拨号：API 可在 RPC 未启动时正常启动，调用时才报错
 
 Docker:
   Host: ""

@@ -1,8 +1,8 @@
 <template>
   <el-container class="layout-container">
     <!-- 侧边栏 -->
-    <el-aside :width="isCollapse ? '64px' : '250px'"
-      :class="['aside', `style-${themeStore.themeStyle}`, { collapsed: isCollapse }]">
+    <el-aside :width="asideWidth"
+      :class="['aside', `style-${themeStore.themeStyle}`, { collapsed: isCollapse, 'mobile-open': mobileDrawerOpen }]">
       <div class="logo">
         <img :src="brandingStore.logoSrc" alt="logo" />
         <span v-show="!isCollapse">{{ brandingStore.displayTitle }}</span>
@@ -267,6 +267,9 @@
 
     </el-aside>
 
+    <!-- 移动端抽屉遮罩 -->
+    <div v-if="mobileDrawerOpen" class="sidebar-backdrop" @click="isCollapse = true"></div>
+
     <el-container>
       <!-- 顶部导航 -->
       <el-header :class="['header', `style-${themeStore.themeStyle}`]">
@@ -324,8 +327,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
@@ -344,12 +347,29 @@ import {
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
 const userStore = useUserStore()
 const themeStore = useThemeStore()
 const brandingStore = useBrandingStore()
 const isCollapse = ref(false)
+const isMobile = ref(false)
 const defaultOpeneds = ref(['scan-config-menu', 'system-management'])
+
+// 移动端断点：< 768px 视为移动端，侧边栏切换为抽屉模式
+const MOBILE_BREAKPOINT = 768
+
+// 抽屉模式：移动端侧边栏固定宽度 250px 浮层；桌面端按 isCollapse 取 64/250
+const asideWidth = computed(() => isMobile.value ? '250px' : (isCollapse.value ? '64px' : '250px'))
+// 移动端抽屉是否展开（桌面端恒为 false）
+const mobileDrawerOpen = computed(() => isMobile.value && !isCollapse.value)
+
+function checkMobile() {
+  const mobile = window.innerWidth < MOBILE_BREAKPOINT
+  isMobile.value = mobile
+  // 进入移动端自动收起，避免 250px 撑出水平溢出
+  if (mobile) isCollapse.value = true
+}
 
 // === 扫描引导：首次登录自动弹出，顶栏按钮可手动唤起 ===
 const showOnboarding = ref(false)
@@ -365,10 +385,22 @@ async function checkOnboarding() {
 }
 
 onMounted(() => {
+  // 响应式：初始化移动端判定 + 监听视口变化
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   // 刷新当前登录用户信息（头像、邮箱等可能在其他会话中已变更）
   userStore.refreshProfile()
   // 首次登录自动弹出扫描引导
   checkOnboarding()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
+})
+
+// 移动端路由切换后自动收起抽屉，避免遮挡内容
+watch(() => route.path, () => {
+  if (isMobile.value && !isCollapse.value) isCollapse.value = true
 })
 
 function handleCommand(command) {
@@ -717,6 +749,53 @@ function handleCommand(command) {
 
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* 移动端抽屉遮罩 */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+}
+
+/* 移动端响应式：< 768px 侧边栏改为浮层抽屉，避免水平溢出 */
+@media (max-width: 767px) {
+  .aside {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 1001;
+    width: 250px !important;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+
+    &.mobile-open {
+      transform: translateX(0);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    }
+  }
+
+  .header {
+    padding: 0 12px;
+
+    .header-left .collapse-btn {
+      margin-right: 10px;
+    }
+
+    .header-right {
+      gap: 8px;
+
+      .user-info .username {
+        display: none;
+      }
+    }
+  }
+
+  .main {
+    padding: 12px;
+  }
 }
 
 /* fade-transform 动画 */

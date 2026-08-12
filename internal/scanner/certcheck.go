@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // CertNameInfo 证书主体/颁发者的结构化字段（对齐 ARL cert 集合的可检索性）
@@ -156,6 +158,7 @@ func FetchCert(ctx context.Context, host string, port int, timeout time.Duration
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	t := certTarget{Host: host, Port: port, Authority: addr}
+	logx.Debugf("[CertCheck] fetching cert host=%s port=%d addr=%s timeout=%v", host, port, addr, timeout)
 
 	type dialResult struct {
 		conn *tls.Conn
@@ -175,17 +178,23 @@ func FetchCert(ctx context.Context, host string, port int, timeout time.Duration
 
 	select {
 	case <-ctx.Done():
+		logx.Debugf("[CertCheck] cancelled host=%s port=%d", host, port)
 		return nil
 	case res := <-ch:
 		if res.err != nil {
+			logx.Debugf("[CertCheck] TLS dial failed host=%s port=%d err=%v", host, port, res.err)
 			return nil
 		}
 		defer res.conn.Close()
 		certs := res.conn.ConnectionState().PeerCertificates
 		if len(certs) == 0 {
+			logx.Debugf("[CertCheck] no certificates host=%s port=%d", host, port)
 			return nil
 		}
-		return buildCertResult(t, certs[0])
+		result := buildCertResult(t, certs[0])
+		logx.Debugf("[CertCheck] cert fetched host=%s port=%d subject=%q issuer=%q notBefore=%s notAfter=%s",
+			host, port, result.Subject, result.Issuer, result.NotBefore, result.NotAfter)
+		return result
 	}
 }
 

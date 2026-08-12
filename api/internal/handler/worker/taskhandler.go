@@ -9,7 +9,6 @@ import (
 	"cscan/api/internal/logic"
 	"cscan/api/internal/svc"
 	"cscan/pkg/response"
-	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
@@ -68,21 +67,11 @@ func WorkerTaskCheckHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 调用RPC CheckTask
-		// 注意：RPC 的 TaskId 字段实际用于传递 WorkerName
-		rpcReq := &pb.CheckTaskReq{
-			TaskId:     req.WorkerName,
-			MainTaskId: "",
-		}
-
-		// 修复 D1：显式 30s 超时，作为 gRPC 客户端默认超时的双保险。
-		// 防止 mongo 连接池清空时该调用无限阻塞，进而拖住 API 的 WS handler
-		// 与 worker 心跳，最终导致 worker 进程被重启（RestartCount 增长）。
 		checkCtx, checkCancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer checkCancel()
-		rpcResp, err := svcCtx.TaskRpcClient.CheckTask(checkCtx, rpcReq)
+
+		result, err := svcCtx.CheckTask(checkCtx, req.WorkerName)
 		if err != nil {
-			// RPC 连接错误不输出日志，避免 Worker 轮询时产生大量日志
 			response.Error(w, err)
 			return
 		}
@@ -90,12 +79,12 @@ func WorkerTaskCheckHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, &WorkerTaskCheckResp{
 			Code:        0,
 			Msg:         "success",
-			IsExist:     rpcResp.IsExist,
-			IsFinished:  rpcResp.IsFinished,
-			TaskId:      rpcResp.TaskId,
-			MainTaskId:  rpcResp.MainTaskId,
-			WorkspaceId: rpcResp.WorkspaceId,
-			Config:      rpcResp.Config,
+			IsExist:     result.IsExist,
+			IsFinished:  result.IsFinished,
+			TaskId:      result.TaskId,
+			MainTaskId:  result.MainTaskId,
+			WorkspaceId: result.WorkspaceId,
+			Config:      result.Config,
 		})
 	}
 }
@@ -117,26 +106,17 @@ func WorkerTaskUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 调用RPC UpdateTask
-		rpcReq := &pb.UpdateTaskReq{
-			TaskId: req.TaskId,
-			State:  req.State,
-			Worker: req.Worker,
-			Result: req.Result,
-			Phase:  req.Phase,
-		}
-
-		rpcResp, err := svcCtx.TaskRpcClient.UpdateTask(r.Context(), rpcReq)
+		err := svcCtx.UpdateTask(r.Context(), req.TaskId, req.State, req.Worker, req.Result, req.Phase)
 		if err != nil {
-			logx.Errorf("[WorkerTaskUpdate] RPC error: %v", err)
+			logx.Errorf("[WorkerTaskUpdate] error: %v", err)
 			response.Error(w, err)
 			return
 		}
 
 		httpx.OkJson(w, &WorkerTaskUpdateResp{
 			Code:    0,
-			Msg:     rpcResp.Message,
-			Success: rpcResp.Success,
+			Msg:     "Task status updated",
+			Success: true,
 		})
 	}
 }

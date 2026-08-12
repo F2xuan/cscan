@@ -33,7 +33,7 @@ jobs:
             echo "version=latest" >> $GITHUB_OUTPUT
           fi
 
-  # [1/4] API Service
+  # [1/3] API Service
   build-api:
     runs-on: ubuntu-latest
     needs: prepare
@@ -59,33 +59,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # [2/4] RPC Service
-  build-rpc:
-    runs-on: ubuntu-latest
-    needs: prepare
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Login to Registry
-        uses: docker/login-action@v3
-        with:
-          registry: registry.cn-hangzhou.aliyuncs.com
-          username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
-          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
-      - name: Build and push cscan-rpc
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile.rpc
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/cscan-rpc:${{ needs.prepare.outputs.version }}
-            ${{ env.REGISTRY }}/cscan-rpc:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # [3/4] Web Service
+  # [2/3] Web Service
   build-web:
     runs-on: ubuntu-latest
     needs: prepare
@@ -112,7 +86,7 @@ jobs:
           build-args: |
             BUILD_TIME=${{ github.run_id }}
 
-  # [4/4] Worker Service
+  # [3/3] Worker Service
   build-worker:
     runs-on: ubuntu-latest
     needs: prepare

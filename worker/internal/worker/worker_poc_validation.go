@@ -181,7 +181,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 			w.taskLog(task.TaskId, LevelInfo, "[%s] Vulnerability found! Matched URL: %s", task.TaskId, vul.Url)
 		}
 		// 保存漏洞到数据库
-		w.saveVulResult(ctx, workspaceId, task.TaskId, result.Vulnerabilities)
+		w.saveVulResultDirect(ctx, workspaceId, task.TaskId, result.Vulnerabilities)
 	} else {
 		// 没有发现漏洞，添加一个未匹配的结果
 		resultPocName := pocName
@@ -473,7 +473,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 			w.taskLog(task.TaskId, LevelInfo, "[%s] Vulnerability found! %s → %s", task.TaskId, vul.PocFile, vul.Url)
 			// 立即保存到数据库
-			w.saveVulResult(ctx, workspaceId, task.TaskId, []*scanner.Vulnerability{vul})
+			w.saveVulResultDirect(ctx, workspaceId, task.TaskId, []*scanner.Vulnerability{vul})
 		},
 	}
 

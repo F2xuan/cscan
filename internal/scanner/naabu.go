@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -99,7 +100,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		PortThreshold:     0,
 		Retries:           2,
 		WarmUpTime:        1,
-		Workers:           50,
+		Workers:           1,
 		Verify:            false,
 		SkipHostDiscovery: true, // 默认跳过 ICMP 主机发现（域名/CDN 目标 ICMP 几乎总被丢弃）
 	}
@@ -301,6 +302,9 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 	totalTargets := len(cleanTargets)
 	concurrency := opts.Workers
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > totalTargets {
@@ -437,6 +441,8 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	processTimeout := aggregatedTimeout + 30*time.Second
 	logx.Infof("Naabu CLI: ProcessTimeout=%v (aggregated + 30s buffer)", processTimeout)
 
+	logx.Infof("[Naabu] CLI: target=%s args=%s", target, strings.Join(args, " "))
+
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: processTimeout,
 	})
@@ -444,6 +450,7 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		logx.Errorf("Naabu(CLI): %s execution failed: %v, stderr=%q", target, err, strings.TrimSpace(res.Stderr))
 		return nil, false
 	}
+	s.executor.LogResult("Naabu(CLI): "+target, res, err)
 
 	// 读取 JSON 输出文件（进程异常退出时仍尝试读取部分结果）
 	content, readErr := os.ReadFile(tmpPath)
@@ -475,7 +482,9 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 
 	var assets []*Asset
 	var foundPorts []string
+	seenPort := make(map[string]bool)
 	hostPortCount := 0
+	parseFailCount := 0
 
 	scanner := bufio.NewScanner(parseSource)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -486,21 +495,38 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		}
 		var hostResult NaabuHostResult
 		if err := json.Unmarshal([]byte(line), &hostResult); err != nil {
-			logx.Infof("Naabu(CLI): json parse error line=%q err=%v", line, err)
+			parseFailCount++
+			logx.Debugf("[Naabu] JSON parse failed line=%q err=%v", line, err)
 			continue
 		}
 		if hostResult.Port <= 0 {
+			logx.Debugf("[Naabu] ignoring non-positive port: ip=%s port=%d", hostResult.IP, hostResult.Port)
 			continue
 		}
+
+		// 优先使用原始目标主机名（子域名），仅在目标为 IP 时使用解析结果
+		// 修复：naabu 内部 DNS 解析后 JSON 仅含 IP，导致后续 nmap/证书扫描使用 IP 而非域名
+		assetHost := hostResult.IP
+		if target != "" && net.ParseIP(target) == nil {
+			assetHost = target
+		}
+
+		// 去重：同一 host:port 只保留一次（Naabu 可能对同一端口输出多条 JSON）
+		dedupKey := fmt.Sprintf("%s:%d", assetHost, hostResult.Port)
+		if seenPort[dedupKey] {
+			continue
+		}
+		seenPort[dedupKey] = true
 		hostPortCount++
 		if opts.PortThreshold > 0 && hostPortCount > opts.PortThreshold {
 			return nil, true
 		}
 		locStr, _ := ipLocator.Locate(hostResult.IP)
 		location := geolocation.NormalizeLocation(locStr)
+
 		asset := &Asset{
-			Authority: utils.BuildTargetWithPort(hostResult.IP, hostResult.Port),
-			Host:      hostResult.IP,
+			Authority: utils.BuildTargetWithPort(assetHost, hostResult.Port),
+			Host:      assetHost,
 			Port:      hostResult.Port,
 			Category:  getCategory(hostResult.IP),
 		}
@@ -519,6 +545,10 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		logx.Infof("Naabu(CLI): %s -> %s", target, strings.Join(foundPorts, ","))
 	} else {
 		logx.Infof("Naabu(CLI): %s -> no open ports found", target)
+	}
+
+	if parseFailCount > 0 {
+		logx.Debugf("[Naabu] scanTargetCLI target=%s: assets=%d parseFail=%d", target, len(assets), parseFailCount)
 	}
 
 	return assets, false

@@ -4,6 +4,7 @@ $ProjectRoot = $ScriptDir
 Set-Location $ProjectRoot
 $env:CSCAN_DEV = "1"
 $env:CSCAN_WORKER_KEY = "dev-worker-key"
+$env:CSCAN_MONGO_URI = "mongodb://localhost:27017"
 
 $logDir = Join-Path $ProjectRoot "log"
 if (-not (Test-Path $logDir)) {
@@ -18,29 +19,26 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$rpcLog = Join-Path $logDir "rpc-$ts.log"
 $apiLog = Join-Path $logDir "api-$ts.log"
 $workerLog = Join-Path $logDir "worker-$ts.log"
 $webLog = Join-Path $logDir "web-$ts.log"
 
-$rpc = Start-Process -FilePath "cmd" -ArgumentList "/c","go run rpc/task/task.go -f rpc/task/etc/task.yaml > `"$rpcLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
 $api = Start-Process -FilePath "cmd" -ArgumentList "/c","go run api/cscan.go -f api/etc/cscan.yaml > `"$apiLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
 $worker = Start-Process -FilePath "cmd" -ArgumentList "/c","go run worker/main.go -s http://localhost:8888 > `"$workerLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
 $web = Start-Process -FilePath "cmd" -ArgumentList "/c","cd web && (if not exist node_modules call npm install) && npm run dev > `"$webLog`" 2>&1" -NoNewWindow -PassThru -WorkingDirectory $ProjectRoot
 
-Write-Host "[dev] Local dev stack started (Deps / RPC / API / Worker / Web)"
+Write-Host "[dev] Local dev stack started (Deps / API / Worker / Web)"
 Write-Host "[dev] Logs:"
-Write-Host "  RPC   : $rpcLog"
 Write-Host "  API   : $apiLog"
 Write-Host "  Worker: $workerLog"
 Write-Host "  Web   : $webLog"
 Write-Host "[dev] Press Ctrl+C to stop all."
 
 try {
-    Wait-Process -Id $rpc.Id, $api.Id, $worker.Id, $web.Id
+    Wait-Process -Id $api.Id, $worker.Id, $web.Id
 } finally {
     Write-Host "[dev] Stopping all local services..."
-    @($rpc, $api, $worker, $web) | ForEach-Object {
+    @($api, $worker, $web) | ForEach-Object {
         if (-not $_.HasExited) { taskkill /T /F /PID $_.Id 2>$null }
     }
     Write-Host "[dev] Stopping dependency stack and cleaning volumes..."

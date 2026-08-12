@@ -735,9 +735,9 @@ func (m *ActiveFingerprintModel) Upsert(ctx context.Context, doc *ActiveFingerpr
 }
 
 func (m *ActiveFingerprintModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]ActiveFingerprint, error) {
-	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find()
 	if page > 0 && pageSize > 0 {
+		page, pageSize = NormalizePage(page, pageSize)
 		opts.SetSkip(int64((page - 1) * pageSize))
 		opts.SetLimit(int64(pageSize))
 	}

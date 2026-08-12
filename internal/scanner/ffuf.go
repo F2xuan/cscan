@@ -58,16 +58,21 @@ func (o *FFufOptions) Validate() error {
 	return nil
 }
 
-// FFufCLIResult ffuf CLI JSON 输出结构
+// FFufCLIResult ffuf 2.x JSON 输出中 results[] 的单条记录
 type FFufCLIResult struct {
 	Url              string `json:"url"`
-	StatusCode       int    `json:"status_code"`
+	StatusCode       int    `json:"status"`
 	ContentLength    int64  `json:"length"`
 	ContentWords     int64  `json:"words"`
 	ContentLines     int64  `json:"lines"`
-	ContentType      string `json:"content_type"`
+	ContentType      string `json:"content-type"`
 	RedirectLocation string `json:"redirectlocation"`
-	DurationMs       int64  `json:"duration"`
+	DurationNs       int64  `json:"duration"`
+}
+
+// ffufCLIOutput ffuf 2.x JSON 输出顶层包裹结构（-of json）
+type ffufCLIOutput struct {
+	Results []FFufCLIResult `json:"results"`
 }
 
 // Scan 执行目录扫描
@@ -131,6 +136,9 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		concurrency = config.WorkerConcurrency
 	}
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(targets) {
@@ -188,6 +196,10 @@ dispatch:
 		} else {
 			allAssets = append(allAssets, res.assets...)
 			logInfo("[FFuf] 目标 %s 发现 %d 个有效路径", res.target, len(res.assets))
+			// 流式入库：每完成一个目标立即回调
+			if config.OnTargetDone != nil && len(res.assets) > 0 {
+				config.OnTargetDone(res.target, res.assets)
+			}
 		}
 		if config.OnProgress != nil {
 			progress := completed * 100 / len(targets)
@@ -239,12 +251,16 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 
 	args = append(args, "-o", tmpPath)
 
+	logx.Infof("[FFuf] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
+
 	logInfo("[FFuf] executing ffuf for %s", target)
 
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout*2) * time.Second,
 	})
 	if err != nil {
+		logx.Debugf("[FFuf] execution error target=%s err=%v", target, err)
+		s.executor.LogResult("FFuf: "+target, res, err)
 		return nil, fmt.Errorf("ffuf execution: %w", err)
 	}
 
@@ -258,17 +274,21 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 	if len(content) > 0 {
 		parseData = content
 	} else if len(res.Stdout) > 0 {
-		logx.Infof("FFuf(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
+		logx.Debugf("[FFuf] output file empty, falling back to stdout (%d bytes)", len(res.Stdout))
 		parseData = []byte(res.Stdout)
 	} else {
-		logx.Infof("FFuf(CLI): no output from file or stdout, returning empty result")
+		logx.Debugf("[FFuf] no output from file or stdout")
 		return nil, nil
 	}
 
-	var ffufResults []FFufCLIResult
-	if err := json.Unmarshal(parseData, &ffufResults); err != nil {
+	var wrapper ffufCLIOutput
+	if err := json.Unmarshal(parseData, &wrapper); err != nil {
+		logx.Debugf("[FFuf] JSON parse error target=%s err=%v raw=%s", target, err, string(parseData))
 		return nil, fmt.Errorf("parse ffuf results: %w", err)
 	}
+	ffufResults := wrapper.Results
+
+	logx.Debugf("[FFuf] %s: parsed %d results", target, len(ffufResults))
 
 	return s.convertResults(target, ffufResults), nil
 }
@@ -323,7 +343,7 @@ func (s *FFufScanner) convertResults(target string, results []FFufCLIResult) []*
 			ContentType:   r.ContentType,
 			ContentWords:  r.ContentWords,
 			ContentLines:  r.ContentLines,
-			Duration:      r.DurationMs,
+			Duration:      r.DurationNs / int64(time.Millisecond),
 		}
 
 		if r.RedirectLocation != "" {

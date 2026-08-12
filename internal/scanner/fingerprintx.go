@@ -107,6 +107,9 @@ func (s *FingerprintxScanner) runFingerprintxCLI(ctx context.Context, assets []*
 	// 并发 Worker Pool：每个目标一个 fingerprintx 进程，完成一个补一个
 	concurrency := opts.Concurrency
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(assets) {
@@ -181,29 +184,38 @@ func (s *FingerprintxScanner) scanSingleTarget(
 	}
 	args = append(args, target)
 
+	taskLog("INFO", "[Fingerprintx] CLI: %s %s", "fingerprintx", strings.Join(args, " "))
+
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
 	if err != nil {
 		logx.Debugf("Fingerprintx(CLI): scan error for %s: %v", target, err)
+		s.executor.LogResult("Fingerprintx: "+target, res, err)
 		asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
 		return
 	}
 
 	resultMap := make(map[string]*FxResult)
 	scanner := newLineScanner(res.Stdout)
+	lineCount := 0
+	parseFailCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		lineCount++
 		var fxr FxResult
 		if err := json.Unmarshal([]byte(line), &fxr); err != nil {
+			parseFailCount++
+			logx.Debugf("[Fingerprintx] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 		key := fmt.Sprintf("%s:%d", fxr.Host, fxr.Port)
 		resultMap[key] = &fxr
 	}
+	logx.Debugf("[Fingerprintx] %s: lines=%d parseFail=%d results=%d", target, lineCount, parseFailCount, len(resultMap))
 
 	key := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
 	if fxr, ok := resultMap[key]; ok {
@@ -246,6 +258,8 @@ func (s *FingerprintxScanner) scanSingleTarget(
 		}
 	}
 	asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
+	logx.Debugf("[Fingerprintx] %s result: service=%s app=%v bannerLen=%d isHTTP=%v",
+		target, asset.Service, asset.App, len(asset.Banner), asset.IsHTTP)
 }
 
 // formatMetadataMap 格式化 metadata map 为字符串

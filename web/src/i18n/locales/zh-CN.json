@@ -888,7 +888,16 @@
         "screenshot": "截图",
         "cname": "CNAME",
         "domain": "域名",
-        "category": "分类"
+        "category": "分类",
+        "labels": "标签",
+        "app": "应用",
+        "header": "响应头",
+        "body": "响应体",
+        "cert": "证书",
+        "source": "来源",
+        "ip": "IP",
+        "memo": "备注",
+        "color_tag": "颜色标记"
       }
     },
     "history": {
@@ -1376,7 +1385,13 @@
     "public": "公开",
     "fileExtensions": "文件扩展名",
     "pocTypes": "POC类型",
-    "scanAll": "扫描全部"
+    "scanAll": "扫描全部",
+    "summarySuffix": "pps",
+    "summaryThreads": "{n}线程",
+    "summaryTimeout": "{n}s",
+    "summaryNoService": "未选服务",
+    "summaryNoDict": "未选字典",
+    "summaryNoPoc": "未选POC"
   },
   "onboarding": {
     "title": "欢迎使用 CSCAN",
@@ -2435,7 +2450,9 @@
     "exportSuccessCount": "成功导出 {count} 条数据",
     "noDirScanData": "暂无目录扫描数据",
     "records": "条记录",
-    "targets": "个目标"
+    "targets": "个目标",
+    "noTaskIdHint": "请从任务列表进入查看任务报告，或使用上方周期报告功能",
+    "goTaskList": "前往任务列表"
   },
   "cronTask": {
     "title": "定时扫描",
@@ -2669,6 +2686,7 @@
     "aiAnalyzedRisk": "AI研判完成：有风险",
     "aiAnalyzedNoRisk": "AI研判完成：无风险",
     "batchAIAnalyze": "批量AI研判",
+    "aiConcurrency": "AI研判并发数(1-5)",
     "batchAIAnalyzeConfirm": "将对所有AI未研判的数据进行批量研判，确定开始吗？",
     "batchAnalyzeSelectedConfirm": "将对选中的 {count} 条数据进行AI研判，确定开始吗？",
     "batchAnalyzeFilteredConfirm": "将对当前筛选条件下的未研判数据进行AI研判，确定开始吗？",
@@ -2869,6 +2887,7 @@
     "aiAnalyze": "AI研判",
     "aiAnalyzing": "研判中...",
     "batchAIAnalyze": "批量AI研判",
+    "aiConcurrency": "AI研判并发数(1-5)",
     "batchAIAnalyzeConfirm": "确定对所有未研判的数据启动AI批量研判吗？该操作将调用大模型API，可能产生费用并需要较长时间。",
     "batchAnalyzeSelectedConfirm": "确定对选中的 {count} 条数据启动AI批量研判吗？",
     "batchAnalyzeFilteredConfirm": "确定对当前筛选条件下所有未研判的数据启动AI批量研判吗？",
@@ -2968,6 +2987,7 @@
     "configured": "已配置",
     "notConfigured": "未配置",
     "apiKey": "API Key",
+    "account": "账号",
     "apiSecret": "Email",
     "fofaSecretPlaceholder": "请输入 Fofa 账号邮箱",
     "fofaKeyPlaceholder": "请输入 Fofa API Key",

@@ -46,6 +46,8 @@ type ScanConfig struct {
 	OnAssetUpdated func(asset *Asset) `json:"-"`
 	// OnTargetDone 单目标/单命令扫描完成后的回调，参数为已完成的 target 与本次产出资产
 	OnTargetDone func(target string, assets []*Asset) `json:"-"`
+	// OnCertFound 证书采集完成后的流式回调，用于即时入库
+	OnCertFound func(cert *CertResult) `json:"-"`
 }
 
 // GetTypedOptions 从 ScanConfig 中提取类型安全的选项

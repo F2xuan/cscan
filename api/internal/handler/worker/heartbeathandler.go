@@ -10,8 +10,6 @@ import (
 
 	"cscan/api/internal/logic"
 	"cscan/api/internal/svc"
-	"cscan/pkg/response"
-	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
@@ -60,54 +58,59 @@ func WorkerHeartbeatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 调用RPC KeepAlive
-		rpcReq := &pb.KeepAliveReq{
-			WorkerName:         req.WorkerName,
-			Ip:                 req.IP,
-			CpuLoad:            req.CpuLoad,
-			MemUsed:            req.MemUsed,
-			TaskStartedNumber:  req.TaskStartedNumber,
-			TaskExecutedNumber: req.TaskExecutedNumber,
-			IsDaemon:           req.IsDaemon,
-		}
+		ctx := r.Context()
 
-		rpcResp, err := svcCtx.TaskRpcClient.KeepAlive(r.Context(), rpcReq)
-		if err != nil {
-			logx.Errorf("[WorkerHeartbeat] RPC KeepAlive error: %v", err)
-			response.Error(w, err)
-			return
+		// 直接更新 Worker 状态到 Redis
+		workerKey := "cscan:worker:" + req.WorkerName
+		workerData := map[string]interface{}{
+			"workerName":         req.WorkerName,
+			"ip":                 req.IP,
+			"cpuLoad":            req.CpuLoad,
+			"memUsed":            req.MemUsed,
+			"taskStartedNumber":  req.TaskStartedNumber,
+			"taskExecutedNumber": req.TaskExecutedNumber,
+			"concurrency":        req.Concurrency,
+			"isDaemon":           req.IsDaemon,
+			"updateTime":         time.Now().Format("2006-01-02 15:04:05"),
+			"status":             "online",
 		}
+		workerJson, _ := json.Marshal(workerData)
+		svcCtx.RedisClient.Set(ctx, workerKey, workerJson, 60*time.Second)
 
-		// 额外更新 concurrency 到 Redis（因为 proto 中没有这个字段）
-		if req.Concurrency > 0 {
-			workerKey := "cscan:worker:" + req.WorkerName
-			// 获取现有数据并更新 concurrency
-			existingData, err := svcCtx.RedisClient.Get(r.Context(), workerKey).Result()
-			if err == nil {
-				var workerData map[string]interface{}
-				if json.Unmarshal([]byte(existingData), &workerData) == nil {
-					workerData["concurrency"] = req.Concurrency
-					updatedJson, _ := json.Marshal(workerData)
-					svcCtx.RedisClient.Set(r.Context(), workerKey, updatedJson, 60*time.Second)
-				}
+		// 添加到 Worker 集合
+		svcCtx.RedisClient.SAdd(ctx, "cscan:workers", req.WorkerName)
+
+		// 检查控制命令
+		controlKey := "cscan:worker:control:" + req.WorkerName
+		controlData, err := svcCtx.RedisClient.Get(ctx, controlKey).Result()
+
+		var manualStop, manualReload, manualInitEnv, manualSync bool
+		if err == nil && controlData != "" {
+			var control map[string]bool
+			if json.Unmarshal([]byte(controlData), &control) == nil {
+				manualStop = control["stop"]
+				manualReload = control["reload"]
+				manualInitEnv = control["initEnv"]
+				manualSync = control["sync"]
 			}
+			svcCtx.RedisClient.Del(ctx, controlKey)
 		}
 
-		// 读取期望并发数（由管理端设置，持久化无TTL），下发给Worker
+		// 读取期望并发数
 		desiredConcurrency := 0
 		desiredKey := fmt.Sprintf("cscan:worker:desired_concurrency:%s", req.WorkerName)
-		if val, err := svcCtx.RedisClient.Get(r.Context(), desiredKey).Int(); err == nil && val > 0 {
+		if val, err := svcCtx.RedisClient.Get(ctx, desiredKey).Int(); err == nil && val > 0 {
 			desiredConcurrency = val
 		}
 
 		httpx.OkJson(w, &WorkerHeartbeatResp{
 			Code:               0,
 			Msg:                "success",
-			Status:             rpcResp.Status,
-			ManualStopFlag:     rpcResp.ManualStopFlag,
-			ManualReloadFlag:   rpcResp.ManualReloadFlag,
-			ManualInitEnvFlag:  rpcResp.ManualInitEnvFlag,
-			ManualSyncFlag:     rpcResp.ManualSyncFlag,
+			Status:             "ok",
+			ManualStopFlag:     manualStop,
+			ManualReloadFlag:   manualReload,
+			ManualInitEnvFlag:  manualInitEnv,
+			ManualSyncFlag:     manualSync,
 			DesiredConcurrency: desiredConcurrency,
 		})
 	}

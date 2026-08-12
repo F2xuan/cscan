@@ -45,7 +45,7 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	// 注意：此处原先会异步 prewrite 初始资产——用 GenerateAssetsFromTargetsWithoutDNS 把用户输入的
 	// 文本目标直接 upsert 进资产表（Source="user_input", IsNewAsset=true）。这在 worker 尚未进行任何
 	// 存活/端口/指纹识别前就把目标录入暴露面，属逻辑错误，已移除。
-	// 资产统一由 worker 扫描完成后通过 SaveTaskResult RPC 回写（rpc/task/internal/logic/savetaskresultlogic.go），
+	// 资产统一由 worker 扫描完成后通过直连 MongoDB 回写，
 	// prewriteInitialAssets 等函数保留但不再调用，待后续清理。
 
 	// 3. Calculate SubTask Count

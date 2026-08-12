@@ -2,16 +2,19 @@ package logic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
 	"cscan/internal/scanner"
-	"cscan/rpc/task/pb"
+	"cscan/internal/scheduler"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"gopkg.in/yaml.v3"
@@ -626,7 +629,6 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 	var pocSeverity string
 
 	if pocType == "nuclei" {
-		// Nuclei默认模板
 		template, err := l.svcCtx.NucleiTemplateModel.FindByTemplateId(l.ctx, req.Id)
 		if err != nil {
 			l.Logger.Errorf("PocValidate: find nuclei template failed, id=%s, error=%v", req.Id, err)
@@ -637,7 +639,6 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 		}
 		pocSeverity = template.Severity
 	} else {
-		// 自定义POC
 		poc, err := l.svcCtx.CustomPocModel.FindById(l.ctx, req.Id)
 		if err != nil {
 			l.Logger.Errorf("PocValidate: find custom poc failed, id=%s, error=%v", req.Id, err)
@@ -649,35 +650,48 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 		pocSeverity = poc.Severity
 	}
 
-	// 通过RPC调用worker执行POC验证
-	rpcReq := &pb.ValidatePocReq{
-		Url:         req.Url,
-		PocId:       req.Id,
-		PocType:     pocType,
-		Timeout:     30,
-		UseTemplate: pocType == "nuclei",
-		UseCustom:   pocType == "custom",
+	// 检查在线 Worker
+	if err := checkOnlineWorkers(l.ctx, l.svcCtx); err != nil {
+		return &types.PocValidateResp{Code: 500, Msg: err.Error()}, nil
+	}
+
+	// 直接入队
+	taskId := uuid.New().String()
+	taskConfig := map[string]interface{}{
+		"taskType":    "poc_validate",
+		"url":         req.Url,
+		"pocId":       req.Id,
+		"pocType":     pocType,
+		"timeout":     30,
+		"workspaceId": workspaceId,
+	}
+	configBytes, _ := json.Marshal(taskConfig)
+
+	task := &scheduler.TaskInfo{
+		TaskId:      taskId,
+		MainTaskId:  taskId,
 		WorkspaceId: workspaceId,
+		TaskName:    "POC验证",
+		Config:      string(configBytes),
+		Priority:    2,
 	}
 
-	rpcResp, err := l.svcCtx.TaskRpcClient.ValidatePoc(l.ctx, rpcReq)
-	if err != nil {
-		l.Logger.Errorf("RPC call failed: %v", err)
-		return &types.PocValidateResp{Code: 500, Msg: "验证服务调用失败"}, nil
+	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
+		l.Logger.Errorf("PocValidate: push task failed, taskId=%s, error=%v", taskId, err)
+		return &types.PocValidateResp{Code: 500, Msg: "任务下发失败"}, nil
 	}
 
-	if !rpcResp.Success {
-		return &types.PocValidateResp{Code: 500, Msg: rpcResp.Message}, nil
-	}
+	// 持久化 taskInfo
+	persistTaskInfo(l.ctx, l.svcCtx, taskId, taskConfig)
 
-	// 异步模式：返回任务已下发的信息和任务ID
+	l.Logger.Infof("PocValidate: task created, taskId=%s, pocId=%s, url=%s", taskId, req.Id, req.Url)
+
 	return &types.PocValidateResp{
 		Code:     0,
 		Msg:      "POC验证任务已下发，请稍后查询结果",
-		Matched:  false, // 异步模式下无法立即返回匹配结果
+		Matched:  false,
 		Severity: pocSeverity,
-		Details:  rpcResp.Details,
-		TaskId:   rpcResp.TaskId,
+		TaskId:   taskId,
 	}, nil
 }
 
@@ -702,11 +716,13 @@ func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq,
 		return &types.PocBatchValidateResp{Code: 400, Msg: "URL列表不能为空"}, nil
 	}
 
-	// 确保使用有效的工作空间ID，避免漏洞保存到 all_vul 集合
 	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Debugf("批量POC验证使用工作空间ID: %s", workspaceId)
 
-	// 设置默认值
+	// 检查在线 Worker
+	if err := checkOnlineWorkers(l.ctx, l.svcCtx); err != nil {
+		return &types.PocBatchValidateResp{Code: 500, Msg: err.Error()}, nil
+	}
+
 	if req.PocType == "" {
 		req.PocType = "all"
 	}
@@ -721,38 +737,43 @@ func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq,
 		req.UseCustom = true
 	}
 
-	// 通过RPC调用worker执行批量POC验证
-	rpcReq := &pb.BatchValidatePocReq{
-		Urls:        req.Urls,
-		PocType:     req.PocType,
-		Severities:  req.Severities,
-		Tags:        req.Tags,
-		Timeout:     int32(req.Timeout),
-		UseTemplate: req.UseTemplate,
-		UseCustom:   req.UseCustom,
-		Concurrency: int32(req.Concurrency),
+	taskId := uuid.New().String()
+	taskConfig := map[string]interface{}{
+		"taskType":    "poc_batch_validate",
+		"urls":        req.Urls,
+		"pocType":     req.PocType,
+		"severities":  req.Severities,
+		"tags":        req.Tags,
+		"timeout":     req.Timeout,
+		"useTemplate": req.UseTemplate,
+		"useCustom":   req.UseCustom,
+		"concurrency": req.Concurrency,
+		"workspaceId": workspaceId,
+		"batchMode":   true,
+	}
+	configBytes, _ := json.Marshal(taskConfig)
+
+	task := &scheduler.TaskInfo{
+		TaskId:      taskId,
+		MainTaskId:  taskId,
 		WorkspaceId: workspaceId,
+		TaskName:    "POC批量扫描",
+		Config:      string(configBytes),
+		Priority:    2,
 	}
 
-	rpcResp, err := l.svcCtx.TaskRpcClient.BatchValidatePoc(l.ctx, rpcReq)
-	if err != nil {
-		l.Logger.Errorf("RPC call failed: %v", err)
-		return &types.PocBatchValidateResp{Code: 500, Msg: "验证服务调用失败"}, nil
+	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
+		l.Logger.Errorf("PocBatchValidate: push task failed, taskId=%s, error=%v", taskId, err)
+		return &types.PocBatchValidateResp{Code: 500, Msg: "任务下发失败"}, nil
 	}
 
-	if !rpcResp.Success {
-		return &types.PocBatchValidateResp{Code: 500, Msg: rpcResp.Message}, nil
-	}
-
-	// 从RPC响应中获取批次ID
-	batchId := rpcResp.BatchId
+	persistTaskInfo(l.ctx, l.svcCtx, taskId, taskConfig)
 
 	return &types.PocBatchValidateResp{
 		Code:      0,
 		Msg:       "批量验证任务已下发，请使用返回的批次ID查询结果",
-		TotalUrls: int(rpcResp.TotalUrls),
-		Duration:  rpcResp.Duration,
-		BatchId:   batchId,
+		TotalUrls: len(req.Urls),
+		BatchId:   taskId,
 	}, nil
 }
 
@@ -777,49 +798,99 @@ func (l *PocValidationResultQueryLogic) PocValidationResultQuery(req *types.PocV
 		return &types.PocValidationResultQueryResp{Code: 400, Msg: "任务ID或批次ID不能为空"}, nil
 	}
 
-	// 通过RPC查询验证结果
-	rpcReq := &pb.GetPocValidationResultReq{
-		TaskId:  req.TaskId,
-		BatchId: req.BatchId,
+	taskId := req.TaskId
+	if taskId == "" {
+		taskId = req.BatchId
 	}
 
-	rpcResp, err := l.svcCtx.TaskRpcClient.GetPocValidationResult(l.ctx, rpcReq)
+	// 从 Redis 读取任务状态
+	statusKey := "cscan:task:status:" + taskId
+	val, err := l.svcCtx.RedisClient.Get(l.ctx, statusKey).Result()
 	if err != nil {
-		l.Logger.Errorf("RPC call failed: %v", err)
-		return &types.PocValidationResultQueryResp{Code: 500, Msg: "查询服务调用失败"}, nil
+		// 检查任务是否还在执行中
+		taskInfoKey := "cscan:task:info:" + taskId
+		if _, infoErr := l.svcCtx.RedisClient.Get(l.ctx, taskInfoKey).Result(); infoErr == nil {
+			return &types.PocValidationResultQueryResp{
+				Code:   0,
+				Msg:    "任务执行中",
+				Status: "RUNNING",
+			}, nil
+		}
+		return &types.PocValidationResultQueryResp{Code: 500, Msg: "未找到验证结果", Status: "NOT_FOUND"}, nil
 	}
 
-	if !rpcResp.Success {
-		return &types.PocValidationResultQueryResp{Code: 500, Msg: rpcResp.Message}, nil
+	var statusInfo map[string]interface{}
+	if err := json.Unmarshal([]byte(val), &statusInfo); err != nil {
+		return &types.PocValidationResultQueryResp{Code: 500, Msg: "解析状态失败", Status: "ERROR"}, nil
 	}
 
-	// 转换结果
-	results := make([]types.PocValidationResult, 0, len(rpcResp.Results))
-	for _, r := range rpcResp.Results {
-		results = append(results, types.PocValidationResult{
-			PocId:      r.PocId,
-			PocName:    r.PocName,
-			TemplateId: r.TemplateId,
-			Severity:   r.Severity,
-			Matched:    r.Matched,
-			MatchedUrl: r.MatchedUrl,
-			Details:    r.Details,
-			Output:     r.Output,
-			PocType:    r.PocType,
-			Tags:       r.Tags,
-		})
+	state, _ := statusInfo["state"].(string)
+	if state == "" {
+		state = "RUNNING"
+	}
+	status := state
+	if state == "COMPLETED" {
+		status = "SUCCESS"
+	}
+
+	var results []types.PocValidationResult
+	resultStr, _ := statusInfo["result"].(string)
+	if resultStr != "" {
+		var resultData map[string]interface{}
+		if json.Unmarshal([]byte(resultStr), &resultData) == nil {
+			if resultStatus, ok := resultData["status"].(string); ok && resultStatus != "" {
+				status = resultStatus
+			}
+			if resultsArr, ok := resultData["results"].([]interface{}); ok {
+				for _, r := range resultsArr {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						pr := types.PocValidationResult{
+							PocId:      getString(rMap, "pocId"),
+							PocName:    getString(rMap, "pocName"),
+							TemplateId: getString(rMap, "templateId"),
+							Severity:   getString(rMap, "severity"),
+							Matched:    getBool(rMap, "matched"),
+							MatchedUrl: getString(rMap, "matchedUrl"),
+							Details:    getString(rMap, "details"),
+							Output:     getString(rMap, "output"),
+							PocType:    getString(rMap, "pocType"),
+						}
+						if tags, ok := rMap["tags"].([]interface{}); ok {
+							for _, t := range tags {
+								if s, ok := t.(string); ok {
+									pr.Tags = append(pr.Tags, s)
+								}
+							}
+						}
+						results = append(results, pr)
+					}
+				}
+			}
+		}
 	}
 
 	return &types.PocValidationResultQueryResp{
 		Code:           0,
 		Msg:            "查询成功",
-		Status:         rpcResp.Status,
-		CompletedCount: int(rpcResp.CompletedCount),
-		TotalCount:     int(rpcResp.TotalCount),
+		Status:         status,
+		CompletedCount: len(results),
+		TotalCount:     len(results),
 		Results:        results,
-		CreateTime:     rpcResp.CreateTime,
-		UpdateTime:     rpcResp.UpdateTime,
 	}, nil
+}
+
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getBool(m map[string]interface{}, key string) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return false
 }
 
 // ==================== 清空所有自定义POC ====================
@@ -983,27 +1054,41 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 		}, nil
 	}
 
-	// 创建一个批量扫描任务（使用批量模式）
-	rpcReq := &pb.ValidatePocReq{
-		PocId:       req.PocId,
-		PocType:     "custom",
-		Timeout:     int32(len(urls) * 30), // 每个目标30秒
-		UseTemplate: false,
-		UseCustom:   true,
-		WorkspaceId: workspaceId,
-		Urls:        urls,
-		BatchMode:   true,
+	// 检查在线 Worker
+	if err := checkOnlineWorkers(l.ctx, l.svcCtx); err != nil {
+		return &types.CustomPocScanAssetsResp{Code: 500, Msg: err.Error()}, nil
 	}
 
-	resp, err := l.svcCtx.TaskRpcClient.ValidatePoc(l.ctx, rpcReq)
-	if err != nil {
-		l.Logger.Errorf("Failed to create batch scan task: %v", err)
+	// 创建批量扫描任务
+	taskId := uuid.New().String()
+	taskConfig := map[string]interface{}{
+		"taskType":    "poc_batch_validate",
+		"urls":        urls,
+		"pocId":       req.PocId,
+		"pocType":     "custom",
+		"timeout":     len(urls) * 30,
+		"useTemplate": false,
+		"useCustom":   true,
+		"workspaceId": workspaceId,
+		"batchMode":   true,
+	}
+	configBytes, _ := json.Marshal(taskConfig)
+
+	task := &scheduler.TaskInfo{
+		TaskId:      taskId,
+		MainTaskId:  taskId,
+		WorkspaceId: workspaceId,
+		TaskName:    "POC批量扫描",
+		Config:      string(configBytes),
+		Priority:    2,
+	}
+
+	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
+		l.Logger.Errorf("CustomPocScanAssets: push task failed, taskId=%s, error=%v", taskId, err)
 		return &types.CustomPocScanAssetsResp{Code: 500, Msg: "创建扫描任务失败: " + err.Error()}, nil
 	}
 
-	if !resp.Success {
-		return &types.CustomPocScanAssetsResp{Code: 500, Msg: resp.Message}, nil
-	}
+	persistTaskInfo(l.ctx, l.svcCtx, taskId, taskConfig)
 
 	msg := fmt.Sprintf("已创建批量扫描任务（POC: %s，目标: %d个），发现的漏洞将显示在漏洞页面", poc.Name, len(urls))
 
@@ -1014,7 +1099,7 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 		VulnCount:    0,
 		Duration:     "异步执行中",
 		VulnList:     []types.CustomPocScanVulnItem{},
-		TaskIds:      []string{resp.TaskId},
+		TaskIds:      []string{taskId},
 	}, nil
 }
 
@@ -1289,5 +1374,29 @@ func parseAuthor(author interface{}) string {
 		return strings.Join(authors, ", ")
 	default:
 		return fmt.Sprintf("%v", author)
+	}
+}
+
+// checkOnlineWorkers 检查是否有在线 Worker
+func checkOnlineWorkers(ctx context.Context, svcCtx *svc.ServiceContext) error {
+	workers, err := svcCtx.RedisClient.SMembers(ctx, "cscan:workers").Result()
+	if err != nil {
+		return fmt.Errorf("获取Worker列表失败: %v", err)
+	}
+	for _, worker := range workers {
+		exists, _ := svcCtx.RedisClient.Exists(ctx, "cscan:worker:"+worker).Result()
+		if exists > 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("当前没有在线的扫描节点(Worker)，无法执行任务。请检查Worker服务状态。")
+}
+
+// persistTaskInfo 持久化任务信息到 Redis（24h TTL）
+func persistTaskInfo(ctx context.Context, svcCtx *svc.ServiceContext, taskId string, taskConfig map[string]interface{}) {
+	taskInfoKey := "cscan:task:info:" + taskId
+	taskInfoData, _ := json.Marshal(taskConfig)
+	if err := svcCtx.RedisClient.Set(ctx, taskInfoKey, taskInfoData, 24*time.Hour).Err(); err != nil {
+		logx.Errorf("[TaskInfo] persist failed, taskId=%s, error=%v", taskId, err)
 	}
 }

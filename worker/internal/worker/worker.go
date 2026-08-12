@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"cscan/internal/notification"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
 	"cscan/pkg/utils"
 
 	"github.com/projectdiscovery/wappalyzergo"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -43,12 +45,12 @@ type Worker struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	config     WorkerConfig
-	httpClient *WorkerHTTPClient // HTTP 客户端（替代 RPC 和 Redis）
-	wsClient   *WorkerWSClient   // WebSocket 客户端（用于日志推送和控制信号）
+	httpClient *WorkerHTTPClient    // HTTP 客户端（配置/模板/字典等仍走 HTTP）
+	schedClient *SchedulerClient    // Redis 直连调度客户端（任务拉取/心跳/进度上报）
+	wsClient   *WorkerWSClient      // WebSocket 客户端（用于日志推送和控制信号）
 	scanners   map[string]scanner.Scanner
-	taskChan   chan *scheduler.TaskInfo
-	resultChan chan *scanner.ScanResult
-	stopChan   chan struct{}
+	taskChan chan *scheduler.TaskInfo
+	stopChan chan struct{}
 	stopOnce   sync.Once
 	wg         sync.WaitGroup
 	mu         sync.Mutex
@@ -281,9 +283,8 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		config:     config,
 		httpClient: httpClient,
 		scanners:   make(map[string]scanner.Scanner),
-		taskChan:   make(chan *scheduler.TaskInfo, config.Concurrency),
-		resultChan: make(chan *scanner.ScanResult, 100),
-		stopChan:   make(chan struct{}),
+		taskChan: make(chan *scheduler.TaskInfo, config.Concurrency),
+		stopChan: make(chan struct{}),
 		logger:     NewWorkerLoggerLocal(config.Name), // 使用本地日志
 	}
 
@@ -349,8 +350,31 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		return err
 	})
 	w.resultQueue.SetCertReplayFn(func(ctx context.Context, req *SaveCertResultReq) error {
-		_, err := w.httpClient.SaveCertResult(ctx, req)
-		return err
+		if w.mongoDB == nil {
+			_, err := w.httpClient.SaveCertResult(ctx, req)
+			return err
+		}
+		certs := make([]*scanner.CertResult, len(req.Results))
+		for i, r := range req.Results {
+			certs[i] = &scanner.CertResult{
+				Host:         r.Host,
+				Port:         r.Port,
+				Authority:    r.Authority,
+				Subject:      r.Subject,
+				SubjectDN:    r.SubjectDN,
+				Issuer:       r.Issuer,
+				IssuerDN:     r.IssuerDN,
+				SerialNumber: r.SerialNumber,
+				SigAlg:       r.SigAlg,
+				NotBefore:    r.NotBefore,
+				NotAfter:     r.NotAfter,
+				Version:      r.Version,
+				SANs:         r.SANs,
+				Fingerprints: r.Fingerprints,
+				IsSelfSigned: r.IsSelfSigned,
+			}
+		}
+		return w.saveCertResultsDirect(ctx, req.WorkspaceId, req.MainTaskId, certs)
 	})
 	w.resultQueue.SetLogger(func(level, format string, args ...interface{}) {
 		w.logger.Info("[ResultQueue] "+format, args...)
@@ -363,6 +387,19 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 func (w *Worker) SetMongoDB(client *mongo.Client, db *mongo.Database) {
 	w.mongoClient = client
 	w.mongoDB = db
+}
+
+// SetRedis 设置 Redis 客户端并创建 SchedulerClient，用于直连 Redis 调度
+func (w *Worker) SetRedis(rdb *redis.Client) {
+	w.schedClient = NewSchedulerClient(rdb, w.config.Name, w.mongoDB)
+	logx.Infof("[Worker] SchedulerClient initialized for direct Redis scheduling")
+}
+
+// SetNotifyService 设置通知服务，任务完成/失败时触发通知
+func (w *Worker) SetNotifyService(svc *notification.Service) {
+	if w.schedClient != nil {
+		w.schedClient.SetNotifyService(svc)
+	}
 }
 
 // handleControlSignal 处理控制信号
@@ -568,10 +605,6 @@ func (w *Worker) Start() {
 	w.wg.Add(1)
 	go w.fetchTasksWithRecovery()
 
-	// 启动结果上报协程
-	w.wg.Add(1)
-	go w.reportResultWithRecovery()
-
 	// 启动心跳协程
 	w.wg.Add(1)
 	go w.keepAliveWithRecovery()
@@ -737,35 +770,6 @@ func (w *Worker) fetchTasksLoop() {
 	}
 }
 
-// reportResultWithRecovery 带 panic 恢复的结果上报
-func (w *Worker) reportResultWithRecovery() {
-	defer w.wg.Done()
-	for {
-		select {
-		case <-w.stopChan:
-			return
-		default:
-		}
-
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					w.logger.Error("Result reporter panic recovered: %v", r)
-				}
-			}()
-			w.reportResultLoop()
-		}()
-
-		select {
-		case <-w.stopChan:
-			return
-		default:
-			time.Sleep(time.Second)
-			w.logger.Info("Result reporter restarting after recovery")
-		}
-	}
-}
-
 // keepAliveWithRecovery 带 panic 恢复的心跳
 func (w *Worker) keepAliveWithRecovery() {
 	defer w.wg.Done()
@@ -832,12 +836,11 @@ func getStackTrace() []byte {
 }
 
 // pullTask 拉取单个任务，返回是否获取到任务
+// 优先使用 schedClient（Redis 直连），回退到 httpClient（HTTP）
 func (w *Worker) pullTask() bool {
 	ctx := context.Background()
 
 	// 检查是否有空闲槽位
-	// Phase 2: 启用 taskQueue 时，槽位 = 已入队但未出队的任务数 + taskChan 中的任务数（taskChan 仍保留槽位计数语义）
-	// 关闭 taskQueue 时，直接看 taskChan 长度（原行为）
 	pendingCount := len(w.taskChan)
 	if w.taskQueue != nil {
 		pendingCount += w.taskQueue.Size()
@@ -846,43 +849,64 @@ func (w *Worker) pullTask() bool {
 		return false
 	}
 
-	// 通过 HTTP 接口获取任务
-	resp, err := w.httpClient.CheckTask(ctx)
-	if err != nil {
-		w.logger.Debug("pullTask: CheckTask failed: %v", err)
+	var task *scheduler.TaskInfo
+
+	// 优先使用 Redis 直连
+	if w.schedClient != nil {
+		resp, err := w.schedClient.CheckTask(ctx)
+		if err != nil {
+			w.logger.Debug("pullTask: schedClient.CheckTask failed: %v", err)
+			return false
+		}
+		if resp.IsExist && !resp.IsFinished {
+			task = &scheduler.TaskInfo{
+				TaskId:      resp.TaskId,
+				MainTaskId:  resp.MainTaskId,
+				WorkspaceId: resp.WorkspaceId,
+				TaskName:    "scan",
+				Config:      resp.Config,
+			}
+		}
+	} else {
+		// 回退到 HTTP
+		resp, err := w.httpClient.CheckTask(ctx)
+		if err != nil {
+			w.logger.Debug("pullTask: CheckTask failed: %v", err)
+			return false
+		}
+		if resp.IsExist && !resp.IsFinished {
+			task = &scheduler.TaskInfo{
+				TaskId:      resp.TaskId,
+				MainTaskId:  resp.MainTaskId,
+				WorkspaceId: resp.WorkspaceId,
+				TaskName:    "scan",
+				Config:      resp.Config,
+			}
+		}
+	}
+
+	if task == nil {
 		return false
 	}
 
-	if resp.IsExist && !resp.IsFinished {
-		// 有待执行的任务
-		w.logger.Info("pullTask: got task %s (main: %s)", resp.TaskId, resp.MainTaskId)
-		task := &scheduler.TaskInfo{
-			TaskId:      resp.TaskId,
-			MainTaskId:  resp.MainTaskId,
-			WorkspaceId: resp.WorkspaceId,
-			TaskName:    "scan",
-			Config:      resp.Config,
-		}
+	w.logger.Info("pullTask: got task %s (main: %s)", task.TaskId, task.MainTaskId)
 
-		// Phase 2: 启用客户端优先级队列时走 TaskQueueManager
-		// 否则保持原 taskChan FIFO 路径
-		if w.taskQueue != nil {
-			priority := GetTaskPriority(task)
-			if !w.taskQueue.Enqueue(task, priority) {
-				w.logger.Warn("pullTask: task %s rejected by TaskQueue (full or low-priority dropped)", task.TaskId)
-				return false
-			}
-			w.logger.Info("pullTask: task %s enqueued with priority %d (queue size: %d/%d)",
-				task.TaskId, priority, w.taskQueue.Size(), w.config.Concurrency)
-			return true
+	// 启用客户端优先级队列时走 TaskQueueManager
+	if w.taskQueue != nil {
+		priority := GetTaskPriority(task)
+		if !w.taskQueue.Enqueue(task, priority) {
+			w.logger.Warn("pullTask: task %s rejected by TaskQueue (full or low-priority dropped)", task.TaskId)
+			return false
 		}
-
-		w.logger.Info("pullTask: pushing task %s to taskChan (channel size: %d/%d)", task.TaskId, len(w.taskChan), cap(w.taskChan))
-		w.taskChan <- task
-		w.logger.Info("pullTask: task %s pushed to taskChan successfully", task.TaskId)
+		w.logger.Info("pullTask: task %s enqueued with priority %d (queue size: %d/%d)",
+			task.TaskId, priority, w.taskQueue.Size(), w.config.Concurrency)
 		return true
 	}
-	return false
+
+	w.logger.Info("pullTask: pushing task %s to taskChan (channel size: %d/%d)", task.TaskId, len(w.taskChan), cap(w.taskChan))
+	w.taskChan <- task
+	w.logger.Info("pullTask: task %s pushed to taskChan successfully", task.TaskId)
+	return true
 }
 
 // recoverOrphanedTasks Worker 启动时恢复之前未完成的任务
@@ -944,6 +968,9 @@ func (w *Worker) Stop() {
 		}
 	}
 
+	// 清理 chromedp 全局浏览器进程，防止 Chrome 进程残留
+	scanner.CleanupChromedp()
+
 	w.logger.Info("Worker %s stopped", w.config.Name)
 }
 
@@ -971,13 +998,21 @@ func (w *Worker) drainAndExit(timeout time.Duration, after func()) {
 
 // notifyOffline 通知服务器Worker即将离线
 func (w *Worker) notifyOffline() {
-	if w.httpClient == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if w.schedClient != nil {
+		if err := w.schedClient.NotifyOffline(ctx); err != nil {
+			w.logger.Warn("Failed to notify offline via Redis: %v", err)
+		} else {
+			w.logger.Info("Notified offline via Redis")
+		}
 		return
 	}
 
-	// 使用独立的context，不受w.ctx取消影响
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	if w.httpClient == nil {
+		return
+	}
 
 	_, err := w.httpClient.NotifyOffline(ctx)
 	if err != nil {
@@ -1046,11 +1081,9 @@ func (w *Worker) checkTaskControl(ctx context.Context, taskId string) string {
 
 // saveTaskProgress 保存任务进度（用于暂停后继续扫描)
 func (w *Worker) saveTaskProgress(ctx context.Context, task *scheduler.TaskInfo, completedPhases map[string]bool, assets []*scanner.Asset) {
-	// 使用新的context，因为原context可能已被取消
 	saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 构建状态
 	phases := make([]string, 0)
 	for phase, completed := range completedPhases {
 		if completed {
@@ -1065,12 +1098,15 @@ func (w *Worker) saveTaskProgress(ctx context.Context, task *scheduler.TaskInfo,
 	}
 	stateJson, _ := json.Marshal(state)
 
-	// 通过 HTTP 接口保存到数据库
-	w.httpClient.UpdateTask(saveCtx, &TaskUpdateReq{
-		TaskId: task.TaskId,
-		State:  "PAUSED",
-		Result: string(stateJson),
-	})
+	if w.schedClient != nil {
+		w.schedClient.UpdateTask(saveCtx, task.TaskId, "PAUSED", 0, string(stateJson))
+	} else {
+		w.httpClient.UpdateTask(saveCtx, &TaskUpdateReq{
+			TaskId: task.TaskId,
+			State:  "PAUSED",
+			Result: string(stateJson),
+		})
+	}
 	w.taskLog(task.TaskId, LevelInfo, "Task %s progress saved: completedPhases=%v, assets=%d", task.TaskId, phases, len(assets))
 }
 
@@ -1258,7 +1294,6 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 	// 获取目标
 	target, _ := taskConfig["target"].(string)
-	w.taskLog(task.TaskId, LevelInfo, "Step 8: Target extracted: '%s'", target)
 	if target == "" {
 		w.taskLog(task.TaskId, LevelError, "Step 8 FAILED: Target is empty")
 		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "Target is empty")
@@ -1541,6 +1576,16 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					MainTaskId:  task.MainTaskId,
 					Options:     subfinderOpts,
 					TaskLogger:  domainTaskLogger,
+					OnTargetDone: func(domain string, assets []*scanner.Asset) {
+						// 流式入库：单域名子域名枚举完成立即保存
+						if len(assets) == 0 {
+							return
+						}
+						for _, asset := range assets {
+							asset.Source = "subfinder"
+						}
+						w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+					},
 				})
 
 				if err != nil {
@@ -1556,11 +1601,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			w.taskLog(task.TaskId, LevelInfo, "Subfinder disabled, skipping passive enumeration")
 		}
 
-		// Subfinder 完成后立即保存，避免后续超时导致结果丢失
-		if len(subfinderAssets) > 0 {
-			w.taskLog(task.TaskId, LevelInfo, "Saving %d subfinder subdomains to database immediately", len(subfinderAssets))
-			w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, subfinderAssets)
-		}
+		// Subfinder 结果已通过 OnTargetDone 流式入库
 
 		// 执行子域名暴力破解（如果配置了字典）
 		var bruteforceAssets []*scanner.Asset
@@ -1637,12 +1678,32 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 					// 执行暴力破解
 					if bruteScanner, ok := w.scanners["subdomain_bruteforce"]; ok {
+						// 预计算 subfinder 已发现的域名，用于回调中过滤增量资产
+						subfinderHosts := make(map[string]bool)
+						for _, asset := range subfinderAssets {
+							if asset.Host != "" {
+								subfinderHosts[asset.Host] = true
+							}
+						}
 						bruteResult, err := bruteScanner.Scan(ctx, &scanner.ScanConfig{
 							Target:      domainScanTarget,
 							WorkspaceId: task.WorkspaceId,
 							MainTaskId:  task.MainTaskId,
 							Options:     bruteforceOpts,
 							TaskLogger:  domainTaskLogger,
+							OnTargetDone: func(domain string, assets []*scanner.Asset) {
+								// 流式入库：单域名暴力破解完成立即保存增量资产
+								var newAssets []*scanner.Asset
+								for _, asset := range assets {
+									if asset.Host != "" && !subfinderHosts[asset.Host] {
+										asset.Source = "bruteforce"
+										newAssets = append(newAssets, asset)
+									}
+								}
+								if len(newAssets) > 0 {
+									w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, newAssets)
+								}
+							},
 						})
 
 						if err != nil {
@@ -1713,25 +1774,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		default:
 		}
 
-		// 只保存暴力破解新发现的增量资产（subfinder 的已在前面立即保存过）
-		if len(bruteforceAssets) > 0 {
-			subfinderHosts := make(map[string]bool)
-			for _, asset := range subfinderAssets {
-				if asset.Host != "" {
-					subfinderHosts[asset.Host] = true
-				}
-			}
-			var newBruteAssets []*scanner.Asset
-			for _, asset := range bruteforceAssets {
-				if asset.Host != "" && !subfinderHosts[asset.Host] {
-					newBruteAssets = append(newBruteAssets, asset)
-				}
-			}
-			if len(newBruteAssets) > 0 {
-				w.taskLog(task.TaskId, LevelInfo, "Saving %d bruteforce subdomains to database", len(newBruteAssets))
-				w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, newBruteAssets)
-			}
-		}
+		// 暴力破解结果已通过 OnTargetDone 流式入库，此处无需重复保存
 
 		if len(mergedAssets) > 0 {
 			// 将发现的子域名添加到目标列表
@@ -1870,6 +1913,16 @@ domainScanDone:
 				Options:    config.PortScan,
 				TaskLogger: taskLogger,
 				OnProgress: onProgress,
+				OnTargetDone: func(target string, assets []*scanner.Asset) {
+					// 流式入库：单目标端口扫描完成立即保存
+					if len(assets) == 0 {
+						return
+					}
+					for _, asset := range assets {
+						asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
+					}
+					w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+				},
 			})
 			// 检查是否有目标超过端口阈值（不终止任务，只记录警告）
 			if err == scanner.ErrPortThresholdExceeded {
@@ -1915,9 +1968,7 @@ domainScanDone:
 			}
 			allAssets = append(allAssets, openPorts...)
 			w.taskLog(task.TaskId, LevelInfo, "Port scan completed: %d assets", len(allAssets))
-
-			// 端口扫描完成后立即保存结果
-			w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, allAssets)
+			// 结果已通过 OnTargetDone 流式入库
 		} else {
 			w.taskLog(task.TaskId, LevelInfo, "No open ports found")
 		}
@@ -1965,11 +2016,10 @@ domainScanDone:
 			// 更新当前阶段
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 40, "端口识别中", "端口识别")
 
-			identifiedAssets := w.executePortIdentify(ctx, task, allAssets, config.PortIdentify)
+			identifiedAssets := w.executePortIdentify(ctx, task, allAssets, config.PortIdentify, orgId)
 			if len(identifiedAssets) > 0 {
 				allAssets = identifiedAssets
-				// 端口识别完成后保存更新结果
-				w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, allAssets)
+				// 结果已通过 executePortIdentify 内部流式入库
 			}
 			completedPhases["portidentify"] = true
 			// 端口识别模块完成，递增子任务进度
@@ -2114,11 +2164,11 @@ domainScanDone:
 						select {
 						case <-assetBuffer.GetFlushChan():
 							assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-								w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+								w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
 							})
 						case <-ticker.C:
 							assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-								w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+								w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
 							})
 						case <-fpCtx.Done():
 							return
@@ -2133,6 +2183,10 @@ domainScanDone:
 					OnAssetUpdated: func(asset *scanner.Asset) {
 						copiedAsset := *asset
 						assetBuffer.Add(&copiedAsset)
+					},
+					OnCertFound: func(cert *scanner.CertResult) {
+						// 流式入库：单证书采集完成立即保存
+						w.saveCertResultsDirect(ctx, task.WorkspaceId, task.MainTaskId, []*scanner.CertResult{cert})
 					},
 				})
 				fpCancel()
@@ -2178,14 +2232,10 @@ domainScanDone:
 
 					// 刷新流式缓冲区剩余资产
 					assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-						w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+						w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
 					})
 
-					// 指纹识别阶段附加产出的证书采集结果：本阶段为内联处理（未走 resultChan），
-					// 需在此处直接落库，否则 CertResults 会被丢弃，UI 证书列表将无数据。
-					if len(result.CertResults) > 0 {
-						w.saveCertResults(ctx, task.WorkspaceId, task.MainTaskId, result.CertResults)
-					}
+					// 证书采集结果已通过 OnCertFound 流式入库
 				}
 			}
 			completedPhases["fingerprint"] = true
@@ -2321,28 +2371,9 @@ domainScanDone:
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "JS扫描中", "JS扫描")
 
 			jsfinderResults := w.executeJSFinder(ctx, task, allAssets, config.JSFinder, orgId)
+			// 结果已通过 OnResultFound 流式入库，此处仅记录日志
 			if len(jsfinderResults) > 0 {
-				var schedResults []*JSFinderResultItem
-				for _, r := range jsfinderResults {
-					schedResults = append(schedResults, &JSFinderResultItem{
-						Authority:        r.Authority,
-						Host:             r.Host,
-						Port:             r.Port,
-						URL:              r.URL,
-						Severity:         r.Severity,
-						VulName:          r.VulName,
-						Result:           r.Result,
-						Tags:             r.Tags,
-						MatcherName:      r.MatcherName,
-						ExtractedResults: r.ExtractedResults,
-						CurlCommand:      r.CurlCommand,
-						Request:          r.Request,
-						Response:         r.Response,
-					})
-				}
-
-				// 修复 P0：改为带重试 + 本地队列回退的保存，避免 API 繁忙时 JS 结果永久丢失
-				w.saveJSFinderResult(ctx, task.WorkspaceId, task.MainTaskId, schedResults)
+				w.taskLog(task.TaskId, LevelInfo, "JSFinder: %d findings (streamed)", len(jsfinderResults))
 			}
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 85, "JS扫描完成", "JS扫描")
 			completedPhases["jsfinder"] = true
@@ -2460,11 +2491,11 @@ domainScanDone:
 									return
 								case <-vulBuffer.flushChan:
 									vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-										w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+										w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
 									})
 								case <-ticker.C:
 									vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-										w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+										w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
 									})
 								}
 							}
@@ -2529,7 +2560,7 @@ domainScanDone:
 
 						// 扫描完成后，刷新剩余的漏洞
 						vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-							w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+							w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
 						})
 
 						if vulCount > 0 {
@@ -2573,11 +2604,11 @@ domainScanDone:
 								return
 							case <-vulBuffer.flushChan:
 								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-									w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+									w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
 								})
 							case <-ticker.C:
 								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-									w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+									w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
 								})
 							}
 						}
@@ -2624,7 +2655,7 @@ domainScanDone:
 
 					// 扫描完成后，刷新剩余的漏洞
 					vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-						w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+						w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
 					})
 
 					if vulCount > 0 {
@@ -2659,7 +2690,20 @@ domainScanDone:
 
 // updateTaskStatus 更新任务状态
 func (w *Worker) updateTaskStatus(ctx context.Context, taskId string, status string, result string) {
-	// 如果任务完成（SUCCESS/FAILURE），同时更新进度和phase，合并为一次HTTP调用
+	if w.schedClient != nil {
+		phase := ""
+		progress := 0
+		if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
+			phase = "完成"
+			progress = 100
+		}
+		if err := w.schedClient.UpdateTask(ctx, taskId, status, progress, phase); err != nil {
+			w.taskLog(taskId, LevelError, "update task status failed: %v", err)
+		}
+		return
+	}
+
+	// 回退到 HTTP
 	if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
 		_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
 			TaskId:   taskId,
@@ -2675,7 +2719,6 @@ func (w *Worker) updateTaskStatus(ctx context.Context, taskId string, status str
 		return
 	}
 
-	// 非终态（如STARTED）：仅更新状态
 	_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
 		TaskId: taskId,
 		State:  status,
@@ -2694,11 +2737,20 @@ func (w *Worker) updateTaskProgress(ctx context.Context, taskId string, progress
 }
 
 // updateTaskProgressWithPhase 更新任务进度和当前阶段
-// 注意：进度更新现在通过 HTTP 接口完成，不再直接写 Redis
 func (w *Worker) updateTaskProgressWithPhase(ctx context.Context, taskId string, progress int, message string, currentPhase string) {
-	// 通过 HTTP 接口更新任务状态
-	// 进度信息包含在任务状态更新中
-	if w.httpClient != nil && currentPhase != "" {
+	if currentPhase == "" {
+		return
+	}
+
+	if w.schedClient != nil {
+		if err := w.schedClient.UpdateTask(ctx, taskId, "", progress, currentPhase); err != nil {
+			w.taskLog(taskId, LevelError, "update task progress failed: %v", err)
+		}
+		return
+	}
+
+	// 回退到 HTTP
+	if w.httpClient != nil {
 		_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
 			TaskId:   taskId,
 			Progress: progress,
@@ -2727,22 +2779,35 @@ func (w *Worker) expectedTaskIncr(configStr string) int {
 // isCompleted: true 表示子任务全部阶段完成，此时才递增计数器
 // incrAmount: 递增数量（早退路径下需补齐 expectedTaskIncr - alreadySent，正常路径恒为 1）
 func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, phase string, isCompleted bool, incrAmount int) {
-	// 添加 panic 恢复机制
 	defer func() {
 		if r := recover(); r != nil {
 			w.logger.Error("Increment subtask done panic recovered: %v, stack: %s", r, string(getStackTrace()))
 		}
 	}()
 
-	if w.httpClient == nil {
-		return
-	}
-
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
 
-	// 通过 HTTP 接口递增子任务完成数
+	if w.schedClient != nil {
+		resp, err := w.schedClient.IncrSubTaskDone(ctx, task.MainTaskId, task.WorkspaceId, phase, incrAmount)
+		if err != nil {
+			w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done: %v", err)
+			return
+		}
+		if resp.AllDone {
+			w.taskLog(task.TaskId, LevelInfo, "All sub-tasks completed: %d/%d", resp.SubTaskDone, resp.SubTaskCount)
+		} else {
+			w.taskLog(task.TaskId, LevelDebug, "Sub-task progress: %d/%d (phase: %s)", resp.SubTaskDone, resp.SubTaskCount, phase)
+		}
+		return
+	}
+
+	// 回退到 HTTP
+	if w.httpClient == nil {
+		return
+	}
+
 	resp, err := w.httpClient.IncrSubTaskDone(ctx, &SubTaskDoneReq{
 		TaskId:      task.TaskId,
 		MainTaskId:  task.MainTaskId,
@@ -2829,4 +2894,3 @@ func calculateAssetBatchBoundaries(assets []*scanner.Asset) []assetBatchRange {
 	return boundaries
 }
 
-// saveAssetResult 保存资产结果

@@ -145,6 +145,10 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 		MainTaskId:  task.MainTaskId,
 		TaskLogger:  taskLogger,
 		OnProgress:  onProgress,
+		OnTargetDone: func(target string, assets []*scanner.Asset) {
+			// 流式入库：每完成一个目标立即保存
+			w.saveDirScanResults(ctx, task, assets)
+		},
 	})
 
 	// 检查是否超时
@@ -161,10 +165,8 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 	if err != nil {
 		// 目录扫描错误不应导致任务退出，只记录警告并继续
 		w.taskLog(task.TaskId, LevelWarn, "Dir scan error (continuing): %v", err)
-		// 如果有部分结果，仍然返回
+		// 结果已通过 OnTargetDone 流式保存，仅返回已有结果
 		if result != nil && len(result.Assets) > 0 {
-			w.taskLog(task.TaskId, LevelInfo, "Dir scan: returning %d partial results despite error", len(result.Assets))
-			w.saveDirScanResults(ctx, task, result.Assets)
 			return result.Assets
 		}
 		return nil
@@ -172,10 +174,6 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 
 	if result != nil && len(result.Assets) > 0 {
 		w.taskLog(task.TaskId, LevelInfo, "Dir scan completed: found %d paths", len(result.Assets))
-
-		// 保存目录扫描结果到数据库
-		w.saveDirScanResults(ctx, task, result.Assets)
-
 		return result.Assets
 	}
 
@@ -231,26 +229,8 @@ func (w *Worker) saveDirScanResults(ctx context.Context, task *scheduler.TaskInf
 		})
 	}
 
-	// 调用 HTTP 接口保存结果
-	req := &DirScanResultReq{
-		WorkspaceId: task.WorkspaceId,
-		MainTaskId:  task.MainTaskId,
-		Results:     results,
-	}
-
-	w.taskLog(task.TaskId, LevelDebug, "Dir scan: calling SaveDirScanResult API with %d results", len(results))
-
-	resp, err := w.httpClient.SaveDirScanResult(ctx, req)
-	if err != nil {
-		w.taskLog(task.TaskId, LevelError, "Dir scan: save results failed: %v", err)
-		return
-	}
-
-	if resp.Success {
-		w.taskLog(task.TaskId, LevelInfo, "Dir scan: saved %d results to database", resp.Total)
-	} else {
-		w.taskLog(task.TaskId, LevelWarn, "Dir scan: save results response: %s", resp.Msg)
-	}
+	// 直连 MongoDB 保存结果（与 JSFinder 保持一致，避免 HTTP 接口不存在导致 404）
+	w.saveDirScanResultsDirect(ctx, task.WorkspaceId, task.MainTaskId, results)
 }
 
 // executeJSFinder 执行 JSFinder 扫描阶段（JS 敏感信息 + 未授权检测）

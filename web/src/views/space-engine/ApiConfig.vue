@@ -43,10 +43,20 @@
             </div>
           </template>
 
-          <el-form label-width="110px" size="default" class="platform-form">
+          <el-form label-width="110px" size="default" class="platform-form" :aria-label="platform.name + ' API'">
+            <!-- 关联 username 字段：供浏览器自动填充与辅助技术识别凭证输入组 -->
+            <input
+              type="text"
+              v-model="accounts[platform.key]"
+              :name="`username-${platform.key}`"
+              autocomplete="username"
+              class="sr-only-username"
+              :aria-label="$t('spaceEngine.account') || '账号'"
+            />
             <el-form-item :label="$t('spaceEngine.apiKey') || 'API Key'">
               <el-input
                 v-model="configs[platform.key].key"
+                :name="`apikey-${platform.key}`"
                 :placeholder="platform.keyPlaceholder"
                 type="password"
                 show-password
@@ -63,6 +73,7 @@
             >
               <el-input
                 v-model="configs[platform.key].secret"
+                name="apisecret-fofa"
                 :placeholder="$t('spaceEngine.fofaSecretPlaceholder') || '请输入 Fofa 账号邮箱'"
                 type="password"
                 show-password
@@ -167,6 +178,9 @@ const configs = reactive({
   hunter: { id: '', key: '', secret: '', version: '', status: 'disable' },
   quake: { id: '', key: '', secret: '', version: '', status: 'disable' }
 })
+
+// 各平台账号（仅前端持有，不提交后端）：为密码输入提供关联的 username 锚点，便于浏览器自动填充与辅助技术识别
+const accounts = reactive({ fofa: '', hunter: '', quake: '' })
 
 // 各平台 UI 状态
 const loading = ref(false)
@@ -330,6 +344,19 @@ async function handleTest(platform) {
 
 <style lang="scss" scoped>
 .space-engine-api-config {
+  // 视觉隐藏但保留在可访问性树中：作为浏览器自动填充与辅助技术的 username 锚点
+  .sr-only-username {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .card-header {
     display: flex;
     align-items: center;

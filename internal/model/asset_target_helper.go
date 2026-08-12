@@ -62,7 +62,7 @@ func ResolveAssetTarget(host, domain string) (AssetTargetType, string) {
 }
 
 // EnsureForAsset 按 (host, domain) 解析顶层资产并 upsert 到 meta 集合。
-// 供手动新增（API AssetSave）与扫描结果保存（RPC SaveTaskResult）共用，
+// 供手动新增（API AssetSave）与扫描结果保存（Worker 直连 MongoDB）共用，
 // 确保 asset 出现在顶层资产列表中。labels 为 nil 时不覆盖既有标签。
 func (m *AssetTargetMetaModel) EnsureForAsset(ctx context.Context, wsId, host, domain string, labels []string) error {
 	tType, tValue := ResolveAssetTarget(host, domain)

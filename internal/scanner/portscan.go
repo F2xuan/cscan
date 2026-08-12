@@ -84,7 +84,7 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		opts = &PortScanOptions{
 			Ports:      "21,22,23,25,80,443,3306,3389,6379,8080",
 			Timeout:    5,
-			Concurrent: 100,
+			Concurrent: 1,
 		}
 	}
 
@@ -197,6 +197,13 @@ func (s *PortScanner) scanPorts(ctx context.Context, targets []string, ports []i
 		target string
 		port   int
 	}, opts.Concurrent)
+
+	if opts.Concurrent <= 0 {
+		opts.Concurrent = 1
+	}
+	if opts.Concurrent > 5 {
+		opts.Concurrent = 5
+	}
 
 	// 启动工作协程
 	for i := 0; i < opts.Concurrent; i++ {

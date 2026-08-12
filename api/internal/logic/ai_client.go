@@ -24,6 +24,29 @@ const aiCallTimeout = 60 * time.Second
 // aiFailFastThreshold 连续失败熔断阈值：AI 服务连续失败达到该次数即判定中断，终止批量研判
 const aiFailFastThreshold = 5
 
+// AI 批量研判并发控制
+const (
+	defaultAIConcurrency = 1 // 默认串行，避免触发 AI 服务速率限制
+	maxAIConcurrency     = 5 // 最大并发数
+)
+
+// ai429MaxRetry 429 限流最大重试次数
+const ai429MaxRetry = 2
+
+// ai429BaseDelay 429 限流重试基础延迟（实际延迟 = baseDelay * attempt）
+const ai429BaseDelay = 5 * time.Second
+
+// clampAIConcurrency 将并发值约束到 [1, maxAIConcurrency]，无效值回退默认
+func clampAIConcurrency(n int) int {
+	if n <= 0 {
+		return defaultAIConcurrency
+	}
+	if n > maxAIConcurrency {
+		return maxAIConcurrency
+	}
+	return n
+}
+
 var (
 	// aiClient AI 调用专用连接池客户端（无客户端级超时，由调用方 context 控制）
 	aiClient     *http.Client
@@ -164,9 +187,30 @@ func (c *AIClient) Chat(ctx context.Context, prompt string, maxTokens int) (stri
 		return "", fmt.Errorf("序列化请求失败: %w", err)
 	}
 
+	// 429 限流重试：AI 服务返回 429 时按递增延迟重试
+	for attempt := 0; ; attempt++ {
+		result, retryable, err := c.doChatRequest(ctx, client, url, headers, bodyBytes)
+		if err == nil {
+			return result, nil
+		}
+		if !retryable || attempt >= ai429MaxRetry {
+			return "", err
+		}
+		delay := ai429BaseDelay * time.Duration(attempt+1)
+		logx.Infof("[AIClient] 429 rate limited, retry %d/%d after %v", attempt+1, ai429MaxRetry, delay)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+// doChatRequest 执行单次 AI 请求，返回 (结果, 是否429可重试, 错误)
+func (c *AIClient) doChatRequest(ctx context.Context, client *http.Client, url string, headers map[string]string, bodyBytes []byte) (string, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return "", fmt.Errorf("创建请求失败: %w", err)
+		return "", false, fmt.Errorf("创建请求失败: %w", err)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -174,27 +218,32 @@ func (c *AIClient) Chat(ctx context.Context, prompt string, maxTokens int) (stri
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("请求AI服务失败: %w", err)
+		return "", false, fmt.Errorf("请求AI服务失败: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %w", err)
+		return "", false, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		logx.Errorf("[AIClient] API返回429限流, body: %s", string(respBody))
+		return "", true, fmt.Errorf("AI服务限流(429): %s", truncateStr(string(respBody), 300))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		logx.Errorf("[AIClient] API返回非200状态: %d, body: %s", resp.StatusCode, string(respBody))
-		return "", fmt.Errorf("AI服务返回错误(%d): %s", resp.StatusCode, truncateStr(string(respBody), 300))
+		return "", false, fmt.Errorf("AI服务返回错误(%d): %s", resp.StatusCode, truncateStr(string(respBody), 300))
 	}
 
 	if c.protocol == "anthropic" {
 		var anthResp anthropicResponse
 		if err := json.Unmarshal(respBody, &anthResp); err != nil {
-			return "", fmt.Errorf("解析Anthropic响应失败: %w", err)
+			return "", false, fmt.Errorf("解析Anthropic响应失败: %w", err)
 		}
 		if anthResp.Error != nil {
-			return "", fmt.Errorf("Anthropic API错误: %s", anthResp.Error.Message)
+			return "", false, fmt.Errorf("Anthropic API错误: %s", anthResp.Error.Message)
 		}
 		var texts []string
 		for _, block := range anthResp.Content {
@@ -202,21 +251,21 @@ func (c *AIClient) Chat(ctx context.Context, prompt string, maxTokens int) (stri
 				texts = append(texts, block.Text)
 			}
 		}
-		return strings.Join(texts, ""), nil
+		return strings.Join(texts, ""), false, nil
 	}
 
 	// OpenAI协议
 	var openAIResp openAIResponse
 	if err := json.Unmarshal(respBody, &openAIResp); err != nil {
-		return "", fmt.Errorf("解析OpenAI响应失败: %w", err)
+		return "", false, fmt.Errorf("解析OpenAI响应失败: %w", err)
 	}
 	if openAIResp.Error != nil {
-		return "", fmt.Errorf("OpenAI API错误: %s", openAIResp.Error.Message)
+		return "", false, fmt.Errorf("OpenAI API错误: %s", openAIResp.Error.Message)
 	}
 	if len(openAIResp.Choices) == 0 {
-		return "", fmt.Errorf("AI返回结果为空")
+		return "", false, fmt.Errorf("AI返回结果为空")
 	}
-	return openAIResp.Choices[0].Message.Content, nil
+	return openAIResp.Choices[0].Message.Content, false, nil
 }
 
 // truncateStr 截断字符串

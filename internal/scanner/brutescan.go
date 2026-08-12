@@ -36,6 +36,8 @@ type BruteScanConfig struct {
 	ServiceDicts map[string][]ServiceDictEntry `json:"-"`
 	// 内部使用，不序列化
 	stopChan chan struct{} `json:"-"` // 用于 StopOnFirst 跨服务停止信号
+	// OnVulnerabilityFound 发现弱口令时的流式回调，用于即时入库
+	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`
 }
 
 // Validate 验证 BruteScanConfig 配置
@@ -263,6 +265,10 @@ func (s *BruteScanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 					mu.Lock()
 					vulns = append(vulns, vuln)
 					mu.Unlock()
+					// 流式入库：发现弱口令立即回调
+					if bruteConfig.OnVulnerabilityFound != nil {
+						bruteConfig.OnVulnerabilityFound(vuln)
+					}
 				}
 			}(asset, service, plugin)
 		}

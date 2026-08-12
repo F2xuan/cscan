@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,13 +25,21 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// chromedp 全局持久化分配器，避免每次截图创建/销毁 Chrome 进程
+// chromedp 全局持久化分配器 + 共享浏览器实例
 // 使用 context.Background() 确保不因外部 context 取消而触发 chromedp 内部的 close-of-closed-channel panic
+// 共享浏览器模式：全局只启动 1 个 Chrome 进程，每次截图通过 NewContext(browserCtx) 创建新 Tab
+// 超时时取消 Tab 上下文（安全，仅关闭标签页），不取消浏览器上下文（避免触发 close-of-closed-channel panic）
 var (
 	globalAllocCtx    context.Context
 	globalAllocCancel context.CancelFunc
 	globalAllocOnce   sync.Once
-	// chromedpSemaphore 限制 chromedp 并发数，避免 race condition 导致 close-of-closed-channel panic
+
+	globalBrowserCtx    context.Context
+	globalBrowserCancel context.CancelFunc
+	globalBrowserMu     sync.Mutex
+	globalBrowserInited bool
+
+	// chromedpSemaphore 限制并发 Tab 数，避免内存耗尽
 	chromedpSemaphore = make(chan struct{}, 3)
 )
 
@@ -54,10 +63,64 @@ func getGlobalAllocator() (context.Context, context.CancelFunc) {
 		if chromePath := os.Getenv("CHROME_BIN"); chromePath != "" {
 			opts = append(opts, chromedp.ExecPath(chromePath))
 		}
-		// 使用 Background context，不随任务取消而销毁分配器
 		globalAllocCtx, globalAllocCancel = chromedp.NewExecAllocator(context.Background(), opts...)
 	})
 	return globalAllocCtx, globalAllocCancel
+}
+
+// getGlobalBrowser 获取全局共享浏览器上下文（首次调用启动 Chrome 进程，后续复用）
+// 返回的 context 用于派生 Tab 上下文：chromedp.NewContext(browserCtx) 创建新标签页
+func getGlobalBrowser() (context.Context, error) {
+	globalBrowserMu.Lock()
+	defer globalBrowserMu.Unlock()
+
+	if globalBrowserInited && globalBrowserCtx != nil {
+		return globalBrowserCtx, nil
+	}
+
+	// 重置可能残留的旧状态
+	if globalBrowserCancel != nil {
+		globalBrowserCancel()
+	}
+	globalBrowserCtx = nil
+	globalBrowserCancel = nil
+	globalBrowserInited = false
+
+	allocCtx, _ := getGlobalAllocator()
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	// 执行空操作以触发浏览器实际启动（chromedp 是惰性初始化）
+	if err := chromedp.Run(ctx); err != nil {
+		cancel()
+		return nil, fmt.Errorf("chromedp browser init failed: %w", err)
+	}
+
+	globalBrowserCtx = ctx
+	globalBrowserCancel = cancel
+	globalBrowserInited = true
+	logx.Info("[Chromedp] Global browser initialized (single Chrome process, tab-per-screenshot)")
+	return globalBrowserCtx, nil
+}
+
+// CleanupChromedp 清理全局 chromedp 资源（浏览器进程 + 分配器）
+// 应在 Worker 停止时调用，确保 Chrome 进程不残留
+func CleanupChromedp() {
+	globalBrowserMu.Lock()
+	defer globalBrowserMu.Unlock()
+
+	if globalBrowserCancel != nil {
+		globalBrowserCancel()
+		globalBrowserCancel = nil
+	}
+	globalBrowserCtx = nil
+	globalBrowserInited = false
+
+	if globalAllocCancel != nil {
+		globalAllocCancel()
+		globalAllocCancel = nil
+	}
+	globalAllocCtx = nil
+
+	logx.Info("[Chromedp] Global browser and allocator cleaned up")
 }
 
 // FingerprintScanner 指纹扫描器
@@ -166,7 +229,19 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 			opts = v
 		default:
 			if data, err := json.Marshal(config.Options); err == nil {
-				json.Unmarshal(data, opts)
+				if err := json.Unmarshal(data, opts); err != nil {
+					logx.Errorf("Fingerprint: failed to unmarshal options: %v", err)
+				}
+			} else {
+				logx.Errorf("Fingerprint: failed to marshal options: %v", err)
+			}
+		}
+		// 反射回退：确保 Cert 字段从 scheduler.FingerprintConfig 正确传播
+		if !opts.Cert {
+			if rv := reflect.ValueOf(config.Options); rv.Kind() == reflect.Ptr {
+				if certField := rv.Elem().FieldByName("Cert"); certField.IsValid() && certField.Kind() == reflect.Bool {
+					opts.Cert = certField.Bool()
+				}
 			}
 		}
 	}
@@ -228,6 +303,15 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		if err := RunHttpxLib(ctx, httpAssets, opts, taskLog); err != nil {
 			taskLog("ERROR", "httpx CLI failed: %v", err)
 		}
+		// httpx CLI 已完成基础信息采集（title/status/server/faviconHash 等），立即流式入库
+		// 避免等待后续 worker pool 的截图/指纹识别完成才入库
+		if config.OnAssetUpdated != nil {
+			for _, asset := range httpAssets {
+				if asset.HttpStatus != "" || asset.Title != "" || asset.Server != "" || asset.IconHash != "" {
+					config.OnAssetUpdated(asset)
+				}
+			}
+		}
 	} else {
 		taskLog("DEBUG", "Using builtin method for fingerprint detection")
 	}
@@ -241,6 +325,9 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		concurrency = config.WorkerConcurrency
 	}
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(httpAssets) {
@@ -324,10 +411,15 @@ dispatch:
 	// 证书抓取（ARL 风格附加功能）：对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，
 	// 采集结果经 worker.handleResult 落入 {workspaceId}_cert 集合。受 opts.Cert 开关控制，默认关闭。
 	if opts.Cert {
-		certFetched := s.fetchCertsForAssets(ctx, httpAssets, result, taskLog)
+		taskLog("DEBUG", "Fingerprint: cert fetch enabled, checking %d assets for cert targets", len(httpAssets))
+		certFetched := s.fetchCertsForAssets(ctx, httpAssets, result, taskLog, config.OnCertFound)
 		if certFetched > 0 {
 			taskLog("INFO", "Fingerprint: cert fetch completed, collected %d certificates", certFetched)
+		} else {
+			taskLog("DEBUG", "Fingerprint: cert fetch completed, no certificates collected (0 cert targets found)")
 		}
+	} else {
+		taskLog("DEBUG", "Fingerprint: cert fetch disabled (cert=false)")
 	}
 
 	// 执行主动指纹扫描（如果启用）
@@ -568,6 +660,8 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			}
 			// 更新状态码为最终响应的状态码
 			asset.HttpStatus = fmt.Sprintf("%d", resp.StatusCode)
+			logx.Debugf("[Fingerprint] builtin HTTP %s: status=%d server=%q title=%q bodyLen=%d",
+				targetUrl, resp.StatusCode, asset.Server, asset.Title, len(body))
 			// 更新HttpHeader为实际响应的header
 			if asset.HttpHeader == "" {
 				asset.HttpHeader = formatHeadersWithStatus(resp.Header, resp.StatusCode, resp.Proto)
@@ -580,7 +674,12 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	// 收集所有指纹识别结果，用于智能合并
 	appResults := make(map[string]*AppDetectionResult)
 
+	// 记录 httpx 残留的应用检测结果
 	mergeExistingAppDetections(appResults, asset.App)
+	if len(asset.App) > 0 {
+		logx.Debugf("[Fingerprint] httpx residual apps for %s:%d: %v", asset.Host, asset.Port, asset.App)
+	}
+
 	// 如果启用Wappalyzer，进行检测（httpx模式下通常不需要，但保留兼容性）
 	if opts.Wappalyzer && s.wappalyzerClient != nil {
 		apps := s.wappalyzerClient.Fingerprint(headers, []byte(asset.HttpBody))
@@ -659,6 +758,8 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			FaviconHash:  faviconMMH3Hash,
 			Cookies:      cookies,
 		}
+		logx.Debugf("[Fingerprint] custom engine input: host=%s:%d url=%s title=%q server=%q bodyLen=%d faviconHash=%s cookies=%q",
+			asset.Host, asset.Port, targetUrl, asset.Title, asset.Server, len(asset.HttpBody), faviconMMH3Hash, cookies)
 		customApps := s.customFingerprintEngine.MatchWithId(fpData)
 		logx.Debugf("Custom fingerprint engine (loaded %d fingerprints) detected apps for %s:%d: %v", fpCount, asset.Host, asset.Port, customApps)
 
@@ -678,6 +779,7 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 		formattedApp := formatAppWithSources(result)
 		asset.App = append(asset.App, formattedApp)
 	}
+	logx.Debugf("[Fingerprint] final apps for %s:%d: %v (wappalyzer+custom+httpx merged)", asset.Host, asset.Port, asset.App)
 
 	// 截图功能：如果 httpx 没有获取到截图，使用内置方法补充
 	// 修复 D6：port 未知(==0)时跳过截图，避免对默认端口做无意义 Chrome 启动
@@ -696,7 +798,18 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 
 // fetchCertsForAssets 对资产列表中符合证书抓取条件的资产执行 TLS 握手并解析证书。
 // 返回成功采集的证书数量；失败的目标静默跳过（不影响整体指纹识别）。
-func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*Asset, result *ScanResult, taskLog func(level, format string, args ...interface{})) int {
+func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*Asset, result *ScanResult, taskLog func(level, format string, args ...interface{}), onCertFound func(*CertResult)) int {
+	certTargetCount := 0
+	for _, a := range assets {
+		if a == nil || !isCertFetchTarget(a) {
+			continue
+		}
+		certTargetCount++
+	}
+	if taskLog != nil {
+		taskLog("DEBUG", "Fingerprint: cert fetch checking %d/%d assets for TLS certs", certTargetCount, len(assets))
+	}
+
 	count := 0
 	for _, a := range assets {
 		if a == nil || !isCertFetchTarget(a) {
@@ -713,7 +826,14 @@ func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*
 		if cr := FetchCert(ctx, a.Host, a.Port, 10*time.Second); cr != nil {
 			result.CertResults = append(result.CertResults, cr)
 			count++
+			// 流式入库：单证书采集完成立即回调
+			if onCertFound != nil {
+				onCertFound(cr)
+			}
 		}
+	}
+	if taskLog != nil && certTargetCount > 0 {
+		taskLog("DEBUG", "Fingerprint: cert fetch done, %d certs collected from %d targets", count, certTargetCount)
 	}
 	return count
 }
@@ -1077,19 +1197,15 @@ func (s *FingerprintScanner) getIconHash(baseUrl string) string {
 	return ""
 }
 
-// takeScreenshot 使用chromedp截图
-// 注意：不使用 context.WithTimeout 包裹 chromedp 调用。
-// chromedp v0.15.1 的 ExecAllocator.Allocate 存在竞态 bug：
-// 超时取消 context 会杀死 Chrome 进程，触发 cleanup goroutine 与 LostConnection handler 竞争
-// close(c.allocated)，导致 panic: close of closed channel。
-// 该 panic 发生在 chromedp 的 goroutine 中，recover() 无法捕获。
-// 因此改用 goroutine + timer 实现外部超时，不取消 chromedp context。
+// takeScreenshot 使用chromedp截图（共享浏览器 + Tab 模式）
+// 全局只维护 1 个 Chrome 进程，每次截图创建新 Tab，完成后或超时时关闭 Tab。
+// 取消 Tab 上下文是安全的（仅关闭标签页），不会触发 chromedp 的 close-of-closed-channel panic。
+// 该 panic 仅在取消 Allocator 分配中的浏览器上下文时发生（Allocation 竞态）。
 func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl string) (result string) {
 	if ctx.Err() != nil {
 		return ""
 	}
 
-	// recover 防护：捕获当前 goroutine 的 panic
 	defer func() {
 		if r := recover(); r != nil {
 			logx.Errorf("takeScreenshot panic recovered for %s: %v", targetUrl, r)
@@ -1097,7 +1213,6 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 		}
 	}()
 
-	// semaphore 限制并发数，避免资源耗尽
 	select {
 	case chromedpSemaphore <- struct{}{}:
 		defer func() { <-chromedpSemaphore }()
@@ -1105,11 +1220,14 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 		return ""
 	}
 
-	allocCtx, _ := getGlobalAllocator()
+	browserCtx, err := getGlobalBrowser()
+	if err != nil {
+		logx.Errorf("[Chromedp] Failed to get global browser: %v, skipping screenshot for %s", err, targetUrl)
+		return ""
+	}
 
-	// 不使用 context.WithTimeout，让 Chrome 自然退出
-	// 使用 Background 派生，确保 chromedp context 不会被外部取消
-	taskCtx, taskCancel := chromedp.NewContext(allocCtx,
+	// 从共享浏览器派生 Tab 上下文
+	taskCtx, taskCancel := chromedp.NewContext(browserCtx,
 		chromedp.WithErrorf(func(format string, args ...interface{}) {
 			msg := fmt.Sprintf(format, args...)
 			if !strings.Contains(msg, "CookiePartitionKey") {
@@ -1117,8 +1235,8 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 			}
 		}),
 	)
+	defer taskCancel()
 
-	// 用 goroutine + timer 实现超时检测，不取消 chromedp context
 	type screenshotResult struct {
 		data string
 		err  error
@@ -1162,7 +1280,6 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 		}
 	}()
 
-	// 等待截图完成或超时
 	timer := time.NewTimer(60 * time.Second)
 	defer timer.Stop()
 
@@ -1177,11 +1294,13 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 		}
 		return r.data
 	case <-timer.C:
-		logx.Errorf("Screenshot timeout for %s (60s), abandoning", targetUrl)
-		// 不取消 taskCtx，让 Chrome 自然退出，避免触发 chromedp 的 close-of-closed-channel panic
+		logx.Errorf("Screenshot timeout for %s (60s), closing tab", targetUrl)
+		// 取消 Tab 上下文，安全关闭标签页，Chrome 进程不受影响
+		taskCancel()
 		return ""
 	case <-ctx.Done():
-		// 父 context 取消（任务停止），不取消 chromedp context
+		// 父 context 取消（任务停止），取消 Tab 上下文
+		taskCancel()
 		return ""
 	}
 }

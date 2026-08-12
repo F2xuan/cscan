@@ -159,6 +159,7 @@ func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string, 
 	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svc, workspaceId)
 	assetModel := l.svc.GetAssetModel(workspaceId)
 	targetMetaModel := l.svc.GetAssetTargetMetaModel(workspaceId)
+	historyModel := l.svc.GetAssetHistoryModel(workspaceId)
 
 	imported := 0 // 新增数
 	skipped := 0  // 跳过（空主机 + 已存在）
@@ -185,6 +186,14 @@ func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string, 
 			logx.Errorf("Import: upsert asset host=%s failed: %v", asset.Host, err)
 		} else if res.IsNew {
 			imported++
+			// 记录首次发现历史，确保时间线不为空
+			newAsset, _ := assetModel.FindByAuthorityOnly(l.ctx, asset.Authority)
+			if newAsset != nil {
+				firstFound := model.SnapshotFromAsset(newAsset, "", time.Now(), nil)
+				if histErr := historyModel.Insert(l.ctx, firstFound); histErr != nil {
+					logx.Errorf("Import: insert first-found history failed: %v", histErr)
+				}
+			}
 		} else {
 			// 资产已存在（重复导入），计入跳过
 			skipped++
@@ -222,6 +231,7 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svc, workspaceId)
 	assetModel := l.svc.GetAssetModel(workspaceId)
 	targetMetaModel := l.svc.GetAssetTargetMetaModel(workspaceId)
+	historyModel := l.svc.GetAssetHistoryModel(workspaceId)
 	pageSize := req.PageSize
 	if pageSize <= 0 {
 		pageSize = 500
@@ -409,6 +419,14 @@ PageLoop:
 				logx.Errorf("ImportAll: upsert asset host=%s failed: %v", asset.Host, err)
 			} else if res.IsNew {
 				totalImport++
+				// 记录首次发现历史，确保时间线不为空
+				newAsset, _ := assetModel.FindByAuthorityOnly(l.ctx, asset.Authority)
+				if newAsset != nil {
+					firstFound := model.SnapshotFromAsset(newAsset, "", time.Now(), nil)
+					if histErr := historyModel.Insert(l.ctx, firstFound); histErr != nil {
+						logx.Errorf("ImportAll: insert first-found history failed: %v", histErr)
+					}
+				}
 			} else {
 				// 资产已存在（重复导入），计入跳过
 				totalSkipped++

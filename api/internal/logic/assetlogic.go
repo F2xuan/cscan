@@ -1011,6 +1011,7 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
 	assetModel := l.svcCtx.GetAssetModel(workspaceId)
 	metaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
+	historyModel := l.svcCtx.GetAssetHistoryModel(workspaceId)
 
 	var newCount, skipCount, errorCount int
 	var errorDetails []string
@@ -1055,6 +1056,12 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 			continue
 		}
 		newCount++
+
+		// 记录首次发现历史，确保时间线不为空
+		firstFound := model.SnapshotFromAsset(asset, "", time.Now(), nil)
+		if histErr := historyModel.Insert(l.ctx, firstFound); histErr != nil {
+			l.Logger.Errorf("[AssetImport] insert first-found history failed: %v", histErr)
+		}
 
 		// 同步创建/刷新顶层资产 meta，否则顶层资产列表（只读 {ws}_asset_target_meta）不会展示手动导入的资产
 		if err := upsertAssetTargetMeta(l.ctx, metaModel, workspaceId, host, "", nil); err != nil {
@@ -1170,6 +1177,15 @@ func (l *AssetSaveLogic) AssetSave(req *types.AssetSaveReq, workspaceId string) 
 		if err := historyModel.Insert(l.ctx, history); err != nil {
 			l.Logger.Errorf("[AssetSave] insert history failed: %v", err)
 		}
+	} else if existing == nil {
+		// 新资产：记录首次发现历史，确保时间线不为空
+		newAsset, _ := assetModel.FindByAuthorityOnly(l.ctx, authority)
+		if newAsset != nil {
+			firstFound := model.SnapshotFromAsset(newAsset, "", time.Now(), nil)
+			if err := historyModel.Insert(l.ctx, firstFound); err != nil {
+				l.Logger.Errorf("[AssetSave] insert first-found history failed: %v", err)
+			}
+		}
 	}
 
 	// 同步创建/刷新顶层资产 meta，否则顶层资产列表不会展示手动添加的资产
@@ -1272,7 +1288,7 @@ func parseTarget(target string) (host string, port int, scheme string, err error
 
 // upsertAssetTargetMeta 将手动导入/添加的资产归并到顶层资产 meta 集合。
 // 解析与 upsert 共用 model.AssetTargetMetaModel.EnsureForAsset，
-// 与扫描结果保存（RPC SaveTaskResult）保持一致，避免顶层资产列表只见手动新增。
+// 与扫描结果保存（Worker 直连 MongoDB）保持一致，避免顶层资产列表只见手动新增。
 //
 // labels 在 Upsert 时按 $set 覆盖；nil 则保留原值。
 func upsertAssetTargetMeta(ctx context.Context, metaModel *model.AssetTargetMetaModel, wsId, host, domain string, labels []string) error {

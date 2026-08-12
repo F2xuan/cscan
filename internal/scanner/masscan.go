@@ -209,7 +209,7 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 	args = append(args, targets...)
 
 	// 输出执行命令到日志
-	logx.Infof("Executing command: masscan %s", strings.Join(args, " "))
+	logx.Infof("[Masscan] CLI: args=%s", strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, "masscan", args...)
 	stdout, err := cmd.StdoutPipe()
@@ -223,8 +223,15 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 		return assets
 	}
 
+	// goroutine for cmd.Wait() — ensures process is reaped even if scanner blocks
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
 	// 解析JSON输出
+	// 当 ctx 取消时，exec.CommandContext 杀死进程，stdout 管道关闭，scanner.Scan() 返回 false
 	scanner := bufio.NewScanner(stdout)
+	lineCount := 0
+	parseFailCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || line == "[" || line == "]" {
@@ -235,6 +242,8 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 
 		var result MasscanResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
+			parseFailCount++
+			logx.Debugf("[Masscan] JSON parse failed line=%d: %v, line=%s", lineCount+1, err, line)
 			continue
 		}
 
@@ -296,7 +305,7 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 		}
 	}
 
-	if err := cmd.Wait(); err != nil {
+	if err := <-done; err != nil {
 		if ctx.Err() != nil {
 			logx.Infof("Masscan canceled for targets")
 		} else {
@@ -304,6 +313,7 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 		}
 	}
 
+	logx.Debugf("[Masscan] completed: assets=%d parseFail=%d", len(assets), parseFailCount)
 	return assets
 }
 

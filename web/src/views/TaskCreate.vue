@@ -3,12 +3,8 @@
     <el-card class="create-card">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="task-form">
         <!-- 模板选择 -->
-        <ScanTemplateSelect 
-          v-model="selectedTemplate"
-          :show-save-button="!isEdit"
-          :current-config="currentConfig"
-          @config-loaded="handleTemplateConfigLoaded"
-        />
+        <ScanTemplateSelect v-model="selectedTemplate" :show-save-button="!isEdit" :current-config="currentConfig"
+          @config-loaded="handleTemplateConfigLoaded" />
 
         <!-- 基本信息 -->
         <el-form-item :label="$t('task.taskName')" prop="name">
@@ -20,27 +16,22 @@
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item :label="$t('task.organization')">
-              <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable style="width: 100%">
+              <el-select v-model="form.orgId" :placeholder="$t('task.selectOrganization')" clearable
+                style="width: 100%">
                 <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
               </el-select>
             </el-form-item>
           </el-col>
         </el-row>
         <el-form-item :label="$t('task.specifyWorker')">
-          <el-select v-model="form.workers" multiple :placeholder="$t('task.anyWorkerExecute')" clearable style="width: 100%">
+          <el-select v-model="form.workers" multiple :placeholder="$t('task.anyWorkerExecute')" clearable
+            style="width: 100%">
             <el-option v-for="w in workers" :key="w.name" :label="`${w.name} (${w.ip})`" :value="w.name" />
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('task.tags')">
-          <el-select 
-            v-model="form.tags" 
-            multiple 
-            filterable 
-            allow-create 
-            default-first-option 
-            :placeholder="$t('task.tagsPlaceholder')" 
-            style="width: 100%"
-          >
+          <el-select v-model="form.tags" multiple filterable allow-create default-first-option
+            :placeholder="$t('task.tagsPlaceholder')" style="width: 100%">
             <el-option v-for="tag in commonTags" :key="tag" :label="tag" :value="tag" />
           </el-select>
           <span class="form-hint">{{ $t('task.tagsHint') }}</span>
@@ -50,19 +41,22 @@
           <!-- 子域名扫描 -->
           <el-collapse-item name="domainscan">
             <template #title>
-              <span class="collapse-title">{{ $t('task.subdomainScan') }} <el-tag v-if="form.domainscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.subdomainScan') }}</span>
+                <span v-if="form.domainscanEnable" class="config-summary">{{ domainscanSummary }}</span>
+                <el-switch v-model="form.domainscanEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.domainscanEnable" />
-              <span class="form-hint">{{ $t('task.subdomainEnumHint') }}</span>
-            </el-form-item>
+            <p class="module-desc">{{ $t('task.subdomainEnumHint') }}</p>
             <template v-if="form.domainscanEnable">
               <el-form-item :label="$t('task.scanTool')">
                 <el-checkbox v-model="form.domainscanSubfinder">Subfinder ({{ $t('task.passiveEnum') }})</el-checkbox>
-                <el-checkbox v-model="form.domainscanBruteforce" :disabled="!form.subdomainDictIds || !form.subdomainDictIds.length">KSubdomain ({{ $t('task.dictBrute') }})</el-checkbox>
+                <el-checkbox v-model="form.domainscanBruteforce"
+                  :disabled="!form.subdomainDictIds || !form.subdomainDictIds.length">KSubdomain ({{
+                    $t('task.dictBrute') }})</el-checkbox>
                 <span class="form-hint">{{ $t('task.multiScanHint') }}</span>
               </el-form-item>
-              
+
               <!-- 左右分栏布局 -->
               <el-row :gutter="24" class="scan-tools-layout">
                 <!-- 左侧：Subfinder 配置 -->
@@ -86,20 +80,24 @@
                         <span class="form-hint">0={{ $t('task.noLimit') }}</span>
                       </el-form-item>
                       <el-form-item :label="$t('task.scanOptions')">
-                        <el-checkbox v-model="form.domainscanRemoveWildcard">{{ $t('task.removeWildcardDomain') }}</el-checkbox>
+                        <el-checkbox v-model="form.domainscanRemoveWildcard">{{ $t('task.removeWildcardDomain')
+                          }}</el-checkbox>
                       </el-form-item>
                       <el-form-item :label="$t('task.dnsResolve')">
-                        <el-checkbox v-model="form.domainscanResolveDNS">{{ $t('task.resolveSubdomainDns') }}</el-checkbox>
+                        <el-checkbox v-model="form.domainscanResolveDNS">{{ $t('task.resolveSubdomainDns')
+                          }}</el-checkbox>
                         <span class="form-hint">{{ $t('task.concurrentByWorker') }}</span>
                       </el-form-item>
                     </template>
                     <div v-else class="scan-tool-disabled-hint">
-                      <el-icon><InfoFilled /></el-icon>
+                      <el-icon>
+                        <InfoFilled />
+                      </el-icon>
                       <span>{{ $t('task.enableSubfinderFirst') }}</span>
                     </div>
                   </div>
                 </el-col>
-                
+
                 <!-- 右侧：KSubdomain 配置 -->
                 <el-col :span="12">
                   <div class="scan-tool-section">
@@ -112,19 +110,22 @@
                     <!-- 字典选择（始终显示，作为启用字典爆破的前提） -->
                     <el-form-item :label="$t('task.bruteforceDict')">
                       <div class="selected-dict-summary">
-                        <el-tag type="primary" size="small" v-if="form.subdomainDictIds && form.subdomainDictIds.length">
+                        <el-tag type="primary" size="small"
+                          v-if="form.subdomainDictIds && form.subdomainDictIds.length">
                           {{ $t('task.selectedCount', { count: form.subdomainDictIds.length }) }}
                         </el-tag>
                         <span v-else class="warning-hint">
                           {{ $t('task.selectDictFirst') }}
                         </span>
-                        <el-button type="primary" link @click="showSubdomainDictSelectDialog">{{ $t('task.selectDict') }}</el-button>
+                        <el-button type="primary" link @click="showSubdomainDictSelectDialog">{{ $t('task.selectDict')
+                          }}</el-button>
                       </div>
                       <span class="form-hint">{{ $t('task.ksubdomainBruteHint') }}</span>
                     </el-form-item>
                     <template v-if="form.domainscanBruteforce">
                       <el-form-item :label="$t('task.bruteforceTimeout') + ' (' + $t('task.minutes') + ')'">
-                        <el-input-number v-model="form.domainscanBruteforceTimeout" :min="1" :max="120" style="width:100%" />
+                        <el-input-number v-model="form.domainscanBruteforceTimeout" :min="1" :max="120"
+                          style="width:100%" />
                         <span class="form-hint">{{ $t('task.ksubdomainTimeoutHint') }}</span>
                       </el-form-item>
                     </template>
@@ -132,27 +133,34 @@
                       <el-form-item :label="$t('task.enhancedFeatures')">
                         <div style="display: flex; flex-direction: column; gap: 8px;">
                           <div style="display: flex; align-items: center; gap: 8px;">
-                            <el-checkbox 
-                              v-model="form.domainscanRecursiveBrute" 
-                              :disabled="!form.recursiveDictIds || !form.recursiveDictIds.length"
-                            >{{ $t('task.recursiveBrute') }}</el-checkbox>
-                            <el-button type="primary" link size="small" @click="showRecursiveDictSelectDialog">{{ $t('task.selectRecursiveDict') }}</el-button>
-                            <el-tag type="primary" size="small" v-if="form.recursiveDictIds && form.recursiveDictIds.length">
+                            <el-checkbox v-model="form.domainscanRecursiveBrute"
+                              :disabled="!form.recursiveDictIds || !form.recursiveDictIds.length">{{
+                                $t('task.recursiveBrute') }}</el-checkbox>
+                            <el-button type="primary" link size="small" @click="showRecursiveDictSelectDialog">{{
+                              $t('task.selectRecursiveDict') }}</el-button>
+                            <el-tag type="primary" size="small"
+                              v-if="form.recursiveDictIds && form.recursiveDictIds.length">
                               {{ $t('task.selectedCount', { count: form.recursiveDictIds.length }) }}
                             </el-tag>
                           </div>
                           <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">
-                            {{ (!form.recursiveDictIds || !form.recursiveDictIds.length) ? $t('task.selectRecursiveDictFirst') : $t('task.recursiveBruteHint') }}
+                            {{ (!form.recursiveDictIds || !form.recursiveDictIds.length) ?
+                              $t('task.selectRecursiveDictFirst') : $t('task.recursiveBruteHint') }}
                           </span>
-                          <el-checkbox v-model="form.domainscanWildcardDetect">{{ $t('task.wildcardDetect') }}</el-checkbox>
-                          <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">{{ $t('task.wildcardDetectHint') }}</span>
-                          
-                          
+                          <el-checkbox v-model="form.domainscanWildcardDetect">{{ $t('task.wildcardDetect')
+                            }}</el-checkbox>
+                          <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">{{
+                            $t('task.wildcardDetectHint') }}</span>
+
+
                         </div>
                       </el-form-item>
                     </template>
-                    <div v-if="!form.domainscanBruteforce && form.subdomainDictIds && form.subdomainDictIds.length" class="scan-tool-disabled-hint">
-                      <el-icon><InfoFilled /></el-icon>
+                    <div v-if="!form.domainscanBruteforce && form.subdomainDictIds && form.subdomainDictIds.length"
+                      class="scan-tool-disabled-hint">
+                      <el-icon>
+                        <InfoFilled />
+                      </el-icon>
                       <span>{{ $t('task.canEnableKSubdomain') }}</span>
                     </div>
                   </div>
@@ -164,11 +172,12 @@
           <!-- 端口扫描 -->
           <el-collapse-item name="portscan">
             <template #title>
-              <span class="collapse-title">{{ $t('task.portScan') }} <el-tag v-if="form.portscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.portScan') }}</span>
+                <span v-if="form.portscanEnable" class="config-summary">{{ portscanSummary }}</span>
+                <el-switch v-model="form.portscanEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.portscanEnable" />
-            </el-form-item>
             <template v-if="form.portscanEnable">
               <el-form-item :label="$t('task.scanTool')">
                 <el-radio-group v-model="form.portscanTool">
@@ -261,11 +270,12 @@
           <!-- 端口识别 -->
           <el-collapse-item name="portidentify">
             <template #title>
-              <span class="collapse-title">{{ $t('task.portIdentify') }} <el-tag v-if="form.portidentifyEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.portIdentify') }}</span>
+                <span v-if="form.portidentifyEnable" class="config-summary">{{ portidentifySummary }}</span>
+                <el-switch v-model="form.portidentifyEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.portidentifyEnable" />
-            </el-form-item>
             <template v-if="form.portidentifyEnable">
               <!-- 强制扫描：仅在端口扫描未启用时显示 -->
               <el-form-item v-if="!form.portscanEnable" :label="$t('task.forceScan')">
@@ -300,11 +310,12 @@
           <!-- 指纹识别 -->
           <el-collapse-item name="fingerprint">
             <template #title>
-              <span class="collapse-title">{{ $t('task.fingerprintScan') }} <el-tag v-if="form.fingerprintEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.fingerprintScan') }}</span>
+                <span v-if="form.fingerprintEnable" class="config-summary">{{ fingerprintSummary }}</span>
+                <el-switch v-model="form.fingerprintEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.fingerprintEnable" />
-            </el-form-item>
             <template v-if="form.fingerprintEnable">
               <!-- 强制扫描：仅在端口扫描和端口识别均未启用时显示 -->
               <el-form-item v-if="!form.portscanEnable && !form.portidentifyEnable" :label="$t('task.forceScan')">
@@ -316,7 +327,8 @@
                   <el-radio label="httpx">Httpx</el-radio>
                   <el-radio label="builtin">{{ $t('task.builtinEngine') }}</el-radio>
                 </el-radio-group>
-                <span class="form-hint">{{ form.fingerprintTool === 'httpx' ? $t('task.httpxWappalyzer') : $t('task.sdkWappalyzer') }}</span>
+                <span class="form-hint">{{ form.fingerprintTool === 'httpx' ? $t('task.httpxWappalyzer') :
+                  $t('task.sdkWappalyzer') }}</span>
               </el-form-item>
               <el-form-item :label="$t('task.additionalFeatures')">
                 <el-checkbox v-model="form.fingerprintIconHash">{{ $t('task.iconHash') }}</el-checkbox>
@@ -329,7 +341,8 @@
                   <el-radio label="http_mapping">{{ $t('task.httpMappingMode') }}</el-radio>
                   <el-radio label="service_mapping">{{ $t('task.serviceMappingMode') }}</el-radio>
                 </el-radio-group>
-                <span class="form-hint">{{ form.fingerprintFilterMode === 'http_mapping' ? $t('task.httpMappingModeHint') : $t('task.serviceMappingModeHint') }}</span>
+                <span class="form-hint">{{ form.fingerprintFilterMode === 'http_mapping' ?
+                  $t('task.httpMappingModeHint') : $t('task.serviceMappingModeHint') }}</span>
               </el-form-item>
               <el-form-item :label="$t('task.activeScan')">
                 <el-checkbox v-model="form.fingerprintActiveScan">{{ $t('task.enableActiveScan') }}</el-checkbox>
@@ -355,12 +368,13 @@
           <!-- 弱口令扫描 -->
           <el-collapse-item name="brutescan">
             <template #title>
-              <span class="collapse-title">{{ $t('task.weakpassScan') }} <el-tag v-if="form.brutescanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.weakpassScan') }}</span>
+                <span v-if="form.brutescanEnable" class="config-summary">{{ brutescanSummary }}</span>
+                <el-switch v-model="form.brutescanEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.brutescanEnable" />
-              <span class="form-hint">{{ $t('task.weakpassScanHint') }}</span>
-            </el-form-item>
+            <p class="module-desc">{{ $t('task.weakpassScanHint') }}</p>
             <template v-if="form.brutescanEnable">
               <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
               <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
@@ -388,12 +402,13 @@
           <!-- 目录扫描 -->
           <el-collapse-item name="dirscan">
             <template #title>
-              <span class="collapse-title">{{ $t('task.dirScan') }} <el-tag v-if="form.dirscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.dirScan') }}</span>
+                <span v-if="form.dirscanEnable" class="config-summary">{{ dirscanSummary }}</span>
+                <el-switch v-model="form.dirscanEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.dirscanEnable" />
-              <span class="form-hint">{{ $t('task.dirScanHint') }}</span>
-            </el-form-item>
+            <p class="module-desc">{{ $t('task.dirScanHint') }}</p>
             <template v-if="form.dirscanEnable">
               <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
               <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
@@ -415,15 +430,8 @@
                 <el-switch v-model="form.dirscanFollowRedirect" />
               </el-form-item>
               <el-form-item :label="$t('task.statusCodes')">
-                <el-select
-                  v-model="form.dirscanStatusCodes"
-                  multiple
-                  filterable
-                  allow-create
-                  default-first-option
-                  style="width:100%"
-                  :placeholder="$t('task.statusCodesPlaceholder')"
-                >
+                <el-select v-model="form.dirscanStatusCodes" multiple filterable allow-create default-first-option
+                  style="width:100%" :placeholder="$t('task.statusCodesPlaceholder')">
                   <el-option v-for="code in commonStatusCodes" :key="code" :label="String(code)" :value="code" />
                 </el-select>
                 <span class="form-hint">{{ $t('task.statusCodesHint') }}</span>
@@ -446,12 +454,13 @@
           <!-- JS扫描 -->
           <el-collapse-item name="jsfinder">
             <template #title>
-              <span class="collapse-title">{{ $t('task.jsfinderScan') }} <el-tag v-if="form.jsfinderEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.jsfinderScan') }}</span>
+                <span v-if="form.jsfinderEnable" class="config-summary">{{ jsfinderSummary }}</span>
+                <el-switch v-model="form.jsfinderEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.jsfinderEnable" />
-              <span class="form-hint">{{ $t('task.jsfinderScanHint') }}</span>
-            </el-form-item>
+            <p class="module-desc">{{ $t('task.jsfinderScanHint') }}</p>
             <template v-if="form.jsfinderEnable">
               <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
               <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
@@ -484,12 +493,13 @@
           <!-- 漏洞扫描 -->
           <el-collapse-item name="pocscan">
             <template #title>
-              <span class="collapse-title">{{ $t('task.vulScan') }} <el-tag v-if="form.pocscanEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
+              <div class="collapse-title-wrapper">
+                <span class="collapse-title">{{ $t('task.vulScan') }}</span>
+                <span v-if="form.pocscanEnable" class="config-summary">{{ pocscanSummary }}</span>
+                <el-switch v-model="form.pocscanEnable" size="small" @click.stop />
+              </div>
             </template>
-            <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.pocscanEnable" />
-              <span class="form-hint">{{ $t('task.useNucleiEngine') }}</span>
-            </el-form-item>
+            <p class="module-desc">{{ $t('task.useNucleiEngine') }}</p>
             <template v-if="form.pocscanEnable">
               <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
               <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
@@ -502,25 +512,30 @@
                   <el-radio label="manual">{{ $t('task.manualSelect') }}</el-radio>
                 </el-radio-group>
               </el-form-item>
-              
+
               <!-- 自动匹配模式 -->
               <template v-if="form.pocscanMode === 'auto'">
                 <el-form-item :label="$t('task.autoScan')">
-                  <el-checkbox v-model="form.pocscanAutoScan" :disabled="form.pocscanCustomOnly">{{ $t('task.customTagMapping') }}</el-checkbox>
-                  <el-checkbox v-model="form.pocscanAutomaticScan" :disabled="form.pocscanCustomOnly || !form.fingerprintEnable">{{ $t('task.webFingerprintAutoMatch') }}</el-checkbox>
-                  <span v-if="!form.fingerprintEnable && !form.pocscanCustomOnly" class="form-hint warning-hint">{{ $t('task.needFingerprintScan') }}</span>
+                  <el-checkbox v-model="form.pocscanAutoScan" :disabled="form.pocscanCustomOnly">{{
+                    $t('task.customTagMapping') }}</el-checkbox>
+                  <el-checkbox v-model="form.pocscanAutomaticScan"
+                    :disabled="form.pocscanCustomOnly || !form.fingerprintEnable">{{ $t('task.webFingerprintAutoMatch')
+                    }}</el-checkbox>
+                  <span v-if="!form.fingerprintEnable && !form.pocscanCustomOnly" class="form-hint warning-hint">{{
+                    $t('task.needFingerprintScan') }}</span>
                 </el-form-item>
                 <el-form-item :label="$t('task.customPoc')">
                   <el-checkbox v-model="form.pocscanCustomOnly">{{ $t('task.onlyUseCustomPoc') }}</el-checkbox>
                 </el-form-item>
               </template>
-              
+
               <!-- 手动选择模式 -->
               <template v-if="form.pocscanMode === 'manual'">
                 <el-form-item :label="$t('task.selectedPoc')">
                   <div class="selected-poc-summary">
                     <el-tag type="primary" size="small" v-if="nucleiSelectAll">
-                      {{ $t('task.defaultTemplate') }}: {{ $t('task.allSelectedCount', { count: nucleiSelectAllCount }) }}
+                      {{ $t('task.defaultTemplate') }}: {{ $t('task.allSelectedCount', { count: nucleiSelectAllCount })
+                      }}
                     </el-tag>
                     <el-tag type="primary" size="small" v-else-if="form.pocscanNucleiTemplateIds.length">
                       {{ $t('task.defaultTemplate') }}: {{ form.pocscanNucleiTemplateIds.length }}
@@ -531,7 +546,9 @@
                     <el-tag type="warning" size="small" v-else-if="form.pocscanCustomPocIds.length">
                       {{ $t('task.customPoc') }}: {{ form.pocscanCustomPocIds.length }}
                     </el-tag>
-                    <span v-if="!nucleiSelectAll && !customPocSelectAll && !form.pocscanNucleiTemplateIds.length && !form.pocscanCustomPocIds.length" class="secondary-hint">
+                    <span
+                      v-if="!nucleiSelectAll && !customPocSelectAll && !form.pocscanNucleiTemplateIds.length && !form.pocscanCustomPocIds.length"
+                      class="secondary-hint">
                       {{ $t('task.noPocSelected') }}
                     </span>
                     <el-button type="primary" link @click="showPocSelectDialog">{{ $t('task.selectPoc') }}</el-button>
@@ -562,30 +579,34 @@
                 <template v-if="form.pocscanHeaderMode === 'preset'">
                   <el-select v-model="form.pocscanPresetUA" :placeholder="$t('task.selectUA')" style="width: 100%;">
                     <el-option-group :label="$t('task.uaDesktop')">
-                      <el-option label="Chrome (Windows)" value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" />
-                      <el-option label="Firefox (macOS)" value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0" />
-                      <el-option label="Edge (Windows)" value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0" />
+                      <el-option label="Chrome (Windows)"
+                        value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" />
+                      <el-option label="Firefox (macOS)"
+                        value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0" />
+                      <el-option label="Edge (Windows)"
+                        value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0" />
                     </el-option-group>
                     <el-option-group :label="$t('task.uaMobile')">
-                      <el-option label="Safari (iPhone)" value="Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1" />
-                      <el-option label="Chrome (Android)" value="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36" />
+                      <el-option label="Safari (iPhone)"
+                        value="Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1" />
+                      <el-option label="Chrome (Android)"
+                        value="Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36" />
                     </el-option-group>
                     <el-option-group :label="$t('task.uaSpider')">
-                      <el-option label="Baiduspider" value="Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)" />
-                      <el-option label="Googlebot" value="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" />
+                      <el-option label="Baiduspider"
+                        value="Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)" />
+                      <el-option label="Googlebot"
+                        value="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" />
                     </el-option-group>
                     <el-option-group :label="$t('task.uaApp')">
-                      <el-option label="WeChat (Android)" value="Mozilla/5.0 (Linux; Android 13; ALN-AL00 Build/HUAWEIALN-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36 XWEB/1160065 MMWEBSDK/20231202 MicroMessenger/8.0.47.2560 WeChat/arm64 Weixin NetType/WIFI" />
+                      <el-option label="WeChat (Android)"
+                        value="Mozilla/5.0 (Linux; Android 13; ALN-AL00 Build/HUAWEIALN-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36 XWEB/1160065 MMWEBSDK/20231202 MicroMessenger/8.0.47.2560 WeChat/arm64 Weixin NetType/WIFI" />
                     </el-option-group>
                   </el-select>
                 </template>
                 <template v-if="form.pocscanHeaderMode === 'custom'">
-                  <el-input
-                    v-model="form.pocscanCustomHeadersText"
-                    type="textarea"
-                    :rows="4"
-                    :placeholder="$t('task.customHeadersPlaceholder')"
-                  />
+                  <el-input v-model="form.pocscanCustomHeadersText" type="textarea" :rows="4"
+                    :placeholder="$t('task.customHeadersPlaceholder')" />
                 </template>
               </el-form-item>
             </template>
@@ -594,28 +615,25 @@
 
         <!-- 操作按钮 -->
         <div class="form-actions">
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">{{ isEdit ? $t('common.save') : $t('task.createTask') }}</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmit">{{ isEdit ? $t('common.save') :
+            $t('task.createTask') }}</el-button>
           <el-button @click="handleCancel">{{ $t('common.cancel') }}</el-button>
         </div>
       </el-form>
     </el-card>
 
     <!-- 目录扫描字典选择对话框 -->
-    <el-dialog v-model="dictSelectDialogVisible" :title="$t('task.selectDirScanDict')" width="800px" @open="handleDictDialogOpen">
-      <el-table 
-        ref="dictTableRef"
-        :data="dictList" 
-        v-loading="dictLoading" 
-        max-height="400"
-        @selection-change="handleDictSelectionChange"
-        row-key="id"
-      >
+    <el-dialog v-model="dictSelectDialogVisible" :title="$t('task.selectDirScanDict')" width="800px"
+      @open="handleDictDialogOpen">
+      <el-table ref="dictTableRef" :data="dictList" v-loading="dictLoading" max-height="400"
+        @selection-change="handleDictSelectionChange" row-key="id">
         <el-table-column type="selection" width="45" :reserve-selection="true" />
         <el-table-column prop="name" :label="$t('task.dictName')" min-width="150" />
         <el-table-column prop="pathCount" :label="$t('task.pathCount')" width="100" />
         <el-table-column prop="isBuiltin" :label="$t('common.type')" width="80">
           <template #default="{ row }">
-            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') : $t('task.custom') }}</el-tag>
+            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') :
+              $t('task.custom') }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -626,21 +644,17 @@
     </el-dialog>
 
     <!-- 子域名字典选择对话框 -->
-    <el-dialog v-model="subdomainDictSelectDialogVisible" :title="$t('task.selectSubdomainDict')" width="800px" @open="handleSubdomainDictDialogOpen">
-      <el-table 
-        ref="subdomainDictTableRef"
-        :data="subdomainDictList" 
-        v-loading="subdomainDictLoading" 
-        max-height="400"
-        @selection-change="handleSubdomainDictSelectionChange"
-        row-key="id"
-      >
+    <el-dialog v-model="subdomainDictSelectDialogVisible" :title="$t('task.selectSubdomainDict')" width="800px"
+      @open="handleSubdomainDictDialogOpen">
+      <el-table ref="subdomainDictTableRef" :data="subdomainDictList" v-loading="subdomainDictLoading" max-height="400"
+        @selection-change="handleSubdomainDictSelectionChange" row-key="id">
         <el-table-column type="selection" width="45" :reserve-selection="true" />
         <el-table-column prop="name" :label="$t('task.dictName')" min-width="150" />
         <el-table-column prop="wordCount" :label="$t('task.wordCount')" width="100" />
         <el-table-column prop="isBuiltin" :label="$t('common.type')" width="80">
           <template #default="{ row }">
-            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') : $t('task.custom') }}</el-tag>
+            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') :
+              $t('task.custom') }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -651,21 +665,17 @@
     </el-dialog>
 
     <!-- 递归爆破字典选择对话框 -->
-    <el-dialog v-model="recursiveDictSelectDialogVisible" :title="$t('task.selectRecursiveDict')" width="800px" @open="handleRecursiveDictDialogOpen">
-      <el-table 
-        ref="recursiveDictTableRef"
-        :data="recursiveDictList" 
-        v-loading="recursiveDictLoading" 
-        max-height="400"
-        @selection-change="handleRecursiveDictSelectionChange"
-        row-key="id"
-      >
+    <el-dialog v-model="recursiveDictSelectDialogVisible" :title="$t('task.selectRecursiveDict')" width="800px"
+      @open="handleRecursiveDictDialogOpen">
+      <el-table ref="recursiveDictTableRef" :data="recursiveDictList" v-loading="recursiveDictLoading" max-height="400"
+        @selection-change="handleRecursiveDictSelectionChange" row-key="id">
         <el-table-column type="selection" width="45" :reserve-selection="true" />
         <el-table-column prop="name" :label="$t('task.dictName')" min-width="150" />
         <el-table-column prop="wordCount" :label="$t('task.wordCount')" width="100" />
         <el-table-column prop="isBuiltin" :label="$t('common.type')" width="80">
           <template #default="{ row }">
-            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') : $t('task.custom') }}</el-tag>
+            <el-tag :type="row.isBuiltin ? 'info' : 'success'" size="small">{{ row.isBuiltin ? $t('task.builtin') :
+              $t('task.custom') }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -676,7 +686,8 @@
     </el-dialog>
 
     <!-- POC选择对话框 -->
-    <el-dialog v-model="pocSelectDialogVisible" :title="$t('task.selectPoc')" width="1200px" @open="handlePocDialogOpen">
+    <el-dialog v-model="pocSelectDialogVisible" :title="$t('task.selectPoc')" width="1200px"
+      @open="handlePocDialogOpen">
       <div class="poc-select-container">
         <!-- 左侧：POC列表 -->
         <div class="poc-select-left">
@@ -685,10 +696,12 @@
             <el-tab-pane :label="$t('task.defaultTemplate')" name="nuclei">
               <el-form :inline="true" class="poc-filter-form">
                 <el-form-item>
-                  <el-input v-model="nucleiTemplateFilter.keyword" :placeholder="$t('task.nameOrId')" clearable style="width: 150px" @keyup.enter="loadNucleiTemplatesForSelect" />
+                  <el-input v-model="nucleiTemplateFilter.keyword" :placeholder="$t('task.nameOrId')" clearable
+                    style="width: 150px" @keyup.enter="loadNucleiTemplatesForSelect" />
                 </el-form-item>
                 <el-form-item>
-                  <el-select v-model="nucleiTemplateFilter.severity" :placeholder="$t('task.level')" clearable style="width: 100px" @change="loadNucleiTemplatesForSelect">
+                  <el-select v-model="nucleiTemplateFilter.severity" :placeholder="$t('task.level')" clearable
+                    style="width: 100px" @change="loadNucleiTemplatesForSelect">
                     <el-option label="Critical" value="critical" />
                     <el-option label="High" value="high" />
                     <el-option label="Medium" value="medium" />
@@ -698,25 +711,23 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-input v-model="nucleiTemplateFilter.tag" :placeholder="$t('task.tags')" clearable style="width: 120px" @keyup.enter="loadNucleiTemplatesForSelect" />
+                  <el-input v-model="nucleiTemplateFilter.tag" :placeholder="$t('task.tags')" clearable
+                    style="width: 120px" @keyup.enter="loadNucleiTemplatesForSelect" />
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" size="small" @click="loadNucleiTemplatesForSelect">{{ $t('common.search') }}</el-button>
-                  <el-button v-if="!nucleiSelectAll" type="success" size="small" @click="selectAllNucleiTemplates" :loading="selectAllNucleiLoading">{{ $t('task.selectAll') }}</el-button>
-                  <el-button v-if="nucleiSelectAll || selectedNucleiTemplateIds.length > 0" type="warning" size="small" @click="deselectAllNucleiTemplates">{{ $t('task.deselectAll') }}</el-button>
+                  <el-button type="primary" size="small" @click="loadNucleiTemplatesForSelect">{{ $t('common.search')
+                    }}</el-button>
+                  <el-button v-if="!nucleiSelectAll" type="success" size="small" @click="selectAllNucleiTemplates"
+                    :loading="selectAllNucleiLoading">{{ $t('task.selectAll') }}</el-button>
+                  <el-button v-if="nucleiSelectAll || selectedNucleiTemplateIds.length > 0" type="warning" size="small"
+                    @click="deselectAllNucleiTemplates">{{ $t('task.deselectAll') }}</el-button>
                 </el-form-item>
               </el-form>
               <div v-if="nucleiSelectAll" class="select-all-tip">
                 {{ $t('task.selectAllHint', { count: nucleiSelectAllCount }) }}
               </div>
-              <el-table
-                ref="nucleiTableRef"
-                :data="nucleiTemplateList" 
-                v-loading="nucleiTemplateLoading" 
-                max-height="400"
-                @selection-change="handleNucleiSelectionChange"
-                row-key="id"
-              >
+              <el-table ref="nucleiTableRef" :data="nucleiTemplateList" v-loading="nucleiTemplateLoading"
+                max-height="400" @selection-change="handleNucleiSelectionChange" row-key="id">
                 <el-table-column type="selection" width="45" :reserve-selection="true" />
                 <el-table-column prop="id" :label="$t('task.templateId')" width="180" show-overflow-tooltip />
                 <el-table-column prop="name" :label="$t('common.name')" min-width="150" show-overflow-tooltip />
@@ -727,36 +738,35 @@
                 </el-table-column>
                 <el-table-column prop="tags" :label="$t('task.tags')" min-width="100">
                   <template #default="{ row }">
-                    <el-tag v-for="tag in (row.tags || []).slice(0, 2)" :key="tag" size="small" style="margin-right: 3px">{{ tag }}</el-tag>
-                    <span v-if="row.tags && row.tags.length > 2" class="secondary-hint">+{{ row.tags.length - 2 }}</span>
+                    <el-tag v-for="tag in (row.tags || []).slice(0, 2)" :key="tag" size="small"
+                      style="margin-right: 3px">{{ tag }}</el-tag>
+                    <span v-if="row.tags && row.tags.length > 2" class="secondary-hint">+{{ row.tags.length - 2
+                      }}</span>
                   </template>
                 </el-table-column>
                 <el-table-column :label="$t('common.operation')" width="60" fixed="right">
                   <template #default="{ row }">
-                    <el-button type="primary" link size="small" @click="viewPocContent(row, 'nuclei')">{{ $t('common.view') }}</el-button>
+                    <el-button type="primary" link size="small" @click="viewPocContent(row, 'nuclei')">{{
+                      $t('common.view') }}</el-button>
                   </template>
                 </el-table-column>
               </el-table>
-              <el-pagination
-                v-model:current-page="nucleiTemplatePagination.page"
-                v-model:page-size="nucleiTemplatePagination.pageSize"
-                :total="nucleiTemplatePagination.total"
-                :page-sizes="[50, 100, 200]"
-                layout="total, sizes, prev, pager, next"
-                class="poc-pagination"
-                @size-change="loadNucleiTemplatesForSelect"
-                @current-change="loadNucleiTemplatesForSelect"
-              />
+              <el-pagination v-model:current-page="nucleiTemplatePagination.page"
+                v-model:page-size="nucleiTemplatePagination.pageSize" :total="nucleiTemplatePagination.total"
+                :page-sizes="[50, 100, 200]" layout="total, sizes, prev, pager, next" class="poc-pagination"
+                @size-change="loadNucleiTemplatesForSelect" @current-change="loadNucleiTemplatesForSelect" />
             </el-tab-pane>
 
             <!-- 自定义POC -->
             <el-tab-pane :label="$t('task.customPoc')" name="custom">
               <el-form :inline="true" class="poc-filter-form">
                 <el-form-item>
-                  <el-input v-model="customPocFilter.name" :placeholder="$t('common.name')" clearable style="width: 150px" @keyup.enter="loadCustomPocsForSelect" />
+                  <el-input v-model="customPocFilter.name" :placeholder="$t('common.name')" clearable
+                    style="width: 150px" @keyup.enter="loadCustomPocsForSelect" />
                 </el-form-item>
                 <el-form-item>
-                  <el-select v-model="customPocFilter.severity" :placeholder="$t('task.level')" clearable style="width: 100px" @change="loadCustomPocsForSelect">
+                  <el-select v-model="customPocFilter.severity" :placeholder="$t('task.level')" clearable
+                    style="width: 100px" @change="loadCustomPocsForSelect">
                     <el-option label="Critical" value="critical" />
                     <el-option label="High" value="high" />
                     <el-option label="Medium" value="medium" />
@@ -766,25 +776,23 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-input v-model="customPocFilter.tag" :placeholder="$t('task.tags')" clearable style="width: 120px" @keyup.enter="loadCustomPocsForSelect" />
+                  <el-input v-model="customPocFilter.tag" :placeholder="$t('task.tags')" clearable style="width: 120px"
+                    @keyup.enter="loadCustomPocsForSelect" />
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" size="small" @click="loadCustomPocsForSelect">{{ $t('common.search') }}</el-button>
-                  <el-button v-if="!customPocSelectAll" type="success" size="small" @click="selectAllCustomPocs" :loading="selectAllCustomLoading">{{ $t('task.selectAll') }}</el-button>
-                  <el-button v-if="customPocSelectAll || selectedCustomPocIds.length > 0" type="warning" size="small" @click="deselectAllCustomPocs">{{ $t('task.deselectAll') }}</el-button>
+                  <el-button type="primary" size="small" @click="loadCustomPocsForSelect">{{ $t('common.search')
+                    }}</el-button>
+                  <el-button v-if="!customPocSelectAll" type="success" size="small" @click="selectAllCustomPocs"
+                    :loading="selectAllCustomLoading">{{ $t('task.selectAll') }}</el-button>
+                  <el-button v-if="customPocSelectAll || selectedCustomPocIds.length > 0" type="warning" size="small"
+                    @click="deselectAllCustomPocs">{{ $t('task.deselectAll') }}</el-button>
                 </el-form-item>
               </el-form>
               <div v-if="customPocSelectAll" class="select-all-tip">
                 {{ $t('task.selectAllHint', { count: customPocSelectAllCount }) }}
               </div>
-              <el-table
-                ref="customPocTableRef"
-                :data="customPocList" 
-                v-loading="customPocLoading" 
-                max-height="400"
-                @selection-change="handleCustomPocSelectionChange"
-                row-key="id"
-              >
+              <el-table ref="customPocTableRef" :data="customPocList" v-loading="customPocLoading" max-height="400"
+                @selection-change="handleCustomPocSelectionChange" row-key="id">
                 <el-table-column type="selection" width="45" :reserve-selection="true" />
                 <el-table-column prop="name" :label="$t('common.name')" min-width="150" show-overflow-tooltip />
                 <el-table-column prop="templateId" :label="$t('task.templateId')" width="150" show-overflow-tooltip />
@@ -795,20 +803,15 @@
                 </el-table-column>
                 <el-table-column :label="$t('common.operation')" width="60" fixed="right">
                   <template #default="{ row }">
-                    <el-button type="primary" link size="small" @click="viewPocContent(row, 'custom')">{{ $t('common.view') }}</el-button>
+                    <el-button type="primary" link size="small" @click="viewPocContent(row, 'custom')">{{
+                      $t('common.view') }}</el-button>
                   </template>
                 </el-table-column>
               </el-table>
-              <el-pagination
-                v-model:current-page="customPocPagination.page"
-                v-model:page-size="customPocPagination.pageSize"
-                :total="customPocPagination.total"
-                :page-sizes="[50, 100, 200]"
-                layout="total, sizes, prev, pager, next"
-                class="poc-pagination"
-                @size-change="loadCustomPocsForSelect"
-                @current-change="loadCustomPocsForSelect"
-              />
+              <el-pagination v-model:current-page="customPocPagination.page"
+                v-model:page-size="customPocPagination.pageSize" :total="customPocPagination.total"
+                :page-sizes="[50, 100, 200]" layout="total, sizes, prev, pager, next" class="poc-pagination"
+                @size-change="loadCustomPocsForSelect" @current-change="loadCustomPocsForSelect" />
             </el-tab-pane>
           </el-tabs>
         </div>
@@ -816,68 +819,94 @@
         <!-- 右侧：已选择列表 -->
         <div class="poc-select-right">
           <div class="selected-header">
-            <span>{{ $t('task.selected') }} ({{ (nucleiSelectAll ? nucleiSelectAllCount : selectedNucleiTemplates.length) + (customPocSelectAll ? customPocSelectAllCount : selectedCustomPocs.length) }})</span>
-            <el-button type="danger" link size="small" @click="clearAllSelections" v-if="nucleiSelectAll || customPocSelectAll || selectedNucleiTemplates.length + selectedCustomPocs.length > 0">
+            <span>{{ $t('task.selected') }} ({{ (nucleiSelectAll ? nucleiSelectAllCount :
+              selectedNucleiTemplates.length) +
+              (customPocSelectAll ? customPocSelectAllCount : selectedCustomPocs.length) }})</span>
+            <el-button type="danger" link size="small" @click="clearAllSelections"
+              v-if="nucleiSelectAll || customPocSelectAll || selectedNucleiTemplates.length + selectedCustomPocs.length > 0">
               {{ $t('task.clearAll') }}
             </el-button>
           </div>
           <div class="selected-search">
-            <el-input v-model="selectedPocSearchKeyword" :placeholder="$t('task.searchSelected')" clearable size="small" :prefix-icon="Search" />
+            <el-input v-model="selectedPocSearchKeyword" :placeholder="$t('task.searchSelected')" clearable size="small"
+              :prefix-icon="Search" />
           </div>
           <div class="selected-list">
             <!-- 默认模板 -->
             <div v-if="nucleiSelectAll" class="selected-group">
               <div class="group-header">
-                <span>{{ $t('task.defaultTemplate') }}: {{ $t('task.allSelectedCount', { count: nucleiSelectAllCount }) }}</span>
-                <el-button type="danger" link size="small" @click="deselectAllNucleiTemplates">{{ $t('task.deselectAll') }}</el-button>
+                <span>{{ $t('task.defaultTemplate') }}: {{ $t('task.allSelectedCount', { count: nucleiSelectAllCount })
+                  }}</span>
+                <el-button type="danger" link size="small" @click="deselectAllNucleiTemplates">{{ $t('task.deselectAll')
+                  }}</el-button>
               </div>
               <div v-if="hasNucleiSelectAllFilter" class="selected-all-conditions">
-                <el-tag v-if="nucleiSelectAllFilter.keyword" size="small">{{ $t('task.nameOrId') }}: {{ nucleiSelectAllFilter.keyword }}</el-tag>
-                <el-tag v-if="nucleiSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{ nucleiSelectAllFilter.severity }}</el-tag>
-                <el-tag v-if="nucleiSelectAllFilter.category" size="small">{{ $t('task.category') }}: {{ nucleiSelectAllFilter.category }}</el-tag>
-                <el-tag v-if="nucleiSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{ nucleiSelectAllFilter.tag }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.keyword" size="small">{{ $t('task.nameOrId') }}: {{
+                  nucleiSelectAllFilter.keyword }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{
+                  nucleiSelectAllFilter.severity }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.category" size="small">{{ $t('task.category') }}: {{
+                  nucleiSelectAllFilter.category }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{
+                  nucleiSelectAllFilter.tag
+                  }}</el-tag>
               </div>
               <div v-else class="selected-all-conditions">{{ $t('task.allTemplates') }}</div>
             </div>
             <div v-else-if="filteredSelectedNucleiTemplates.length > 0" class="selected-group">
               <div class="group-header">
-                <span>{{ $t('task.defaultTemplate') }} ({{ filteredSelectedNucleiTemplates.length }}<template v-if="selectedPocSearchKeyword">/{{ selectedNucleiTemplates.length }}</template>)</span>
-                <el-button type="danger" link size="small" @click="clearNucleiSelections">{{ $t('task.clear') }}</el-button>
+                <span>{{ $t('task.defaultTemplate') }} ({{ filteredSelectedNucleiTemplates.length }}<template
+                    v-if="selectedPocSearchKeyword">/{{ selectedNucleiTemplates.length }}</template>)</span>
+                <el-button type="danger" link size="small" @click="clearNucleiSelections">{{ $t('task.clear')
+                  }}</el-button>
               </div>
               <div class="selected-items">
                 <div v-for="item in filteredSelectedNucleiTemplates" :key="item.id" class="selected-item">
                   <span class="item-name" :title="item.name || item.id">{{ item.name || item.id }}</span>
-                  <el-icon class="item-remove" @click="removeNucleiTemplate(item.id)"><Close /></el-icon>
+                  <el-icon class="item-remove" @click="removeNucleiTemplate(item.id)">
+                    <Close />
+                  </el-icon>
                 </div>
               </div>
             </div>
             <!-- 自定义POC -->
             <div v-if="customPocSelectAll" class="selected-group">
               <div class="group-header">
-                <span>{{ $t('task.customPoc') }}: {{ $t('task.allSelectedCount', { count: customPocSelectAllCount }) }}</span>
-                <el-button type="danger" link size="small" @click="deselectAllCustomPocs">{{ $t('task.deselectAll') }}</el-button>
+                <span>{{ $t('task.customPoc') }}: {{ $t('task.allSelectedCount', { count: customPocSelectAllCount })
+                  }}</span>
+                <el-button type="danger" link size="small" @click="deselectAllCustomPocs">{{ $t('task.deselectAll')
+                  }}</el-button>
               </div>
               <div v-if="hasCustomPocSelectAllFilter" class="selected-all-conditions">
-                <el-tag v-if="customPocSelectAllFilter.name" size="small">{{ $t('common.name') }}: {{ customPocSelectAllFilter.name }}</el-tag>
-                <el-tag v-if="customPocSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{ customPocSelectAllFilter.severity }}</el-tag>
-                <el-tag v-if="customPocSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{ customPocSelectAllFilter.tag }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.name" size="small">{{ $t('common.name') }}: {{
+                  customPocSelectAllFilter.name }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{
+                  customPocSelectAllFilter.severity }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{
+                  customPocSelectAllFilter.tag }}</el-tag>
               </div>
               <div v-else class="selected-all-conditions">{{ $t('task.allPocs') }}</div>
             </div>
             <div v-else-if="filteredSelectedCustomPocs.length > 0" class="selected-group">
               <div class="group-header">
-                <span>{{ $t('task.customPoc') }} ({{ filteredSelectedCustomPocs.length }}<template v-if="selectedPocSearchKeyword">/{{ selectedCustomPocs.length }}</template>)</span>
-                <el-button type="danger" link size="small" @click="clearCustomPocSelections">{{ $t('task.clear') }}</el-button>
+                <span>{{ $t('task.customPoc') }} ({{ filteredSelectedCustomPocs.length }}<template
+                    v-if="selectedPocSearchKeyword">/{{ selectedCustomPocs.length }}</template>)</span>
+                <el-button type="danger" link size="small" @click="clearCustomPocSelections">{{ $t('task.clear')
+                  }}</el-button>
               </div>
               <div class="selected-items">
                 <div v-for="item in filteredSelectedCustomPocs" :key="item.id" class="selected-item">
                   <span class="item-name" :title="item.name">{{ item.name }}</span>
-                  <el-icon class="item-remove" @click="removeCustomPoc(item.id)"><Close /></el-icon>
+                  <el-icon class="item-remove" @click="removeCustomPoc(item.id)">
+                    <Close />
+                  </el-icon>
                 </div>
               </div>
             </div>
             <!-- 空状态 -->
-            <div v-if="!nucleiSelectAll && !customPocSelectAll && filteredSelectedNucleiTemplates.length === 0 && filteredSelectedCustomPocs.length === 0" class="selected-empty">
+            <div
+              v-if="!nucleiSelectAll && !customPocSelectAll && filteredSelectedNucleiTemplates.length === 0 && filteredSelectedCustomPocs.length === 0"
+              class="selected-empty">
               <span>{{ selectedPocSearchKeyword ? $t('task.noMatchingResults') : $t('task.noPocSelected') }}</span>
             </div>
           </div>
@@ -893,25 +922,23 @@
     <!-- 查看POC内容对话框 -->
     <el-dialog v-model="pocContentDialogVisible" :title="pocContentTitle" width="800px">
       <el-descriptions :column="2" border size="small" style="margin-bottom: 15px">
-        <el-descriptions-item :label="$t('task.templateId')">{{ currentViewPoc.id || currentViewPoc.templateId }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('task.templateId')">{{ currentViewPoc.id || currentViewPoc.templateId
+          }}</el-descriptions-item>
         <el-descriptions-item :label="$t('common.name')">{{ currentViewPoc.name }}</el-descriptions-item>
         <el-descriptions-item :label="$t('task.severityLevel')">
           <el-tag :type="getSeverityType(currentViewPoc.severity)" size="small">{{ currentViewPoc.severity }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item :label="$t('task.author')">{{ currentViewPoc.author || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$t('task.tags')" :span="2">
-          <el-tag v-for="tag in (currentViewPoc.tags || [])" :key="tag" size="small" style="margin-right: 5px">{{ tag }}</el-tag>
+          <el-tag v-for="tag in (currentViewPoc.tags || [])" :key="tag" size="small" style="margin-right: 5px">{{ tag
+            }}</el-tag>
           <span v-if="!currentViewPoc.tags || currentViewPoc.tags.length === 0">-</span>
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('common.description')" :span="2">{{ currentViewPoc.description || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('common.description')" :span="2">{{ currentViewPoc.description || '-'
+          }}</el-descriptions-item>
       </el-descriptions>
       <div class="poc-content-wrapper" v-loading="pocContentLoading">
-        <el-input
-          v-model="currentViewPoc.content"
-          type="textarea"
-          :rows="18"
-          readonly
-        />
+        <el-input v-model="currentViewPoc.content" type="textarea" :rows="18" readonly />
       </div>
       <template #footer>
         <el-button @click="pocContentDialogVisible = false">{{ $t('common.close') }}</el-button>
@@ -1019,8 +1046,8 @@ const hasCustomPocSelectAllFilter = computed(() => Object.values(customPocSelect
 const filteredSelectedNucleiTemplates = computed(() => {
   if (!selectedPocSearchKeyword.value) return selectedNucleiTemplates.value
   const keyword = selectedPocSearchKeyword.value.toLowerCase()
-  return selectedNucleiTemplates.value.filter(t => 
-    (t.name && t.name.toLowerCase().includes(keyword)) || 
+  return selectedNucleiTemplates.value.filter(t =>
+    (t.name && t.name.toLowerCase().includes(keyword)) ||
     (t.id && t.id.toLowerCase().includes(keyword))
   )
 })
@@ -1028,8 +1055,8 @@ const filteredSelectedNucleiTemplates = computed(() => {
 const filteredSelectedCustomPocs = computed(() => {
   if (!selectedPocSearchKeyword.value) return selectedCustomPocs.value
   const keyword = selectedPocSearchKeyword.value.toLowerCase()
-  return selectedCustomPocs.value.filter(p => 
-    (p.name && p.name.toLowerCase().includes(keyword)) || 
+  return selectedCustomPocs.value.filter(p =>
+    (p.name && p.name.toLowerCase().includes(keyword)) ||
     (p.templateId && p.templateId.toLowerCase().includes(keyword)) ||
     (p.id && p.id.toLowerCase().includes(keyword))
   )
@@ -1092,7 +1119,7 @@ const form = reactive({
   recursiveDictIds: [], // 递归爆破字典ID列表
   recursiveDicts: [], // 保存已选择的递归字典信息
   domainscanWildcardDetect: true,  // 泛解析检测
-      // 端口扫描
+  // 端口扫描
   portscanEnable: true,
   portscanTool: 'naabu',
   portscanRate: 3000, // 提高默认值从1000到3000
@@ -1112,7 +1139,7 @@ const form = reactive({
   portidentifyTool: 'nmap',
   portidentifyTimeout: 30,
   portidentifyConcurrency: 10,
-  portidentifyArgs: '-sV -version-intensity 5',
+  portidentifyArgs: '-sV --version-intensity 5',
   portidentifyUDP: false,
   portidentifyFastMode: false,
   portidentifyForceScan: false,
@@ -1173,7 +1200,71 @@ const form = reactive({
 // 判断是否有前序扫描阶段启用（用于控制强制扫描开关的显隐）
 const hasPrePhaseEnabled = computed(() => {
   return form.domainscanEnable || form.portscanEnable ||
-         form.portidentifyEnable || form.fingerprintEnable
+    form.portidentifyEnable || form.fingerprintEnable
+})
+
+// 各模块关键配置摘要（折叠状态下显示）
+const domainscanSummary = computed(() => {
+  const tools = []
+  if (form.domainscanSubfinder) tools.push('Subfinder')
+  if (form.domainscanBruteforce) tools.push('KSubdomain')
+  return tools.length ? tools.join(' + ') : t('task.notStarted')
+})
+
+const portscanSummary = computed(() => {
+  const tool = form.portscanTool === 'naabu' ? 'Naabu' : 'Masscan'
+  return `${tool} | ${form.ports} | ${form.portscanRate}${t('task.summarySuffix')}`
+})
+
+const portidentifySummary = computed(() => {
+  const tool = form.portidentifyTool === 'nmap' ? 'Nmap' : 'Fingerprintx'
+  return `${tool} | ${t('task.summaryTimeout', { n: form.portidentifyTimeout })}`
+})
+
+const fingerprintSummary = computed(() => {
+  const tool = form.fingerprintTool === 'httpx' ? 'Httpx' : t('task.builtinEngine')
+  const features = []
+  if (form.fingerprintIconHash) features.push(t('task.iconHash'))
+  if (form.fingerprintScreenshot) features.push(t('task.screenshot'))
+  if (form.fingerprintCert) features.push(t('task.cert'))
+  return features.length ? `${tool} | ${features.join(' ')}` : tool
+})
+
+const brutescanSummary = computed(() => {
+  if (!form.brutescanServices || !form.brutescanServices.length) return t('task.summaryNoService')
+  return form.brutescanServices.slice(0, 4).join(',') + (form.brutescanServices.length > 4 ? '...' : '')
+})
+
+const dirscanSummary = computed(() => {
+  const parts = []
+  if (form.dirscanDictIds && form.dirscanDictIds.length) {
+    parts.push(t('task.selectedCount', { count: form.dirscanDictIds.length }))
+  } else {
+    parts.push(t('task.summaryNoDict'))
+  }
+  if (form.dirscanRecursion) parts.push(t('task.recursion'))
+  return parts.join(' | ')
+})
+
+const jsfinderSummary = computed(() => {
+  const parts = [t('task.summaryThreads', { n: form.jsfinderThreads })]
+  if (form.jsfinderEnableSourcemap) parts.push('Sourcemap')
+  if (form.jsfinderEnableUnauthCheck) parts.push(t('task.enableUnauthCheck'))
+  return parts.join(' | ')
+})
+
+const pocscanSummary = computed(() => {
+  const mode = form.pocscanMode === 'auto' ? t('task.autoMatch') : t('task.manualSelect')
+  if (form.pocscanMode === 'manual') {
+    const counts = []
+    if (nucleiSelectAll.value) counts.push(`${t('task.allTemplates')}:${nucleiSelectAllCount.value}`)
+    else if (form.pocscanNucleiTemplateIds.length) counts.push(`${t('task.templates')}:${form.pocscanNucleiTemplateIds.length}`)
+    if (customPocSelectAll.value) counts.push(`${t('task.allPocs')}:${customPocSelectAllCount.value}`)
+    else if (form.pocscanCustomPocIds.length) counts.push(`${t('task.pocs')}:${form.pocscanCustomPocIds.length}`)
+    return counts.length ? `${mode} | ${counts.join(' ')}` : `${mode} | ${t('task.summaryNoPoc')}`
+  }
+  const severity = form.pocscanSeverity && form.pocscanSeverity.length ? form.pocscanSeverity.join(',') : '-'
+  return `${mode} | ${severity}`
 })
 
 const targetValidator = (rule, value, callback) => {
@@ -1191,7 +1282,7 @@ onMounted(async () => {
   await loadOrganizations()
   await loadWorkers()
   await loadCommonTags()
-  
+
   // 检查是否是编辑模式
   if (route.query.id) {
     isEdit.value = true
@@ -1475,10 +1566,10 @@ watch(
     skipHostDiscovery: form.skipHostDiscovery,
     excludeCDN: form.excludeCDN,
     excludeHosts: form.excludeHosts,
-      workers: form.portscanWorkers,
-      retries: form.portscanRetries,
-      warmUpTime: form.portscanWarmUpTime,
-      verify: form.portscanVerify,
+    workers: form.portscanWorkers,
+    retries: form.portscanRetries,
+    warmUpTime: form.portscanWarmUpTime,
+    verify: form.portscanVerify,
     portidentifyEnable: form.portidentifyEnable,
     portidentifyTool: form.portidentifyTool,
     portidentifyTimeout: form.portidentifyTimeout,
@@ -1579,7 +1670,7 @@ function buildConfig() {
       recursiveBrute: form.domainscanBruteforce ? form.domainscanRecursiveBrute : false,
       recursiveDictIds: (form.domainscanBruteforce && form.domainscanRecursiveBrute) ? (form.recursiveDictIds || []) : [],
       wildcardDetect: form.domainscanBruteforce ? form.domainscanWildcardDetect : false,
-      },
+    },
     portscan: {
       enable: form.portscanEnable,
       tool: form.portscanTool,
@@ -1941,12 +2032,12 @@ function handleCustomPocSelectionChange(selection) {
   // 获取当前页选中的ID和对象
   const currentPageSelectedIds = new Set(selection.map(p => p.id))
   const currentPageSelectedItems = selection.filter(p => currentPageIds.has(p.id))
-  
+
   // 保留其他页的选择ID
   const newSelectedIds = selectedCustomPocIds.value.filter(id => !currentPageIds.has(id))
   currentPageSelectedIds.forEach(id => newSelectedIds.push(id))
   selectedCustomPocIds.value = newSelectedIds
-  
+
   // 保留其他页的选择对象，添加当前页选中的对象
   const otherPageItems = selectedCustomPocs.value.filter(p => !currentPageIds.has(p.id))
   selectedCustomPocs.value = [...otherPageItems, ...currentPageSelectedItems]
@@ -2145,7 +2236,7 @@ async function viewPocContent(row, type) {
   currentViewPoc.value = { ...row }
   pocContentTitle.value = type === 'nuclei' ? t('task.defaultTemplateContent') : t('task.customPocContent')
   pocContentDialogVisible.value = true
-  
+
   // 如果没有content字段，需要从后端获取
   if (!row.content) {
     pocContentLoading.value = true
@@ -2198,7 +2289,7 @@ function fallbackCopyToClipboard(text) {
     textarea.select()
     const successful = document.execCommand('copy')
     document.body.removeChild(textarea)
-    
+
     if (successful) {
       ElMessage.success(t('task.copiedToClipboard'))
     } else {
@@ -2406,10 +2497,33 @@ function confirmRecursiveDictSelection() {
       padding: 20px 16px;
     }
 
-    .collapse-title {
+    .collapse-title-wrapper {
       display: flex;
       align-items: center;
-      gap: 10px;
+      justify-content: space-between;
+      flex: 1;
+      padding-right: 8px;
+      gap: 8px;
+    }
+
+    .collapse-title {
+      font-weight: 500;
+    }
+
+    .config-summary {
+      flex: 1;
+      text-align: right;
+      color: var(--el-text-color-secondary);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .module-desc {
+      margin: 0 0 16px;
+      color: var(--el-text-color-secondary);
+      font-size: 12px;
     }
   }
 
@@ -2599,11 +2713,11 @@ function confirmRecursiveDictSelection() {
   background: var(--el-fill-color-light);
   border-radius: 4px;
   font-size: 12px;
-  
+
   &:hover {
     background: var(--el-fill-color);
   }
-  
+
   &:last-child {
     margin-bottom: 0;
   }
@@ -2621,7 +2735,7 @@ function confirmRecursiveDictSelection() {
   cursor: pointer;
   color: var(--el-text-color-secondary);
   flex-shrink: 0;
-  
+
   &:hover {
     color: var(--el-color-danger);
   }

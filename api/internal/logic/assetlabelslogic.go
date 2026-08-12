@@ -2,9 +2,13 @@ package logic
 
 import (
 	"context"
+	"sort"
+	"strings"
+	"time"
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -23,6 +27,34 @@ func NewAssetUpdateLabelsLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 	}
 }
 
+// recordLabelHistory 记录标签变更历史到时间线
+func recordLabelHistory(ctx context.Context, historyModel *model.AssetHistoryModel, asset *model.Asset, oldLabels, newLabels []string) {
+	if historyModel == nil || asset == nil {
+		return
+	}
+	oldStr := sortedJoinLabels(oldLabels)
+	newStr := sortedJoinLabels(newLabels)
+	if oldStr == newStr {
+		return
+	}
+	history := model.SnapshotFromAsset(asset, "", time.Now(), []model.FieldChange{
+		{Field: "labels", OldValue: oldStr, NewValue: newStr},
+	})
+	if err := historyModel.Insert(ctx, history); err != nil {
+		logx.Errorf("[AssetLabels] insert label change history failed: %v", err)
+	}
+}
+
+func sortedJoinLabels(labels []string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	cp := make([]string, len(labels))
+	copy(cp, labels)
+	sort.Strings(cp)
+	return strings.Join(cp, ", ")
+}
+
 // AssetUpdateLabels 更新资产标签
 func (l *AssetUpdateLabelsLogic) AssetUpdateLabels(req *types.AssetUpdateLabelsReq, workspaceId string) (resp *types.BaseResp, err error) {
 	targetWorkspace := workspaceId
@@ -30,6 +62,10 @@ func (l *AssetUpdateLabelsLogic) AssetUpdateLabels(req *types.AssetUpdateLabelsR
 		targetWorkspace = req.WorkspaceId
 	}
 	assetModel := l.svcCtx.GetAssetModel(targetWorkspace)
+	historyModel := l.svcCtx.GetAssetHistoryModel(targetWorkspace)
+
+	// 先获取旧标签用于历史记录
+	existing, _ := assetModel.FindById(l.ctx, req.Id)
 
 	err = assetModel.UpdateLabels(l.ctx, req.Id, req.Labels)
 	if err != nil {
@@ -38,6 +74,10 @@ func (l *AssetUpdateLabelsLogic) AssetUpdateLabels(req *types.AssetUpdateLabelsR
 			Code: 1,
 			Msg:  "更新失败",
 		}, nil
+	}
+
+	if existing != nil {
+		recordLabelHistory(l.ctx, historyModel, existing, existing.Labels, req.Labels)
 	}
 
 	return &types.BaseResp{
@@ -67,6 +107,9 @@ func (l *AssetAddLabelLogic) AssetAddLabel(req *types.AssetAddLabelReq, workspac
 		targetWorkspace = req.WorkspaceId
 	}
 	assetModel := l.svcCtx.GetAssetModel(targetWorkspace)
+	historyModel := l.svcCtx.GetAssetHistoryModel(targetWorkspace)
+
+	existing, _ := assetModel.FindById(l.ctx, req.Id)
 
 	err = assetModel.AddLabel(l.ctx, req.Id, req.Label)
 	if err != nil {
@@ -75,6 +118,11 @@ func (l *AssetAddLabelLogic) AssetAddLabel(req *types.AssetAddLabelReq, workspac
 			Code: 1,
 			Msg:  "添加失败",
 		}, nil
+	}
+
+	if existing != nil {
+		newLabels := append(append([]string{}, existing.Labels...), req.Label)
+		recordLabelHistory(l.ctx, historyModel, existing, existing.Labels, newLabels)
 	}
 
 	return &types.BaseResp{
@@ -104,6 +152,9 @@ func (l *AssetRemoveLabelLogic) AssetRemoveLabel(req *types.AssetRemoveLabelReq,
 		targetWorkspace = req.WorkspaceId
 	}
 	assetModel := l.svcCtx.GetAssetModel(targetWorkspace)
+	historyModel := l.svcCtx.GetAssetHistoryModel(targetWorkspace)
+
+	existing, _ := assetModel.FindById(l.ctx, req.Id)
 
 	err = assetModel.RemoveLabel(l.ctx, req.Id, req.Label)
 	if err != nil {
@@ -112,6 +163,16 @@ func (l *AssetRemoveLabelLogic) AssetRemoveLabel(req *types.AssetRemoveLabelReq,
 			Code: 1,
 			Msg:  "删除失败",
 		}, nil
+	}
+
+	if existing != nil {
+		var newLabels []string
+		for _, lb := range existing.Labels {
+			if lb != req.Label {
+				newLabels = append(newLabels, lb)
+			}
+		}
+		recordLabelHistory(l.ctx, historyModel, existing, existing.Labels, newLabels)
 	}
 
 	return &types.BaseResp{

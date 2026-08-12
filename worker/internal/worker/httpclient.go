@@ -163,14 +163,6 @@ type VulResultReq struct {
 	Vuls        []VulDocument `json:"vuls"`
 }
 
-// VulResultResp 漏洞结果上报响应
-type VulResultResp struct {
-	Code    int    `json:"code"`
-	Msg     string `json:"msg"`
-	Success bool   `json:"success"`
-	Total   int32  `json:"total"`
-}
-
 // VulReverifyReq 漏洞复验结果上报请求
 type VulReverifyReq struct {
 	WorkspaceId string `json:"workspaceId"`
@@ -582,84 +574,6 @@ func (c *WorkerHTTPClient) SaveTaskResult(ctx context.Context, req *TaskResultRe
 	}
 
 	var resp TaskResultResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %w", err)
-	}
-
-	return &resp, nil
-}
-
-// SaveVulResult 保存漏洞结果
-func (c *WorkerHTTPClient) SaveVulResult(ctx context.Context, req *VulResultReq) (*VulResultResp, error) {
-	payload := struct {
-		WorkspaceId string                   `json:"workspaceId"`
-		MainTaskId  string                   `json:"mainTaskId"`
-		Vuls        []map[string]interface{} `json:"vuls"`
-	}{
-		WorkspaceId: req.WorkspaceId,
-		MainTaskId:  req.MainTaskId,
-		Vuls:        make([]map[string]interface{}, 0, len(req.Vuls)),
-	}
-
-	for _, vul := range req.Vuls {
-		item := map[string]interface{}{
-			"authority": vul.Authority,
-			"host":      vul.Host,
-			"port":      vul.Port,
-			"url":       vul.Url,
-			"pocFile":   vul.PocFile,
-			"source":    vul.Source,
-			"severity":  vul.Severity,
-			"extra":     vul.Extra,
-			"result":    vul.Result,
-			"taskId":    vul.TaskId,
-			"tags":      vul.Tags,
-		}
-		if vul.VulName != nil {
-			item["vulName"] = *vul.VulName
-		}
-		if vul.CvssScore != nil {
-			item["cvssScore"] = *vul.CvssScore
-		}
-		if vul.CveId != nil {
-			item["cveId"] = *vul.CveId
-		}
-		if vul.CweId != nil {
-			item["cweId"] = *vul.CweId
-		}
-		if vul.Remediation != nil {
-			item["remediation"] = *vul.Remediation
-		}
-		if len(vul.References) > 0 {
-			item["references"] = vul.References
-		}
-		if vul.MatcherName != nil {
-			item["matcherName"] = *vul.MatcherName
-		}
-		if len(vul.ExtractedResults) > 0 {
-			item["extractedResults"] = vul.ExtractedResults
-		}
-		if vul.CurlCommand != nil {
-			item["curlCommand"] = *vul.CurlCommand
-		}
-		if vul.Request != nil {
-			item["request"] = *vul.Request
-		}
-		if vul.Response != nil {
-			item["response"] = *vul.Response
-		}
-		if vul.ResponseTruncated != nil {
-			item["responseTruncated"] = *vul.ResponseTruncated
-		}
-		payload.Vuls = append(payload.Vuls, item)
-	}
-
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/vul", payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp VulResultResp
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
@@ -1114,21 +1028,6 @@ type DirScanResultDocument struct {
 	Response      string `json:"response,omitempty"`
 }
 
-// DirScanResultReq 目录扫描结果上报请求
-type DirScanResultReq struct {
-	WorkspaceId string                  `json:"workspaceId"`
-	MainTaskId  string                  `json:"mainTaskId"`
-	Results     []DirScanResultDocument `json:"results"`
-}
-
-// DirScanResultResp 目录扫描结果上报响应
-type DirScanResultResp struct {
-	Code    int    `json:"code"`
-	Msg     string `json:"msg"`
-	Success bool   `json:"success"`
-	Total   int64  `json:"total"`
-}
-
 // JSFinderResultItem JSFinder 扫描结果项
 type JSFinderResultItem struct {
 	Authority        string   `json:"authority"`
@@ -1209,21 +1108,6 @@ func (c *WorkerHTTPClient) SaveCertResult(ctx context.Context, req *SaveCertResu
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, err
 	}
-	return &resp, nil
-}
-
-// SaveDirScanResult 保存目录扫描结果
-func (c *WorkerHTTPClient) SaveDirScanResult(ctx context.Context, req *DirScanResultReq) (*DirScanResultResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/dirscan", req)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp DirScanResultResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %w", err)
-	}
-
 	return &resp, nil
 }
 

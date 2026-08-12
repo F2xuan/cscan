@@ -2,36 +2,24 @@ package worker
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"cscan/api/internal/svc"
-	"cscan/rpc/task/pb"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 )
-
-type stubTaskRpcClient struct {
-	pb.TaskServiceClient
-}
-
-func (s *stubTaskRpcClient) KeepAlive(ctx context.Context, in *pb.KeepAliveReq, opts ...grpc.CallOption) (*pb.KeepAliveResp, error) {
-	return &pb.KeepAliveResp{Status: "online"}, nil
-}
 
 func newHeartbeatTestContext(t *testing.T) (*svc.ServiceContext, *miniredis.Miniredis) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	return &svc.ServiceContext{
-		RedisClient:   rdb,
-		TaskRpcClient: &stubTaskRpcClient{},
+		RedisClient: rdb,
 	}, mr
 }
 

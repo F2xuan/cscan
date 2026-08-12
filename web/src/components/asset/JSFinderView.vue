@@ -21,6 +21,16 @@
       <template #toolbar-left>
         <!-- 批量AI研判按钮（仅JS模式显示） -->
         <div v-if="props.mode === 'js'" style="display: flex; align-items: center; margin-right: 8px;">
+          <el-input-number
+            v-model="aiConcurrency"
+            :min="1"
+            :max="5"
+            :step="1"
+            :disabled="batchAnalyzing"
+            size="small"
+            style="width: 90px; margin-right: 4px;"
+            :title="$t('jsfinder.aiConcurrency')"
+          />
           <el-button
             type="primary"
             :loading="batchAnalyzing && !batchTaskId"
@@ -240,6 +250,7 @@ const selectedRows = computed(() => proTableRef.value?.selectedRows || [])
 // AI研判相关状态
 const analyzingId = ref('')
 const batchAnalyzing = ref(false)
+const aiConcurrency = ref(1)
 const batchTaskId = ref('')
 const batchTotal = ref(0)
 const batchCompleted = ref(0)
@@ -773,7 +784,7 @@ async function handleSingleAnalyze(row) {
 async function handleBatchAnalyze() {
   // 确定批量研判的范围和确认文案
   let confirmMsg = t('jsfinder.batchAIAnalyzeConfirm')
-  const params = { workspaceId: props.extraParams?.workspaceId || '' }
+  const params = { workspaceId: props.extraParams?.workspaceId || '', concurrency: aiConcurrency.value }
 
   const selected = selectedRows.value
   if (selected.length > 0) {

@@ -8,10 +8,10 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
 	"cscan/pkg/response"
-	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // ==================== Templates Config Types ====================
@@ -185,59 +185,103 @@ func WorkerConfigTemplatesHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
+		ctx := r.Context()
 		var templates []string
-		var count int32
 
 		// 优先按ID获取
 		if len(req.NucleiTemplateIds) > 0 || len(req.CustomPocIds) > 0 {
-			rpcReq := &pb.GetTemplatesByIdsReq{
-				NucleiTemplateIds: req.NucleiTemplateIds,
-				CustomPocIds:      req.CustomPocIds,
+			if len(req.NucleiTemplateIds) > 0 {
+				nucleiTemplates, err := svcCtx.NucleiTemplateModel.FindByIds(ctx, req.NucleiTemplateIds)
+				if err != nil {
+					logx.Errorf("[WorkerConfigTemplates] FindByIds nuclei error: %v", err)
+					response.Error(w, err)
+					return
+				}
+				for _, t := range nucleiTemplates {
+					if t.Content != "" && t.Enabled {
+						templates = append(templates, t.Content)
+					}
+				}
 			}
-			rpcResp, err := svcCtx.TaskRpcClient.GetTemplatesByIds(r.Context(), rpcReq)
-			if err != nil {
-				logx.Errorf("[WorkerConfigTemplates] RPC GetTemplatesByIds error: %v", err)
-				response.Error(w, err)
-				return
+			if len(req.CustomPocIds) > 0 {
+				customPocs, err := svcCtx.CustomPocModel.FindByIds(ctx, req.CustomPocIds)
+				if err != nil {
+					logx.Errorf("[WorkerConfigTemplates] FindByIds custom poc error: %v", err)
+					response.Error(w, err)
+					return
+				}
+				for _, p := range customPocs {
+					if p.Content != "" && p.Enabled {
+						templates = append(templates, p.Content)
+					}
+				}
 			}
-			templates = rpcResp.Templates
-			count = rpcResp.Count
 		} else if req.CustomPocOnly {
-			// 获取所有自定义POC
-			rpcReq := &pb.GetTemplatesByTagsReq{
-				Severities:    req.Severities,
-				CustomPocOnly: true,
+			// 获取所有自定义POC（按严重级别过滤）
+			filter := bson.M{"enabled": true}
+			if len(req.Severities) > 0 {
+				filter["severity"] = bson.M{"$in": req.Severities}
 			}
-			rpcResp, err := svcCtx.TaskRpcClient.GetTemplatesByTags(r.Context(), rpcReq)
+			customPocs, err := svcCtx.CustomPocModel.FindWithFilter(ctx, filter, 0, 0)
 			if err != nil {
-				logx.Errorf("[WorkerConfigTemplates] RPC GetTemplatesByTags (customPocOnly) error: %v", err)
+				logx.Errorf("[WorkerConfigTemplates] FindWithFilter custom poc error: %v", err)
 				response.Error(w, err)
 				return
 			}
-			templates = rpcResp.Templates
-			count = rpcResp.Count
+			for _, p := range customPocs {
+				if p.Content != "" {
+					templates = append(templates, p.Content)
+				}
+			}
 		} else {
-			// 按标签获取
-			rpcReq := &pb.GetTemplatesByTagsReq{
-				Tags:       req.Tags,
-				Severities: req.Severities,
+			// 按标签获取 Nuclei 模板
+			filter := bson.M{"enabled": true}
+			if len(req.Tags) > 0 {
+				filter["tags"] = bson.M{"$in": req.Tags}
 			}
-			rpcResp, err := svcCtx.TaskRpcClient.GetTemplatesByTags(r.Context(), rpcReq)
+			if len(req.Severities) > 0 {
+				filter["severity"] = bson.M{"$in": req.Severities}
+			}
+			nucleiTemplates, err := svcCtx.NucleiTemplateModel.FindEnabledByFilter(ctx, filter)
 			if err != nil {
-				logx.Errorf("[WorkerConfigTemplates] RPC GetTemplatesByTags error: %v", err)
+				logx.Errorf("[WorkerConfigTemplates] FindEnabledByFilter nuclei error: %v", err)
 				response.Error(w, err)
 				return
 			}
-			templates = rpcResp.Templates
-			count = rpcResp.Count
+			for _, t := range nucleiTemplates {
+				if t.Content != "" {
+					templates = append(templates, t.Content)
+				}
+			}
+			// 按标签获取自定义POC
+			if len(req.Tags) > 0 {
+				customFilter := bson.M{
+					"enabled": true,
+					"tags":    bson.M{"$in": req.Tags},
+				}
+				if len(req.Severities) > 0 {
+					customFilter["severity"] = bson.M{"$in": req.Severities}
+				}
+				customPocs, err := svcCtx.CustomPocModel.FindWithFilter(ctx, customFilter, 0, 0)
+				if err != nil {
+					logx.Errorf("[WorkerConfigTemplates] FindWithFilter custom poc error: %v", err)
+				} else {
+					for _, p := range customPocs {
+						if p.Content != "" {
+							templates = append(templates, p.Content)
+						}
+					}
+				}
+			}
 		}
 
+		logx.Infof("[WorkerConfigTemplates] returned %d templates", len(templates))
 		httpx.OkJson(w, &WorkerTemplatesResp{
 			Code:      0,
 			Msg:       "success",
 			Success:   true,
 			Templates: templates,
-			Count:     count,
+			Count:     int32(len(templates)),
 		})
 	}
 }
@@ -254,34 +298,35 @@ func WorkerConfigFingerprintsHandler(svcCtx *svc.ServiceContext) http.HandlerFun
 			return
 		}
 
-		rpcReq := &pb.GetCustomFingerprintsReq{
-			EnabledOnly: req.EnabledOnly,
+		ctx := r.Context()
+		filter := bson.M{}
+		if req.EnabledOnly {
+			filter["enabled"] = true
 		}
 
-		rpcResp, err := svcCtx.TaskRpcClient.GetCustomFingerprints(r.Context(), rpcReq)
+		fps, err := svcCtx.FingerprintModel.Find(ctx, filter, 0, 0)
 		if err != nil {
-			logx.Errorf("[WorkerConfigFingerprints] RPC GetCustomFingerprints error: %v", err)
+			logx.Errorf("[WorkerConfigFingerprints] Find error: %v", err)
 			response.Error(w, err)
 			return
 		}
 
-		// 转换指纹数据
-		fingerprints := make([]WorkerFingerprintDocument, 0, len(rpcResp.Fingerprints))
-		for _, fp := range rpcResp.Fingerprints {
+		fingerprints := make([]WorkerFingerprintDocument, 0, len(fps))
+		for _, fp := range fps {
 			fingerprints = append(fingerprints, WorkerFingerprintDocument{
-				Id:        fp.Id,
+				Id:        fp.Id.Hex(),
 				Name:      fp.Name,
 				Category:  fp.Category,
 				Rule:      fp.Rule,
 				Source:    fp.Source,
 				Headers:   fp.Headers,
 				Cookies:   fp.Cookies,
-				Html:      fp.Html,
+				Html:      fp.HTML,
 				Scripts:   fp.Scripts,
 				ScriptSrc: fp.ScriptSrc,
 				Meta:      fp.Meta,
-				Css:       fp.Css,
-				Url:       fp.Url,
+				Css:       fp.CSS,
+				Url:       fp.URL,
 				IsBuiltin: fp.IsBuiltin,
 				Enabled:   fp.Enabled,
 			})
@@ -292,7 +337,7 @@ func WorkerConfigFingerprintsHandler(svcCtx *svc.ServiceContext) http.HandlerFun
 			Msg:          "success",
 			Success:      true,
 			Fingerprints: fingerprints,
-			Count:        rpcResp.Count,
+			Count:        int32(len(fingerprints)),
 		})
 	}
 }
@@ -309,22 +354,17 @@ func WorkerConfigSubfinderHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		rpcReq := &pb.GetSubfinderProvidersReq{
-			WorkspaceId: req.WorkspaceId,
-		}
-
-		rpcResp, err := svcCtx.TaskRpcClient.GetSubfinderProviders(r.Context(), rpcReq)
+		providers, err := svcCtx.SubfinderProviderModel.FindEnabled(r.Context())
 		if err != nil {
-			logx.Errorf("[WorkerConfigSubfinder] RPC GetSubfinderProviders error: %v", err)
+			logx.Errorf("[WorkerConfigSubfinder] FindEnabled error: %v", err)
 			response.Error(w, err)
 			return
 		}
 
-		// 转换数据源数据
-		providers := make([]WorkerSubfinderProvider, 0, len(rpcResp.Providers))
-		for _, p := range rpcResp.Providers {
-			providers = append(providers, WorkerSubfinderProvider{
-				Id:          p.Id,
+		result := make([]WorkerSubfinderProvider, 0, len(providers))
+		for _, p := range providers {
+			result = append(result, WorkerSubfinderProvider{
+				Id:          p.Id.Hex(),
 				Provider:    p.Provider,
 				Keys:        p.Keys,
 				Status:      p.Status,
@@ -336,8 +376,8 @@ func WorkerConfigSubfinderHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			Code:      0,
 			Msg:       "success",
 			Success:   true,
-			Providers: providers,
-			Count:     rpcResp.Count,
+			Providers: result,
+			Count:     int32(len(result)),
 		})
 	}
 }
@@ -354,22 +394,25 @@ func WorkerConfigHttpServiceHandler(svcCtx *svc.ServiceContext) http.HandlerFunc
 			return
 		}
 
-		rpcReq := &pb.GetHttpServiceMappingsReq{
-			EnabledOnly: req.EnabledOnly,
-		}
+		ctx := r.Context()
+		var mappingDocs []model.HttpServiceMapping
+		var err error
 
-		rpcResp, err := svcCtx.TaskRpcClient.GetHttpServiceMappings(r.Context(), rpcReq)
+		if req.EnabledOnly {
+			mappingDocs, err = svcCtx.HttpServiceMappingModel.FindEnabled(ctx)
+		} else {
+			mappingDocs, err = svcCtx.HttpServiceMappingModel.FindAll(ctx)
+		}
 		if err != nil {
-			logx.Errorf("[WorkerConfigHttpService] RPC GetHttpServiceMappings error: %v", err)
+			logx.Errorf("[WorkerConfigHttpService] Find error: %v", err)
 			response.Error(w, err)
 			return
 		}
 
-		// 转换映射数据
-		mappings := make([]WorkerHttpServiceMapping, 0, len(rpcResp.Mappings))
-		for _, m := range rpcResp.Mappings {
+		mappings := make([]WorkerHttpServiceMapping, 0, len(mappingDocs))
+		for _, m := range mappingDocs {
 			mappings = append(mappings, WorkerHttpServiceMapping{
-				Id:          m.Id,
+				Id:          m.Id.Hex(),
 				ServiceName: m.ServiceName,
 				IsHttp:      m.IsHttp,
 				Description: m.Description,
@@ -382,7 +425,7 @@ func WorkerConfigHttpServiceHandler(svcCtx *svc.ServiceContext) http.HandlerFunc
 			Msg:      "success",
 			Success:  true,
 			Mappings: mappings,
-			Count:    rpcResp.Count,
+			Count:    int32(len(mappings)),
 		})
 	}
 }
@@ -559,24 +602,54 @@ func WorkerConfigPocHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		rpcReq := &pb.GetPocByIdReq{
-			PocId:   req.PocId,
-			PocType: req.PocType,
-		}
+		ctx := r.Context()
 
-		rpcResp, err := svcCtx.TaskRpcClient.GetPocById(r.Context(), rpcReq)
-		if err != nil {
-			logx.Errorf("[WorkerConfigPoc] RPC GetPocById error: %v", err)
-			response.Error(w, err)
+		if req.PocType == "custom" {
+			poc, err := svcCtx.CustomPocModel.FindById(ctx, req.PocId)
+			if err != nil {
+				logx.Errorf("[WorkerConfigPoc] FindById custom poc error: %v", err)
+				response.Error(w, err)
+				return
+			}
+			if poc == nil {
+				httpx.OkJson(w, &WorkerPocResp{Code: 404, Msg: "自定义POC不存在", Success: false})
+				return
+			}
+			httpx.OkJson(w, &WorkerPocResp{
+				Code:    0,
+				Msg:     "success",
+				Success: true,
+				Content: poc.Content,
+				PocId:   poc.Id.Hex(),
+				PocType: "custom",
+			})
 			return
 		}
 
-		if !rpcResp.Success {
+		// 默认查询 Nuclei 模板：先按 template_id (FindByIds)，再按 template_id 字段
+		templates, err := svcCtx.NucleiTemplateModel.FindByIds(ctx, []string{req.PocId})
+		if err == nil && len(templates) > 0 {
+			t := templates[0]
 			httpx.OkJson(w, &WorkerPocResp{
-				Code:    500,
-				Msg:     rpcResp.Message,
-				Success: false,
+				Code:    0,
+				Msg:     "success",
+				Success: true,
+				Content: t.Content,
+				PocId:   t.Id.Hex(),
+				PocType: "nuclei",
 			})
+			return
+		}
+
+		// 按 template_id 字段查询
+		template, err := svcCtx.NucleiTemplateModel.FindByTemplateId(ctx, req.PocId)
+		if err != nil {
+			logx.Errorf("[WorkerConfigPoc] FindByTemplateId error: %v", err)
+			response.Error(w, err)
+			return
+		}
+		if template == nil {
+			httpx.OkJson(w, &WorkerPocResp{Code: 404, Msg: "Nuclei模板不存在", Success: false})
 			return
 		}
 
@@ -584,9 +657,9 @@ func WorkerConfigPocHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			Code:    0,
 			Msg:     "success",
 			Success: true,
-			Content: rpcResp.Content,
-			PocId:   rpcResp.PocId,
-			PocType: rpcResp.PocType,
+			Content: template.Content,
+			PocId:   template.Id.Hex(),
+			PocType: "nuclei",
 		})
 	}
 }

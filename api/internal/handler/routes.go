@@ -124,13 +124,10 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// 任务相关
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/check", Handler: worker.WorkerTaskCheckHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/update", Handler: worker.WorkerTaskUpdateHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/task/result", Handler: worker.WorkerTaskResultHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/task/vul", Handler: worker.WorkerVulResultHandler(svcCtx)},
 		// 单条漏洞复验结果回传（worker 复测完成后写入复验结论/状态，T-复验闭环）
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/vul/reverify", Handler: worker.WorkerVulReverifyHandler(svcCtx)},
 		// 持续复验批量结果回传（T3.3 弱口令 / T3.4 敏感信息，worker 执行后回传状态流转）
 		{Method: http.MethodPost, Path: "/api/v1/worker/reverify/result", Handler: worker.WorkerReverifyBatchHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/task/dirscan", Handler: worker.WorkerDirScanResultHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/subtask/done", Handler: worker.WorkerSubTaskDoneHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/control", Handler: worker.WorkerTaskControlHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/recovery", Handler: worker.WorkerTaskRecoveryHandler(svcCtx)},
@@ -153,8 +150,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/config/blacklist", Handler: blacklist.BlacklistRulesHandler(svcCtx)},
 		// JSFinder 配置（供Worker使用）
 		{Method: http.MethodPost, Path: "/api/v1/worker/config/jsfinder", Handler: worker.WorkerConfigJSFinderHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/jsfinder/save", Handler: jsfinder.SaveJSFinderResultHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/cert/save", Handler: cert.SaveCertResultHandler(svcCtx)},
 	}
 
 	// 为Worker路由包装认证中间件

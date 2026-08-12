@@ -8,8 +8,9 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/rpc/task/pb"
+	"cscan/internal/scheduler"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -49,22 +50,36 @@ func (l *ActiveFingerprintValidateLogic) ActiveFingerprintValidate(req *types.Ac
 
 	l.Logger.Infof("ActiveFingerprintValidate: activeFpId=%s, name=%s, url=%s", req.Id, activeFp.Name, req.Url)
 
-	// 通过RPC下发主动指纹验证任务到Worker
-	rpcReq := &pb.ValidateFingerprintReq{
-		Url:        req.Url,
-		ActiveFpId: req.Id,
-	}
-	rpcResp, err := l.svcCtx.TaskRpcClient.ValidateFingerprint(l.ctx, rpcReq)
-	if err != nil {
-		l.Logger.Errorf("ActiveFingerprintValidate: RPC call failed: %v", err)
-		return &types.ActiveFingerprintValidateResp{Code: 500, Msg: "验证服务调用失败，请确保Worker服务已启动"}, nil
-	}
-	if !rpcResp.Success {
-		return &types.ActiveFingerprintValidateResp{Code: 500, Msg: rpcResp.Message}, nil
+	// 检查在线 Worker
+	if err := checkOnlineWorkers(l.ctx, l.svcCtx); err != nil {
+		return &types.ActiveFingerprintValidateResp{Code: 500, Msg: err.Error()}, nil
 	}
 
-	// 同步等待结果（最多30秒）
-	taskId := rpcResp.TaskId
+	// 直接入队主动指纹验证任务
+	taskId := uuid.New().String()
+	taskConfig := map[string]interface{}{
+		"taskType":   "active_fingerprint_validate",
+		"url":        req.Url,
+		"activeFpId": req.Id,
+		"timeout":    60,
+	}
+	configBytes, _ := json.Marshal(taskConfig)
+
+	task := &scheduler.TaskInfo{
+		TaskId:      taskId,
+		MainTaskId:  taskId,
+		WorkspaceId: "default",
+		TaskName:    "主动指纹验证",
+		Config:      string(configBytes),
+		Priority:    2,
+	}
+
+	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
+		l.Logger.Errorf("ActiveFingerprintValidate: push task failed, taskId=%s, error=%v", taskId, err)
+		return &types.ActiveFingerprintValidateResp{Code: 500, Msg: "任务下发失败"}, nil
+	}
+
+	persistTaskInfo(l.ctx, l.svcCtx, taskId, taskConfig)
 	result, err := l.waitForActiveFingerprintValidateResult(taskId, 30*time.Second)
 	if err != nil {
 		l.Logger.Errorf("ActiveFingerprintValidate: wait result failed, taskId=%s, error=%v", taskId, err)

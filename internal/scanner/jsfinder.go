@@ -33,6 +33,8 @@ type JSFinderOptions struct {
 	MaxJSSize            int64    // 单个 JS/Map 文件最大读取字节数
 	MaxJSPerTarget       int      // 单目标最多下载 JS 数量
 	MaxAPIPerTarget      int      // 单目标最多探测 API 数量
+	// OnResultFound 单目标扫描完成后的流式回调，用于即时入库
+	OnResultFound func(results []*JSFinderResult) `json:"-"`
 }
 
 // Validate 校验选项
@@ -212,7 +214,10 @@ func (s *JSFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRe
 
 	concurrency := opts.Threads
 	if concurrency <= 0 {
-		concurrency = 10
+		concurrency = 1
+	}
+	if concurrency > 5 {
+		concurrency = 5
 	}
 	if concurrency > totalTargets {
 		concurrency = totalTargets
@@ -246,6 +251,10 @@ func (s *JSFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRe
 				mu.Lock()
 				result.JSFinderResults = append(result.JSFinderResults, vuls...)
 				mu.Unlock()
+				// 流式入库：单目标完成后立即回调
+				if opts.OnResultFound != nil {
+					opts.OnResultFound(vuls)
+				}
 			}
 		}(tgt)
 	}

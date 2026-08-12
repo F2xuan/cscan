@@ -96,9 +96,9 @@ func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	// 并发 Worker Pool：每个域名一个 dnsx 进程，完成一个补一个
 	concurrency := config.WorkerConcurrency
 	if concurrency <= 0 {
-		concurrency = 5
+		concurrency = 1
 	}
-	if concurrency <= 0 {
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(domains) {
@@ -175,10 +175,14 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
 	}
 
+	logx.Infof("[Dnsx] CLI: domain=%s args=%s", domain, strings.Join(args, " "))
+
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
 	if err != nil {
+		logx.Debugf("[Dnsx] execution error domain=%s err=%v", domain, err)
+		s.executor.LogResult("Dnsx: "+domain, res, err)
 		return nil, fmt.Errorf("dnsx execution for %s: %w", domain, err)
 	}
 
@@ -186,13 +190,18 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 	ipLocator := geolocation.NewIPLocator()
 
 	scanner := newLineScanner(res.Stdout)
+	lineCount := 0
+	parseFailCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		lineCount++
 		var dr DnsxResult
 		if err := json.Unmarshal([]byte(line), &dr); err != nil {
+			parseFailCount++
+			logx.Debugf("[Dnsx] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 		if dr.Host == "" {
@@ -216,6 +225,7 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 		assets = append(assets, asset)
 	}
 
+	logx.Debugf("[Dnsx] domain=%s: lines=%d parseFail=%d assets=%d", domain, lineCount, parseFailCount, len(assets))
 	return assets, nil
 }
 
@@ -277,9 +287,11 @@ func (s *DnsxScanner) DetectWildcard(ctx context.Context, domain string) map[str
 		fmt.Sprintf("random-%d.%s", utils.RandomInt(100000, 999999), domain),
 		fmt.Sprintf("nonexistent-%d.%s", utils.RandomInt(100000, 999999), domain),
 	}
+	logx.Debugf("[Dnsx] DetectWildcard domain=%s tests=%v", domain, testSubdomains)
 
 	results, err := s.runDnsxLookup(ctx, testSubdomains, 30)
 	if err != nil {
+		logx.Debugf("[Dnsx] DetectWildcard error domain=%s err=%v", domain, err)
 		return wildcardIPs
 	}
 	for _, dr := range results {
@@ -287,6 +299,7 @@ func (s *DnsxScanner) DetectWildcard(ctx context.Context, domain string) map[str
 			wildcardIPs[ip] = true
 		}
 	}
+	logx.Debugf("[Dnsx] DetectWildcard domain=%s: wildcardIPs=%v", domain, wildcardIPs)
 
 	return wildcardIPs
 }

@@ -23,6 +23,22 @@ type TemplateYAML struct {
 	Config      map[string]interface{} `yaml:"config"`
 }
 
+// LoadBuiltinTemplateConfig 从 rules/scan-template 文件加载指定分类的内置模板配置（map 形式）。
+// 供引导扫描（quickCreate）等场景在运行时直接读取文件，避免硬编码副本与模板漂移。
+// 找不到文件或对应分类时返回 nil。
+func LoadBuiltinTemplateConfig(category string) map[string]interface{} {
+	templates := loadTemplatesFromFiles()
+	for _, t := range templates {
+		if t.Category == category && t.Config != "" {
+			var cfg map[string]interface{}
+			if err := json.Unmarshal([]byte(t.Config), &cfg); err == nil {
+				return cfg
+			}
+		}
+	}
+	return nil
+}
+
 // InitBuiltinTemplates 初始化内置扫描模板
 func InitBuiltinTemplates(templateModel *model.ScanTemplateModel) {
 	ctx := context.Background()
@@ -239,7 +255,7 @@ func getDefaultTemplates() []model.ScanTemplate {
 		},
 		"fingerprint": map[string]interface{}{
 			"enable": true, "tool": "httpx", "iconHash": true, "customEngine": true,
-			"screenshot": false, "activeScan": false, "cert": false, "activeTimeout": 10,
+			"screenshot": false, "activeScan": false, "cert": true, "activeTimeout": 10,
 			"targetTimeout": 30, "filterMode": "http_mapping", "forceScan": false,
 		},
 		"brutescan": map[string]interface{}{
@@ -288,7 +304,7 @@ func getDefaultTemplates() []model.ScanTemplate {
 		},
 		"fingerprint": map[string]interface{}{
 			"enable": true, "tool": "httpx", "iconHash": true, "customEngine": true,
-			"screenshot": true, "activeScan": true, "cert": false, "activeTimeout": 10,
+			"screenshot": true, "activeScan": true, "cert": true, "activeTimeout": 10,
 			"targetTimeout": 90, "filterMode": "http_mapping", "forceScan": false,
 		},
 		"brutescan": map[string]interface{}{

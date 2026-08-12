@@ -676,7 +676,7 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 	jsfinderAIBatchTasks.Store(taskId, state)
 
 	// 启动goroutine异步处理
-	go l.runBatchAnalysis(wsIds, taskId, state, pendingDocs)
+	go l.runBatchAnalysis(wsIds, taskId, state, pendingDocs, clampAIConcurrency(req.Concurrency))
 
 	return &types.JSFinderAIBatchAnalyzeResp{
 		Code: 0, Msg: "批量研判任务已启动", TaskId: taskId, Total: int64(len(pendingDocs)),
@@ -684,7 +684,7 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 }
 
 // runBatchAnalysis 批量研判实际执行逻辑（在独立goroutine中运行）
-func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *batchTaskState, pendingDocs []*model.JSFinderResult) {
+func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *batchTaskState, pendingDocs []*model.JSFinderResult, concurrency int) {
 	// 使用独立的Background context，避免HTTP请求context被cancel导致后台任务中断
 	bgCtx := context.Background()
 
@@ -699,8 +699,7 @@ func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *b
 		return
 	}
 
-	// 2. 使用goroutine池处理（并发度5）
-	concurrency := 5
+	// 2. 使用goroutine池处理（并发度由调用方控制，默认1，最大5）
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 

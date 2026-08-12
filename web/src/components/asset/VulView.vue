@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="vul-view">
     <!-- T4.3 快速筛选 -->
     <div class="vul-filter-tabs">
@@ -80,7 +80,7 @@
 
       <!-- 复验状态（单条复验闭环） -->
       <template #reverifyStatus="{ row }">
-        <el-tag v-if="reverifyingMap[row.id]" type="warning" size="small" effect="light">
+        <el-tag v-if="reverifyingMap[row.id]" type="warning" size="small" effect="light" style="white-space:nowrap">
           <el-icon class="is-loading" style="margin-right:4px"><Loading /></el-icon>{{ t('vul.reverifyReverifying') }}
         </el-tag>
         <template v-else-if="row.reverifyStatus === 'done'">
@@ -313,7 +313,7 @@ const vulColumns = computed(() => [
   { label: 'URL', prop: 'url', minWidth: 250, showOverflowTooltip: false },
   { label: t('vul.discoveryTime'), prop: 'createTime', width: 160, showOverflowTooltip: false },
   { label: t('vul.lastVerifiedAt'), prop: 'lastVerifiedAt', width: 160, showOverflowTooltip: false },
-  { label: t('vul.reverifyStatus'), prop: 'reverifyStatus', slot: 'reverifyStatus', width: 120 },
+  { label: t('vul.reverifyStatus'), prop: 'reverifyStatus', slot: 'reverifyStatus', width: 150 },
   { label: t('common.updateTime'), prop: 'updateTime', width: 160, showOverflowTooltip: false },
   { label: t('common.operation'), slot: 'operation', width: 170, fixed: 'right' }
 ])

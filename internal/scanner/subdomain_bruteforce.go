@@ -149,7 +149,7 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 		Timeout:        5,
 		WildcardFilter: true,
 		ResolveDNS:     true,
-		Concurrent:     50,
+		Concurrent:     1,
 		RecursiveDepth: 2,
 	}
 	if config.Options != nil {
@@ -196,6 +196,9 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 		concurrency = config.WorkerConcurrency
 	}
 	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
 	if concurrency > len(domains) {
@@ -292,6 +295,10 @@ dispatch:
 		resultMu.Lock()
 		if len(res.assets) > 0 {
 			allAssets = append(allAssets, res.assets...)
+			// 流式入库：单域名暴力破解完成立即回调
+			if config.OnTargetDone != nil {
+				config.OnTargetDone(res.domain, res.assets)
+			}
 		}
 		if len(res.subdomains) > 0 {
 			allSubdomains = append(allSubdomains, res.subdomains...)
@@ -477,8 +484,11 @@ func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx contex
 	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
 	// 超时按目标数量估算，最少 60s
 	timeout := time.Duration(len(subdomainCandidates)*opts.Timeout+60) * time.Second
+	taskLog("INFO", "[Bruteforce] Dnsx CLI: args=%s", strings.Join(args, " "))
 	res, err := executor.Execute(ctx, args, ExecuteOpts{Timeout: timeout})
 	if err != nil {
+		taskLog("WARN", "[Bruteforce] dnsx execution error: %v", err)
+		executor.LogResult("Bruteforce dnsx", res, err)
 		return nil, fmt.Errorf("dnsx execution: %w", err)
 	}
 
@@ -971,9 +981,11 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
 	// 超时按目标数量估算，最少 60s
 	timeout := time.Duration(len(domains)*5+60) * time.Second
+	taskLog("INFO", "[Bruteforce] Dnsx CLI: args=%s", strings.Join(args, " "))
 	res, err := executor.Execute(ctx, args, ExecuteOpts{Timeout: timeout})
 	if err != nil {
-		logx.Errorf("Failed to run dnsx for resolution: %v", err)
+		taskLog("WARN", "[Bruteforce] dnsx resolve error: %v", err)
+		executor.LogResult("Bruteforce dnsx resolve", res, err)
 		return nil
 	}
 
@@ -1173,10 +1185,14 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 			return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 		}
 		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s, falling back to dnsx", err, stderr.String())
+		logx.Debugf("[Bruteforce] ksubdomain stderr: %s", stderr.String())
 		// 如果ksubdomain执行失败，回退到dnsx
 		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 	}
 
+	if stdout.Len() > 0 {
+		logx.Debugf("[Bruteforce] ksubdomain stdout (%d bytes): %s", stdout.Len(), stdout.String())
+	}
 	taskLog("INFO", "Bruteforce: ksubdomain execution completed, reading results from: %s", outputFile)
 
 	// 读取输出文件
@@ -1307,9 +1323,13 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 			return assets, fmt.Errorf("ksubdomain not found")
 		}
 		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s", err, stderr.String())
+		logx.Debugf("[Bruteforce] ksubdomain stderr: %s", stderr.String())
 		return assets, fmt.Errorf("ksubdomain execution error: %v", err)
 	}
 
+	if stdout.Len() > 0 {
+		logx.Debugf("[Bruteforce] ksubdomain stdout (%d bytes): %s", stdout.Len(), stdout.String())
+	}
 	taskLog("INFO", "Bruteforce: ksubdomain execution completed, parsing results with IP from: %s", outputFile)
 
 	// 读取输出文件

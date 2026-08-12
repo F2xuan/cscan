@@ -71,6 +71,24 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 					for _, tag := range tags {
 						tagSet[tag] = true
 					}
+				} else if strings.Contains(appNameLower, " ") {
+					// 拆分多词 Nmap 产品名，逐词尝试匹配映射
+					// 例如 "Elasticsearch Kibana" -> "elasticsearch" + "kibana"
+					for _, part := range strings.Fields(appNameLower) {
+						if partTags, ok := mapping.WappalyzerNucleiMapping[part]; ok {
+							compositeKey := appName + "_" + part + "_builtin"
+							if _, exists := matchInfoMap[compositeKey]; !exists {
+								matchInfoMap[compositeKey] = &TagMatchInfo{
+									Fingerprint: appName,
+									Tags:        partTags,
+									Source:      "builtin",
+								}
+							}
+							for _, tag := range partTags {
+								tagSet[tag] = true
+							}
+						}
+					}
 				}
 			}
 		}
@@ -120,6 +138,15 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 			if tags, ok := mapping.WappalyzerNucleiMapping[appNameLower]; ok {
 				for _, tag := range tags {
 					tagSet[tag] = true
+				}
+			} else if strings.Contains(appNameLower, " ") {
+				// 拆分多词 Nmap 产品名，逐词尝试匹配映射
+				for _, part := range strings.Fields(appNameLower) {
+					if partTags, ok := mapping.WappalyzerNucleiMapping[part]; ok {
+						for _, tag := range partTags {
+							tagSet[tag] = true
+						}
+					}
 				}
 			}
 		}

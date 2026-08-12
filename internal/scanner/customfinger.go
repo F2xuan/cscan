@@ -204,8 +204,12 @@ func (e *CustomFingerprintEngine) MatchWithId(data *FingerprintData) []MatchedFi
 	matchedByName := make(map[string]int)
 
 	if len(e.fingerprints) == 0 {
+		logx.Debug("[CustomFingerprint] no fingerprints loaded")
 		return matched
 	}
+
+	logx.Debugf("[CustomFingerprint] MatchWithId: evaluating %d fingerprints (enabled) against url=%s title=%q server=%q bodyLen=%d",
+		len(e.fingerprints), data.URL, data.Title, data.Server, len(data.Body))
 
 	for _, fp := range e.fingerprints {
 		if !fp.Enabled {
@@ -214,21 +218,27 @@ func (e *CustomFingerprintEngine) MatchWithId(data *FingerprintData) []MatchedFi
 
 		if fp.Rule != "" {
 			if e.matchRule(fp.Rule, data) {
+				logx.Debugf("[CustomFingerprint] MATCH: rule=%s name=%s", fp.Rule, fp.Name)
 				matched = appendOrReplaceMatchedFingerprint(matched, matchedByName, fp)
+			} else {
+				logx.Debugf("[CustomFingerprint] NO MATCH: rule=%s name=%s", fp.Rule, fp.Name)
 			}
 			continue
 		}
 
 		if e.matchARLWebappRules(fp, data) {
+			logx.Debugf("[CustomFingerprint] MATCH: arl_webapp name=%s", fp.Name)
 			matched = appendOrReplaceMatchedFingerprint(matched, matchedByName, fp)
 			continue
 		}
 
 		if e.matchWappalyzerRules(fp, data) {
+			logx.Debugf("[CustomFingerprint] MATCH: wappalyzer name=%s", fp.Name)
 			matched = appendOrReplaceMatchedFingerprint(matched, matchedByName, fp)
 		}
 	}
 
+	logx.Debugf("[CustomFingerprint] MatchWithId result: matched=%d/%d", len(matched), len(e.fingerprints))
 	return matched
 }
 

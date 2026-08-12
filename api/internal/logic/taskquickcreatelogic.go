@@ -9,6 +9,7 @@ import (
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
+	"cscan/api/internal/svc/sync"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
 	"cscan/internal/scanner"
@@ -26,32 +27,6 @@ import (
 //     按目标主导类型 + 模式智能启用对应阶段，等价于"智能模板推荐"。
 //   - 任务落地复用 common.TaskBuilder.BuildAndPushSubTasks，不另写队列逻辑。
 //   - 预估耗时复用 scheduler.NewTaskSplitter(...).GetSplitPreview 的静态估值（秒）。
-
-// quickTemplateConfigJSON 快速扫描回退基线（仅模块段，参数取自内置 quick-scan.json）。
-// 仅在 DB 中无对应内置模板时作为回退使用；正常路径由 loadBuiltinTemplateConfig 从 DB 加载。
-const quickTemplateConfigJSON = `{
-  "domainscan": {"enable": false, "subfinder": true, "timeout": 300, "maxEnumerationTime": 10, "threads": 10, "rateLimit": 0, "removeWildcard": true, "resolveDNS": true, "concurrent": 50, "subdomainDictIds": [], "bruteforceTimeout": 30, "recursiveBrute": false, "recursiveDictIds": [], "wildcardDetect": false},
-  "portscan": {"enable": true, "tool": "naabu", "rate": 3000, "ports": "top100", "portThreshold": 100, "scanType": "s", "timeout": 60, "skipHostDiscovery": false, "excludeCDN": false, "excludeHosts": "", "workers": 50, "retries": 2, "warmUpTime": 1, "verify": false},
-  "portidentify": {"enable": false, "tool": "nmap", "timeout": 60, "concurrency": 10, "args": "-sV -version-intensity 5", "udp": false, "fastMode": false, "forceScan": false},
-  "fingerprint": {"enable": true, "tool": "httpx", "iconHash": true, "customEngine": true, "screenshot": false, "activeScan": false, "cert": false, "activeTimeout": 10, "targetTimeout": 30, "filterMode": "http_mapping", "forceScan": false},
-  "brutescan": {"enable": false, "services": [], "threads": 20, "timeout": 5, "delayMs": 100, "stopOnFirst": true, "forceScan": false},
-  "pocscan": {"enable": false, "mode": "auto", "useNuclei": true, "forceScan": false, "autoScan": true, "automaticScan": true, "customOnly": false, "severity": "critical,high,medium,low,info,unknown", "targetTimeout": 600, "nucleiTemplateIds": [], "customPocIds": [], "customHeaders": [], "customPocOnly": false},
-  "dirscan": {"enable": false, "dictIds": [], "threads": 50, "timeout": 10, "followRedirect": true, "forceScan": false, "autoCalibration": true, "filterSize": "", "filterWords": "", "filterLines": "", "filterRegex": "", "matcherMode": "or", "filterMode": "or", "rate": 0, "recursion": false, "recursionDepth": 2},
-  "jsfinder": {"enable": false, "threads": 10, "timeout": 10, "forceScan": false}
-}`
-
-// standardTemplateConfigJSON 标准扫描回退基线（仅模块段，参数取自内置 standard-scan.json）。
-// 仅在 DB 中无对应内置模板时作为回退使用；正常路径由 loadBuiltinTemplateConfig 从 DB 加载。
-const standardTemplateConfigJSON = `{
-  "domainscan": {"enable": false, "subfinder": true, "timeout": 300, "maxEnumerationTime": 10, "threads": 10, "rateLimit": 0, "removeWildcard": true, "resolveDNS": true, "concurrent": 50, "subdomainDictIds": [], "bruteforceTimeout": 30, "recursiveBrute": false, "recursiveDictIds": [], "wildcardDetect": false},
-  "portscan": {"enable": true, "tool": "naabu", "rate": 3000, "ports": "top100", "portThreshold": 100, "scanType": "s", "timeout": 60, "skipHostDiscovery": false, "excludeCDN": false, "excludeHosts": "", "workers": 50, "retries": 2, "warmUpTime": 1, "verify": false},
-  "portidentify": {"enable": true, "tool": "nmap", "timeout": 60, "concurrency": 10, "args": "-sV -version-intensity 5", "udp": false, "fastMode": false, "forceScan": false},
-  "fingerprint": {"enable": true, "tool": "httpx", "iconHash": true, "customEngine": true, "screenshot": true, "activeScan": true, "cert": false, "activeTimeout": 10, "targetTimeout": 90, "filterMode": "http_mapping", "forceScan": false},
-  "brutescan": {"enable": true, "services": [], "threads": 20, "timeout": 5, "delayMs": 100, "stopOnFirst": true, "forceScan": false},
-  "pocscan": {"enable": true, "mode": "auto", "useNuclei": true, "forceScan": false, "autoScan": true, "automaticScan": true, "customOnly": false, "severity": "critical,high,medium,low,info,unknown", "targetTimeout": 600, "nucleiTemplateIds": [], "customPocIds": [], "customHeaders": [], "customPocOnly": false},
-  "dirscan": {"enable": true, "dictIds": ["69fd35207eaed2f49d40abec"], "threads": 50, "timeout": 10, "followRedirect": true, "forceScan": false, "autoCalibration": true, "filterSize": "", "filterWords": "", "filterLines": "", "filterRegex": "", "matcherMode": "or", "filterMode": "or", "rate": 0, "recursion": false, "recursionDepth": 2},
-  "jsfinder": {"enable": true, "threads": 10, "timeout": 10, "forceScan": false}
-}`
 
 // TaskQuickCreateLogic 一键扫描
 type TaskQuickCreateLogic struct {
@@ -179,14 +154,11 @@ func (l *TaskQuickCreateLogic) loadBuiltinTemplateConfig(category string) map[st
 			}
 		}
 	}
-	// 回退：内置常量（与 template_init.go 的默认模板参数保持一致）
-	base := quickTemplateConfigJSON
-	if category == "standard" {
-		base = standardTemplateConfigJSON
+	// 回退：从 rules/scan-template 文件直接读取（单一真相源，与 InitBuiltinTemplates 加载的是同一组文件）
+	if cfg := sync.LoadBuiltinTemplateConfig(category); cfg != nil {
+		return cfg
 	}
-	var cfg map[string]interface{}
-	_ = json.Unmarshal([]byte(base), &cfg)
-	return cfg
+	return nil
 }
 
 // recommendConfig 根据解析后的目标类型分布与模式，在 base（内置模板配置）之上

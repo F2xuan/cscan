@@ -67,6 +67,7 @@ func resolveSingleDomainAsset(domain string, resolver dnsResolver) *Asset {
 func newLineScanner(s string) *bufio.Scanner {
 	sc := bufio.NewScanner(strings.NewReader(s))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	sc.Split(bufio.ScanLines)
 	return sc
 }
 

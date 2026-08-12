@@ -103,12 +103,13 @@ type AssetListItem struct {
 
 // FindListOptimized 优化的列表查询（使用投影减少数据传输）
 func (m *AssetModel) FindListOptimized(ctx context.Context, filter bson.M, page, pageSize int) ([]*AssetListItem, int64, error) {
-	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find().
 		SetProjection(AssetListProjection).
-		SetSkip(int64((page - 1) * pageSize)).
-		SetLimit(int64(pageSize)).
 		SetSort(bson.D{{Key: "update_time", Value: -1}})
+	if page > 0 && pageSize > 0 {
+		page, pageSize = NormalizePage(page, pageSize)
+		opts.SetSkip(int64((page - 1) * pageSize)).SetLimit(int64(pageSize))
+	}
 
 	// 并行执行查询和计数
 	var (
@@ -164,12 +165,13 @@ func (m *AssetModel) FindListOptimized(ctx context.Context, filter bson.M, page,
 
 // FindListOptimizedWithSort 优化的列表查询（带自定义排序）
 func (m *AssetModel) FindListOptimizedWithSort(ctx context.Context, filter bson.M, page, pageSize int, sortField string, sortOrder int) ([]*AssetListItem, int64, error) {
-	page, pageSize = NormalizePage(page, pageSize)
 	opts := options.Find().
 		SetProjection(AssetListProjection).
-		SetSkip(int64((page - 1) * pageSize)).
-		SetLimit(int64(pageSize)).
 		SetSort(bson.D{{Key: sortField, Value: sortOrder}})
+	if page > 0 && pageSize > 0 {
+		page, pageSize = NormalizePage(page, pageSize)
+		opts.SetSkip(int64((page - 1) * pageSize)).SetLimit(int64(pageSize))
+	}
 
 	var (
 		items []*AssetListItem

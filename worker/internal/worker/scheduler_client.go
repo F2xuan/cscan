@@ -137,10 +137,15 @@ func (c *SchedulerClient) waitForTaskAvailable(ctx context.Context, timeout time
 // UpdateTask 更新任务状态
 // 写 Redis status/progress + 终态清理 + MongoDB 主任务更新
 func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, progress int, phase string) error {
+	var firstErr error
+
 	// 更新恢复管理器进度
 	if phase != "" {
 		if err := c.recoveryMgr.UpdateTaskProgress(taskID, phase, progress); err != nil {
 			logx.Errorf("[SchedulerClient] UpdateTaskProgress failed: %v", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
@@ -148,6 +153,9 @@ func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, 
 	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusFailure {
 		if err := c.rdb.SRem(ctx, "cscan:task:processing", taskID).Err(); err != nil {
 			logx.Errorf("[SchedulerClient] SRem processing failed: %v", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
@@ -158,12 +166,12 @@ func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, 
 		"state":  state,
 		"worker": c.workerName,
 	}
-	if state != "" {
-		statusData["state"] = state
-	}
 	statusJson, _ := json.Marshal(statusData)
 	if err := c.rdb.Set(ctx, statusKey, statusJson, 24*time.Hour).Err(); err != nil {
 		logx.Errorf("[SchedulerClient] Set status failed: %v", err)
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	// 写 Redis progress（24h TTL）
@@ -175,6 +183,9 @@ func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, 
 		progressJson, _ := json.Marshal(progressData)
 		if err := c.rdb.Set(ctx, progressKey, progressJson, 24*time.Hour).Err(); err != nil {
 			logx.Errorf("[SchedulerClient] Set progress failed: %v", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
@@ -201,7 +212,7 @@ func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, 
 		c.updateMainTaskFromTaskInfo(ctx, taskInfoData, state, phase)
 	}
 
-	return nil
+	return firstErr
 }
 
 // KeepAlive 心跳（对齐原 RPC KeepAlive）
@@ -372,7 +383,6 @@ func (c *SchedulerClient) updateMainTaskStatus(ctx context.Context, mainTaskID, 
 	if mainTaskID == "" || !isValidObjectID(mainTaskID) {
 		return
 	}
-	// workspaceId 在此路径下未知，使用空字符串（MainTaskModel 不依赖 workspaceId 做集合隔离）
 	taskModel := model.NewMainTaskModel(c.mongoDB, "")
 	now := time.Now()
 

@@ -133,16 +133,22 @@ func (l *WorkerInstallLogic) GetInstallCommand(req *types.WorkerInstallCommandRe
 		mongoURI = "mongodb://localhost:27017/cscan"
 	}
 
-	// 注意：RpcAddr 和 RedisAddr 保留在响应中以保持向后兼容，但不再使用
+	// Redis 直连地址（供分布式 Worker 直连调度层）
+	redisAddr := l.svcCtx.Config.Redis.Host
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
 	return &types.WorkerInstallCommandResp{
-		Code:       0,
-		Msg:        "success",
-		InstallKey: installKey,
-		ServerAddr: serverAddrClean,
-		RpcAddr:    "", // 已废弃，Worker 不再直接连接 RPC
-		RedisAddr:  "", // 已废弃，Worker 不再直接连接 Redis
-		MongoUri:   mongoURI,
-		Commands:   commands,
+		Code:          0,
+		Msg:           "success",
+		InstallKey:    installKey,
+		ServerAddr:    serverAddrClean,
+		RpcAddr:       "", // 已废弃，Worker 不再直接连接 RPC
+		RedisAddr:     redisAddr,
+		RedisPassword: l.svcCtx.Config.Redis.Pass,
+		MongoUri:      mongoURI,
+		Commands:      commands,
 	}, nil
 }
 

@@ -2243,14 +2243,15 @@ type WorkerInstallCommandReq struct {
 
 // WorkerInstallCommandResp 获取Worker安装命令响应
 type WorkerInstallCommandResp struct {
-	Code       int               `json:"code"`
-	Msg        string            `json:"msg"`
-	InstallKey string            `json:"installKey"` // 安装密钥
-	ServerAddr string            `json:"serverAddr"` // API服务地址
-	RpcAddr    string            `json:"rpcAddr"`    // RPC服务地址
-	RedisAddr  string            `json:"redisAddr"`  // Redis地址
-	MongoUri   string            `json:"mongoUri"`   // MongoDB地址
-	Commands   map[string]string `json:"commands"`   // 各平台安装命令
+	Code          int               `json:"code"`
+	Msg           string            `json:"msg"`
+	InstallKey    string            `json:"installKey"`    // 安装密钥
+	ServerAddr    string            `json:"serverAddr"`    // API服务地址
+	RpcAddr       string            `json:"rpcAddr"`       // RPC服务地址（已废弃）
+	RedisAddr     string            `json:"redisAddr"`     // Redis地址（Worker直连调度层）
+	RedisPassword string            `json:"redisPassword"` // Redis密码
+	MongoUri      string            `json:"mongoUri"`      // MongoDB地址
+	Commands      map[string]string `json:"commands"`      // 各平台安装命令
 }
 
 // WorkerRefreshKeyResp 刷新安装密钥响应

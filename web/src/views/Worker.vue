@@ -209,6 +209,13 @@
               style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;"
             >（{{ $t('worker.mongoConnectAddress') }}）</span>
           </el-form-item>
+
+          <el-form-item :label="$t('worker.redisAddress')">
+            <code class="server-addr-code">{{ installInfo.redisAddr || 'localhost:6379' }}</code>
+            <span
+              style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;"
+            >（{{ $t('worker.redisConnectAddress') }}）</span>
+          </el-form-item>
         </el-form>
 
         <el-divider content-position="left">{{ $t('worker.dockerDeployCommand') }}</el-divider>
@@ -297,20 +304,20 @@
             <el-col :span="12">
               <p class="command-title">{{ $t('worker.viewLogs') }}</p>
               <div class="command-box small">
-                <code>docker-compose -f docker-compose-worker.yaml logs -f</code>
+                <code>docker compose -f docker-compose-worker.yaml logs -f</code>
                 <el-button
                   size="small"
-                  @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml logs -f')"
+                  @click="copyToClipboard('docker compose -f docker-compose-worker.yaml logs -f')"
                 >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
             <el-col :span="12">
               <p class="command-title">{{ $t('worker.stopProbe') }}</p>
               <div class="command-box small">
-                <code>docker-compose -f docker-compose-worker.yaml down</code>
+                <code>docker compose -f docker-compose-worker.yaml down</code>
                 <el-button
                   size="small"
-                  @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml down')"
+                  @click="copyToClipboard('docker compose -f docker-compose-worker.yaml down')"
                 >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
@@ -319,10 +326,10 @@
             <el-col :span="12">
               <p class="command-title">{{ $t('worker.restartProbe') }}</p>
               <div class="command-box small">
-                <code>docker-compose -f docker-compose-worker.yaml restart</code>
+                <code>docker compose -f docker-compose-worker.yaml restart</code>
                 <el-button
                   size="small"
-                  @click="copyToClipboard('docker-compose -f docker-compose-worker.yaml restart')"
+                  @click="copyToClipboard('docker compose -f docker-compose-worker.yaml restart')"
                 >{{ $t('common.copy') }}</el-button>
               </div>
             </el-col>
@@ -347,7 +354,12 @@
               {{ $t('worker.distributedDeployNote') }}
             </template>
           </el-alert>
-          <el-row :gutter="20">
+          <p class="command-title">{{ $t('worker.dockerComposeTitle') }}</p>
+          <div class="command-box small">
+            <code>{{ dockerComposeCmd }}</code>
+            <el-button size="small" @click="copyToClipboard(dockerComposeCmd)">{{ $t('common.copy') }}</el-button>
+          </div>
+          <el-row :gutter="20" style="margin-top: 15px">
             <el-col :span="12">
               <p class="command-title">{{ $t('worker.distributedDockerTitle') }}</p>
               <div class="command-box small">
@@ -364,6 +376,10 @@
                   installInfo.installKey
                 }}<br>CSCAN_MONGO_URI={{
                   installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
+                }}<br>CSCAN_REDIS_ADDR={{
+                  installInfo.redisAddr || 'localhost:6379'
+                }}<br>CSCAN_REDIS_PASSWORD={{
+                  installInfo.redisPassword || '(' + $t('common.none') + ')'
                 }}</code>
                 <el-button
                   size="small"
@@ -482,6 +498,8 @@ const installInfo = reactive({
   serverAddr: '',    // API 服务地址（Worker 连接用）
   downloadUrl: '',   // 下载地址（当前浏览器地址）
   mongoUri: '',      // MongoDB 地址（分布式 Worker 直连用）
+  redisAddr: '',     // Redis 地址（Worker 直连调度层）
+  redisPassword: '', // Redis 密码
   commands: {}
 })
 
@@ -489,7 +507,10 @@ const installInfo = reactive({
 const paramTableData = computed(() => [
   { param: 'CSCAN_SERVER', desc: t('worker.serverAddressRequired'), default: t('common.no') },
   { param: 'CSCAN_KEY', desc: t('worker.installKeyRequired'), default: t('common.no') },
-  { param: 'CSCAN_NAME', desc: t('worker.workerNameDesc'), default: t('worker.autoGenerate') },
+  { param: 'CSCAN_NAME', desc: t('worker.workerNameDesc'), default: 'cscan-probe' },
+  { param: 'CSCAN_MONGO_URI', desc: t('worker.mongoUriDesc'), default: t('common.no') },
+  { param: 'CSCAN_REDIS_ADDR', desc: t('worker.redisAddrDesc'), default: t('common.no') },
+  { param: 'CSCAN_REDIS_PASSWORD', desc: t('worker.redisPasswordDesc'), default: t('common.none') },
   { param: 'CSCAN_CONCURRENCY', desc: t('worker.concurrencyDesc'), default: t('worker.autoDerive') }
 ])
 
@@ -533,16 +554,37 @@ const cmdStartCmd = computed(() => {
     + 'powershell -NoProfile -ExecutionPolicy Bypass -File worker-tune.ps1'
 })
 
-// 更新探针命令（docker-compose pull + up）
-const updateProbeCmd = 'docker-compose -f docker-compose-worker.yaml pull '
-  + '&& docker-compose -f docker-compose-worker.yaml up -d'
+// 更新探针命令（docker compose pull + up）
+const updateProbeCmd = 'docker compose -f docker-compose-worker.yaml pull '
+  + '&& docker compose -f docker-compose-worker.yaml up -d'
 
 // 分布式部署环境变量文本（复制到剪贴板用）
 const distributedEnvText = computed(() => {
   const mongo = installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
-  return `CSCAN_SERVER=${installInfo.serverAddr}\n`
+  const redisAddr = installInfo.redisAddr || 'localhost:6379'
+  let text = `CSCAN_SERVER=${installInfo.serverAddr}\n`
     + `CSCAN_KEY=${installInfo.installKey}\n`
-    + `CSCAN_MONGO_URI=${mongo}`
+    + `CSCAN_MONGO_URI=${mongo}\n`
+    + `CSCAN_REDIS_ADDR=${redisAddr}`
+  if (installInfo.redisPassword) {
+    text += `\nCSCAN_REDIS_PASSWORD=${installInfo.redisPassword}`
+  }
+  return text
+})
+
+// Docker Compose 部署命令（与 docker-compose-worker.yaml 对齐）
+const dockerComposeCmd = computed(() => {
+  const mongo = installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
+  const redisAddr = installInfo.redisAddr || 'localhost:6379'
+  let cmd = `CSCAN_SERVER=${installInfo.serverAddr} `
+    + `CSCAN_KEY=${installInfo.installKey} `
+    + `CSCAN_MONGO_URI=${mongo} `
+    + `CSCAN_REDIS_ADDR=${redisAddr}`
+  if (installInfo.redisPassword) {
+    cmd += ` CSCAN_REDIS_PASSWORD=${installInfo.redisPassword}`
+  }
+  cmd += ` \\\n  docker compose -f docker-compose-worker.yaml up -d`
+  return cmd
 })
 
 // 分布式 docker 部署命令
@@ -550,10 +592,16 @@ const dockerRunCmd = computed(() => {
   const server = installInfo.serverAddr
   const key = installInfo.installKey
   const mongo = installInfo.mongoUri || 'mongodb://localhost:27017/cscan'
-  return `docker run -d --name cscan-worker --network host \
+  const redisAddr = installInfo.redisAddr || 'localhost:6379'
+  let cmd = `docker run -d --name cscan-worker --network host \
 -e CSCAN_SERVER=${server} -e CSCAN_KEY=${key} \
 -e CSCAN_MONGO_URI=${mongo} \
-registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest`
+-e CSCAN_REDIS_ADDR=${redisAddr}`
+  if (installInfo.redisPassword) {
+    cmd += ` -e CSCAN_REDIS_PASSWORD=${installInfo.redisPassword}`
+  }
+  cmd += ` \\\nregistry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest`
+  return cmd
 })
 
 // 重命名相关
@@ -764,6 +812,8 @@ async function loadInstallCommand() {
       installInfo.downloadUrl = apiUrl
       installInfo.serverAddr = apiUrl
       installInfo.mongoUri = res.mongoUri || ''
+      installInfo.redisAddr = res.redisAddr || ''
+      installInfo.redisPassword = res.redisPassword || ''
       installInfo.commands = res.commands || {}
     } else {
       ElMessage.error(res.msg || t('worker.getInstallCommandFailed'))

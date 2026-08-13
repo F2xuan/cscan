@@ -514,7 +514,7 @@ const form = reactive({
   target: '',
   orgId: '',
   workers: [],
-  batchSize: 50,
+  batchSize: 0,
   // 子域名扫描
   domainscanEnable: false,
   domainscanSubfinder: true,
@@ -763,7 +763,7 @@ function getStatusText(row) {
 function resetForm() {
   Object.assign(form, {
     id: '', name: '', target: '', orgId: '', workers: [],
-    batchSize: 50,
+    batchSize: 0,
     // 子域名扫描
     domainscanEnable: false, domainscanSubfinder: true, domainscanTimeout: 300, domainscanMaxEnumTime: 10,
     domainscanThreads: 10, domainscanRateLimit: 0,
@@ -813,7 +813,7 @@ async function showCreateDialog() {
 // 应用配置到表单
 function applyConfig(config) {
   Object.assign(form, {
-    batchSize: config.batchSize || 50,
+    batchSize: config.batchSize || 0,
     // 子域名扫描
     domainscanEnable: config.domainscan?.enable ?? false,
     domainscanSubfinder: config.domainscan?.subfinder ?? true,

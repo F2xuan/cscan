@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cscan/api/internal/logic/common"
+	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -437,6 +438,7 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq) (resp
 		OrgId:       req.OrgId,
 		Config:      string(configBytes),
 		Status:      model.TaskStatusCreated,
+		CreatedBy:   middleware.GetUserId(l.ctx),
 	}
 
 	if err := taskModel.Insert(l.ctx, task); err != nil {
@@ -719,6 +721,7 @@ func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq) (resp *t
 		OrgId:       oldTask.OrgId,
 		Config:      string(configBytes),
 		Status:      model.TaskStatusCreated, // 设置初始状态
+		CreatedBy:   middleware.GetUserId(l.ctx),
 	}
 
 	if err := taskModel.Insert(l.ctx, newTask); err != nil {
@@ -1316,6 +1319,24 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 		return &types.GetTaskLogsResp{Code: 400, Msg: "任务ID不能为空", List: []types.TaskLogEntry{}}, nil
 	}
 
+	// 校验任务存在且当前用户有权限访问
+	taskModel := l.svcCtx.GetMainTaskModel()
+	task, taskErr := taskModel.FindByTaskId(l.ctx, req.TaskId)
+	if taskErr != nil {
+		l.Logger.Errorf("GetTaskLogs: query task failed, taskId=%s, error=%v", req.TaskId, taskErr)
+		return &types.GetTaskLogsResp{Code: 500, Msg: "查询任务失败", List: []types.TaskLogEntry{}}, nil
+	}
+	if task == nil {
+		return &types.GetTaskLogsResp{Code: 404, Msg: "任务不存在", List: []types.TaskLogEntry{}}, nil
+	}
+	// 权限校验：管理员可访问所有任务；非管理员仅可访问自己创建的任务
+	// 旧数据无 created_by 字段，允许访问以保持兼容
+	currentUserId := middleware.GetUserId(l.ctx)
+	currentRole := middleware.GetRole(l.ctx)
+	if currentRole != "admin" && currentRole != "superadmin" && task.CreatedBy != "" && task.CreatedBy != currentUserId {
+		return &types.GetTaskLogsResp{Code: 403, Msg: "无权访问该任务日志", List: []types.TaskLogEntry{}}, nil
+	}
+
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 100
@@ -1324,52 +1345,40 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 		limit = 10000
 	}
 
-	// 从 MongoDB worker_log 集合读取，按 taskId 过滤
 	if l.svcCtx.WorkerLogReader == nil {
 		return &types.GetTaskLogsResp{Code: 0, Msg: "日志读取器未初始化", List: []types.TaskLogEntry{}}, nil
 	}
 
-	// 获取最新日期
-	date, _ := l.svcCtx.WorkerLogReader.FindLatestDate()
-	if date == "" {
-		return &types.GetTaskLogsResp{Code: 0, Msg: "暂无日志", List: []types.TaskLogEntry{}}, nil
+	// 跨所有日期和 Worker 按 taskId 查询日志
+	entries, readErr := l.svcCtx.WorkerLogReader.ReadByTaskIdAll(req.TaskId, limit)
+	if readErr != nil {
+		l.Logger.Errorf("GetTaskLogs: read logs failed, taskId=%s, error=%v", req.TaskId, readErr)
+		return &types.GetTaskLogsResp{Code: 500, Msg: "读取日志失败", List: []types.TaskLogEntry{}}, nil
 	}
 
-	// 遍历所有 Worker，读取并过滤 taskId
-	workers, _ := l.svcCtx.WorkerLogReader.ListWorkers(date)
-	result := make([]types.TaskLogEntry, 0, limit)
+	result := make([]types.TaskLogEntry, 0, len(entries))
 	searchLower := strings.ToLower(req.Search)
 
-	for _, workerName := range workers {
-		entries, _ := l.svcCtx.WorkerLogReader.ReadByTaskId(workerName, req.TaskId, date, limit)
-		for _, e := range entries {
-			// 匹配主任务ID或子任务ID
-			if e.TaskId != req.TaskId && getMainTaskIdFromLog(e.TaskId) != req.TaskId {
+	for _, e := range entries {
+		// 模糊搜索过滤
+		if req.Search != "" {
+			if !strings.Contains(strings.ToLower(e.Msg), searchLower) &&
+				!strings.Contains(strings.ToLower(e.Level), searchLower) &&
+				!strings.Contains(strings.ToLower(e.Worker), searchLower) {
 				continue
-			}
-			// 模糊搜索过滤
-			if req.Search != "" {
-				if !strings.Contains(strings.ToLower(e.Msg), searchLower) &&
-					!strings.Contains(strings.ToLower(e.Level), searchLower) &&
-					!strings.Contains(strings.ToLower(e.Worker), searchLower) {
-					continue
-				}
-			}
-			// DEBUG 级别默认过滤（可通过 IncludeDebug 开启，用于与容器日志对齐排查）
-			if !req.IncludeDebug && strings.EqualFold(e.Level, "DEBUG") {
-				continue
-			}
-			result = append(result, types.TaskLogEntry{
-				Timestamp:  e.Ts,
-				Level:      e.Level,
-				WorkerName: e.Worker,
-				TaskId:     e.TaskId,
-				Message:    e.Msg,
-			})
-			if len(result) >= limit {
-				break
 			}
 		}
+		// DEBUG 级别默认过滤（可通过 IncludeDebug 开启，用于与容器日志对齐排查）
+		if !req.IncludeDebug && strings.EqualFold(e.Level, "DEBUG") {
+			continue
+		}
+		result = append(result, types.TaskLogEntry{
+			Timestamp:  e.Ts,
+			Level:      e.Level,
+			WorkerName: e.Worker,
+			TaskId:     e.TaskId,
+			Message:    e.Msg,
+		})
 		if len(result) >= limit {
 			break
 		}

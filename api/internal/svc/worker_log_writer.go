@@ -68,6 +68,21 @@ func (r *WorkerLogReader) ReadByTaskId(workerName, taskId, date string, lines in
 	return entries, nil
 }
 
+// ReadByTaskIdAll 跨所有日期和 Worker 按 taskId 查询日志
+func (r *WorkerLogReader) ReadByTaskIdAll(taskId string, lines int) ([]WorkerLogEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	logs, err := r.model.ReadByTaskIdAll(ctx, taskId, lines)
+	if err != nil {
+		return []WorkerLogEntry{}, err
+	}
+	entries := make([]WorkerLogEntry, len(logs))
+	for i, log := range logs {
+		entries[i] = toEntry(log)
+	}
+	return entries, nil
+}
+
 // ListDates 返回有日志的日期列表（降序）
 func (r *WorkerLogReader) ListDates() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

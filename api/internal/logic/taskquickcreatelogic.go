@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"cscan/api/internal/logic/common"
+	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/svc/sync"
 	"cscan/api/internal/types"
@@ -93,6 +94,7 @@ func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*
 		ProfileName: profileName,
 		Config:      mustJSON(taskConfig),
 		Status:      model.TaskStatusCreated,
+		CreatedBy:   middleware.GetUserId(l.ctx),
 	}
 	taskModel := l.svcCtx.GetMainTaskModel()
 	if err := taskModel.Insert(l.ctx, task); err != nil {

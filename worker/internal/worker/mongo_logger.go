@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,6 +23,7 @@ type mongoLogDoc struct {
 	Level      string    `bson:"level"`
 	Msg        string    `bson:"msg"`
 	CreateTime time.Time `bson:"create_time"`
+	Seq        int64     `bson:"seq"`
 }
 
 // MongoLogger 将 Worker 日志批量直写 MongoDB
@@ -32,6 +34,7 @@ type MongoLogger struct {
 	closeChan  chan struct{}
 	closeOnce  sync.Once
 	wg         sync.WaitGroup
+	seq        atomic.Int64
 }
 
 // NewMongoLogger 创建 MongoDB 日志写入器
@@ -58,6 +61,7 @@ func (m *MongoLogger) Write(level, taskId, msg string) {
 		Level:      level,
 		Msg:        msg,
 		CreateTime: time.Now().Local(),
+		Seq:        m.seq.Add(1),
 	}
 	select {
 	case m.logCh <- doc:

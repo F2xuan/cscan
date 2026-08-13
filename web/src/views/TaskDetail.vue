@@ -130,6 +130,64 @@
         <div class="result-content">{{ task.result }}</div>
       </el-card>
 
+      <!-- 任务日志 -->
+      <el-card class="section-card" shadow="never">
+        <div class="section-title log-section-title">
+          <div class="title-left">
+            <el-icon><Document /></el-icon>
+            <span>{{ $t('task.taskLog') }}</span>
+          </div>
+          <div class="log-toolbar">
+            <el-input
+              v-model="logSearch"
+              :placeholder="$t('task.searchLogs')"
+              clearable
+              size="small"
+              style="width: 180px"
+              @keyup.enter="loadTaskLogs"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-select v-model="logLevelFilter" size="small" style="width: 110px" @change="() => {}">
+              <el-option :label="$t('task.allLevels')" value="all" />
+              <el-option label="ERROR" value="ERROR" />
+              <el-option label="WARN" value="WARN" />
+              <el-option label="INFO" value="INFO" />
+            </el-select>
+            <el-checkbox v-model="includeDebug" size="small" @change="loadTaskLogs">
+              {{ $t('task.includeDebug') }}
+            </el-checkbox>
+            <el-button size="small" type="primary" @click="loadTaskLogs" :loading="logLoading">
+              <el-icon style="margin-right: 4px"><Refresh /></el-icon>
+              {{ $t('task.refreshLogs') }}
+            </el-button>
+            <span class="log-count">{{ $t('task.totalLogs', { count: filteredLogs.length }) }}</span>
+          </div>
+        </div>
+        <div v-if="logLoading && !taskLogs.length" class="log-skeleton">
+          <el-skeleton :rows="5" animated />
+        </div>
+        <div v-else-if="!filteredLogs.length" class="log-empty">
+          <el-empty :description="$t('task.noLogs')" :image-size="60" />
+        </div>
+        <div v-else ref="logBox" class="log-box">
+          <div
+            v-for="(l, idx) in filteredLogs"
+            :key="idx"
+            class="log-line"
+            :class="logLineClass(l)"
+          >
+            <span class="log-ln">{{ idx + 1 }}</span>
+            <span class="log-time">{{ formatLogTime(l.timestamp) }}</span>
+            <span class="log-level" :class="logLevelClass(l.level)">{{ l.level || 'LOG' }}</span>
+            <span v-if="l.workerName" class="log-worker">{{ l.workerName }}</span>
+            <span class="log-body">{{ l.message }}</span>
+          </div>
+        </div>
+      </el-card>
+
       <!-- 扫描配置概览 -->
       <el-card v-if="parsedConfig" class="section-card" shadow="never">
         <div class="section-title">
@@ -151,7 +209,7 @@
               </div>
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.taskSplit') }}</span>
-                <span class="stat-value">{{ parsedConfig.batchSize === 0 ? $t('task.noSplit') : (parsedConfig.batchSize || 50) }}</span>
+                <span class="stat-value">{{ parsedConfig.batchSize > 0 ? parsedConfig.batchSize : $t('task.autoCalc') }}</span>
               </div>
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.currentPhase') }}</span>
@@ -273,19 +331,19 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowLeft, Clock, VideoPlay, CircleCheck, Document, Setting,
   Connection, Monitor, Stamp, WarnTriangleFilled, FolderOpened,
-  Aim, Operation, Key, Search
+  Aim, Operation, Key, Search, Refresh
 } from '@element-plus/icons-vue'
 import ScanWorkflow from '@/components/ScanWorkflow.vue'
 import {
   getTaskDetail, startTask, pauseTask, resumeTask, stopTask,
-  retryTask, deleteTask
+  retryTask, deleteTask, getTaskLogs
 } from '@/api/task'
 
 const route = useRoute()
@@ -296,6 +354,14 @@ const task = ref({})
 const loading = ref(false)
 const notFound = ref(false)
 let refreshTimer = null
+
+// 日志状态
+const taskLogs = ref([])
+const logLoading = ref(false)
+const logSearch = ref('')
+const logLevelFilter = ref('all')
+const includeDebug = ref(false)
+const logBox = ref(null)
 
 const taskId = computed(() => route.query.id || '')
 
@@ -328,6 +394,73 @@ const enabledModulesCount = computed(() => {
 const shouldAutoRefresh = computed(() => {
   return ['STARTED', 'PENDING'].includes(task.value?.status)
 })
+
+// 日志过滤（客户端级别过滤，搜索由后端处理）
+const filteredLogs = computed(() => {
+  const lf = logLevelFilter.value
+  return taskLogs.value.filter(l => {
+    if (lf !== 'all' && (l.level || '').toUpperCase() !== lf) return false
+    return true
+  })
+})
+
+// 加载任务日志（使用 task.taskId UUID，而非 MongoDB _id）
+async function loadTaskLogs() {
+  const logTaskId = task.value?.taskId
+  if (!logTaskId) return
+  logLoading.value = true
+  try {
+    const res = await getTaskLogs({
+      taskId: logTaskId,
+      limit: 500,
+      search: logSearch.value.trim(),
+      includeDebug: includeDebug.value
+    })
+    if (res.code === 0 && res.list) {
+      taskLogs.value = res.list
+    } else {
+      taskLogs.value = []
+    }
+  } catch (e) {
+    console.error('load task logs failed:', e)
+  } finally {
+    logLoading.value = false
+  }
+}
+
+let logSearchTimer = null
+watch(logSearch, () => {
+  if (logSearchTimer) clearTimeout(logSearchTimer)
+  logSearchTimer = setTimeout(() => {
+    loadTaskLogs()
+  }, 500)
+})
+
+function logLineClass(l) {
+  return {
+    'log-error': l.level === 'ERROR' || l.level === 'FATAL',
+    'log-warn': l.level === 'WARN',
+    'log-debug': l.level === 'DEBUG'
+  }
+}
+
+function logLevelClass(level) {
+  if (!level) return ''
+  const map = { ERROR: 'lvl-error', FATAL: 'lvl-error', WARN: 'lvl-warn', INFO: 'lvl-info', DEBUG: 'lvl-debug' }
+  return map[level.toUpperCase()] || ''
+}
+
+function formatLogTime(ts) {
+  if (!ts) return '--:--:--'
+  // ISO 格式 → MM-DD HH:MM:SS
+  if (ts.includes('T')) {
+    const parts = ts.split('T')
+    if (parts.length > 1) {
+      return `${parts[0].substring(5)} ${parts[1].split('.')[0]}`
+    }
+  }
+  return ts
+}
 
 function getStatusType(status, row) {
   const map = { CREATED: 'info', PENDING: 'warning', STARTED: 'primary', PAUSED: 'warning', SUCCESS: 'success', FAILURE: 'danger', STOPPED: 'info', REVOKED: 'info' }
@@ -408,7 +541,10 @@ async function loadDetail() {
 function scheduleAutoRefresh() {
   stopAutoRefresh()
   if (shouldAutoRefresh.value) {
-    refreshTimer = setInterval(() => loadDetail(), 5000)
+    refreshTimer = setInterval(() => {
+      loadDetail()
+      loadTaskLogs()
+    }, 5000)
   }
 }
 
@@ -497,8 +633,9 @@ async function handleDelete() {
   }
 }
 
-onMounted(() => {
-  loadDetail()
+onMounted(async () => {
+  await loadDetail()
+  loadTaskLogs()
 })
 
 onUnmounted(() => {
@@ -509,6 +646,26 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .task-detail-page {
   padding: 16px 20px;
+
+  --log-bg: #1a1b26;
+  --log-line-odd-bg: rgba(255, 255, 255, 0.02);
+  --log-line-hover-bg: rgba(255, 255, 255, 0.06);
+  --log-ln-color: #565f89;
+  --log-time-color: #7aa2f7;
+  --log-body-color: #c0caf5;
+  --log-worker-color: #7aa2f7;
+  --log-worker-bg: rgba(122, 162, 247, 0.1);
+  --lvl-error-color: #fff;
+  --lvl-error-bg: rgba(247, 118, 142, 0.8);
+  --lvl-warn-color: #1a1b26;
+  --lvl-warn-bg: rgba(224, 175, 104, 0.85);
+  --lvl-info-color: #9ece6a;
+  --lvl-info-bg: rgba(158, 206, 106, 0.12);
+  --lvl-debug-color: #565f89;
+  --lvl-debug-bg: rgba(86, 95, 137, 0.15);
+  --log-error-color: #f7768e;
+  --log-warn-color: #e0af68;
+  --log-debug-color: #565f89;
 
   .detail-toolbar {
     display: flex;
@@ -667,6 +824,122 @@ onUnmounted(() => {
     line-height: 1.6;
   }
 
+  // 日志区域
+  .log-section-title {
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .title-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+  }
+
+  .log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    .log-count {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+      white-space: nowrap;
+    }
+  }
+
+  .log-skeleton {
+    padding: 16px;
+  }
+
+  .log-empty {
+    padding: 20px 0;
+  }
+
+  .log-box {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 8px 0;
+    font-family: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Menlo', monospace;
+    font-size: 12px;
+    line-height: 1.8;
+    background: var(--log-bg);
+    border-radius: 6px;
+  }
+
+  .log-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0;
+    padding: 2px 12px 2px 0;
+    transition: background 0.1s;
+    &:nth-child(odd) { background: var(--log-line-odd-bg); }
+    &:hover { background: var(--log-line-hover-bg); }
+  }
+
+  .log-ln {
+    display: inline-block;
+    width: 42px;
+    min-width: 42px;
+    text-align: right;
+    padding-right: 10px;
+    color: var(--log-ln-color);
+    font-size: 11px;
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .log-time {
+    color: var(--log-time-color);
+    font-size: 11px;
+    margin-right: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .log-level {
+    display: inline-block;
+    min-width: 44px;
+    padding: 0 5px;
+    margin-right: 6px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .lvl-error { color: var(--lvl-error-color); background: var(--lvl-error-bg); }
+  .lvl-warn { color: var(--lvl-warn-color); background: var(--lvl-warn-bg); }
+  .lvl-info { color: var(--lvl-info-color); background: var(--lvl-info-bg); }
+  .lvl-debug { color: var(--lvl-debug-color); background: var(--lvl-debug-bg); }
+
+  .log-worker {
+    display: inline-block;
+    padding: 0 5px;
+    margin-right: 6px;
+    font-size: 11px;
+    color: var(--log-worker-color);
+    background: var(--log-worker-bg);
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .log-body {
+    color: var(--log-body-color);
+    word-break: break-all;
+    white-space: pre-wrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .log-error .log-body { color: var(--log-error-color); }
+  .log-warn .log-body { color: var(--log-warn-color); }
+  .log-debug .log-body { color: var(--log-debug-color); }
+
   .strategy-overview {
     margin-bottom: 16px;
 
@@ -771,5 +1044,27 @@ onUnmounted(() => {
       }
     }
   }
+}
+
+:global(html:not(.dark) .task-detail-page) {
+  --log-bg: #f8f9fc;
+  --log-line-odd-bg: rgba(0, 0, 0, 0.02);
+  --log-line-hover-bg: rgba(0, 0, 0, 0.05);
+  --log-ln-color: #9aa0b8;
+  --log-time-color: #3b6ff5;
+  --log-body-color: #343b58;
+  --log-worker-color: #3b6ff5;
+  --log-worker-bg: rgba(59, 111, 245, 0.08);
+  --lvl-error-color: #fff;
+  --lvl-error-bg: #f56c6c;
+  --lvl-warn-color: #fff;
+  --lvl-warn-bg: #e6a23c;
+  --lvl-info-color: #2d7d2d;
+  --lvl-info-bg: rgba(103, 194, 58, 0.15);
+  --lvl-debug-color: #606266;
+  --lvl-debug-bg: rgba(144, 147, 153, 0.12);
+  --log-error-color: #c64343;
+  --log-warn-color: #8f5e15;
+  --log-debug-color: #909399;
 }
 </style>

@@ -44,6 +44,7 @@ type MainTask struct {
 	UpdateTime  time.Time          `bson:"update_time" json:"updateTime"`
 	StartTime   *time.Time         `bson:"start_time" json:"startTime"`
 	EndTime     *time.Time         `bson:"end_time" json:"endTime"`
+	CreatedBy   string             `bson:"created_by,omitempty" json:"createdBy,omitempty"` // 任务创建者用户ID
 	// 任务进度保存（用于暂停/继续）
 	TaskState    string `bson:"task_state" json:"taskState"`       // 任务执行状态JSON（保存已完成的阶段和数据）
 	Config       string `bson:"config" json:"config"`              // 任务配置JSON

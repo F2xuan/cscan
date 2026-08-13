@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"regexp"
 	"slices"
 	"time"
 
@@ -19,6 +20,7 @@ type WorkerLog struct {
 	Level      string             `bson:"level" json:"level"`
 	Msg        string             `bson:"msg" json:"msg"`
 	CreateTime time.Time          `bson:"create_time" json:"createTime"`
+	Seq        int64              `bson:"seq" json:"seq"`
 }
 
 // WorkerLogModel Worker 日志集合操作
@@ -33,8 +35,8 @@ func NewWorkerLogModel(db *mongo.Database) *WorkerLogModel {
 	defer cancel()
 	coll.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "create_time", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(7 * 24 * 3600)},
-		{Keys: bson.D{{Key: "worker", Value: 1}, {Key: "create_time", Value: -1}}},
-		{Keys: bson.D{{Key: "task_id", Value: 1}, {Key: "create_time", Value: -1}}},
+		{Keys: bson.D{{Key: "worker", Value: 1}, {Key: "create_time", Value: -1}, {Key: "seq", Value: -1}}},
+		{Keys: bson.D{{Key: "task_id", Value: 1}, {Key: "create_time", Value: -1}, {Key: "seq", Value: -1}}},
 	})
 	return &WorkerLogModel{coll: coll}
 }
@@ -64,7 +66,7 @@ func (m *WorkerLogModel) ReadTail(ctx context.Context, worker, date string, line
 			filter["create_time"] = bson.M{"$gte": start, "$lt": end}
 		}
 	}
-	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}).SetLimit(int64(lines))
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}, {Key: "seq", Value: -1}}).SetLimit(int64(lines))
 	cursor, err := m.coll.Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
@@ -95,7 +97,31 @@ func (m *WorkerLogModel) ReadByTaskId(ctx context.Context, worker, taskId, date 
 			filter["create_time"] = bson.M{"$gte": start, "$lt": end}
 		}
 	}
-	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}).SetLimit(int64(lines))
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}, {Key: "seq", Value: -1}}).SetLimit(int64(lines))
+	cursor, err := m.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var result []WorkerLog
+	if err := cursor.All(ctx, &result); err != nil {
+		return nil, err
+	}
+	slices.Reverse(result)
+	return result, nil
+}
+
+// ReadByTaskIdAll 跨所有日期和 Worker 按 taskId 查询日志（匹配主任务ID及子任务ID），按时间正序返回
+func (m *WorkerLogModel) ReadByTaskIdAll(ctx context.Context, taskId string, lines int) ([]WorkerLog, error) {
+	if lines <= 0 {
+		lines = 500
+	}
+	if lines > 10000 {
+		lines = 10000
+	}
+	// 前缀匹配主任务ID及其子任务ID（taskId-0, taskId-1, ...）
+	filter := bson.M{"task_id": bson.M{"$regex": "^" + regexp.QuoteMeta(taskId)}}
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}, {Key: "seq", Value: -1}}).SetLimit(int64(lines))
 	cursor, err := m.coll.Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err

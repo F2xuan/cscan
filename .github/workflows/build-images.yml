@@ -53,6 +53,7 @@ jobs:
           file: docker/Dockerfile.api
           platforms: linux/amd64
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/cscan-api:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-api:latest
@@ -79,6 +80,7 @@ jobs:
           file: web/Dockerfile
           platforms: linux/amd64
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/cscan-web:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-web:latest
@@ -106,6 +108,7 @@ jobs:
           file: docker/Dockerfile.worker
           platforms: linux/amd64
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/cscan-worker:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-worker:latest

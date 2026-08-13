@@ -78,8 +78,8 @@ func (s *DirScanWriteService) SaveResults(ctx context.Context, mainTaskID string
 		})
 	}
 
-	if err := s.dirModel.InsertMany(ctx, docs); err != nil {
-		logx.Errorf("[DirScanWriteService] InsertMany failed: %v", err)
+	if err := s.dirModel.UpsertMany(ctx, docs); err != nil {
+		logx.Errorf("[DirScanWriteService] UpsertMany failed: %v", err)
 		return err
 	}
 

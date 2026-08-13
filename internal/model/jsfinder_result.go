@@ -111,8 +111,21 @@ func (m *JSFinderResultModel) UpsertMany(ctx context.Context, results []*JSFinde
 
 			// $setOnInsert：仅插入时设置的不可变字段（不可与 $set 字段重叠，否则 MongoDB 报冲突）
 			setOnInsert := bson.M{
-				"_id":          primitive.NewObjectID(),
-				"create_time":  r.CreateTime,
+				"_id":         primitive.NewObjectID(),
+				"create_time": r.CreateTime,
+			}
+			// AI 研判字段仅在插入时设置（非空时），保护已有标注不被覆盖
+			if r.AIStatus != "" {
+				setOnInsert["ai_status"] = r.AIStatus
+			}
+			if r.AIResult != "" {
+				setOnInsert["ai_result"] = r.AIResult
+			}
+			if r.AIReason != "" {
+				setOnInsert["ai_reason"] = r.AIReason
+			}
+			if !r.AIAnalyzedAt.IsZero() {
+				setOnInsert["ai_analyzed_at"] = r.AIAnalyzedAt
 			}
 
 			// $set：每次都更新的可变字段（update_time 始终刷新，

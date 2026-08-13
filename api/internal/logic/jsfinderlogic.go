@@ -207,7 +207,7 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
 	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	cacheKey := fmt.Sprintf("jsfinder_list:%d:%d:%s:%s:%s:%s:%s:%s:%s:%v",
+	cacheKey := fmt.Sprintf("jsfinder_list:%d:%d:%s:%s:%s:%s:%s:%s:%s",
 		req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.AIResult, req.TagsAny)
 
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, jsfinderListCacheTTL, func() (interface{}, error) {

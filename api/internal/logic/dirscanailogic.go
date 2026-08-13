@@ -110,6 +110,11 @@ func (l *DirScanLogic) AnalyzeSingle(req *types.DirScanAIAnalyzeReq) (*types.Dir
 		return &types.DirScanAIAnalyzeResp{Code: 500, Msg: "结果保存失败: " + err.Error()}, nil
 	}
 
+	// AI研判为风险时同步到敏感信息页面（jsfinder 集合）
+	if aiResult == "risk" {
+		l.syncRiskToJSFinder(l.ctx, doc, reason)
+	}
+
 	return &types.DirScanAIAnalyzeResp{
 		Code: 0, Msg: "success",
 		Data: &types.DirScanAIAnalyzeData{
@@ -255,6 +260,8 @@ func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatc
 			}
 			if aiResult == "risk" {
 				atomic.AddInt64(&state.RiskCount, 1)
+				// AI研判为风险时同步到敏感信息页面（jsfinder 集合）
+				l.syncRiskToJSFinder(context.Background(), d, reason)
 			} else {
 				atomic.AddInt64(&state.NoRiskCount, 1)
 			}
@@ -594,6 +601,39 @@ func (l *DirScanLogic) callDirScanAIAnalysis(cfg *model.APIConfig, doc *model.Di
 	return parseAIAnalysisResult(content) // 复用JSFinder的JSON解析逻辑
 }
 
+// syncRiskToJSFinder 将AI研判为风险的目录扫描结果同步到 jsfinder 集合（敏感信息页面数据源）
+func (l *DirScanLogic) syncRiskToJSFinder(ctx context.Context, doc *model.DirScanResult, reason string) {
+	if doc == nil || doc.URL == "" {
+		return
+	}
+
+	now := time.Now()
+	result := &model.JSFinderResult{
+		MainTaskId:   doc.MainTaskId,
+		Authority:    doc.Authority,
+		Host:         doc.Host,
+		Port:         doc.Port,
+		URL:          doc.URL,
+		Severity:     "medium",
+		VulName:      "敏感目录/文件暴露",
+		Result:       fmt.Sprintf("路径: %s | 状态码: %d | AI研判: %s", doc.Path, doc.StatusCode, reason),
+		Tags:         []string{"info-leak", "dirscan"},
+		Request:      doc.Request,
+		Response:     doc.Response,
+		CreateTime:   now,
+		UpdateTime:   now,
+		AIStatus:     "completed",
+		AIResult:     "risk",
+		AIReason:     reason,
+		AIAnalyzedAt: now,
+	}
+
+	jsModel := model.NewJSFinderResultModel(l.svcCtx.MongoDB)
+	if err := jsModel.UpsertMany(ctx, []*model.JSFinderResult{result}); err != nil {
+		logx.Errorf("[DirScan-AI] syncRiskToJSFinder failed for %s: %v", doc.URL, err)
+	}
+}
+
 // buildDirScanAnalysisPrompt 构造目录扫描结果的风险研判Prompt
 func buildDirScanAnalysisPrompt(doc *model.DirScanResult) string {
 	var sb strings.Builder
@@ -607,15 +647,21 @@ func buildDirScanAnalysisPrompt(doc *model.DirScanResult) string {
 	if doc.RedirectURL != "" {
 		sb.WriteString(fmt.Sprintf("重定向到: %s\n", doc.RedirectURL))
 	}
-	if doc.Response != "" {
-		// 截取响应内容前2000字符，避免token过多
-		resp := doc.Response
-		if len(resp) > 2000 {
-			resp = resp[:2000] + "...(截断)"
+	if doc.Request != "" {
+		req := doc.Request
+		if len(req) > 1500 {
+			req = req[:1500] + "...(截断)"
 		}
-		sb.WriteString(fmt.Sprintf("响应内容(前2000字符):\n%s\n", resp))
+		sb.WriteString(fmt.Sprintf("HTTP请求内容:\n%s\n", req))
 	}
-	sb.WriteString("\n请判断该路径是否存在安全风险。重点关注以下情况：\n")
+	if doc.Response != "" {
+		resp := doc.Response
+		if len(resp) > 4000 {
+			resp = resp[:4000] + "...(截断)"
+		}
+		sb.WriteString(fmt.Sprintf("HTTP响应内容(前4000字符):\n%s\n", resp))
+	}
+	sb.WriteString("\n请结合请求和响应内容判断该路径是否存在安全风险。重点关注以下情况：\n")
 	sb.WriteString("1. 敏感目录/文件暴露（如备份文件、配置文件、.git目录、数据库文件、日志文件、phpinfo等）\n")
 	sb.WriteString("2. 管理后台入口、未授权访问页面\n")
 	sb.WriteString("3. 目录遍历漏洞、文件列表暴露\n")

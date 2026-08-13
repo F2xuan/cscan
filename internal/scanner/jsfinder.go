@@ -155,6 +155,7 @@ func resolveJSFinderOptions(in *JSFinderOptions) *JSFinderOptions {
 	opts.AuthRequiredKeywords = lowerSlice(in.AuthRequiredKeywords)
 	opts.SensitiveKeywords = lowerSlice(in.SensitiveKeywords)
 	opts.DomainBlacklist = lowerSlice(in.DomainBlacklist)
+	opts.OnResultFound = in.OnResultFound
 	return opts
 }
 

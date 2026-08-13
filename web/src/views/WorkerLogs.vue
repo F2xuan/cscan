@@ -205,7 +205,7 @@ function parseHistoryLine(raw) {
 
 // ==================== 过滤 ====================
 const filteredLines = computed(() => {
-  const kw = debouncedKeyword.value.trim().toLowerCase()
+  const kw = searchKeyword.value.trim().toLowerCase()
   const lf = levelFilter.value
   return historyLines.value.filter(l => {
     if (lf !== 'all' && l.level !== lf) return false

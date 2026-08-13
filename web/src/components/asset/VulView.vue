@@ -80,10 +80,10 @@
 
       <!-- 复验状态（单条复验闭环） -->
       <template #reverifyStatus="{ row }">
-        <el-tag v-if="reverifyingMap[row.id]" type="warning" size="small" effect="light" style="white-space:nowrap">
+        <el-tag v-if="reverifyingMap[row.id] || row.reverifyStatus === 'reverifying'" type="warning" size="small" effect="light" style="display:inline-flex;align-items:center;white-space:nowrap">
           <el-icon class="is-loading" style="margin-right:4px"><Loading /></el-icon>{{ t('vul.reverifyReverifying') }}
         </el-tag>
-        <template v-else-if="row.reverifyStatus === 'done'">
+        <template v-else-if="row.reverifyStatus === 'done' && row.reverifyConclusion">
           <el-tag :type="getReverifyConclusionType(row.reverifyConclusion)" size="small">
             {{ getReverifyConclusionLabel(row.reverifyConclusion) }}
           </el-tag>
@@ -149,10 +149,10 @@
         <el-descriptions-item :label="$t('vul.fixConfirmSource')" v-if="currentVul.fixConfirmSource">{{ currentVul.fixConfirmSource }}</el-descriptions-item>
         <!-- 复验信息（单条复验闭环） -->
         <el-descriptions-item :label="$t('vul.reverifyStatus')">
-          <el-tag v-if="reverifyingMap[currentVul.id]" type="warning" size="small" effect="light">
+          <el-tag v-if="reverifyingMap[currentVul.id] || currentVul.reverifyStatus === 'reverifying'" type="warning" size="small" effect="light" style="display:inline-flex;align-items:center;white-space:nowrap">
             <el-icon class="is-loading" style="margin-right:4px"><Loading /></el-icon>{{ $t('vul.reverifyReverifying') }}
           </el-tag>
-          <el-tag v-else-if="currentVul.reverifyStatus === 'done'" :type="getReverifyConclusionType(currentVul.reverifyConclusion)" size="small">
+          <el-tag v-else-if="currentVul.reverifyStatus === 'done' && currentVul.reverifyConclusion" :type="getReverifyConclusionType(currentVul.reverifyConclusion)" size="small">
             {{ getReverifyConclusionLabel(currentVul.reverifyConclusion) }}
           </el-tag>
           <span v-else style="color: var(--el-text-color-secondary)">-</span>
@@ -527,7 +527,7 @@ function getReverifyConclusionLabel(conclusion) {
     unreachable: t('vul.reverifyConclusionUnreachable'),
     reachable_untested: t('vul.reverifyConclusionUntested')
   }
-  return map[conclusion] || t('vul.reverifyIdle')
+  return map[conclusion] || conclusion
 }
 
 onBeforeUnmount(() => {

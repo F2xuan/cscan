@@ -32,7 +32,6 @@ export const useThemeStore = defineStore('theme', () => {
     // BUG-001 修复：仅在已登录状态下才加载服务端主题配置
     const userStore = useUserStore()
     if (!userStore.token) {
-      console.warn('[ThemeStore] Skipping server theme load: user not logged in')
       return
     }
 

@@ -9,260 +9,47 @@
       </div>
 
       <div class="menu-wrapper">
-        <el-menu :default-active="$route.path" :default-openeds="defaultOpeneds" :collapse="isCollapse" router
-          :unique-opened="false">
-          <!-- 主控台分组 -->
-          <el-menu-item index="/dashboard">
-            <el-icon>
-              <Odometer />
-            </el-icon>
-            <template #title>{{ $t('navigation.dashboard') }}</template>
-          </el-menu-item>
-          <el-sub-menu index="asset-menu">
-            <template #title>
+        <div v-show="!isCollapse" class="menu-search">
+          <el-input v-model="searchKeyword" :placeholder="t('common.menuSearch')" clearable size="small"
+            :prefix-icon="Search" />
+        </div>
+        <el-menu ref="menuRef" :default-active="$route.path" :default-openeds="defaultOpeneds" :collapse="isCollapse"
+          router :unique-opened="false">
+          <template v-for="(group, gi) in menuData" :key="group.index || `g-${gi}`">
+            <div v-if="group.type === 'divider'" v-show="!searchKeyword" class="menu-divider"></div>
+            <el-menu-item v-else-if="group.type === 'item' && (!group.adminOnly || isAdmin)"
+              v-show="!searchKeyword || matchLabel(group.label)" :index="group.index">
               <el-icon>
-                <Monitor />
+                <component :is="group.icon" />
               </el-icon>
-              <span>{{ $t('navigation.assetManagement') }}</span>
-            </template>
-            <el-menu-item index="/asset-management">
-              <el-icon>
-                <DataAnalysis />
-              </el-icon>
-              <template #title>{{ $t('navigation.assetOverview') }}</template>
+              <template #title>{{ group.label }}</template>
             </el-menu-item>
-            <el-menu-item index="/asset-management/space-search">
-              <el-icon>
-                <Search />
-              </el-icon>
-              <template #title>{{ $t('navigation.assetSpaceSearch') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-
-          <!-- 暴露面管理 -->
-          <el-sub-menu index="exposure-menu">
-            <template #title>
-              <el-icon>
-                <View />
-              </el-icon>
-              <span>{{ $t('navigation.exposure') }}</span>
-            </template>
-            <el-menu-item index="/asset-management/exposure/subdomain">
-              <template #title>{{ $t('navigation.exposureSubdomain') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/ip">
-              <template #title>{{ $t('navigation.exposureIp') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/port">
-              <template #title>{{ $t('navigation.exposurePort') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/site">
-              <template #title>{{ $t('navigation.exposureSite') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/icon">
-              <template #title>{{ $t('navigation.exposureIcon') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/app">
-              <template #title>{{ $t('navigation.exposureApp') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/screenshot">
-              <template #title>{{ $t('navigation.exposureScreenshot') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/dir">
-              <template #title>{{ $t('navigation.exposureDir') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/exposure/js">
-              <template #title>{{ $t('navigation.exposureJs') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-
-          <!-- 风险（证书 / 敏感信息 / 漏洞） -->
-          <el-sub-menu index="risk-menu">
-            <template #title>
-              <el-icon>
-                <Warning />
-              </el-icon>
-              <span>{{ $t('navigation.risk') }}</span>
-            </template>
-            <el-menu-item index="/asset-management/fingerprint/cert">
-              <template #title>{{ $t('navigation.certAsset') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/risk/sensitive-info">
-              <template #title>{{ $t('navigation.riskSensitiveInfo') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/asset-management/risk/vuln">
-              <template #title>{{ $t('navigation.riskVuln') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-          <!-- 分割线 -->
-          <div class="menu-divider"></div>
-
-          <!-- 任务管理 -->
-          <el-menu-item index="/task">
-            <el-icon>
-              <List />
-            </el-icon>
-            <template #title>{{ $t('navigation.taskManagement') }}</template>
-          </el-menu-item>
-
-          <!-- 空间引擎分组 -->
-          <el-sub-menu index="space-engine-menu">
-            <template #title>
-              <el-icon>
-                <Connection />
-              </el-icon>
-              <span>{{ $t('navigation.spaceEngine') }}</span>
-            </template>
-            <el-menu-item index="/space-engine/online-search">
-              <el-icon>
-                <Search />
-              </el-icon>
-              <template #title>{{ $t('navigation.onlineSearch') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/space-engine/api-config">
-              <el-icon>
-                <Key />
-              </el-icon>
-              <template #title>{{ $t('navigation.spaceEngineApiConfig') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/space-engine/cron-task">
-              <el-icon>
-                <Timer />
-              </el-icon>
-              <template #title>{{ $t('navigation.spaceEngineCronTask') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-
-          <!-- 扫描配置分组 -->
-          <el-sub-menu index="scan-config-menu">
-            <template #title>
-              <el-icon>
-                <Operation />
-              </el-icon>
-              <span>{{ $t('navigation.scanConfig') }}</span>
-            </template>
-            <el-menu-item index="/cron-task">
-              <el-icon>
-                <Timer />
-              </el-icon>
-              <template #title>{{ $t('navigation.cronTask') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/settings-subfinder">
-              <el-icon>
-                <Search />
-              </el-icon>
-              <template #title>{{ $t('navigation.subdomainConfig') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/poc">
-              <el-icon>
-                <Aim />
-              </el-icon>
-              <template #title>{{ $t('navigation.pocManagement') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/fingerprint" :title="$t('navigation.fingerprintManagement')">
-              <el-icon>
-                <Stamp />
-              </el-icon>
-              <template #title>{{ $t('navigation.fingerprintManagement') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/blacklist">
-              <el-icon>
-                <CircleClose />
-              </el-icon>
-              <template #title>{{ $t('navigation.blacklist') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-
-          <!-- 分割线 -->
-          <div class="menu-divider"></div>
-
-          <!-- AI配置（管理员，置顶） -->
-          <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'" index="/ai-config">
-            <el-icon>
-              <MagicStick />
-            </el-icon>
-            <template #title>{{ $t('navigation.aiConfig') }}</template>
-          </el-menu-item>
-          <el-menu-item index="/worker">
-            <el-icon>
-              <Connection />
-            </el-icon>
-            <template #title>{{ $t('navigation.workerNodes') }}</template>
-          </el-menu-item>
-          <el-menu-item index="/worker-logs">
-            <el-icon>
-              <Document />
-            </el-icon>
-            <template #title>{{ $t('navigation.workerLogs') }}</template>
-          </el-menu-item>
-
-          <!-- 高级配置分组 -->
-          <el-sub-menu index="advanced-config-menu">
-            <template #title>
-              <el-icon>
-                <Operation />
-              </el-icon>
-              <span>{{ $t('navigation.advancedConfig') }}</span>
-            </template>
-            <el-menu-item index="/settings-notify">
-              <el-icon>
-                <Bell />
-              </el-icon>
-              <template #title>{{ $t('navigation.notifyConfig') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/settings-reverify" :title="$t('navigation.reverifyConfig')">
-              <el-icon>
-                <Timer />
-              </el-icon>
-              <template #title>{{ $t('navigation.reverifyConfig') }}</template>
-            </el-menu-item>
-            <el-menu-item index="/high-risk-filter">
-              <el-icon>
-                <Warning />
-              </el-icon>
-              <template #title>{{ $t('navigation.highRiskFilter') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-
-          <!-- 系统管理分组 -->
-          <el-sub-menu index="system-management">
-            <template #title>
-              <el-icon>
-                <Setting />
-              </el-icon>
-              <span>{{ $t('navigation.systemManagement') }}</span>
-            </template>
-            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="/user">
-              <el-icon>
-                <User />
-              </el-icon>
-              <template #title>{{ $t('navigation.userManagement') }}</template>
-            </el-menu-item>
-            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="/registration-config">
-              <el-icon>
-                <UserFilled />
-              </el-icon>
-              <template #title>{{ $t('settings.registration.title') }}</template>
-            </el-menu-item>
-            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="/organization" :title="$t('navigation.organizationManagement')">
-              <el-icon>
-                <OfficeBuilding />
-              </el-icon>
-              <template #title>{{ $t('navigation.organizationManagement') }}</template>
-            </el-menu-item>
-            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'"
-              index="/settings-branding">
-              <el-icon>
-                <Picture />
-              </el-icon>
-              <template #title>{{ $t('navigation.brandingConfig') }}</template>
-            </el-menu-item>
-          </el-sub-menu>
-
+            <el-sub-menu v-else-if="group.type === 'submenu'"
+              v-show="!searchKeyword || subMenuHasMatch(group)" :index="group.index">
+              <template #title>
+                <el-icon>
+                  <component :is="group.icon" />
+                </el-icon>
+                <span>{{ group.label }}</span>
+              </template>
+              <template v-for="item in group.items" :key="item.index">
+                <el-menu-item v-if="!item.adminOnly || isAdmin"
+                  v-show="!searchKeyword || matchLabel(group.label) || matchLabel(item.label)" :index="item.index">
+                  <el-icon v-if="item.icon">
+                    <component :is="item.icon" />
+                  </el-icon>
+                  <template #title>{{ item.label }}</template>
+                </el-menu-item>
+              </template>
+            </el-sub-menu>
+          </template>
         </el-menu>
+        <div v-if="searchKeyword && !hasAnyResult" class="menu-no-results">
+          <el-icon>
+            <Search />
+          </el-icon>
+          <span>{{ t('common.noData') }}</span>
+        </div>
       </div>
 
     </el-aside>
@@ -327,7 +114,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -355,6 +142,100 @@ const brandingStore = useBrandingStore()
 const isCollapse = ref(false)
 const isMobile = ref(false)
 const defaultOpeneds = ref(['scan-config-menu', 'system-management'])
+
+// === 菜单搜索 ===
+const searchKeyword = ref('')
+const menuRef = ref()
+const isAdmin = computed(() => userStore.role === 'admin' || userStore.role === 'superadmin')
+
+// 菜单数据结构（数据驱动渲染 + 搜索过滤）
+const menuData = computed(() => [
+  { type: 'item', index: '/dashboard', icon: Odometer, label: t('navigation.dashboard') },
+  { type: 'submenu', index: 'asset-menu', icon: Monitor, label: t('navigation.assetManagement'), items: [
+    { index: '/asset-management', icon: DataAnalysis, label: t('navigation.assetOverview') },
+    { index: '/asset-management/space-search', icon: Search, label: t('navigation.assetSpaceSearch') },
+  ]},
+  { type: 'submenu', index: 'exposure-menu', icon: View, label: t('navigation.exposure'), items: [
+    { index: '/asset-management/exposure/subdomain', label: t('navigation.exposureSubdomain') },
+    { index: '/asset-management/exposure/ip', label: t('navigation.exposureIp') },
+    { index: '/asset-management/exposure/port', label: t('navigation.exposurePort') },
+    { index: '/asset-management/exposure/site', label: t('navigation.exposureSite') },
+    { index: '/asset-management/exposure/icon', label: t('navigation.exposureIcon') },
+    { index: '/asset-management/exposure/app', label: t('navigation.exposureApp') },
+    { index: '/asset-management/exposure/screenshot', label: t('navigation.exposureScreenshot') },
+    { index: '/asset-management/exposure/dir', label: t('navigation.exposureDir') },
+    { index: '/asset-management/exposure/js', label: t('navigation.exposureJs') },
+  ]},
+  { type: 'submenu', index: 'risk-menu', icon: Warning, label: t('navigation.risk'), items: [
+    { index: '/asset-management/fingerprint/cert', label: t('navigation.certAsset') },
+    { index: '/asset-management/risk/sensitive-info', label: t('navigation.riskSensitiveInfo') },
+    { index: '/asset-management/risk/vuln', label: t('navigation.riskVuln') },
+  ]},
+  { type: 'divider' },
+  { type: 'item', index: '/task', icon: List, label: t('navigation.taskManagement') },
+  { type: 'submenu', index: 'space-engine-menu', icon: Connection, label: t('navigation.spaceEngine'), items: [
+    { index: '/space-engine/online-search', icon: Search, label: t('navigation.onlineSearch') },
+    { index: '/space-engine/api-config', icon: Key, label: t('navigation.spaceEngineApiConfig') },
+    { index: '/space-engine/cron-task', icon: Timer, label: t('navigation.spaceEngineCronTask') },
+  ]},
+  { type: 'submenu', index: 'scan-config-menu', icon: Operation, label: t('navigation.scanConfig'), items: [
+    { index: '/cron-task', icon: Timer, label: t('navigation.cronTask') },
+    { index: '/settings-subfinder', icon: Search, label: t('navigation.subdomainConfig') },
+    { index: '/poc', icon: Aim, label: t('navigation.pocManagement') },
+    { index: '/fingerprint', icon: Stamp, label: t('navigation.fingerprintManagement') },
+    { index: '/blacklist', icon: CircleClose, label: t('navigation.blacklist') },
+  ]},
+  { type: 'divider' },
+  { type: 'item', index: '/ai-config', icon: MagicStick, label: t('navigation.aiConfig'), adminOnly: true },
+  { type: 'item', index: '/worker', icon: Connection, label: t('navigation.workerNodes') },
+  { type: 'item', index: '/worker-logs', icon: Document, label: t('navigation.workerLogs') },
+  { type: 'submenu', index: 'advanced-config-menu', icon: Operation, label: t('navigation.advancedConfig'), items: [
+    { index: '/settings-notify', icon: Bell, label: t('navigation.notifyConfig') },
+    { index: '/settings-reverify', icon: Timer, label: t('navigation.reverifyConfig') },
+    { index: '/high-risk-filter', icon: Warning, label: t('navigation.highRiskFilter') },
+  ]},
+  { type: 'submenu', index: 'system-management', icon: Setting, label: t('navigation.systemManagement'), items: [
+    { index: '/user', icon: User, label: t('navigation.userManagement'), adminOnly: true },
+    { index: '/registration-config', icon: UserFilled, label: t('settings.registration.title'), adminOnly: true },
+    { index: '/organization', icon: OfficeBuilding, label: t('navigation.organizationManagement'), adminOnly: true },
+    { index: '/settings-branding', icon: Picture, label: t('navigation.brandingConfig'), adminOnly: true },
+  ]},
+])
+
+function matchLabel(label) {
+  if (!searchKeyword.value) return true
+  return label.toLowerCase().includes(searchKeyword.value.trim().toLowerCase())
+}
+
+function subMenuHasMatch(group) {
+  if (matchLabel(group.label)) return true
+  return group.items.some(item => (!item.adminOnly || isAdmin.value) && matchLabel(item.label))
+}
+
+const hasAnyResult = computed(() => menuData.value.some(group => {
+  if (group.type === 'divider') return false
+  if (group.adminOnly && !isAdmin.value) return false
+  if (group.type === 'item') return matchLabel(group.label)
+  if (group.type === 'submenu') return subMenuHasMatch(group)
+  return false
+}))
+
+// 搜索时自动展开/收起子菜单
+watch(searchKeyword, (val) => {
+  if (!menuRef.value) return
+  nextTick(() => {
+    menuData.value.forEach(group => {
+      if (group.type !== 'submenu') return
+      if (val && subMenuHasMatch(group)) {
+        menuRef.value.open(group.index)
+      } else if (!val && !defaultOpeneds.value.includes(group.index)) {
+        menuRef.value.close(group.index)
+      } else if (!val && defaultOpeneds.value.includes(group.index)) {
+        menuRef.value.open(group.index)
+      }
+    })
+  })
+})
 
 // 移动端断点：< 768px 视为移动端，侧边栏切换为抽屉模式
 const MOBILE_BREAKPOINT = 768
@@ -470,6 +351,7 @@ function handleCommand(command) {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    scroll-behavior: smooth;
 
     &::-webkit-scrollbar {
       width: 4px;
@@ -478,6 +360,58 @@ function handleCommand(command) {
     &::-webkit-scrollbar-thumb {
       background: hsl(var(--sidebar-border));
       border-radius: 2px;
+    }
+  }
+
+  .menu-search {
+    padding: 8px 12px 4px;
+    flex-shrink: 0;
+
+    :deep(.el-input) {
+      .el-input__wrapper {
+        background: hsl(var(--sidebar-accent) / 0.5);
+        border-radius: 8px;
+        box-shadow: none;
+        border: 1px solid hsl(var(--sidebar-border));
+        transition: border-color 0.25s ease, box-shadow 0.25s ease;
+
+        &:hover {
+          border-color: hsl(var(--sidebar-primary) / 0.3);
+        }
+
+        &.is-focus {
+          border-color: hsl(var(--sidebar-primary) / 0.5);
+          box-shadow: 0 0 0 2px hsl(var(--sidebar-primary) / 0.1);
+        }
+      }
+
+      .el-input__inner {
+        color: hsl(var(--sidebar-foreground));
+        font-size: 13px;
+
+        &::placeholder {
+          color: hsl(var(--sidebar-foreground) / 0.4);
+        }
+      }
+
+      .el-input__prefix,
+      .el-input__suffix {
+        color: hsl(var(--sidebar-foreground) / 0.4);
+      }
+    }
+  }
+
+  .menu-no-results {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 32px 0;
+    color: hsl(var(--sidebar-foreground) / 0.35);
+    font-size: 13px;
+
+    .el-icon {
+      font-size: 22px;
     }
   }
 
@@ -499,10 +433,11 @@ function handleCommand(command) {
       color: hsl(var(--sidebar-foreground));
       display: flex;
       align-items: center;
-      padding: 0 12px !important; // 使用padding而不是复杂的定位
+      padding: 0 12px !important;
       overflow: hidden;
       white-space: nowrap;
       position: relative;
+      transition: background-color 0.2s ease, color 0.2s ease;
 
       .el-icon {
         font-size: 18px;
@@ -544,10 +479,11 @@ function handleCommand(command) {
         color: hsl(var(--sidebar-foreground));
         display: flex;
         align-items: center;
-        padding: 0 12px !important; // 使用padding而不是复杂的定位
+        padding: 0 12px !important;
         overflow: hidden;
         white-space: nowrap;
         position: relative;
+        transition: background-color 0.2s ease, color 0.2s ease;
 
         .el-icon {
           font-size: 18px;
@@ -614,13 +550,12 @@ function handleCommand(command) {
 
 }
 
-// 简化的深度选择器，只处理必要的样式覆盖
+// 深度选择器：样式覆盖 + 平滑过渡
 :deep(.el-menu) {
 
   .el-menu-item,
   .el-sub-menu .el-sub-menu__title {
 
-    // 重置所有可能的隐藏样式
     .el-icon {
       display: flex !important;
       visibility: visible !important;
@@ -632,6 +567,22 @@ function handleCommand(command) {
       visibility: visible !important;
       opacity: 1 !important;
     }
+  }
+
+  // 子菜单展开/收起：平滑高度过渡
+  .el-sub-menu .el-menu {
+    transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+    overflow: hidden;
+  }
+
+  // 箭头旋转：平滑过渡
+  .el-sub-menu__title .el-sub-menu__icon-arrow {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  // 折叠态弹出菜单：平滑出现
+  .el-popper.el-menu--vertical {
+    transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
 

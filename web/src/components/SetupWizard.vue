@@ -46,12 +46,20 @@
               completed: currentStep > index,
             }"
           >
-            <div v-if="index > 0" class="step-connector" :class="{ filled: currentStep > index }" />
-            <div class="step-circle">
-              <el-icon v-if="currentStep > index" :size="16"><Check /></el-icon>
-              <span v-else>{{ index + 1 }}</span>
+            <div class="step-top">
+              <div
+                class="step-connector"
+                :class="{ filled: currentStep >= index, hidden: index === 0 }"
+              />
+              <div class="step-circle">
+                <el-icon v-if="currentStep > index" :size="16"><Check /></el-icon>
+                <span v-else>{{ index + 1 }}</span>
+              </div>
+              <div
+                class="step-connector"
+                :class="{ filled: currentStep > index, hidden: index === steps.length - 1 }"
+              />
             </div>
-            <div v-if="index < steps.length - 1" class="step-connector" :class="{ filled: currentStep > index }" />
             <div class="step-text">
               <span class="step-title">{{ $t(step.titleKey) }}</span>
               <span class="step-desc">{{ $t(step.descKey) }}</span>
@@ -282,7 +290,11 @@ function handlePrev() {
 }
 
 async function handleSubmit() {
-  await formRef.value.validate()
+  try {
+    await formRef.value.validate()
+  } catch (e) {
+    return
+  }
   submitting.value = true
   try {
     const res = await apiRegister({
@@ -501,14 +513,23 @@ async function handleSubmit() {
   color: hsl(var(--foreground));
 }
 
+.step-top {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
 .step-connector {
   flex: 1;
   height: 2px;
   background: hsl(var(--border));
-  margin-top: 15px;
   border-radius: 1px;
   transition: background 0.3s;
   min-width: 12px;
+}
+
+.step-connector.hidden {
+  visibility: hidden;
 }
 
 .step-connector.filled {

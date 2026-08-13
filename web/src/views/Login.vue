@@ -130,7 +130,7 @@ import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
 import { useBrandingStore } from '@/stores/branding'
-import { Sunny, Moon, Position } from '@element-plus/icons-vue'
+import { Sunny, Moon, Position, Loading } from '@element-plus/icons-vue'
 import { register as apiRegister } from '@/api/auth'
 import SetupWizard from '@/components/SetupWizard.vue'
 
@@ -147,6 +147,7 @@ const registerFormRef = ref()
 const loginLoading = ref(false)
 const registerLoading = ref(false)
 const systemHasUsers = ref(null) // null=未检测, false=无用户(首次部署), true=已有用户
+const systemChecking = ref(true) // 系统状态检测中，避免登录表单先闪现
 
 const showSetupWizard = computed(() => systemHasUsers.value === false)
 
@@ -175,6 +176,8 @@ async function checkSystemStatus() {
     }
   } catch (e) {
     // 检测失败不影响正常登录流程
+  } finally {
+    systemChecking.value = false
   }
 }
 

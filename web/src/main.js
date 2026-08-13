@@ -17,6 +17,14 @@ import './styles/index.css'
 import { enablePerformanceMonitoring, setupRouterPerformance } from './utils/performance'
 
 const app = createApp(App)
+
+// 过滤 Element Plus 内部 useResizeObserver 在 await 后调用 onMounted 的已知告警
+const EP_LIFECYCLE_WARN = 'is called when there is no active component instance to be associated with'
+app.config.warnHandler = (msg) => {
+  if (typeof msg === 'string' && msg.includes(EP_LIFECYCLE_WARN)) return
+  console.warn(msg)
+}
+
 const pinia = createPinia()
 
 app.use(pinia)

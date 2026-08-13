@@ -73,7 +73,6 @@
             :src="formatScreenshotUrl(item.screenshot)"
             :alt="item.name"
             class="screenshot-image"
-            loading="lazy"
             @error="handleScreenshotError"
           />
           <div v-else class="no-screenshot">

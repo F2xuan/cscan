@@ -35,7 +35,11 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 	for _, asset := range assets {
 		for _, app := range asset.App {
 			appName := parseAppName(app)
+			if appName == "" {
+				continue
+			}
 			appNameLower := strings.ToLower(appName)
+			matched := false
 
 			// 模式1: 基于自定义标签映射
 			if pocConfig.AutoScan && pocConfig.TagMappings != nil {
@@ -52,6 +56,7 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 						for _, tag := range tags {
 							tagSet[tag] = true
 						}
+						matched = true
 						break
 					}
 				}
@@ -71,6 +76,7 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 					for _, tag := range tags {
 						tagSet[tag] = true
 					}
+					matched = true
 				} else if strings.Contains(appNameLower, " ") {
 					// 拆分多词 Nmap 产品名，逐词尝试匹配映射
 					// 例如 "Elasticsearch Kibana" -> "elasticsearch" + "kibana"
@@ -87,7 +93,21 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 							for _, tag := range partTags {
 								tagSet[tag] = true
 							}
+							matched = true
 						}
+					}
+				}
+			}
+
+			// 兜底: 未匹配任何映射时，将指纹名小写作为标签传入POC扫描
+			if !matched && (pocConfig.AutoScan || pocConfig.AutomaticScan) {
+				tagSet[appNameLower] = true
+				key := appName + "_fallback"
+				if _, exists := matchInfoMap[key]; !exists {
+					matchInfoMap[key] = &TagMatchInfo{
+						Fingerprint: appName,
+						Tags:        []string{appNameLower},
+						Source:      "fallback",
 					}
 				}
 			}
@@ -119,7 +139,11 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 
 	for _, app := range asset.App {
 		appName := parseAppName(app)
+		if appName == "" {
+			continue
+		}
 		appNameLower := strings.ToLower(appName)
+		matched := false
 
 		// 模式1: 基于自定义标签映射
 		if pocConfig.AutoScan && pocConfig.TagMappings != nil {
@@ -128,6 +152,7 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 					for _, tag := range tags {
 						tagSet[tag] = true
 					}
+					matched = true
 					break
 				}
 			}
@@ -139,6 +164,7 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 				for _, tag := range tags {
 					tagSet[tag] = true
 				}
+				matched = true
 			} else if strings.Contains(appNameLower, " ") {
 				// 拆分多词 Nmap 产品名，逐词尝试匹配映射
 				for _, part := range strings.Fields(appNameLower) {
@@ -146,9 +172,15 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 						for _, tag := range partTags {
 							tagSet[tag] = true
 						}
+						matched = true
 					}
 				}
 			}
+		}
+
+		// 兜底: 未匹配任何映射时，将指纹名小写作为标签传入POC扫描
+		if !matched && (pocConfig.AutoScan || pocConfig.AutomaticScan) {
+			tagSet[appNameLower] = true
 		}
 	}
 

@@ -84,6 +84,7 @@ type WorkerWSClient struct {
 	config               *WSClientConfig
 	conn                 net.Conn
 	connMu               sync.RWMutex
+	writeMu              sync.Mutex // serializes WebSocket write operations (writePump + sendPingDirect)
 	connected            atomic.Bool
 	authenticated        atomic.Bool
 	closeChan            chan struct{}
@@ -563,16 +564,19 @@ func (c *WorkerWSClient) writePump(ctx context.Context) {
 				continue
 			}
 
-			// 使用读锁保护整个写入操作
+			// 使用写锁序列化 WebSocket 写操作，防止与 sendPingDirect 并发写
+			c.writeMu.Lock()
 			c.connMu.RLock()
 			conn := c.conn
 			if conn == nil {
 				c.connMu.RUnlock()
+				c.writeMu.Unlock()
 				continue
 			}
 
 			if err := conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout)); err != nil {
 				c.connMu.RUnlock()
+				c.writeMu.Unlock()
 				logx.Infof("[WSClient] SetWriteDeadline error: %v", err)
 				c.triggerReconnect()
 				continue
@@ -580,6 +584,7 @@ func (c *WorkerWSClient) writePump(ctx context.Context) {
 
 			err := wsutil.WriteClientMessage(conn, ws.OpText, data)
 			c.connMu.RUnlock()
+			c.writeMu.Unlock()
 
 			if err != nil {
 				logx.Infof("[WSClient] Write error: %v", err)
@@ -623,7 +628,8 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 
 			// 发送PING（绕过 sendChan，避免日志背压导致 PING 丢失引发误重连）
 			if err := c.sendPingDirect(); err != nil {
-				logx.Infof("[WSClient] PING send failed: %v", err)
+				logx.Infof("[WSClient] PING send failed: %v, triggering reconnect...", err)
+				c.initiateReconnect(false, "pingPump")
 			}
 		}
 	}
@@ -759,11 +765,21 @@ func (c *WorkerWSClient) sendPingDirect() error {
 	if err != nil {
 		return err
 	}
+	// 使用写锁序列化 WebSocket 写操作，防止与 writePump 并发写
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	c.connMu.RLock()
 	conn := c.conn
 	if conn == nil {
 		c.connMu.RUnlock()
 		return fmt.Errorf("not connected")
+	}
+	// 必须设置写超时，否则会复用 writePump 留下的已过期 deadline，
+	// 导致写入立即返回 i/o timeout（连接实际正常）
+	if err := conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout)); err != nil {
+		c.connMu.RUnlock()
+		return fmt.Errorf("set write deadline: %w", err)
 	}
 	err = wsutil.WriteClientMessage(conn, ws.OpText, data)
 	c.connMu.RUnlock()

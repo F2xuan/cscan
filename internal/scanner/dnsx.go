@@ -52,7 +52,8 @@ func (o *DnsxOptions) Validate() error {
 // DnsxResult dnsx CLI JSON 输出
 type DnsxResult struct {
 	Host     string   `json:"host"`
-	IP       []string `json:"ip,omitempty"`
+	A        []string `json:"a,omitempty"`
+	AAAA     []string `json:"aaaa,omitempty"`
 	CNAME    []string `json:"cname,omitempty"`
 	Resolver string   `json:"resolver,omitempty"`
 }
@@ -213,7 +214,10 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 			Category:  "domain",
 		}
 
-		for _, ipStr := range dr.IP {
+		for _, ipStr := range dr.A {
+			appendIPInfo(asset, ipStr, ipLocator)
+		}
+		for _, ipStr := range dr.AAAA {
 			appendIPInfo(asset, ipStr, ipLocator)
 		}
 
@@ -294,7 +298,7 @@ func (s *DnsxScanner) DetectWildcard(ctx context.Context, domain string) map[str
 		return wildcardIPs
 	}
 	for _, dr := range results {
-		for _, ip := range dr.IP {
+		for _, ip := range dr.A {
 			wildcardIPs[ip] = true
 		}
 	}
@@ -312,7 +316,7 @@ func (s *DnsxScanner) Lookup(ctx context.Context, domain string) ([]string, erro
 
 	var ips []string
 	for _, dr := range results {
-		ips = append(ips, dr.IP...)
+		ips = append(ips, dr.A...)
 	}
 
 	return ips, nil

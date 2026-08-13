@@ -320,7 +320,7 @@ func (s *SubfinderScanner) scanDomain(
 
 		// DNS 解析（如果启用）
 		if opts.ResolveDNS {
-			resolvedIPs := s.resolveDNS(ctx, []string{sr.Host})
+			resolvedIPs, cname := s.resolveDNS(ctx, []string{sr.Host})
 			for _, ip := range resolvedIPs {
 				parsedIP := parseIP(ip)
 				if parsedIP == nil {
@@ -333,6 +333,9 @@ func (s *SubfinderScanner) scanDomain(
 					locStr, _ := ipLocator.Locate(parsedIP.String())
 					asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String(), Location: geolocation.NormalizeLocation(locStr)})
 				}
+			}
+			if cname != "" {
+				asset.CName = cname
 			}
 		}
 
@@ -369,11 +372,11 @@ func (s *SubfinderScanner) parseDomains(target string) []string {
 	return domains
 }
 
-func (s *SubfinderScanner) resolveDNS(ctx context.Context, domains []string) []string {
-	// 使用 dnsx CLI 进行批量 DNS 解析
+func (s *SubfinderScanner) resolveDNS(ctx context.Context, domains []string) ([]string, string) {
+	// 使用 dnsx CLI 进行批量 DNS 解析（含 CNAME）
 	tmpFile, err := os.CreateTemp("", "dnsx-targets-*.txt")
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	for _, d := range domains {
 		tmpFile.WriteString(d + "\n")
@@ -387,7 +390,7 @@ func (s *SubfinderScanner) resolveDNS(ctx context.Context, domains []string) []s
 		"-l", tmpPath,
 		"-json",
 		"-silent",
-		"-a", "-aaaa",
+		"-a", "-aaaa", "-cname",
 		"-timeout", "5",
 		"-retry", "1",
 		"-disable-update-check",
@@ -397,10 +400,11 @@ func (s *SubfinderScanner) resolveDNS(ctx context.Context, domains []string) []s
 		Timeout: 5 * time.Minute,
 	})
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 
 	var ips []string
+	var cname string
 	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -411,12 +415,31 @@ func (s *SubfinderScanner) resolveDNS(ctx context.Context, domains []string) []s
 		if err := json.Unmarshal([]byte(line), &dnsResult); err != nil {
 			continue
 		}
-		if host, ok := dnsResult["host"].(string); ok && host != "" {
-			ips = append(ips, host)
+		// A 记录
+		if a, ok := dnsResult["a"].([]interface{}); ok {
+			for _, ip := range a {
+				if ipStr, ok := ip.(string); ok && ipStr != "" {
+					ips = append(ips, ipStr)
+				}
+			}
+		}
+		// AAAA 记录
+		if aaaa, ok := dnsResult["aaaa"].([]interface{}); ok {
+			for _, ip := range aaaa {
+				if ipStr, ok := ip.(string); ok && ipStr != "" {
+					ips = append(ips, ipStr)
+				}
+			}
+		}
+		// CNAME 记录（取第一个）
+		if cnames, ok := dnsResult["cname"].([]interface{}); ok && len(cnames) > 0 && cname == "" {
+			if cnameStr, ok := cnames[0].(string); ok {
+				cname = strings.TrimSuffix(cnameStr, ".")
+			}
 		}
 	}
 
-	return ips
+	return ips, cname
 }
 
 func parseIP(s string) net.IP {

@@ -545,15 +545,14 @@ func TestProperty7_APIEndpointBackwardCompatibility(t *testing.T) {
 
 	// Property 7.4: Login response maintains authentication fields
 	properties.Property("Login response maintains authentication fields", prop.ForAll(
-		func(code int, msg, token, userId, username, role, workspaceId string) bool {
+		func(code int, msg, token, userId, username, role string) bool {
 			resp := types.LoginResp{
-				Code:        code,
-				Msg:         msg,
-				Token:       token,
-				UserId:      userId,
-				Username:    username,
-				Role:        role,
-				WorkspaceId: workspaceId,
+				Code:     code,
+				Msg:      msg,
+				Token:    token,
+				UserId:   userId,
+				Username: username,
+				Role:     role,
 			}
 
 			data, err := json.Marshal(resp)
@@ -576,7 +575,6 @@ func TestProperty7_APIEndpointBackwardCompatibility(t *testing.T) {
 			return true
 		},
 		gen.Int(),
-		gen.AnyString(),
 		gen.AnyString(),
 		gen.AnyString(),
 		gen.AnyString(),

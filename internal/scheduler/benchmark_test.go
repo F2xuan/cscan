@@ -28,7 +28,6 @@ func benchTasks(prefix string, n int) []*TaskInfo {
 	for i := 0; i < n; i++ {
 		tasks[i] = &TaskInfo{
 			TaskId:      fmt.Sprintf("%s-%d", prefix, i),
-			WorkspaceId: "default",
 			Priority:    i % 5,
 		}
 	}

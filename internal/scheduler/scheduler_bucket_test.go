@@ -401,7 +401,6 @@ func TestPriorityBucketTaskInfoIntegrity(t *testing.T) {
 	original := &TaskInfo{
 		TaskId:      "integrity-test",
 		MainTaskId:  "main-001",
-		WorkspaceId: "ws-001",
 		TaskName:    "scan-task",
 		Config:      `{"portscan":{"enable":true,"ports":"80,443"}}`,
 		Priority:    PriorityHigh,
@@ -426,9 +425,6 @@ func TestPriorityBucketTaskInfoIntegrity(t *testing.T) {
 	}
 	if task.MainTaskId != original.MainTaskId {
 		t.Errorf("MainTaskId = %s，期望 %s", task.MainTaskId, original.MainTaskId)
-	}
-	if task.WorkspaceId != original.WorkspaceId {
-		t.Errorf("WorkspaceId = %s，期望 %s", task.WorkspaceId, original.WorkspaceId)
 	}
 	if task.Config != original.Config {
 		t.Errorf("Config = %s，期望 %s", task.Config, original.Config)

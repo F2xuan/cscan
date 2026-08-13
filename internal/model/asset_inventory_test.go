@@ -43,8 +43,7 @@ func TestAggregateInventoryPaged_PaginationSortProjection(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	wsId := "inv_ws"
-	coll := db.Collection(wsId + "_asset")
+	coll := db.Collection("asset")
 	defer coll.Drop(ctx)
 
 	now := time.Now()
@@ -68,10 +67,10 @@ func TestAggregateInventoryPaged_PaginationSortProjection(t *testing.T) {
 		t.Fatalf("插入测试数据失败: %v", err)
 	}
 
-	m := NewAssetModel(db, wsId)
+	m := NewAssetModel(db)
 
 	// 空过滤 -> EstimatedDocumentCount，total == 25
-	total, list, err := m.AggregateInventoryPaged(ctx, []string{wsId}, bson.M{}, 0, 10, "-update_time")
+	total, list, err := m.AggregateInventoryPaged(ctx, bson.M{}, 0, 10, "-update_time")
 	if err != nil {
 		t.Fatalf("AggregateInventoryPaged 失败: %v", err)
 	}
@@ -112,7 +111,7 @@ func TestAggregateInventoryPaged_PaginationSortProjection(t *testing.T) {
 	if len(list2) != 10 {
 		t.Errorf("第 2 页期望 10 条，实际 %d", len(list2))
 	}
-	_, list3, _ := m.AggregateInventoryPaged(ctx, []string{wsId}, bson.M{}, 20, 10, "-update_time")
+	_, list3, _ := m.AggregateInventoryPaged(ctx, bson.M{}, 20, 10, "-update_time")
 	if len(list3) != 5 {
 		t.Errorf("第 3 页期望 5 条（余量），实际 %d", len(list3))
 	}
@@ -124,8 +123,7 @@ func TestAggregateInventoryPaged_FilteredCount(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	wsId := "inv_ws2"
-	coll := db.Collection(wsId + "_asset")
+	coll := db.Collection("asset")
 	defer coll.Drop(ctx)
 
 	now := time.Now()
@@ -152,17 +150,17 @@ func TestAggregateInventoryPaged_FilteredCount(t *testing.T) {
 	}
 }
 
-// TestAggregateInventoryPaged_EmptyWsIds 覆盖 wsIds 为空时安全返回（不 panic）。
-func TestAggregateInventoryPaged_EmptyWsIds(t *testing.T) {
+// TestAggregateInventoryPaged_EmptyCollection 覆盖空集合时安全返回（不 panic）。
+func TestAggregateInventoryPaged_EmptyCollection(t *testing.T) {
 	db, cleanup := mongoTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	m := NewAssetModel(db)
 	total, list, err := m.AggregateInventoryPaged(ctx, bson.M{}, 0, 10, "-update_time")
 	if err != nil {
-		t.Fatalf("空 wsIds 不应返回错误，实际 %v", err)
+		t.Fatalf("空集合不应返回错误，实际 %v", err)
 	}
-	if total != 0 || list != nil {
-		t.Errorf("空 wsIds 应返回 (0, nil)，实际 (%d, %v)", total, list)
+	if total != 0 || len(list) != 0 {
+		t.Errorf("空集合应返回 (0, [])，实际 (%d, %v)", total, list)
 	}
 }

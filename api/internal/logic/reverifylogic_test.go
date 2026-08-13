@@ -7,15 +7,14 @@ import (
 	"cscan/api/internal/types"
 )
 
-// TestReverifyConfigGet_DefaultWorkspace 验证单租户化后复验配置在 workspaceId 为空时
-// 仍能正确回退到默认工作空间并返回配置（前端不再下发 X-Workspace-Id）。
+// TestReverifyConfigGet_DefaultWorkspace 验证单租户化后复验配置在无 workspace 概念时
+// 仍能正确返回默认配置（前端不再下发 X-Workspace-Id）。
 func TestReverifyConfigGet_DefaultWorkspace(t *testing.T) {
 	svcCtx, cleanup := newTestSvcCtxDB(t)
 	defer cleanup()
 	ctx := context.Background()
 
 	l := NewReverifyConfigGetLogic(ctx, svcCtx)
-	// 空 workspaceId：应回退默认工作空间并返回默认值（无报错）
 	resp, err := l.ReverifyConfigGet(&types.ReverifyConfigGetReq{})
 	if err != nil {
 		t.Fatalf("ReverifyConfigGet 失败: %v", err)
@@ -26,14 +25,10 @@ func TestReverifyConfigGet_DefaultWorkspace(t *testing.T) {
 	if resp.Config == nil {
 		t.Fatal("期望返回默认配置，实际 nil")
 	}
-	if resp.Config.WorkspaceId == "" {
-		t.Errorf("配置应绑定到回退后的工作空间 ID，实际为空")
-	}
 
-	// Save 后再次 Get 应读到保存值（验证以 workspaceId 为键的一致性）
+	// Save 后再次 Get 应读到保存值
 	saveL := NewReverifyConfigSaveLogic(ctx, svcCtx)
 	saveResp, err := saveL.ReverifyConfigSave(&types.ReverifyConfigSaveReq{
-		WorkspaceId:      resp.Config.WorkspaceId,
 		WeakPassEnabled:  true,
 		ExposureEnabled:  true,
 		CronSpec:         "0 0 4 * * *",
@@ -48,7 +43,7 @@ func TestReverifyConfigGet_DefaultWorkspace(t *testing.T) {
 	}
 
 	getL := NewReverifyConfigGetLogic(ctx, svcCtx)
-	getResp, err := getL.ReverifyConfigGet(&types.ReverifyConfigGetReq{WorkspaceId: resp.Config.WorkspaceId})
+	getResp, err := getL.ReverifyConfigGet(&types.ReverifyConfigGetReq{})
 	if err != nil {
 		t.Fatalf("再次 Get 失败: %v", err)
 	}

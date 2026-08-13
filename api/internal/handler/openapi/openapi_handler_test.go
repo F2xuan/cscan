@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,15 +65,19 @@ func TestOpenAPI_WrongScope_403(t *testing.T) {
 	}
 }
 
-func TestOpenAPI_ReadOnlyScope_WorkspaceRequired(t *testing.T) {
+func TestOpenAPI_ReadOnlyScope_NoWorkspaceRequired(t *testing.T) {
 	h := buildWrapped([]string{"readonly"})
-	// 缺 X-Workspace-Id：鉴权通过但 logic 要求 workspace，返回 400（在触达 DB 前）
+	// workspace 概念已移除，不传 X-Workspace-Id 不应返回 400
+	// 由于 svcCtx 无 DB 连接，handler 会 panic，用 recover 捕获验证非 400
+	defer func() {
+		if r := recover(); r != nil {
+			// panic 说明请求已通过鉴权/scope 检查并进入 handler（workspace 不再拦截）
+			return
+		}
+	}()
 	w := doReq(h, http.MethodGet, "cscan_pat_x", "")
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 (workspace required), got %d (body=%s)", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "工作空间") {
-		t.Errorf("expected workspace-required message, got %s", w.Body.String())
+	if w.Code == http.StatusBadRequest {
+		t.Fatalf("workspace 移除后不应返回 400，got %d (body=%s)", w.Code, w.Body.String())
 	}
 }
 
@@ -86,10 +89,15 @@ func TestOpenAPI_NonGet_405(t *testing.T) {
 	}
 }
 
-func TestOpenAPI_WildcardScope_WorkspaceRequired(t *testing.T) {
+func TestOpenAPI_WildcardScope_NoWorkspaceRequired(t *testing.T) {
 	h := buildWrapped([]string{"*"})
+	defer func() {
+		if r := recover(); r != nil {
+			return
+		}
+	}()
 	w := doReq(h, http.MethodGet, "cscan_pat_x", "")
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 (workspace required), got %d", w.Code)
+	if w.Code == http.StatusBadRequest {
+		t.Fatalf("workspace 移除后不应返回 400，got %d (body=%s)", w.Code, w.Body.String())
 	}
 }

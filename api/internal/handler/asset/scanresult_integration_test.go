@@ -469,7 +469,7 @@ func cleanupTestData(t *testing.T, db *mongo.Database, workspaceId string) {
 
 	// Clean up directory scan results
 	dirScanModel := model.NewDirScanResultModel(db)
-	_, err = dirScanModel.DeleteByFilter(ctx, primitive.M{"workspace_id": workspaceId})
+	_, err = dirScanModel.DeleteByFilter(ctx, primitive.M{})
 	if err != nil {
 		t.Logf("Warning: Failed to clean up directory scan results: %v", err)
 	}

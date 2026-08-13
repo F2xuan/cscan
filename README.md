@@ -40,14 +40,12 @@
 git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
 
-# 复制环境变量模板并填值
-cp .env.example .env
-
-# 启动全部服务
+# 启动（零配置，使用内置默认密钥）
 docker compose up -d
 ```
 
-> 访问 `https://ip:7777`
+- 访问 `https://ip:7777`
+- 生产部署请覆盖内置默认密钥：`cp .env.example .env`，填入强随机值后再 `docker compose up -d`
 ---
 
 ## 本地开发

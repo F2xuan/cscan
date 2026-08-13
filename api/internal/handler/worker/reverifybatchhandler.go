@@ -81,6 +81,8 @@ func applyWeakpassReverify(ctx context.Context, svcCtx *svc.ServiceContext, wsId
 		if _, e := vulModel.MarkFixed(ctx, fixedIDs, model.VulFixSourceRescan); e != nil {
 			logx.Errorf("[WorkerReverifyBatch] workspace=%s MarkFixed failed: %v", wsId, e)
 		}
+		// 失效漏洞统计缓存，使工作台安全评分即时反映复验修复
+		svcCtx.QueryCache.Delete("vul_stat")
 	}
 
 	finishReverifyRun(ctx, svcCtx, wsId, "weakpass-reverify", "弱口令持续复验", len(items), len(fixedIDs))

@@ -83,10 +83,14 @@ func (l *AppListLogic) AppList(req *types.AppListReq) (*types.AppListResp, error
 	for _, stat := range pageItems {
 		assets := assetsByApp[stat.Field]
 		assetNames := make([]string, 0, len(assets))
+		seenHosts := make(map[string]bool, len(assets))
 		var createTime, updateTime string
 		orgName := ""
 		for _, asset := range assets {
-			assetNames = append(assetNames, asset.Host)
+			if !seenHosts[asset.Host] {
+				seenHosts[asset.Host] = true
+				assetNames = append(assetNames, asset.Host)
+			}
 			if assetCreate := asset.CreateTime.Local().Format("2006-01-02 15:04:05"); createTime == "" || assetCreate < createTime {
 				createTime = assetCreate
 			}

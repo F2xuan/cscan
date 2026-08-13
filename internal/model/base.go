@@ -32,8 +32,11 @@ type Timestamped interface {
 //
 // 同时支持 int 与 int64（不同 model 方法的参数类型不同），通过泛型约束自动推导。
 func NormalizePage[T int | int64](page, pageSize T) (T, T) {
-	if page < 1 || pageSize < 1 {
-		return page, pageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
 	}
 	if pageSize > 100 {
 		pageSize = 100

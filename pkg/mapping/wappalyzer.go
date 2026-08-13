@@ -98,6 +98,7 @@ var WappalyzerNucleiMapping = map[string][]string{
 	"mongodb":              {"mongodb"},
 	"redis":                {"redis"},
 	"elasticsearch":        {"elasticsearch", "elastic"},
+	"elastic":              {"elastic"},
 	"memcached":            {"memcached"},
 	"couchdb":              {"couchdb"},
 	"cassandra":            {"cassandra"},

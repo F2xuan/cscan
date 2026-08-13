@@ -80,121 +80,75 @@ type CompareVersionsResp struct {
 // ArchiveCurrentResults moves existing scan results to the asset_history collection
 // This method ensures atomicity by using MongoDB transactions
 func (s *HistoryService) ArchiveCurrentResults(ctx context.Context, req *ArchiveResultsReq) error {
-	// Validate required parameters
 	if req.Host == "" {
 		return fmt.Errorf("host is required")
 	}
 	if req.Port == 0 {
 		return fmt.Errorf("port is required")
 	}
-
-	// Set default archive time if not provided
 	if req.ArchiveTime.IsZero() {
 		req.ArchiveTime = time.Now()
 	}
 
-	// Start a MongoDB session for transaction support
-	session, err := s.db.Client().StartSession()
-	if err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
+	dirScanModel := model.NewDirScanResultModel(s.db)
+	dirFilter := bson.M{"host": req.Host, "port": req.Port}
+	if req.Authority != "" {
+		dirFilter["authority"] = req.Authority
 	}
-	defer session.EndSession(ctx)
-
-	// Execute the archival operation within a transaction
-	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
-		// Step 1: Query existing directory scan results
-		dirScanModel := model.NewDirScanResultModel(s.db)
-		dirFilter := bson.M{
-			"host": req.Host,
-			"port": req.Port,
-		}
-		if req.Authority != "" {
-			dirFilter["authority"] = req.Authority
-		}
-
-		dirResults, err := dirScanModel.FindByFilter(sessCtx, dirFilter, 0, 0)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query directory scan results: %w", err)
-		}
-
-		// Step 2: Query existing vulnerability scan results
-		scanResultModel := model.NewScanResultModel(s.db)
-		vulnFilter := bson.M{
-			"host": req.Host,
-			"port": req.Port,
-		}
-		if req.Authority != "" {
-			vulnFilter["authority"] = req.Authority
-		}
-
-		vulnResults, err := scanResultModel.FindWithSort(sessCtx, vulnFilter, 0, 0, "create_time", -1)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query vulnerability scan results: %w", err)
-		}
-
-		// If no results exist, nothing to archive
-		if len(dirResults) == 0 && len(vulnResults) == 0 {
-			return nil, nil
-		}
-
-		// Step 3: Determine the scan timestamp (use the most recent)
-		var scanTimestamp time.Time
-		if len(dirResults) > 0 && !dirResults[0].ScanTime.IsZero() {
-			scanTimestamp = dirResults[0].ScanTime
-		}
-		if len(vulnResults) > 0 && !vulnResults[0].ScanTime.IsZero() {
-			if scanTimestamp.IsZero() || vulnResults[0].ScanTime.After(scanTimestamp) {
-				scanTimestamp = vulnResults[0].ScanTime
-			}
-		}
-		// If no scan_time is set, use created or current time
-		if scanTimestamp.IsZero() {
-			if len(dirResults) > 0 && !dirResults[0].CreateTime.IsZero() {
-				scanTimestamp = dirResults[0].CreateTime
-			} else if len(vulnResults) > 0 && !vulnResults[0].Created.IsZero() {
-				scanTimestamp = vulnResults[0].Created
-			} else {
-				scanTimestamp = req.ArchiveTime
-			}
-		}
-
-		// Step 4: Create historical record
-		historyModel := model.NewScanResultHistoryModel(s.db)
-		versionId := uuid.New().String()
-
-		changesSummary := fmt.Sprintf("Archived %d directory scans and %d vulnerability scans",
-			len(dirResults), len(vulnResults))
-
-		historyRecord := &model.ScanResultHistory{
-			AssetId:         req.TargetId,
-			Authority:       req.Authority,
-			Host:            req.Host,
-			Port:            req.Port,
-			VersionId:       versionId,
-			ScanTimestamp:   scanTimestamp,
-			DirScanResults:  dirResults,
-			VulnScanResults: vulnResults,
-			ChangesSummary:  changesSummary,
-			ArchivedAt:      req.ArchiveTime,
-		}
-
-		// Step 5: Insert historical record
-		if err := historyModel.Insert(sessCtx, historyRecord); err != nil {
-			return nil, fmt.Errorf("failed to insert historical record: %w", err)
-		}
-
-		// Step 6: Delete archived results from current collections
-		// Note: We don't delete the results here because the design specifies
-		// that new results will replace old ones. The archival is just for preservation.
-		// The actual deletion/replacement happens when new scan results are saved.
-
-		return versionId, nil
-	})
-
+	dirResults, err := dirScanModel.FindByFilter(ctx, dirFilter, 0, 0)
 	if err != nil {
-		return fmt.Errorf("transaction failed: %w", err)
+		return fmt.Errorf("failed to query directory scan results: %w", err)
 	}
 
+	scanResultModel := model.NewScanResultModel(s.db)
+	vulnFilter := bson.M{"host": req.Host, "port": req.Port}
+	if req.Authority != "" {
+		vulnFilter["authority"] = req.Authority
+	}
+	vulnResults, err := scanResultModel.FindWithSort(ctx, vulnFilter, 0, 0, "create_time", -1)
+	if err != nil {
+		return fmt.Errorf("failed to query vulnerability scan results: %w", err)
+	}
+
+	if len(dirResults) == 0 && len(vulnResults) == 0 {
+		return nil
+	}
+
+	var scanTimestamp time.Time
+	if len(dirResults) > 0 && !dirResults[0].ScanTime.IsZero() {
+		scanTimestamp = dirResults[0].ScanTime
+	}
+	if len(vulnResults) > 0 && !vulnResults[0].ScanTime.IsZero() {
+		if scanTimestamp.IsZero() || vulnResults[0].ScanTime.After(scanTimestamp) {
+			scanTimestamp = vulnResults[0].ScanTime
+		}
+	}
+	if scanTimestamp.IsZero() {
+		if len(dirResults) > 0 && !dirResults[0].CreateTime.IsZero() {
+			scanTimestamp = dirResults[0].CreateTime
+		} else if len(vulnResults) > 0 && !vulnResults[0].Created.IsZero() {
+			scanTimestamp = vulnResults[0].Created
+		} else {
+			scanTimestamp = req.ArchiveTime
+		}
+	}
+
+	historyModel := model.NewScanResultHistoryModel(s.db)
+	historyRecord := &model.ScanResultHistory{
+		AssetId:         req.TargetId,
+		Authority:       req.Authority,
+		Host:            req.Host,
+		Port:            req.Port,
+		VersionId:       uuid.New().String(),
+		ScanTimestamp:   scanTimestamp,
+		DirScanResults:  dirResults,
+		VulnScanResults: vulnResults,
+		ChangesSummary:  fmt.Sprintf("Archived %d directory scans and %d vulnerability scans", len(dirResults), len(vulnResults)),
+		ArchivedAt:      req.ArchiveTime,
+	}
+	if err := historyModel.Insert(ctx, historyRecord); err != nil {
+		return fmt.Errorf("failed to insert historical record: %w", err)
+	}
 	return nil
 }
 

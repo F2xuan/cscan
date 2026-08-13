@@ -385,9 +385,9 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 			// logx.Errorf("Failed to archive results: %v", err)
 		}
 
-		// NOTE: We no longer delete old results here!
-		// Instead, we use Upsert below to merge new results with existing ones.
-		// This preserves historical data while updating with new scan information.
+		// 归档后清除当前集合中的旧结果，确保当前视图仅展示最新扫描数据
+		dirScanModel.DeleteByFilter(ctx, dirFilter)
+		scanResultModel.DeleteMany(ctx, vulnFilter)
 	}
 
 	// Step 3: Save new scan results using Insert

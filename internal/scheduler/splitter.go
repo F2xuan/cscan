@@ -338,10 +338,10 @@ type TargetSplitter struct {
 }
 
 // NewTargetSplitter 创建目标拆分器（保持向后兼容）
-// batchSize <= 0 时使用自动计算的最佳值（默认50）
+// batchSize <= 0 时使用默认分片配置（30个目标/片）
 func NewTargetSplitter(batchSize int) *TargetSplitter {
 	if batchSize <= 0 {
-		batchSize = 50 // 默认每批50个IP
+		batchSize = DefaultChunkConfig().MaxTargetsPerChunk
 	}
 	return &TargetSplitter{batchSize: batchSize}
 }

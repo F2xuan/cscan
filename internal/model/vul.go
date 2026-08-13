@@ -264,18 +264,24 @@ func (m *VulModel) EstimatedCount(ctx context.Context) (int64, error) {
 }
 
 type VulSeverityStats struct {
-	Total    int64
-	Critical int64
-	High     int64
-	Medium   int64
-	Low      int64
-	Info     int64
-	Week     int64
-	Month    int64
+	Total    int64 `bson:"total"`
+	Critical int64 `bson:"critical"`
+	High     int64 `bson:"high"`
+	Medium   int64 `bson:"medium"`
+	Low      int64 `bson:"low"`
+	Info     int64 `bson:"info"`
+	Week     int64 `bson:"week"`
+	Month    int64 `bson:"month"`
 	// T1.3: 生命周期状态计数（缺失 status 视为 open）
-	Open    int64
-	Fixed   int64
-	Ignored int64
+	Open    int64 `bson:"open"`
+	Fixed   int64 `bson:"fixed"`
+	Ignored int64 `bson:"ignored"`
+	// 按严重等级拆分的待处理（open）计数，用于安全评分仅计入未修复漏洞
+	OpenCritical int64 `bson:"openCritical"`
+	OpenHigh     int64 `bson:"openHigh"`
+	OpenMedium   int64 `bson:"openMedium"`
+	OpenLow      int64 `bson:"openLow"`
+	OpenInfo     int64 `bson:"openInfo"`
 }
 
 // AggregateStats 聚合统计漏洞总数、严重级别分布以及近7/30天数量
@@ -298,6 +304,12 @@ func (m *VulModel) AggregateStats(ctx context.Context, now time.Time) (*VulSever
 			{Key: "open", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$ne", Value: bson.A{"$status", "fixed"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "ignored"}}}}}}, 1, 0}}}}}},
 			{Key: "fixed", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "fixed"}}}, 1, 0}}}}}},
 			{Key: "ignored", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "ignored"}}}, 1, 0}}}}}},
+			// 按严重等级拆分的待处理计数（status 非 fixed 且非 ignored）
+			{Key: "openCritical", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$severity", "critical"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "fixed"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "ignored"}}}}}}, 1, 0}}}}}},
+			{Key: "openHigh", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$severity", "high"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "fixed"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "ignored"}}}}}}, 1, 0}}}}}},
+			{Key: "openMedium", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$severity", "medium"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "fixed"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "ignored"}}}}}}, 1, 0}}}}}},
+			{Key: "openLow", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$severity", "low"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "fixed"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "ignored"}}}}}}, 1, 0}}}}}},
+			{Key: "openInfo", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$severity", "info"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "fixed"}}}, bson.D{{Key: "$ne", Value: bson.A{"$status", "ignored"}}}}}}, 1, 0}}}}}},
 		}}},
 	}
 

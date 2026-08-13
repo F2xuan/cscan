@@ -1116,6 +1116,12 @@ type VulStatResp struct {
 	Open    int `json:"open"`
 	Fixed   int `json:"fixed"`
 	Ignored int `json:"ignored"`
+	// 按严重等级拆分的待处理（open）计数
+	OpenCritical int `json:"openCritical"`
+	OpenHigh     int `json:"openHigh"`
+	OpenMedium   int `json:"openMedium"`
+	OpenLow      int `json:"openLow"`
+	OpenInfo     int `json:"openInfo"`
 }
 
 // ==================== 工作台变化（T1.5） ====================

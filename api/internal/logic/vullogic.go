@@ -264,48 +264,43 @@ func (l *VulStatLogic) VulStat() (resp *types.VulStatResp, err error) {
 	// 聚合统计走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
 	cacheKey := "vul_stat"
 	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		var total, critical, high, medium, low, info, week, month, open, fixed, ignored int64
 		now := time.Now()
 
 		vulModel := l.svcCtx.GetVulModel()
 		stats, statErr := vulModel.AggregateStats(l.ctx, now)
-		if statErr == nil {
-			total = stats.Total
-			critical = stats.Critical
-			high = stats.High
-			medium = stats.Medium
-			low = stats.Low
-			info = stats.Info
-			week = stats.Week
-			month = stats.Month
-			open = stats.Open
-			fixed = stats.Fixed
-			ignored = stats.Ignored
+		if statErr != nil {
+			l.Logger.Errorf("[VulStat] aggregation failed: %v", statErr)
+			return nil, statErr
 		}
 
 		return &types.VulStatResp{
-			Code:     0,
-			Msg:      "success",
-			Total:    int(total),
-			Critical: int(critical),
-			High:     int(high),
-			Medium:   int(medium),
-			Low:      int(low),
-			Info:     int(info),
-			Week:     int(week),
-			Month:    int(month),
-			Open:     int(open),
-			Fixed:    int(fixed),
-			Ignored:  int(ignored),
+			Code:         0,
+			Msg:          "success",
+			Total:        int(stats.Total),
+			Critical:     int(stats.Critical),
+			High:         int(stats.High),
+			Medium:       int(stats.Medium),
+			Low:          int(stats.Low),
+			Info:         int(stats.Info),
+			Week:         int(stats.Week),
+			Month:        int(stats.Month),
+			Open:         int(stats.Open),
+			Fixed:        int(stats.Fixed),
+			Ignored:      int(stats.Ignored),
+			OpenCritical: int(stats.OpenCritical),
+			OpenHigh:     int(stats.OpenHigh),
+			OpenMedium:   int(stats.OpenMedium),
+			OpenLow:      int(stats.OpenLow),
+			OpenInfo:     int(stats.OpenInfo),
 		}, nil
 	})
 	if cacheErr != nil {
-		return &types.VulStatResp{Code: 0, Msg: "success"}, nil
+		return &types.VulStatResp{Code: 500, Msg: "统计查询失败"}, nil
 	}
 	if r, ok := cached.(*types.VulStatResp); ok {
 		return r, nil
 	}
-	return &types.VulStatResp{Code: 0, Msg: "success"}, nil
+	return &types.VulStatResp{Code: 500, Msg: "统计查询失败"}, nil
 }
 
 // VulDetailLogic 漏洞详情逻辑
@@ -444,7 +439,15 @@ func (l *VulUpdateStatusLogic) VulUpdateStatus(req *types.VulUpdateStatusReq) (r
 	}
 	if err != nil {
 		l.Logger.Errorf("[VulUpdateStatus] update failed: %v", err)
+		return &types.VulUpdateStatusResp{
+			Code:    500,
+			Msg:     "状态更新失败: " + err.Error(),
+			Updated: int(totalUpdated),
+		}, nil
 	}
+
+	// 失效漏洞统计缓存，使工作台安全评分即时反映状态变更
+	l.svcCtx.QueryCache.Delete("vul_stat")
 
 	return &types.VulUpdateStatusResp{
 		Code:    0,

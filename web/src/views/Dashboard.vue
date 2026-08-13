@@ -33,23 +33,23 @@
               <span class="vuln-label">{{ t('dashboard.total') }}</span>
             </div>
             <div class="vuln-stat critical">
-              <span class="vuln-num">{{ stats.vulnCritical }}</span>
+              <span class="vuln-num">{{ stats.vulnOpenCritical }}</span>
               <span class="vuln-label">{{ t('dashboard.critical') }}</span>
             </div>
             <div class="vuln-stat high">
-              <span class="vuln-num">{{ stats.vulnHigh }}</span>
+              <span class="vuln-num">{{ stats.vulnOpenHigh }}</span>
               <span class="vuln-label">{{ t('dashboard.high') }}</span>
             </div>
             <div class="vuln-stat medium">
-              <span class="vuln-num">{{ stats.vulnMedium }}</span>
+              <span class="vuln-num">{{ stats.vulnOpenMedium }}</span>
               <span class="vuln-label">{{ t('dashboard.medium') }}</span>
             </div>
             <div class="vuln-stat low">
-              <span class="vuln-num">{{ stats.vulnLow }}</span>
+              <span class="vuln-num">{{ stats.vulnOpenLow }}</span>
               <span class="vuln-label">{{ t('dashboard.low') }}</span>
             </div>
             <div class="vuln-stat info">
-              <span class="vuln-num">{{ stats.vulnInfo }}</span>
+              <span class="vuln-num">{{ stats.vulnOpenInfo }}</span>
               <span class="vuln-label">{{ t('dashboard.info') }}</span>
             </div>
           </div>
@@ -353,16 +353,17 @@ const { t } = useI18n()
 const username = computed(() => userStore.username || 'Admin')
 
 // === 安全评分（加权风险密度 + 资产归一化 + 修复率加成）===
+// 仅计入待处理（open）漏洞，已修复/已忽略的漏洞不再扣分
 const securityScore = computed(() => {
   if (stats.vulns === 0) return 100
   const assetCount = Math.max(stats.ports, 1)
   // 加权风险值：Critical=10, High=5, Medium=2, Low=0.5, Info=0.1
   const riskValue =
-    stats.vulnCritical * 10 +
-    stats.vulnHigh * 5 +
-    stats.vulnMedium * 2 +
-    stats.vulnLow * 0.5 +
-    stats.vulnInfo * 0.1
+    stats.vulnOpenCritical * 10 +
+    stats.vulnOpenHigh * 5 +
+    stats.vulnOpenMedium * 2 +
+    stats.vulnOpenLow * 0.5 +
+    stats.vulnOpenInfo * 0.1
   // 风险密度 = 每资产平均风险
   const density = riskValue / assetCount
   // 对数衰减：density=0→100, density↑→平缓下降
@@ -485,12 +486,12 @@ const exposureSources = computed(() => [
   { key: 'sites', label: t('dashboard.exposedSites'), value: stats.sites, color: '#8b5cf6', route: '/asset-management/exposure/site' },
   { key: 'dirs', label: t('dashboard.sensitiveDirs'), value: stats.dirScans, color: '#ef4444', route: '/asset-management/exposure/dir' },
   { key: 'vulns', label: t('dashboard.knownVulns'), value: stats.vulns, color: '#f97316', route: '/asset-management/risk/vuln' },
-  { key: 'critical', label: t('dashboard.criticalRisks'), value: stats.vulnCritical + stats.vulnHigh, color: '#dc2626', route: '/asset-management/risk/vuln' }
+  { key: 'critical', label: t('dashboard.criticalRisks'), value: stats.vulnOpenCritical + stats.vulnOpenHigh, color: '#dc2626', route: '/asset-management/risk/vuln' }
 ])
 
 const exposureRings = computed(() => {
   const totalTasks = taskStats.total || 1
-  const unresolved = stats.vulnCritical + stats.vulnHigh + stats.vulnMedium
+  const unresolved = stats.vulnOpenCritical + stats.vulnOpenHigh + stats.vulnOpenMedium
   return [
     { key: 'scanned', label: t('dashboard.ringScanned'), value: taskStats.completed, color: '#22c55e', pct: Math.min(100, Math.round((taskStats.completed / totalTasks) * 100)), route: '/task' },
     { key: 'vulns', label: t('dashboard.ringVulns'), value: stats.vulns, color: '#f97316', pct: stats.vulns > 0 ? 100 : 0, route: '/asset-management/risk/vuln' },
@@ -508,6 +509,7 @@ const stats = reactive({
   dirScans: 0,
   vulns: 0, vulnCritical: 0, vulnHigh: 0, vulnMedium: 0, vulnLow: 0, vulnInfo: 0,
   vulnOpen: 0, vulnFixed: 0, vulnIgnored: 0,
+  vulnOpenCritical: 0, vulnOpenHigh: 0, vulnOpenMedium: 0, vulnOpenLow: 0, vulnOpenInfo: 0,
   topPorts: [], topService: [], topApp: []
 })
 
@@ -562,9 +564,9 @@ function calcPercent(part, total) {
 }
 
 function vulnBarWidth(level) {
-  if (stats.vulns === 0) return '0%'
-  const map = { critical: stats.vulnCritical, high: stats.vulnHigh, medium: stats.vulnMedium, low: stats.vulnLow, info: stats.vulnInfo }
-  return `${(map[level] / stats.vulns) * 100}%`
+  if (stats.vulnOpen === 0) return '0%'
+  const map = { critical: stats.vulnOpenCritical, high: stats.vulnOpenHigh, medium: stats.vulnOpenMedium, low: stats.vulnOpenLow, info: stats.vulnOpenInfo }
+  return `${(map[level] / stats.vulnOpen) * 100}%`
 }
 
 function animateValue(key, target, duration = 1000) {
@@ -695,7 +697,12 @@ async function fetchVulnStat() {
     stats.vulnOpen = statRes.open || 0
     stats.vulnFixed = statRes.fixed || 0
     stats.vulnIgnored = statRes.ignored || 0
-    animateValue('vulns', stats.vulns)
+    stats.vulnOpenCritical = statRes.openCritical || 0
+    stats.vulnOpenHigh = statRes.openHigh || 0
+    stats.vulnOpenMedium = statRes.openMedium || 0
+    stats.vulnOpenLow = statRes.openLow || 0
+    stats.vulnOpenInfo = statRes.openInfo || 0
+    animateValue('vulns', stats.vulnOpen)
   }
 }
 
@@ -1096,6 +1103,24 @@ onUnmounted(() => {
   &.medium .vuln-num { color: #eab308; }
   &.low .vuln-num { color: #3b82f6; }
   &.info .vuln-num { color: #6b7280; }
+
+  // 允许在窄屏下收缩，避免 6 列 min-content 撑破面板导致横向溢出
+  min-width: 0;
+}
+
+// 窄屏：漏洞统计 6 列换行为 3 列，防止横向溢出
+@media (max-width: 480px) {
+  .vuln-stats-row {
+    flex-wrap: wrap;
+  }
+
+  .vuln-stat {
+    flex: 0 0 33.333%;
+    padding: 8px 4px;
+    border-right: none;
+
+    .vuln-num { font-size: 18px; }
+  }
 }
 
 .vuln-bar-track {

@@ -77,6 +77,7 @@ type HttpxCLIResult struct {
 	FaviconData   string   `json:"favicon,omitempty"`
 	IP            []string `json:"ip,omitempty"`
 	Chain         []string `json:"chain,omitempty"`
+	Screenshot    string   `json:"screenshot,omitempty"`
 }
 
 // Scan 执行 httpx 扫描
@@ -119,7 +120,20 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		return result, nil
 	}
 
-	logx.Infof("Httpx(CLI): scanning %d targets", len(targets))
+	taskLog := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR":
+			logx.Errorf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
+	taskLog("INFO", "Httpx(CLI): scanning %d targets", len(targets))
 
 	// 并发 Worker Pool：每个目标一个 httpx 进程，完成一个补一个
 	concurrency := opts.Concurrency
@@ -135,7 +149,7 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	if concurrency > len(targets) {
 		concurrency = len(targets)
 	}
-	logx.Infof("Httpx(CLI): using %d workers for %d targets", concurrency, len(targets))
+	taskLog("INFO", "Httpx(CLI): using %d workers for %d targets", concurrency, len(targets))
 
 	type scanResult struct {
 		processedAsset *Asset
@@ -158,7 +172,7 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 					return
 				default:
 				}
-				asset := s.scanSingleTargetCLI(ctx, target, opts, targetMap, &resultMu, processed)
+				asset := s.scanSingleTargetCLI(ctx, target, opts, targetMap, &resultMu, processed, taskLog)
 				if asset != nil {
 					resultChan <- scanResult{processedAsset: asset}
 				} else {
@@ -192,12 +206,12 @@ dispatch:
 
 	for res := range resultChan {
 		if res.err != nil {
-			logx.Errorf("Httpx(CLI): error: %v", res.err)
+			taskLog("ERROR", "Httpx(CLI): error: %v", res.err)
 			continue
 		}
 	}
 
-	logx.Infof("Httpx(CLI): completed, updated %d assets", len(processed))
+	taskLog("INFO", "Httpx(CLI): completed, updated %d assets", len(processed))
 	return result, nil
 }
 
@@ -205,6 +219,7 @@ dispatch:
 func (s *HttpxScanner) scanSingleTargetCLI(
 	ctx context.Context, target string, opts *HttpxOptions,
 	targetMap map[string]*Asset, resultMu *sync.Mutex, processed map[*Asset]bool,
+	taskLog func(level, format string, args ...interface{}),
 ) *Asset {
 	args := []string{
 		"-u", target,
@@ -242,7 +257,7 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		args = append(args, "-title")
 	}
 	if opts.Screenshot {
-		args = append(args, "-screenshot")
+		args = append(args, "-screenshot", "-system-chrome")
 	}
 	if opts.OutputIP {
 		args = append(args, "-ip")
@@ -251,13 +266,13 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		args = append(args, "-header", h)
 	}
 
-	logx.Infof("[Httpx] CLI: target=%s args=%s", target, strings.Join(args, " "))
+	taskLog("INFO", "[Httpx] CLI: target=%s args=%s", target, strings.Join(args, " "))
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
 	})
 	if err != nil {
-		logx.Errorf("Httpx(CLI): %s execution error: %v", target, err)
+		taskLog("ERROR", "Httpx(CLI): %s execution error: %v", target, err)
 		return nil
 	}
 	s.executor.LogResult("Httpx(CLI): "+target, res, err)
@@ -327,6 +342,11 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 			asset.HttpBody = body
 		}
 		asset.IsHTTP = true
+
+		// httpx -screenshot 输出的 screenshot 字段为 base64 编码的 PNG 数据
+		if hr.Screenshot != "" && asset.Screenshot == "" {
+			asset.Screenshot = hr.Screenshot
+		}
 
 		if len(hr.IP) > 0 {
 			ipLocator := geolocation.NewIPLocator()
@@ -412,6 +432,7 @@ func RunHttpxLib(ctx context.Context, assets []*Asset, opts *FingerprintOptions,
 		ContentType:     true,
 		StatusCode:      true,
 		Title:           true,
+		Body:            false,
 		OutputIP:        true,
 	}
 

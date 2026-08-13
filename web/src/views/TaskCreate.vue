@@ -415,6 +415,12 @@
             </template>
             <p class="module-desc">{{ $t('task.dirScanHint') }}</p>
             <template v-if="form.dirscanEnable">
+              <el-form-item :label="$t('task.scanTool')">
+                <el-radio-group v-model="form.dirscanTool">
+                  <el-radio label="ffuf">ffuf ({{ $t('task.recommended') }})</el-radio>
+                  <el-radio label="feroxbuster">Feroxbuster</el-radio>
+                </el-radio-group>
+              </el-form-item>
               <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
               <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
                 <el-switch v-model="form.dirscanForceScan" />
@@ -965,7 +971,7 @@ import { getDirScanDictEnabledList } from '@/api/dirscan'
 import { getSubdomainDictEnabledList } from '@/api/subdomain'
 import ScanTemplateSelect from '@/components/ScanTemplateSelect.vue'
 import request from '@/api/request'
-import { validateTargets, formatValidationErrors } from '@/utils/target'
+import { validateTargets, formatValidationErrors, validateSingleTarget } from '@/utils/target'
 
 const router = useRouter()
 const route = useRoute()
@@ -1185,6 +1191,7 @@ const form = reactive({
   pocscanCustomPocs: [],
   // 目录扫描
   dirscanEnable: false,
+  dirscanTool: 'ffuf',
   dirscanDictIds: [],
   dirscanDicts: [], // 保存已选择的字典信息
   dirscanFollowRedirect: false,
@@ -1482,6 +1489,7 @@ function applyConfig(config) {
     ...parseCustomHeaders(config.pocscan?.customHeaders),
     // 目录扫描
     dirscanEnable: config.dirscan?.enable ?? false,
+    dirscanTool: config.dirscan?.tool || 'ffuf',
     dirscanDictIds: config.dirscan?.dictIds || [],
     dirscanFollowRedirect: config.dirscan?.followRedirect ?? false,
     dirscanForceScan: config.dirscan?.forceScan ?? false,
@@ -1740,6 +1748,7 @@ function buildConfig() {
     },
     dirscan: {
       enable: form.dirscanEnable,
+      tool: form.dirscanTool,
       dictIds: form.dirscanDictIds,
       followRedirect: form.dirscanFollowRedirect,
       forceScan: form.dirscanForceScan && !hasPrePhaseEnabled.value,

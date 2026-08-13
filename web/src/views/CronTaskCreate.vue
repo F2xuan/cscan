@@ -538,6 +538,12 @@
             </template>
             <p class="module-desc">{{ $t('task.dirScanHint') }}</p>
             <template v-if="form.dirscanEnable">
+              <el-form-item :label="$t('task.scanTool')">
+                <el-radio-group v-model="form.dirscanTool">
+                  <el-radio label="ffuf">ffuf ({{ $t('task.recommended') }})</el-radio>
+                  <el-radio label="feroxbuster">Feroxbuster</el-radio>
+                </el-radio-group>
+              </el-form-item>
               <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
               <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
                 <el-switch v-model="form.dirscanForceScan" />
@@ -1185,6 +1191,7 @@ function getDefaultForm() {
     pocscanCustomPocs: [],
     // 目录扫描
     dirscanEnable: false,
+    dirscanTool: 'ffuf',
     dirscanDictIds: [],
     dirscanDicts: [],
     dirscanFollowRedirect: false,
@@ -1825,6 +1832,7 @@ function buildConfig() {
     },
     dirscan: {
       enable: form.dirscanEnable,
+      tool: form.dirscanTool,
       dictIds: form.dirscanDictIds || [],
       followRedirect: form.dirscanFollowRedirect,
       forceScan: form.dirscanForceScan && !hasPrePhaseEnabled.value,
@@ -1968,6 +1976,7 @@ function applyConfig(config) {
   }
   if (config.dirscan) {
     form.dirscanEnable = config.dirscan.enable ?? false
+    form.dirscanTool = config.dirscan.tool || 'ffuf'
     form.dirscanDictIds = config.dirscan.dictIds || []
     form.dirscanFollowRedirect = config.dirscan.followRedirect ?? false
     form.dirscanForceScan = config.dirscan.forceScan ?? false

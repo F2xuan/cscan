@@ -51,6 +51,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 go install -v github.com/praetorian-inc/fingerprintx/cmd/fingerprintx@v1.1.19 && \
     CGO_ENABLED=1 go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.0
 
+# 下载 feroxbuster 预编译二进制（Rust 工具，非 go install）
+RUN curl -sL "https://github.com/epi052/feroxbuster/releases/latest/download/x86_64-linux-feroxbuster.tar.gz" -o /tmp/feroxbuster.tar.gz && \
+    tar -xzf /tmp/feroxbuster.tar.gz -C /tmp && \
+    chmod +x /tmp/feroxbuster && \
+    rm -f /tmp/feroxbuster.tar.gz
+
 # ============ 运行阶段 ============
 FROM debian:bookworm-slim
 
@@ -73,6 +79,8 @@ RUN test -f /usr/share/nmap/nse_main.lua \
 
 # 设置时区
 ENV TZ=Asia/Shanghai
+# chromedp 截图引擎通过 CHROME_BIN 定位系统 Chromium
+ENV CHROME_BIN=/usr/bin/chromium
 
 # 复制 ip2region 数据库
 COPY --from=builder /app/data ./data/
@@ -85,8 +93,13 @@ COPY --from=builder /go/bin/httpx /usr/local/bin/httpx
 COPY --from=builder /go/bin/naabu /usr/local/bin/naabu
 COPY --from=builder /go/bin/subfinder /usr/local/bin/subfinder
 COPY --from=builder /go/bin/ffuf /usr/local/bin/ffuf
+COPY --from=builder /tmp/feroxbuster /usr/local/bin/feroxbuster
 COPY --from=builder /go/bin/fingerprintx /usr/local/bin/fingerprintx
 COPY --from=builder /go/bin/dnsx /usr/local/bin/dnsx
+
+# 预初始化 httpx 截图（-system-chrome 复用系统 Chromium）
+# 首次启动 Chrome 需创建 profile 目录、加载扩展等，构建期预热后运行时零延迟
+RUN httpx -u http://127.0.0.1:1 -screenshot -system-chrome -silent 2>/dev/null || true
 
 # 启动脚本（prlimit 提升 fd 上限）
 RUN printf '#!/bin/sh\nexec prlimit --nofile=65535:65535 /cscan-worker "$@"\n' > /start.sh \

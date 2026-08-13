@@ -627,13 +627,13 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 		headers = parseHttpHeaders(asset.HttpHeader)
 	}
 
-	// 如果 httpx 没有获取到 body（可能是重定向等原因），使用内置方法重新获取
+	// httpx 正常情况下已获取 body/title；若为空（重定向丢失、超时截断等异常），使用内置客户端兜底
 	var bodyBytes []byte
 	if asset.HttpBody == "" || asset.Title == "" {
 		if taskLog != nil {
-			taskLog("DEBUG", "httpx didn't get body/title for %s:%d, fetching with builtin client", asset.Host, asset.Port)
+			taskLog("DEBUG", "httpx body/title empty for %s:%d, falling back to builtin client", asset.Host, asset.Port)
 		} else {
-			logx.Debugf("httpx didn't get body/title for %s:%d, fetching with builtin client", asset.Host, asset.Port)
+			logx.Debugf("httpx body/title empty for %s:%d, falling back to builtin client", asset.Host, asset.Port)
 		}
 		resp, err := s.client.Get(targetUrl)
 		if err == nil {
@@ -1226,14 +1226,9 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 	}
 
 	// 从共享浏览器派生 Tab 上下文
-	taskCtx, taskCancel := chromedp.NewContext(browserCtx,
-		chromedp.WithErrorf(func(format string, args ...interface{}) {
-			msg := fmt.Sprintf(format, args...)
-			if !strings.Contains(msg, "CookiePartitionKey") {
-				logx.Errorf(format, args...)
-			}
-		}),
-	)
+	// 注意：chromedp.WithErrorf 是 BrowserOption，不能在 Tab 派生时使用，
+	// 否则触发 "WithBrowserOption can only be used when allocating a new browser" panic
+	taskCtx, taskCancel := chromedp.NewContext(browserCtx)
 	defer taskCancel()
 
 	type screenshotResult struct {

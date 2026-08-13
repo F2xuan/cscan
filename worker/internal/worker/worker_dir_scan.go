@@ -76,12 +76,23 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 
 	w.taskLog(task.TaskId, LevelInfo, "Dir scan: total %d unique paths", len(allPaths))
 
-	// 获取扫描器（优先使用 ffuf）
-	ffufScanner, ok := w.scanners["ffuf"]
+	// 根据配置选择扫描工具（默认 ffuf）
+	dirscanTool := config.Tool
+	if dirscanTool == "" {
+		dirscanTool = "ffuf"
+	}
+
+	scannerKey := "ffuf"
+	if dirscanTool == "feroxbuster" {
+		scannerKey = "feroxbuster"
+	}
+
+	dirScanner, ok := w.scanners[scannerKey]
 	if !ok {
-		w.taskLog(task.TaskId, LevelError, "Dir scan: ffuf scanner not found")
+		w.taskLog(task.TaskId, LevelError, "Dir scan: %s scanner not found", scannerKey)
 		return nil
 	}
+	w.taskLog(task.TaskId, LevelInfo, "Dir scan: using %s scanner", scannerKey)
 
 	// 构建扫描选项：前端已隐藏threads/timeout/rate配置，这里使用合理默认值，并用Worker并发数做上限保护
 	threads := config.Threads
@@ -138,7 +149,7 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 	}
 
 	// 执行扫描
-	result, err := ffufScanner.Scan(dirCtx, &scanner.ScanConfig{
+	result, err := dirScanner.Scan(dirCtx, &scanner.ScanConfig{
 		Assets:     httpAssets,
 		Options:    opts,
 		MainTaskId: task.MainTaskId,

@@ -1076,6 +1076,7 @@ type BruteScanConfig struct {
 // DirScanConfig 目录扫描配置
 type DirScanConfig struct {
 	Enable         bool     `json:"enable"`
+	Tool           string   `json:"tool"`            // 扫描工具: ffuf(默认), feroxbuster
 	DictIds        []string `json:"dictIds"`        // 字典ID列表
 	Threads        int      `json:"threads"`        // 并发线程数
 	Timeout        int      `json:"timeout"`        // 单个请求超时(秒)

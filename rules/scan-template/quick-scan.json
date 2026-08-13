@@ -56,7 +56,7 @@
     "tool": "httpx",
     "iconHash": true,
     "customEngine": true,
-    "screenshot": false,
+    "screenshot": true,
     "cert": true,
     "activeScan": false,
     "activeTimeout": 10,

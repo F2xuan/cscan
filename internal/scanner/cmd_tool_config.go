@@ -76,6 +76,16 @@ var ToolConfigs = map[string]ToolConfig{
 		JSONOutput:     true,
 		SilentOutput:   false,
 	},
+	"feroxbuster": {
+		Name:           "feroxbuster",
+		BinaryName:     "feroxbuster",
+		InstallCmd:     "https://github.com/epi052/feroxbuster/releases/latest/download/x86_64-linux-feroxbuster.tar.gz",
+		FixedVersion:   "latest",
+		DefaultTimeout: 10 * time.Minute,
+		MemoryLimitMB:  384,
+		JSONOutput:     true,
+		SilentOutput:   true,
+	},
 	"fingerprintx": {
 		Name:           "fingerprintx",
 		BinaryName:     "fingerprintx",

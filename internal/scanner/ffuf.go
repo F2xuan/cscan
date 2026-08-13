@@ -1,9 +1,13 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -289,7 +293,9 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 
 	logx.Debugf("[FFuf] %s: parsed %d results", target, len(ffufResults))
 
-	return s.convertResults(target, ffufResults), nil
+	results := s.convertResults(target, ffufResults)
+	s.enrichWithHTTPRequests(ctx, results, opts, logInfo)
+	return results, nil
 }
 
 // convertResults 将 ffuf 结果转换为 Asset 列表
@@ -353,6 +359,147 @@ func (s *FFufScanner) convertResults(target string, results []FFufCLIResult) []*
 	}
 
 	return assets
+}
+
+// enrichWithHTTPRequests 对扫描结果补充HTTP请求和响应原文（供AI研判使用）
+func (s *FFufScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asset, opts *FFufOptions, logInfo func(string, ...interface{})) {
+	if len(assets) == 0 {
+		return
+	}
+
+	concurrency := 10
+	if concurrency > len(assets) {
+		concurrency = len(assets)
+	}
+
+	timeout := time.Duration(opts.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, concurrency)
+
+	for _, asset := range assets {
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		default:
+		}
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(a *Asset) {
+			defer wg.Done()
+			defer func() {
+				<-sem
+				if r := recover(); r != nil {
+					logx.Errorf("[FFuf] enrichWithHTTPRequests panic: %v", r)
+				}
+			}()
+
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			scheme := a.Service
+			if scheme == "" {
+				scheme = "http"
+			}
+			var targetURL string
+			if (scheme == "http" && a.Port == 80) || (scheme == "https" && a.Port == 443) {
+				targetURL = fmt.Sprintf("%s://%s%s", scheme, a.Host, a.Path)
+			} else {
+				targetURL = fmt.Sprintf("%s://%s:%d%s", scheme, a.Host, a.Port, a.Path)
+			}
+
+			reqRaw, respRaw := fetchHTTPRequestResponse(ctx, targetURL, timeout)
+			a.RequestRaw = reqRaw
+			a.ResponseRaw = respRaw
+		}(asset)
+	}
+
+	wg.Wait()
+	logInfo("[FFuf] HTTP请求响应补充完成，共 %d 条", len(assets))
+}
+
+// fetchHTTPRequestResponse 获取URL的HTTP请求和响应原文（跟随重定向，最多10次）
+func fetchHTTPRequestResponse(ctx context.Context, targetURL string, timeout time.Duration) (reqRaw, respRaw string) {
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return "", ""
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", ""
+	}
+
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	if err != nil {
+		return "", ""
+	}
+	req.Header.Set("User-Agent", "cscan-dirscan/1.0")
+
+	var reqBuf bytes.Buffer
+	if err := req.Write(&reqBuf); err == nil {
+		reqRaw = reqBuf.String()
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return reqRaw, ""
+	}
+	defer resp.Body.Close()
+
+	var respBuilder strings.Builder
+	respBuilder.WriteString(fmt.Sprintf("HTTP/%d.%d %s\r\n", resp.ProtoMajor, resp.ProtoMinor, resp.Status))
+	resp.Header.Write(&respBuilder)
+	respBuilder.WriteString("\r\n")
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024))
+	if err == nil && len(body) > 0 {
+		if isMostlyPrintable(body) {
+			respBuilder.Write(body)
+		} else {
+			respBuilder.WriteString("[binary content omitted]")
+		}
+	}
+
+	respRaw = respBuilder.String()
+	if len(respRaw) > 100*1024 {
+		respRaw = respRaw[:100*1024] + "...(truncated)"
+	}
+
+	return reqRaw, respRaw
+}
+
+// isMostlyPrintable 判断数据是否主要为可打印字符（用于过滤二进制内容）
+func isMostlyPrintable(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+	nonPrintable := 0
+	for _, b := range data {
+		if b < 0x09 || (b > 0x0D && b < 0x20) {
+			nonPrintable++
+		}
+	}
+	return nonPrintable*100/len(data) < 10
 }
 
 // collectTargets 从 ScanConfig 中提取目标列表

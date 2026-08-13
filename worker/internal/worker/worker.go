@@ -546,6 +546,7 @@ func (w *Worker) registerScanners() {
 	w.scanners["nuclei"] = scanner.NewNucleiScanner()
 	w.scanners["urlfinder"] = scanner.NewURLFinderScanner()
 	w.scanners["ffuf"] = scanner.NewFFufScanner()
+	w.scanners["feroxbuster"] = scanner.NewFeroxbusterScanner()
 	w.scanners["brutescan"] = scanner.NewBruteScanScanner()
 	w.scanners["jsfinder"] = scanner.NewJSFinderScanner()
 }

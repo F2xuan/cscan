@@ -529,19 +529,17 @@ func (m *CronManager) executeTask(task *CronTask) {
 	case "space_engine":
 		// 发布空间引擎执行消息
 		spaceExecData, _ := json.Marshal(map[string]interface{}{
-			"cronTaskId":  execTask.Id,
-			"workspaceId": execTask.WorkspaceId,
-			"taskName":    execTask.Name,
-			"platform":    execTask.Platform,
-			"query":       execTask.Query,
-			"maxResults":  execTask.MaxResults,
+			"cronTaskId": execTask.Id,
+			"taskName":   execTask.Name,
+			"platform":   execTask.Platform,
+			"query":      execTask.Query,
+			"maxResults": execTask.MaxResults,
 		})
 		m.rdb.Publish(ctx, "cscan:cron:execute_space", string(spaceExecData))
 	default:
 		// 默认 scan 类型：发布扫描执行消息
 		cronExecData, _ := json.Marshal(map[string]interface{}{
 			"cronTaskId":          execTask.Id,
-			"workspaceId":         execTask.WorkspaceId,
 			"taskName":            execTask.Name,
 			"targetMode":          execTask.TargetMode,
 			"target":              execTask.Target,

@@ -27,20 +27,15 @@ type ScannerJSFinderResult struct {
 
 // JSFinderWriteService JS扫描结果写入服务，封装完整的保存业务逻辑
 type JSFinderWriteService struct {
-	db          *mongo.Database
-	workspaceId string
-	jsModel     *JSFinderResultModel
+	db      *mongo.Database
+	jsModel *JSFinderResultModel
 }
 
 // NewJSFinderWriteService 创建JS扫描结果写入服务
-func NewJSFinderWriteService(db *mongo.Database, workspaceId string) *JSFinderWriteService {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func NewJSFinderWriteService(db *mongo.Database) *JSFinderWriteService {
 	return &JSFinderWriteService{
-		db:          db,
-		workspaceId: workspaceId,
-		jsModel:     NewJSFinderResultModel(db, workspaceId),
+		db:      db,
+		jsModel: NewJSFinderResultModel(db),
 	}
 }
 
@@ -58,7 +53,6 @@ func (s *JSFinderWriteService) SaveResults(ctx context.Context, mainTaskID strin
 
 	for _, r := range results {
 		modelResults = append(modelResults, &JSFinderResult{
-			WorkspaceId:      s.workspaceId,
 			MainTaskId:       mainTaskID,
 			Authority:        r.Authority,
 			Host:             r.Host,

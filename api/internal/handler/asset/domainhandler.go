@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func DomainListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDomainLogic(r.Context(), svcCtx)
-		resp, err := l.DomainList(&req, workspaceId)
+		resp, err := l.DomainList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -35,9 +33,8 @@ func DomainListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // DomainStatHandler 域名统计
 func DomainStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDomainLogic(r.Context(), svcCtx)
-		resp, err := l.DomainStat(workspaceId)
+		resp, err := l.DomainStat()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -55,9 +52,8 @@ func DomainDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDomainLogic(r.Context(), svcCtx)
-		resp, err := l.DomainDelete(&req, workspaceId)
+		resp, err := l.DomainDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -75,9 +71,8 @@ func DomainBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDomainLogic(r.Context(), svcCtx)
-		resp, err := l.DomainBatchDelete(&req, workspaceId)
+		resp, err := l.DomainBatchDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -89,9 +84,8 @@ func DomainBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // DomainClearHandler 清空域名
 func DomainClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDomainClearLogic(r.Context(), svcCtx)
-		resp, err := l.DomainClear(workspaceId)
+		resp, err := l.DomainClear()
 		if err != nil {
 			response.Error(w, err)
 			return

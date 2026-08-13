@@ -175,16 +175,15 @@ func (w *Worker) executeBruteScan(ctx context.Context, task *scheduler.TaskInfo,
 		ServiceDicts:   serviceDicts,
 		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 			// 流式入库：发现弱口令立即保存
-			w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, []*scanner.Vulnerability{vul})
+			w.saveVulResultDirect(ctx, task.MainTaskId, []*scanner.Vulnerability{vul})
 		},
 	}
 
 	// 构建扫描器配置
 	scanConfig := &scanner.ScanConfig{
-		Assets:      bruteAssets,
-		Options:     bruteScanConfig,
-		WorkspaceId: task.WorkspaceId,
-		MainTaskId:  task.MainTaskId,
+		Assets:     bruteAssets,
+		Options:    bruteScanConfig,
+		MainTaskId: task.MainTaskId,
 		TaskLogger: func(level, format string, args ...interface{}) {
 			w.taskLog(task.TaskId, level, format, args...)
 		},

@@ -432,7 +432,7 @@ function viewReport() {
 }
 
 async function handleStart() {
-  const res = await startTask({ id: task.value.id, workspaceId: task.value.workspaceId })
+  const res = await startTask({ id: task.value.id })
   if (res.code === 0) {
     ElMessage.success(t('task.taskStarted'))
     await loadDetail()
@@ -444,7 +444,7 @@ async function handleStart() {
 
 async function handlePause() {
   await ElMessageBox.confirm(t('task.confirmPause'), t('common.tip'), { type: 'warning' })
-  const res = await pauseTask({ id: task.value.id, workspaceId: task.value.workspaceId })
+  const res = await pauseTask({ id: task.value.id })
   if (res.code === 0) {
     ElMessage.success(t('task.taskPaused'))
     await loadDetail()
@@ -454,7 +454,7 @@ async function handlePause() {
 }
 
 async function handleResume() {
-  const res = await resumeTask({ id: task.value.id, workspaceId: task.value.workspaceId })
+  const res = await resumeTask({ id: task.value.id })
   if (res.code === 0) {
     ElMessage.success(t('task.taskResumed'))
     await loadDetail()
@@ -465,7 +465,7 @@ async function handleResume() {
 
 async function handleStop() {
   await ElMessageBox.confirm(t('task.confirmStop'), t('common.tip'), { type: 'warning' })
-  const res = await stopTask({ id: task.value.id, workspaceId: task.value.workspaceId })
+  const res = await stopTask({ id: task.value.id })
   if (res.code === 0) {
     ElMessage.success(t('task.taskStopped'))
     await loadDetail()
@@ -487,7 +487,7 @@ async function handleRetry() {
 
 async function handleDelete() {
   await ElMessageBox.confirm(t('task.confirmDeleteTask'), t('common.tip'), { type: 'warning' })
-  const res = await deleteTask({ id: task.value.id, workspaceId: task.value.workspaceId })
+  const res = await deleteTask({ id: task.value.id })
   if (res.code === 0) {
     ElMessage.success(t('task.deleteSuccess'))
     stopAutoRefresh()

@@ -42,8 +42,7 @@ func TestAssetDetail_FullFields(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	wsId := "detail_ws"
-	assetModel := svcCtx.GetAssetModel(wsId)
+	assetModel := svcCtx.GetAssetModel()
 	id := primitive.NewObjectID()
 	doc := &model.Asset{
 		Id:         id,
@@ -63,7 +62,7 @@ func TestAssetDetail_FullFields(t *testing.T) {
 	}
 
 	l := NewAssetDetailLogic(ctx, svcCtx)
-	resp, err := l.AssetDetail(&types.AssetDetailReq{Id: id.Hex()}, wsId)
+	resp, err := l.AssetDetail(&types.AssetDetailReq{Id: id.Hex()})
 	if err != nil {
 		t.Fatalf("AssetDetail 失败: %v", err)
 	}
@@ -90,7 +89,7 @@ func TestAssetDetail_EmptyId(t *testing.T) {
 	svcCtx, cleanup := newTestSvcCtxDB(t)
 	defer cleanup()
 	l := NewAssetDetailLogic(context.Background(), svcCtx)
-	resp, err := l.AssetDetail(&types.AssetDetailReq{Id: ""}, "detail_ws")
+	resp, err := l.AssetDetail(&types.AssetDetailReq{Id: ""})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

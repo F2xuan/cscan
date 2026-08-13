@@ -1,0 +1,41 @@
+# 独立 Worker 探针部署
+# 适用场景：在远端目标网络部署一个 Worker 探针，回连中心 API 执行扫描。
+# 前提：中心 API 已部署并可访问，并已通过 Web 控制台「Worker 安装命令」取得 Install Key。
+#
+# 启动：
+#   CSCAN_SERVER=http://your-center-ip:8888 CSCAN_KEY=<install-key> \
+#     docker compose -f docker-compose-worker.yaml up -d
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+services:
+  cscan-worker:
+    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest
+    container_name: cscan_worker_probe
+    logging: *default-logging
+    environment:
+      - TZ=Asia/Shanghai
+      # 中心 API 地址（必填）：来自 Web 控制台「Worker 安装命令」
+      - CSCAN_SERVER=${CSCAN_SERVER}
+      # Worker Install Key（必填）：与中心 API 的 CSCAN_WORKER_KEY 一致
+      - CSCAN_KEY=${CSCAN_KEY}
+      # Worker 名称（可选，默认 主机名-pid）
+      - CSCAN_NAME=${CSCAN_NAME:-cscan-probe}
+      # Worker 直连中心 Mongo 写入资产（必填，需含 authSource=admin）
+      - CSCAN_MONGO_URI=${CSCAN_MONGO_URI}
+      # Worker 直连中心 Redis（调度层）
+      - CSCAN_REDIS_ADDR=${CSCAN_REDIS_ADDR}
+      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
+      # 单节点并发数（可选，留空按内存自适应）
+      - CSCAN_CONCURRENCY=${CSCAN_CONCURRENCY:-}
+    restart: unless-stopped
+    volumes:
+      - cscan_worker_logs:/app/log
+
+volumes:
+  cscan_worker_logs:
+    driver: local

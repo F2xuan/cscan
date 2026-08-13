@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func AssetListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetListLogic(r.Context(), svcCtx)
-		resp, err := l.AssetList(&req, workspaceId)
+		resp, err := l.AssetList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -35,9 +33,8 @@ func AssetListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // AssetStatHandler 资产统计
 func AssetStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetStatLogic(r.Context(), svcCtx)
-		resp, err := l.AssetStat(workspaceId)
+		resp, err := l.AssetStat()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -55,9 +52,8 @@ func AssetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetDeleteLogic(r.Context(), svcCtx)
-		resp, err := l.AssetDelete(&req, workspaceId)
+		resp, err := l.AssetDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -75,9 +71,8 @@ func AssetBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetBatchDeleteLogic(r.Context(), svcCtx)
-		resp, err := l.AssetBatchDelete(&req, workspaceId)
+		resp, err := l.AssetBatchDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -89,9 +84,8 @@ func AssetBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // AssetClearHandler 清空资产
 func AssetClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetClearLogic(r.Context(), svcCtx)
-		resp, err := l.AssetClear(workspaceId)
+		resp, err := l.AssetClear()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -109,9 +103,8 @@ func AssetImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetImportLogic(r.Context(), svcCtx)
-		resp, err := l.AssetImport(&req, workspaceId)
+		resp, err := l.AssetImport(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -129,9 +122,8 @@ func AssetSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetSaveLogic(r.Context(), svcCtx)
-		resp, err := l.AssetSave(&req, workspaceId)
+		resp, err := l.AssetSave(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -181,9 +173,8 @@ func AssetGroupsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetGroupsLogic(r.Context(), svcCtx)
-		resp, err := l.AssetGroups(&req, workspaceId)
+		resp, err := l.AssetGroups(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -201,9 +192,8 @@ func AssetInventoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetInventoryLogic(r.Context(), svcCtx)
-		resp, err := l.AssetInventory(&req, workspaceId)
+		resp, err := l.AssetInventory(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -221,9 +211,8 @@ func ScreenshotsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewScreenshotsLogic(r.Context(), svcCtx)
-		resp, err := l.Screenshots(&req, workspaceId)
+		resp, err := l.Screenshots(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -241,9 +230,8 @@ func AssetUpdateLabelsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetUpdateLabelsLogic(r.Context(), svcCtx)
-		resp, err := l.AssetUpdateLabels(&req, workspaceId)
+		resp, err := l.AssetUpdateLabels(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -261,9 +249,8 @@ func AssetAddLabelHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetAddLabelLogic(r.Context(), svcCtx)
-		resp, err := l.AssetAddLabel(&req, workspaceId)
+		resp, err := l.AssetAddLabel(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -281,9 +268,8 @@ func AssetRemoveLabelHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetRemoveLabelLogic(r.Context(), svcCtx)
-		resp, err := l.AssetRemoveLabel(&req, workspaceId)
+		resp, err := l.AssetRemoveLabel(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -301,9 +287,8 @@ func AssetFilterOptionsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetFilterOptionsLogic(r.Context(), svcCtx)
-		resp, err := l.AssetFilterOptions(&req, workspaceId)
+		resp, err := l.AssetFilterOptions(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -321,9 +306,8 @@ func AssetDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetDetailLogic(r.Context(), svcCtx)
-		resp, err := l.AssetDetail(&req, workspaceId)
+		resp, err := l.AssetDetail(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -341,9 +325,8 @@ func DeleteAssetGroupHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDeleteAssetGroupLogic(r.Context(), svcCtx)
-		resp, err := l.DeleteAssetGroup(&req, workspaceId)
+		resp, err := l.DeleteAssetGroup(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -361,9 +344,8 @@ func AssetExposuresHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetExposuresLogic(r.Context(), svcCtx)
-		resp, err := l.AssetExposures(&req, workspaceId)
+		resp, err := l.AssetExposures(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -380,9 +362,8 @@ func AssetTargetListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, err.Error())
 			return
 		}
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetTargetListLogic(r.Context(), svcCtx)
-		resp, err := l.AssetTargetList(&req, workspaceId)
+		resp, err := l.AssetTargetList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -399,9 +380,8 @@ func AssetTargetDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, err.Error())
 			return
 		}
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetTargetDetailLogic(r.Context(), svcCtx)
-		resp, err := l.AssetTargetDetail(&req, workspaceId)
+		resp, err := l.AssetTargetDetail(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -418,9 +398,8 @@ func AssetTargetUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, err.Error())
 			return
 		}
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetTargetUpdateLogic(r.Context(), svcCtx)
-		if err := l.AssetTargetUpdate(&req, workspaceId); err != nil {
+		if err := l.AssetTargetUpdate(&req); err != nil {
 			response.Error(w, err)
 			return
 		}
@@ -436,9 +415,8 @@ func AssetTargetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, err.Error())
 			return
 		}
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetTargetDeleteLogic(r.Context(), svcCtx)
-		resp, err := l.AssetTargetDelete(&req, workspaceId)
+		resp, err := l.AssetTargetDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -450,9 +428,8 @@ func AssetTargetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // ScreenshotsClearHandler 清空截图
 func ScreenshotsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewScreenshotsClearLogic(r.Context(), svcCtx)
-		resp, err := l.ScreenshotsClear(workspaceId)
+		resp, err := l.ScreenshotsClear()
 		if err != nil {
 			response.Error(w, err)
 			return

@@ -28,7 +28,6 @@ func NewHistoryService(db *mongo.Database) *HistoryService {
 
 // ArchiveResultsReq represents a request to archive current scan results
 type ArchiveResultsReq struct {
-	WorkspaceId string
 	TargetId    string
 	Authority   string
 	Host        string
@@ -38,7 +37,6 @@ type ArchiveResultsReq struct {
 
 // GetResultHistoryReq represents a request to retrieve historical versions
 type GetResultHistoryReq struct {
-	WorkspaceId string
 	Authority   string
 	Host        string
 	Port        int
@@ -62,7 +60,6 @@ type HistoricalVersion struct {
 
 // CompareVersionsReq represents a request to compare two versions
 type CompareVersionsReq struct {
-	WorkspaceId string
 	VersionId1  string
 	VersionId2  string
 }
@@ -84,9 +81,6 @@ type CompareVersionsResp struct {
 // This method ensures atomicity by using MongoDB transactions
 func (s *HistoryService) ArchiveCurrentResults(ctx context.Context, req *ArchiveResultsReq) error {
 	// Validate required parameters
-	if req.WorkspaceId == "" {
-		return fmt.Errorf("workspace_id is required")
-	}
 	if req.Host == "" {
 		return fmt.Errorf("host is required")
 	}
@@ -111,9 +105,8 @@ func (s *HistoryService) ArchiveCurrentResults(ctx context.Context, req *Archive
 		// Step 1: Query existing directory scan results
 		dirScanModel := model.NewDirScanResultModel(s.db)
 		dirFilter := bson.M{
-			"workspace_id": req.WorkspaceId,
-			"host":         req.Host,
-			"port":         req.Port,
+			"host": req.Host,
+			"port": req.Port,
 		}
 		if req.Authority != "" {
 			dirFilter["authority"] = req.Authority
@@ -125,7 +118,7 @@ func (s *HistoryService) ArchiveCurrentResults(ctx context.Context, req *Archive
 		}
 
 		// Step 2: Query existing vulnerability scan results
-		scanResultModel := model.NewScanResultModel(s.db, req.WorkspaceId)
+		scanResultModel := model.NewScanResultModel(s.db)
 		vulnFilter := bson.M{
 			"host": req.Host,
 			"port": req.Port,
@@ -166,14 +159,13 @@ func (s *HistoryService) ArchiveCurrentResults(ctx context.Context, req *Archive
 		}
 
 		// Step 4: Create historical record
-		historyModel := model.NewScanResultHistoryModel(s.db, req.WorkspaceId)
+		historyModel := model.NewScanResultHistoryModel(s.db)
 		versionId := uuid.New().String()
 
 		changesSummary := fmt.Sprintf("Archived %d directory scans and %d vulnerability scans",
 			len(dirResults), len(vulnResults))
 
 		historyRecord := &model.ScanResultHistory{
-			WorkspaceId:     req.WorkspaceId,
 			AssetId:         req.TargetId,
 			Authority:       req.Authority,
 			Host:            req.Host,
@@ -209,9 +201,6 @@ func (s *HistoryService) ArchiveCurrentResults(ctx context.Context, req *Archive
 // GetResultHistory retrieves historical scan result versions within a time range
 func (s *HistoryService) GetResultHistory(ctx context.Context, req *GetResultHistoryReq) (*GetResultHistoryResp, error) {
 	// Validate required parameters
-	if req.WorkspaceId == "" {
-		return nil, fmt.Errorf("workspace_id is required")
-	}
 	if req.Host == "" {
 		return nil, fmt.Errorf("host is required")
 	}
@@ -219,17 +208,17 @@ func (s *HistoryService) GetResultHistory(ctx context.Context, req *GetResultHis
 		return nil, fmt.Errorf("port is required")
 	}
 
-	historyModel := model.NewScanResultHistoryModel(s.db, req.WorkspaceId)
+	historyModel := model.NewScanResultHistoryModel(s.db)
 
 	var histories []model.ScanResultHistory
 	var err error
 
 	// Query by time range if provided, otherwise get all versions
 	if !req.StartTime.IsZero() && !req.EndTime.IsZero() {
-		histories, err = historyModel.FindByTimeRange(ctx, req.WorkspaceId, req.Authority, req.Host, req.Port, req.StartTime, req.EndTime)
+		histories, err = historyModel.FindByTimeRange(ctx, req.Authority, req.Host, req.Port, req.StartTime, req.EndTime)
 	} else {
 		// Get all versions for this asset (limited to reasonable number)
-		histories, err = historyModel.FindByAuthority(ctx, req.WorkspaceId, req.Authority, req.Host, req.Port, 100)
+		histories, err = historyModel.FindByAuthority(ctx, req.Authority, req.Host, req.Port, 100)
 	}
 
 	if err != nil {
@@ -256,17 +245,14 @@ func (s *HistoryService) GetResultHistory(ctx context.Context, req *GetResultHis
 // CompareVersions compares two historical scan versions and shows differences
 func (s *HistoryService) CompareVersions(ctx context.Context, req *CompareVersionsReq) (*CompareVersionsResp, error) {
 	// Validate required parameters
-	if req.WorkspaceId == "" {
-		return nil, fmt.Errorf("workspace_id is required")
-	}
 	if req.VersionId1 == "" || req.VersionId2 == "" {
 		return nil, fmt.Errorf("both version IDs are required")
 	}
 
-	historyModel := model.NewScanResultHistoryModel(s.db, req.WorkspaceId)
+	historyModel := model.NewScanResultHistoryModel(s.db)
 
 	// Fetch both versions
-	version1, err := historyModel.FindByVersionId(ctx, req.WorkspaceId, req.VersionId1)
+	version1, err := historyModel.FindByVersionId(ctx, req.VersionId1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch version 1: %w", err)
 	}
@@ -274,7 +260,7 @@ func (s *HistoryService) CompareVersions(ctx context.Context, req *CompareVersio
 		return nil, fmt.Errorf("version 1 not found: %s", req.VersionId1)
 	}
 
-	version2, err := historyModel.FindByVersionId(ctx, req.WorkspaceId, req.VersionId2)
+	version2, err := historyModel.FindByVersionId(ctx, req.VersionId2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch version 2: %w", err)
 	}

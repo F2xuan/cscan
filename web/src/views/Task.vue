@@ -934,7 +934,7 @@ async function handleSubmit() {
 
 async function handleDelete(row) {
   await ElMessageBox.confirm(t('task.confirmDeleteTask'), t('common.tip'), { type: 'warning' })
-  const res = await deleteTask({ id: row.id, workspaceId: row.workspaceId })
+  const res = await deleteTask({ id: row.id })
   res.code === 0 ? (ElMessage.success(t('task.deleteSuccess')), loadData()) : ElMessage.error(res.msg)
 }
 
@@ -943,7 +943,7 @@ function handleSelectionChange(rows) { selectedRows.value = rows }
 async function handleBatchDelete() {
   if (selectedRows.value.length === 0) return
   await ElMessageBox.confirm(t('task.confirmBatchDelete', { count: selectedRows.value.length }), t('common.tip'), { type: 'warning' })
-  const res = await batchDeleteTask({ ids: selectedRows.value.map(row => row.id), workspaceId: 'default' })
+  const res = await batchDeleteTask({ ids: selectedRows.value.map(row => row.id) })
   res.code === 0 ? (ElMessage.success(t('task.deleteSuccess')), selectedRows.value = [], loadData()) : ElMessage.error(res.msg)
 }
 
@@ -959,7 +959,7 @@ async function handleRetry(row) {
 }
 
 async function handleStart(row) {
-  const res = await startTask({ id: row.id, workspaceId: row.workspaceId })
+  const res = await startTask({ id: row.id })
   if (res.code === 0) {
     ElMessage.success(t('task.taskStarted'))
     loadData()
@@ -972,18 +972,18 @@ async function handleStart(row) {
 
 async function handlePause(row) {
   await ElMessageBox.confirm(t('task.confirmPause'), t('common.tip'), { type: 'warning' })
-  const res = await pauseTask({ id: row.id, workspaceId: row.workspaceId })
+  const res = await pauseTask({ id: row.id })
   res.code === 0 ? (ElMessage.success(t('task.taskPaused')), loadData()) : ElMessage.error(res.msg)
 }
 
 async function handleResume(row) {
-  const res = await resumeTask({ id: row.id, workspaceId: row.workspaceId })
+  const res = await resumeTask({ id: row.id })
   res.code === 0 ? (ElMessage.success(t('task.taskResumed')), loadData()) : ElMessage.error(res.msg)
 }
 
 async function handleStop(row) {
   await ElMessageBox.confirm(t('task.confirmStop'), t('common.tip'), { type: 'warning' })
-  const res = await stopTask({ id: row.id, workspaceId: row.workspaceId })
+  const res = await stopTask({ id: row.id })
   res.code === 0 ? (ElMessage.success(t('task.taskStopped')), loadData()) : ElMessage.error(res.msg)
 }
 

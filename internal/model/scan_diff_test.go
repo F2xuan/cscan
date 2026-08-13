@@ -29,7 +29,7 @@ func newTestScanDiffModel(t *testing.T) (*ScanDiffModel, func()) {
 		_ = db.Drop(context.Background())
 		_ = client.Disconnect(context.Background())
 	}
-	return NewScanDiffModel(db, "default"), cleanup
+	return NewScanDiffModel(db), cleanup
 }
 
 func TestScanDiff_DeleteOlderThan(t *testing.T) {

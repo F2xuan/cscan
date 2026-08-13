@@ -27,7 +27,7 @@ func newTestVulModel(t *testing.T) (*VulModel, func()) {
 		_ = db.Drop(ctx)
 		_ = client.Disconnect(ctx)
 	}
-	return NewVulModel(db, "test"), cleanup
+	return NewVulModel(db), cleanup
 }
 
 // TestShouldResurrect 纯逻辑单测：仅 fixed 应复活为 open（T1.3）。

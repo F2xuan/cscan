@@ -86,10 +86,15 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 		memUsed = 0.0
 	}
 
+	// 修复 #27：读取 concurrency 时加 RLock，避免与 applyConcurrency 写入竞争
+	w.mu.RLock()
+	concurrency := w.config.Concurrency
+	w.mu.RUnlock()
+
 	// 优先使用 Redis 直连
 	if w.schedClient != nil {
 		resp, err := w.schedClient.KeepAliveWithResponse(ctx, cpuLoad, memUsed,
-			w.taskStarted, w.taskExecuted, w.config.Concurrency)
+			w.taskStarted, w.taskExecuted, concurrency)
 		if err != nil {
 			return err
 		}
@@ -123,7 +128,7 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 		TaskStartedNumber:  int32(w.taskStarted),
 		TaskExecutedNumber: int32(w.taskExecuted),
 		IsDaemon:           false,
-		Concurrency:        w.config.Concurrency,
+		Concurrency:        concurrency,
 	})
 	if err != nil {
 		return err

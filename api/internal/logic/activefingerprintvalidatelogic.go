@@ -66,12 +66,11 @@ func (l *ActiveFingerprintValidateLogic) ActiveFingerprintValidate(req *types.Ac
 	configBytes, _ := json.Marshal(taskConfig)
 
 	task := &scheduler.TaskInfo{
-		TaskId:      taskId,
-		MainTaskId:  taskId,
-		WorkspaceId: "default",
-		TaskName:    "主动指纹验证",
-		Config:      string(configBytes),
-		Priority:    2,
+		TaskId:     taskId,
+		MainTaskId: taskId,
+		TaskName:   "主动指纹验证",
+		Config:     string(configBytes),
+		Priority:   2,
 	}
 
 	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {

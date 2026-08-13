@@ -110,8 +110,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	if len(opts.Paths) == 0 {
 		logWarn("[URLFinder] 未提供扫描路径")
 		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
+			MainTaskId: config.MainTaskId,
 		}, nil
 	}
 
@@ -153,8 +152,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	if len(targets) == 0 {
 		logWarn("[URLFinder] 无有效目标")
 		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
+			MainTaskId: config.MainTaskId,
 		}, nil
 	}
 
@@ -238,8 +236,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 				close(taskChan)
 				wg.Wait()
 				return &ScanResult{
-					WorkspaceId: config.WorkspaceId,
-					MainTaskId:  config.MainTaskId,
+					MainTaskId: config.MainTaskId,
 				}, ctx.Err()
 			case taskChan <- scanTask{baseURL: baseURL, path: path}:
 				completedTasks++
@@ -292,8 +289,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	}
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets:      assets,
 	}, nil
 }

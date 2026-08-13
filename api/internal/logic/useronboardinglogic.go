@@ -39,12 +39,10 @@ func (l *UserOnboardingLogic) UserOnboardingStatus() (*types.UserOnboardingStatu
 
 	done := user.OnboardingDone
 	if !done {
-		// 老用户（当前工作空间已有扫描任务）视为已完成引导，避免重复弹出
-		if wsId := middleware.GetWorkspaceId(l.ctx); wsId != "" {
-			n, cerr := l.svcCtx.GetMainTaskModel(wsId).Count(l.ctx, bson.M{})
-			if cerr == nil && n > 0 {
-				done = true
-			}
+		// 老用户（已有扫描任务）视为已完成引导，避免重复弹出
+		n, cerr := l.svcCtx.GetMainTaskModel().Count(l.ctx, bson.M{})
+		if cerr == nil && n > 0 {
+			done = true
 		}
 	}
 	return &types.UserOnboardingStatusResp{Code: 0, Msg: "success", Done: done}, nil

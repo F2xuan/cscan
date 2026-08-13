@@ -126,7 +126,6 @@ type CheckTaskResult struct {
 	IsFinished  bool
 	TaskId      string
 	MainTaskId  string
-	WorkspaceId string
 	Config      string
 }
 
@@ -235,14 +234,13 @@ func (s *ServiceContext) popTaskFromQueue(ctx context.Context, queueKey, process
 		return nil, err
 	}
 
-	s.updateMainTaskToStarted(ctx, task.MainTaskId, task.WorkspaceId)
+	s.updateMainTaskToStarted(ctx, task.MainTaskId)
 
 	return &CheckTaskResult{
 		IsExist:     true,
 		IsFinished:  false,
 		TaskId:      task.TaskId,
 		MainTaskId:  task.MainTaskId,
-		WorkspaceId: task.WorkspaceId,
 		Config:      task.Config,
 	}, nil
 }
@@ -276,27 +274,26 @@ func (s *ServiceContext) popTaskFromBuckets(ctx context.Context, workerQueueKey,
 		return nil, err
 	}
 
-	s.updateMainTaskToStarted(ctx, task.MainTaskId, task.WorkspaceId)
+	s.updateMainTaskToStarted(ctx, task.MainTaskId)
 
 	return &CheckTaskResult{
 		IsExist:     true,
 		IsFinished:  false,
 		TaskId:      task.TaskId,
 		MainTaskId:  task.MainTaskId,
-		WorkspaceId: task.WorkspaceId,
 		Config:      task.Config,
 	}, nil
 }
 
-func (s *ServiceContext) updateMainTaskToStarted(ctx context.Context, mainTaskId, workspaceId string) {
-	if mainTaskId == "" || workspaceId == "" || !isValidObjectID(mainTaskId) {
+func (s *ServiceContext) updateMainTaskToStarted(ctx context.Context, mainTaskId string) {
+	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
 		return
 	}
 
 	mongoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	taskModel := model.NewMainTaskModel(s.MongoDB, workspaceId)
+	taskModel := model.NewMainTaskModel(s.MongoDB)
 	task, err := taskModel.FindById(mongoCtx, mainTaskId)
 	if err != nil || task == nil {
 		return
@@ -389,17 +386,16 @@ func (s *ServiceContext) updateTaskInDB(ctx context.Context, taskId, state, resu
 		}
 	}
 
-	workspaceId, _ := taskInfo["workspaceId"].(string)
 	mainTaskId, _ := taskInfo["mainTaskId"].(string)
 	subTaskCount := 1
 	if count, ok := taskInfo["subTaskCount"].(float64); ok {
 		subTaskCount = int(count)
 	}
-	if workspaceId == "" || mainTaskId == "" || !isValidObjectID(mainTaskId) {
+	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
 		return
 	}
 
-	taskModel := model.NewMainTaskModel(s.MongoDB, workspaceId)
+	taskModel := model.NewMainTaskModel(s.MongoDB)
 	now := time.Now()
 	update := bson.M{}
 
@@ -464,9 +460,9 @@ type IncrSubTaskDoneResult struct {
 }
 
 // IncrSubTaskDone 递增子任务完成数
-func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId, workspaceId, phase string, incrAmount int) (*IncrSubTaskDoneResult, error) {
-	if workspaceId == "" || mainTaskId == "" {
-		return &IncrSubTaskDoneResult{Success: false, Message: "workspaceId or mainTaskId is empty"}, nil
+func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId, phase string, incrAmount int) (*IncrSubTaskDoneResult, error) {
+	if mainTaskId == "" {
+		return &IncrSubTaskDoneResult{Success: false, Message: "mainTaskId is empty"}, nil
 	}
 
 	// 快速验证类任务跳过
@@ -480,7 +476,7 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 	mongoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	taskModel := model.NewMainTaskModel(s.MongoDB, workspaceId)
+	taskModel := model.NewMainTaskModel(s.MongoDB)
 
 	if incrAmount <= 0 {
 		incrAmount = 1

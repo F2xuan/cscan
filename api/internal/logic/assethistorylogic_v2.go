@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/internal/model"
 	"cscan/pkg/xerr"
 )
 
@@ -25,34 +23,24 @@ func NewAssetHistoryV2Logic(ctx context.Context, svcCtx *svc.ServiceContext) *As
 }
 
 // AssetHistoryV2 retrieves historical scan versions for a specific asset
-func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, workspaceId string) (*types.AssetScanHistoryResp, error) {
+func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq) (*types.AssetScanHistoryResp, error) {
 	// Validate asset ID
 	if req.AssetId == "" {
 		return nil, xerr.NewParamError("asset_id is required")
 	}
 
-	// Fetch asset - 当 workspaceId 为 "all" 时，需要遍历所有工作空间查找资产
-	var asset *model.Asset
-	var actualWorkspaceId string
-
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName), wsId)
-		found, err := assetModel.FindById(l.ctx, req.AssetId)
-		if err == nil && found != nil {
-			asset = found
-			actualWorkspaceId = wsId
-			break
-		}
+	// Fetch asset
+	assetModel := l.svcCtx.GetAssetModel()
+	asset, err := assetModel.FindById(l.ctx, req.AssetId)
+	if err != nil {
+		return nil, xerr.NewServerError(fmt.Sprintf("find asset fail: %v", err))
 	}
-
 	if asset == nil {
 		return nil, xerr.NewNotFoundError(fmt.Sprintf("asset not found: %s", req.AssetId))
 	}
 
 	// Parse time range if provided
 	var startTime, endTime time.Time
-	var err error
 	if req.StartTime != "" {
 		startTime, err = time.Parse(time.RFC3339, req.StartTime)
 		if err != nil {
@@ -70,12 +58,11 @@ func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, wor
 	historyService := svc.NewHistoryService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
 
 	historyReq := &svc.GetResultHistoryReq{
-		WorkspaceId: actualWorkspaceId,
-		Authority:   asset.Authority,
-		Host:        asset.Host,
-		Port:        asset.Port,
-		StartTime:   startTime,
-		EndTime:     endTime,
+		Authority: asset.Authority,
+		Host:      asset.Host,
+		Port:      asset.Port,
+		StartTime: startTime,
+		EndTime:   endTime,
 	}
 
 	historyResp, err := historyService.GetResultHistory(l.ctx, historyReq)
@@ -96,7 +83,7 @@ func (l *AssetHistoryV2Logic) AssetHistoryV2(req *types.AssetScanHistoryReq, wor
 	}
 
 	// 同时查询字段级变更历史（原 V1 功能），供时间线组件使用
-	historyModel := l.svcCtx.GetAssetHistoryModel(actualWorkspaceId)
+	historyModel := l.svcCtx.GetAssetHistoryModel()
 	histories, _ := historyModel.FindByAssetId(l.ctx, req.AssetId, 20)
 
 	historyList := make([]types.AssetHistoryItem, 0, len(histories))

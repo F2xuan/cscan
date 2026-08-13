@@ -139,11 +139,10 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 
 	// 执行扫描
 	result, err := ffufScanner.Scan(dirCtx, &scanner.ScanConfig{
-		Assets:      httpAssets,
-		Options:     opts,
-		WorkspaceId: task.WorkspaceId,
-		MainTaskId:  task.MainTaskId,
-		TaskLogger:  taskLogger,
+		Assets:     httpAssets,
+		Options:    opts,
+		MainTaskId: task.MainTaskId,
+		TaskLogger: taskLogger,
 		OnProgress:  onProgress,
 		OnTargetDone: func(target string, assets []*scanner.Asset) {
 			// 流式入库：每完成一个目标立即保存
@@ -230,7 +229,7 @@ func (w *Worker) saveDirScanResults(ctx context.Context, task *scheduler.TaskInf
 	}
 
 	// 直连 MongoDB 保存结果（与 JSFinder 保持一致，避免 HTTP 接口不存在导致 404）
-	w.saveDirScanResultsDirect(ctx, task.WorkspaceId, task.MainTaskId, results)
+	w.saveDirScanResultsDirect(ctx, task.MainTaskId, results)
 }
 
 // executeJSFinder 执行 JSFinder 扫描阶段（JS 敏感信息 + 未授权检测）

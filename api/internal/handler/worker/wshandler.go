@@ -20,17 +20,12 @@ import (
 // ==================== WebSocket Message Types ====================
 
 const (
-	WSTypeAuth        = "AUTH"          // 认证请求
-	WSTypeAuthOK      = "AUTH_OK"       // 认证成功
-	WSTypeAuthFail    = "AUTH_FAIL"     // 认证失败
-	WSTypePing        = "PING"          // 心跳请求
-	WSTypePong        = "PONG"          // 心跳响应
-	WSTypeLog         = "LOG"           // 日志消息
-	WSTypeLogBatch    = "LOG_BATCH"     // 批量日志消息
-	WSTypeControl     = "CONTROL"       // 控制信号
-	WSTypeLogSyncReq  = "LOG_SYNC_REQ"  // API 请求 Worker 同步日志
-	WSTypeLogSyncResp = "LOG_SYNC_RESP" // Worker 返回同步日志数据
-	WSTypeLogSyncAck  = "LOG_SYNC_ACK"  // API 确认日志已写入文件
+	WSTypeAuth     = "AUTH"      // 认证请求
+	WSTypeAuthOK   = "AUTH_OK"   // 认证成功
+	WSTypeAuthFail = "AUTH_FAIL" // 认证失败
+	WSTypePing     = "PING"      // 心跳请求
+	WSTypePong     = "PONG"      // 心跳响应
+	WSTypeControl  = "CONTROL"   // 控制信号
 )
 
 // WSMessage WebSocket消息结构
@@ -43,40 +38,6 @@ type WSMessage struct {
 type AuthPayload struct {
 	WorkerName string `json:"workerName"`
 	InstallKey string `json:"installKey"`
-}
-
-// LogPayload 日志消息载荷
-type LogPayload struct {
-	TaskId    string `json:"taskId"`
-	Level     string `json:"level"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
-}
-
-// LogBatchPayload 批量日志消息载荷
-type LogBatchPayload struct {
-	Logs []LogPayload `json:"logs"`
-}
-
-// LogSyncReqPayload 日志同步请求载荷（API → Worker）
-type LogSyncReqPayload struct {
-	Filename string `json:"filename"`
-	Offset   int64  `json:"offset"`
-}
-
-// LogSyncRespPayload 日志同步响应载荷（Worker → API）
-type LogSyncRespPayload struct {
-	Filename  string               `json:"filename"`
-	Logs      []svc.WorkerLogEntry `json:"logs"`
-	NewOffset int64                `json:"newOffset"`
-	HasMore   bool                 `json:"hasMore"`
-	NextFile  string               `json:"nextFile"`
-}
-
-// LogSyncAckPayload 日志同步确认载荷（API → Worker）
-type LogSyncAckPayload struct {
-	Filename string `json:"filename"`
-	Offset   int64  `json:"offset"`
 }
 
 // ControlPayload 控制信号载荷
@@ -97,27 +58,17 @@ type WorkerConnection struct {
 	closeOnce  sync.Once
 	lastPing   time.Time
 	mu         sync.RWMutex
-
-	// 日志同步游标（记录已成功写入文件的日志位置）
-	syncCursorMu sync.Mutex
-	syncCursor   LogSyncReqPayload        // {filename, offset}
-	syncRespChan chan *LogSyncRespPayload // 同步响应通道
-
-	// 日志同步完成信号（供 TriggerLogSyncAndWait 等待本轮同步落盘，用于刷新时立即拉取最新日志）
-	syncDone chan struct{}
 }
 
 // NewWorkerConnection 创建新的Worker连接
 func NewWorkerConnection(conn net.Conn, workerName string, svcCtx *svc.ServiceContext) *WorkerConnection {
 	return &WorkerConnection{
-		conn:         conn,
-		workerName:   workerName,
-		svcCtx:       svcCtx,
-		sendChan:     make(chan []byte, 256),
-		closeChan:    make(chan struct{}),
-		lastPing:     time.Now(),
-		syncRespChan: make(chan *LogSyncRespPayload, 8),
-		syncDone:     make(chan struct{}, 1),
+		conn:       conn,
+		workerName: workerName,
+		svcCtx:     svcCtx,
+		sendChan:   make(chan []byte, 256),
+		closeChan:  make(chan struct{}),
+		lastPing:   time.Now(),
 	}
 }
 
@@ -491,12 +442,6 @@ func handleWebSocketConnection(ctx context.Context, conn net.Conn, svcCtx *svc.S
 	// 启动心跳检测
 	go heartbeatChecker(ctx, wc)
 
-	// 启动日志同步循环（定期从 Worker 拉取日志写入文件）
-	go startLogSyncLoop(ctx, wc, svcCtx)
-
-	// 连接建立后立即触发一次日志同步
-	TriggerLogSync(wc)
-
 	// 主循环：读取消息
 	readPump(ctx, conn, wc, svcCtx)
 }
@@ -605,8 +550,10 @@ func readPump(ctx context.Context, conn net.Conn, wc *WorkerConnection, svcCtx *
 			continue
 		}
 
-		// 调试：打印收到的消息类型
-		logx.Infof("[WorkerWS] Received message from %s: type=%s", wc.GetWorkerName(), msg.Type)
+		// 仅对非心跳消息打印日志，避免 PING/PONG 刷屏
+		if msg.Type != WSTypePing && msg.Type != WSTypePong {
+			logx.Infof("[WorkerWS] Received message from %s: type=%s", wc.GetWorkerName(), msg.Type)
+		}
 
 		// 路由消息
 		handleMessage(ctx, wc, svcCtx, &msg)
@@ -672,13 +619,6 @@ func handleMessage(ctx context.Context, wc *WorkerConnection, svcCtx *svc.Servic
 		handlePing(wc)
 	case WSTypePong:
 		handlePong(wc)
-	case WSTypeLog:
-		handleLog(ctx, wc, svcCtx, msg.Payload)
-	case WSTypeLogBatch:
-		handleLogBatch(ctx, wc, svcCtx, msg.Payload)
-	case WSTypeLogSyncResp:
-		// Worker 返回的日志同步数据
-		handleLogSyncResp(ctx, wc, svcCtx, msg.Payload)
 	default:
 		logx.Infof("[WorkerWS] Unknown message type from %s: %s", wc.GetWorkerName(), msg.Type)
 	}
@@ -694,230 +634,6 @@ func handlePing(wc *WorkerConnection) {
 // handlePong 处理PONG消息
 func handlePong(wc *WorkerConnection) {
 	wc.UpdateLastPing()
-}
-
-// handleLog 处理单条日志消息（向后兼容：旧版 Worker 仍发送 LOG 消息）
-// 新版 Worker 通过游标同步协议传输日志，不再发送 LOG 消息
-// 保留此 handler 将旧版消息写入文件，避免日志丢失
-// 修复 H-4：Worker 字段强制使用已认证连接名，忽略上报 payload 中可能伪造的名称
-func handleLog(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
-	var logPayload LogPayload
-	if err := json.Unmarshal(payload, &logPayload); err != nil {
-		logx.Errorf("[WorkerWS] Invalid log payload from %s: %v", wc.GetWorkerName(), err)
-		return
-	}
-
-	if logPayload.Timestamp == 0 {
-		logPayload.Timestamp = time.Now().UnixMilli()
-	}
-
-	// 写入文件（兼容旧版 Worker）
-	if svcCtx.WorkerLogWriter != nil {
-		svcCtx.WorkerLogWriter.Write(svc.WorkerLogEntry{
-			Ts:     time.UnixMilli(logPayload.Timestamp).Local().Format("2006-01-02T15:04:05.000-07:00"),
-			Level:  logPayload.Level,
-			Worker: wc.GetWorkerName(),
-			TaskId: logPayload.TaskId,
-			Msg:    logPayload.Message,
-		})
-	}
-}
-
-// handleLogBatch 处理批量日志消息（向后兼容）
-func handleLogBatch(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
-	var batchPayload LogBatchPayload
-	if err := json.Unmarshal(payload, &batchPayload); err != nil {
-		logx.Errorf("[WorkerWS] Invalid log batch payload from %s: %v", wc.GetWorkerName(), err)
-		return
-	}
-
-	if svcCtx.WorkerLogWriter != nil {
-		entries := make([]svc.WorkerLogEntry, 0, len(batchPayload.Logs))
-		for _, logPayload := range batchPayload.Logs {
-			if logPayload.Timestamp == 0 {
-				logPayload.Timestamp = time.Now().UnixMilli()
-			}
-			entries = append(entries, svc.WorkerLogEntry{
-				Ts:     time.UnixMilli(logPayload.Timestamp).Local().Format("2006-01-02T15:04:05.000-07:00"),
-				Level:  logPayload.Level,
-				Worker: wc.GetWorkerName(),
-				TaskId: logPayload.TaskId,
-				Msg:    logPayload.Message,
-			})
-		}
-		svcCtx.WorkerLogWriter.WriteBatch(entries)
-	}
-}
-
-// handleLogSyncResp 处理 Worker 返回的日志同步数据
-// 修复 H-2：等待日志真正写入磁盘并 Sync 成功后才发送 ACK，避免 API 崩溃导致日志丢失。
-// Worker 只有收到 ACK 才会推进本地持久化游标，因此 ACK 必须作为"已持久化"的承诺。
-func handleLogSyncResp(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext, payload json.RawMessage) {
-	var resp LogSyncRespPayload
-	if err := json.Unmarshal(payload, &resp); err != nil {
-		logx.Errorf("[WorkerWS] Invalid log sync response from %s: %v", wc.GetWorkerName(), err)
-		return
-	}
-
-	// 修复 H-4：强制覆盖 Worker 名为已认证连接名，防止恶意 Worker 通过上报数据伪造 Worker 字段穿越路径
-	authedName := wc.GetWorkerName()
-	for i := range resp.Logs {
-		resp.Logs[i].Worker = authedName
-	}
-
-	if len(resp.Logs) == 0 {
-		// 没有新日志，直接 ACK 推进游标
-		sendLogSyncAck(wc, resp.Filename, resp.NewOffset)
-		wc.syncCursorMu.Lock()
-		wc.syncCursor = LogSyncReqPayload{
-			Filename: resp.Filename,
-			Offset:   resp.NewOffset,
-		}
-		wc.syncCursorMu.Unlock()
-		if resp.HasMore && resp.NextFile != "" {
-			wc.syncCursorMu.Lock()
-			wc.syncCursor = LogSyncReqPayload{Filename: resp.NextFile, Offset: 0}
-			wc.syncCursorMu.Unlock()
-		}
-		wc.notifySyncDone()
-		return
-	}
-
-	// 同步写入文件并等待 Sync 落盘
-	var writeErr error
-	if svcCtx.WorkerLogWriter != nil {
-		writeErr = svcCtx.WorkerLogWriter.SyncWriteBatch(resp.Logs)
-	}
-	if writeErr != nil {
-		// 写入失败：不发送 ACK，Worker 会在下次同步时重发同一批日志（at-least-once）
-		logx.Errorf("[WorkerWS] Failed to sync-write logs from %s: %v, will NOT ack (worker will retry)",
-			wc.GetWorkerName(), writeErr)
-		return
-	}
-
-	// 写入并 Sync 成功后才发送 ACK 给 Worker，更新其本地持久化游标
-	sendLogSyncAck(wc, resp.Filename, resp.NewOffset)
-
-	// 更新 API 端的内存游标
-	wc.syncCursorMu.Lock()
-	wc.syncCursor = LogSyncReqPayload{
-		Filename: resp.Filename,
-		Offset:   resp.NewOffset,
-	}
-	wc.syncCursorMu.Unlock()
-
-	// 如果还有更多数据且需要切换到下一个文件（跨日），更新游标
-	// NextFile 非空表示当前文件已读完，需要切换到下一个文件从头开始
-	if resp.HasMore && resp.NextFile != "" {
-		wc.syncCursorMu.Lock()
-		wc.syncCursor = LogSyncReqPayload{Filename: resp.NextFile, Offset: 0}
-		wc.syncCursorMu.Unlock()
-	}
-	wc.notifySyncDone()
-}
-
-// sendLogSyncAck 发送日志同步确认给 Worker
-func sendLogSyncAck(wc *WorkerConnection, filename string, offset int64) {
-	ack := LogSyncAckPayload{
-		Filename: filename,
-		Offset:   offset,
-	}
-	payloadData, _ := json.Marshal(ack)
-	wc.Send(&WSMessage{
-		Type:    WSTypeLogSyncAck,
-		Payload: payloadData,
-	})
-}
-
-// TriggerLogSync 触发一次日志同步（用户点击刷新按钮时调用）
-// 向 Worker 发送 LOG_SYNC_REQ，请求从当前游标位置开始的新日志
-func TriggerLogSync(wc *WorkerConnection) {
-	wc.syncCursorMu.Lock()
-	cursor := wc.syncCursor
-	wc.syncCursorMu.Unlock()
-
-	req := LogSyncReqPayload{
-		Filename: cursor.Filename,
-		Offset:   cursor.Offset,
-	}
-	payloadData, _ := json.Marshal(req)
-	wc.Send(&WSMessage{
-		Type:    WSTypeLogSyncReq,
-		Payload: payloadData,
-	})
-}
-
-// notifySyncDone 非阻塞地通知等待方"本轮日志同步已完成并落盘"
-func (wc *WorkerConnection) notifySyncDone() {
-	select {
-	case wc.syncDone <- struct{}{}:
-	default:
-	}
-}
-
-// TriggerLogSyncAndWait 触发一次日志同步，并等待本轮同步完成（或超时/连接关闭）
-// 用于用户点击"刷新"时立即拉取 Worker 最新日志，避免仅依赖后台 5s 轮询导致刷新看不到最新内容
-func (wc *WorkerConnection) TriggerLogSyncAndWait(timeout time.Duration) {
-	// 先清空可能残留的完成信号，确保等待的是本轮同步
-	for {
-		select {
-		case <-wc.syncDone:
-			continue
-		default:
-		}
-		break
-	}
-	TriggerLogSync(wc)
-	select {
-	case <-wc.syncDone:
-	case <-time.After(timeout):
-	case <-wc.closeChan:
-	}
-}
-
-// SyncAllAndWait 触发所有已连接 Worker 的日志同步并等待完成（或超时）
-// 任务日志刷新时调用：确保读取前各 Worker 已把最新日志拉取到 API 本地文件
-func (h *WorkerWSHandler) SyncAllAndWait(timeout time.Duration) {
-	var wg sync.WaitGroup
-	h.connections.Range(func(key, value interface{}) bool {
-		wc, ok := value.(*WorkerConnection)
-		if !ok {
-			return true
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			wc.TriggerLogSyncAndWait(timeout)
-		}()
-		return true
-	})
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-	}
-}
-
-// startLogSyncLoop 启动日志同步循环（每个 Worker 连接一个 goroutine）
-// 定期向 Worker 请求新日志，写入文件
-func startLogSyncLoop(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-wc.closeChan:
-			return
-		case <-ticker.C:
-			if wc.isClosed() {
-				return
-			}
-			TriggerLogSync(wc)
-		}
-	}
 }
 
 // ==================== Control Signal Subscription ====================

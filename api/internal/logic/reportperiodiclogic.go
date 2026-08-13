@@ -32,21 +32,18 @@ func NewReportPeriodicGenerateLogic(ctx context.Context, svcCtx *svc.ServiceCont
 	}
 }
 
-func (l *ReportPeriodicGenerateLogic) PeriodicGenerate(req *types.ReportPeriodicGenerateReq, workspaceId string) (*types.ReportPeriodicGenerateResp, error) {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func (l *ReportPeriodicGenerateLogic) PeriodicGenerate(req *types.ReportPeriodicGenerateReq) (*types.ReportPeriodicGenerateResp, error) {
 	period := strings.ToLower(strings.TrimSpace(req.Period))
 	if period == "" {
 		period = "weekly"
 	}
 	start, end, prevStart, prevEnd := derivePeriodRange(period, req.End)
 
-	cur, err := l.aggregate(workspaceId, start, end)
+	cur, err := l.aggregate(start, end)
 	if err != nil {
 		return &types.ReportPeriodicGenerateResp{Code: 500, Msg: "聚合失败: " + err.Error()}, nil
 	}
-	prev, err := l.aggregate(workspaceId, prevStart, prevEnd)
+	prev, err := l.aggregate(prevStart, prevEnd)
 	if err != nil {
 		logx.Errorf("[ReportPeriodic] prev aggregate failed: %v", err)
 		prev = &aggResult{}
@@ -94,9 +91,9 @@ func NewReportPeriodicExportLogic(ctx context.Context, svcCtx *svc.ServiceContex
 	}
 }
 
-func (l *ReportPeriodicExportLogic) PeriodicExport(req *types.ReportPeriodicExportReq, workspaceId string) ([]byte, string, error) {
+func (l *ReportPeriodicExportLogic) PeriodicExport(req *types.ReportPeriodicExportReq) ([]byte, string, error) {
 	gen := NewReportPeriodicGenerateLogic(l.ctx, l.svcCtx)
-	resp, err := gen.PeriodicGenerate(&types.ReportPeriodicGenerateReq{Period: req.Period, End: req.End, WorkspaceId: req.WorkspaceId}, workspaceId)
+	resp, err := gen.PeriodicGenerate(&types.ReportPeriodicGenerateReq{Period: req.Period, End: req.End})
 	if err != nil {
 		return nil, "", err
 	}
@@ -121,23 +118,23 @@ type aggResult struct {
 	topItems  []types.ReportPeriodicItem
 }
 
-func (l *ReportPeriodicGenerateLogic) aggregate(wsId string, start, end time.Time) (*aggResult, error) {
+func (l *ReportPeriodicGenerateLogic) aggregate(start, end time.Time) (*aggResult, error) {
 	res := &aggResult{sev: map[string]int64{}}
 
-	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB, wsId)
-	added, err := diffModel.FindByTimeRange(l.ctx, wsId, start, end, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded)
+	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB)
+	added, err := diffModel.FindByTimeRange(l.ctx, start, end, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded)
 	if err != nil {
 		return nil, err
 	}
 	res.newAssets = int64(len(added))
 
-	resolved, err := diffModel.FindByTimeRange(l.ctx, wsId, start, end, model.ScanDiffTypeVul, model.ScanDiffChangeResolved)
+	resolved, err := diffModel.FindByTimeRange(l.ctx, start, end, model.ScanDiffTypeVul, model.ScanDiffChangeResolved)
 	if err != nil {
 		return nil, err
 	}
 	res.fixed = int64(len(resolved))
 
-	vulModel := model.NewVulModel(l.svcCtx.MongoDB, wsId)
+	vulModel := model.NewVulModel(l.svcCtx.MongoDB)
 	sev, err := vulModel.StatBySeverityInRange(l.ctx, start, end)
 	if err != nil {
 		return nil, err
@@ -147,7 +144,7 @@ func (l *ReportPeriodicGenerateLogic) aggregate(wsId string, start, end time.Tim
 		res.newVulns += c
 	}
 
-	certModel := model.NewCertModel(l.svcCtx.MongoDB, wsId)
+	certModel := model.NewCertModel(l.svcCtx.MongoDB)
 	certs, err := certModel.Find(l.ctx, bson.M{}, nil)
 	if err != nil {
 		return nil, err

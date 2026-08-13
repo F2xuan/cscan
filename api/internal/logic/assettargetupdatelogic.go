@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -30,8 +29,7 @@ func NewAssetTargetUpdateLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 
 // AssetTargetUpdate 更新顶层资产的用户字段（labels/memo/color_tag）。
 // labels 为全量覆盖；memo/color_tag 仅在 req 字段非空时更新。
-// 跨 workspace 解析 owning ws，非 admin 操作非本 ws 返回 Forbidden。
-func (l *AssetTargetUpdateLogic) AssetTargetUpdate(req *types.AssetTargetUpdateReq, workspaceId string) error {
+func (l *AssetTargetUpdateLogic) AssetTargetUpdate(req *types.AssetTargetUpdateReq) error {
 	targetId := strings.TrimSpace(req.TargetId)
 	if targetId == "" {
 		return fmt.Errorf("targetId is empty")
@@ -40,13 +38,11 @@ func (l *AssetTargetUpdateLogic) AssetTargetUpdate(req *types.AssetTargetUpdateR
 		return err
 	}
 
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	owningWs := locateOwningWsMeta(l.ctx, l.svcCtx, wsIds, targetId)
-	if owningWs == "" {
+	if !targetMetaExists(l.ctx, l.svcCtx, targetId) {
 		return xerr.NewNotFoundError(fmt.Sprintf("target %s not found", targetId))
 	}
 
-	metaModel := l.svcCtx.GetAssetTargetMetaModel(owningWs)
+	metaModel := l.svcCtx.GetAssetTargetMetaModel()
 
 	if req.Labels != nil {
 		if err := metaModel.UpdateLabels(l.ctx, targetId, req.Labels); err != nil {

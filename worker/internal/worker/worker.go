@@ -42,18 +42,18 @@ type WorkerConfig struct {
 
 // Worker 工作节点
 type Worker struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	config     WorkerConfig
-	httpClient *WorkerHTTPClient    // HTTP 客户端（配置/模板/字典等仍走 HTTP）
-	schedClient *SchedulerClient    // Redis 直连调度客户端（任务拉取/心跳/进度上报）
-	wsClient   *WorkerWSClient      // WebSocket 客户端（用于日志推送和控制信号）
-	scanners   map[string]scanner.Scanner
-	taskChan chan *scheduler.TaskInfo
-	stopChan chan struct{}
-	stopOnce   sync.Once
-	wg         sync.WaitGroup
-	mu         sync.Mutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	config      WorkerConfig
+	httpClient  *WorkerHTTPClient // HTTP 客户端（配置/模板/字典等仍走 HTTP）
+	schedClient *SchedulerClient  // Redis 直连调度客户端（任务拉取/心跳/进度上报）
+	wsClient    *WorkerWSClient   // WebSocket 客户端（用于日志推送和控制信号）
+	scanners    map[string]scanner.Scanner
+	taskChan    chan *scheduler.TaskInfo
+	stopChan    chan struct{}
+	stopOnce    sync.Once
+	wg          sync.WaitGroup
+	mu          sync.RWMutex
 
 	// Phase 2 客户端优先级队列管理器
 	// 当 config.EnableTaskQueueManager=true 时启用
@@ -131,7 +131,7 @@ func (w *Worker) taskLog(taskId, level, format string, args ...interface{}) {
 	// 从 map 获取持久化的 logger 实例，仅在首次时创建
 	val, ok := w.taskLoggers.Load(mainTaskId)
 	if !ok {
-		newLogger := NewTaskLoggerWS(w.config.Name, mainTaskId, w.wsClient)
+		newLogger := NewTaskLoggerWS(w.config.Name, mainTaskId)
 		val, _ = w.taskLoggers.LoadOrStore(mainTaskId, newLogger)
 	}
 	logger := val.(*TaskLoggerWS)
@@ -151,7 +151,7 @@ func (w *Worker) taskLog(taskId, level, format string, args ...interface{}) {
 // cleanupTaskLogger 清理任务日志记录器
 func (w *Worker) cleanupTaskLogger(taskId string) {
 	mainTaskId := getMainTaskId(taskId)
-	// 日志已写入本地文件，无需 flush 缓冲区
+	// 日志直写 MongoDB，无需 flush 缓冲区
 	w.taskLoggers.Delete(mainTaskId)
 }
 
@@ -283,8 +283,8 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		config:     config,
 		httpClient: httpClient,
 		scanners:   make(map[string]scanner.Scanner),
-		taskChan: make(chan *scheduler.TaskInfo, config.Concurrency),
-		stopChan: make(chan struct{}),
+		taskChan:   make(chan *scheduler.TaskInfo, config.Concurrency),
+		stopChan:   make(chan struct{}),
 		logger:     NewWorkerLoggerLocal(config.Name), // 使用本地日志
 	}
 
@@ -307,12 +307,9 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	wsConfig := DefaultWSClientConfig(config.ServerAddr, config.Name, config.InstallKey)
 	w.wsClient = NewWorkerWSClient(wsConfig)
 
-	// 初始化日志同步：本地文件写入 + 游标同步
-	// Worker 日志先写入本地文件（事实源），通过 WebSocket 游标同步到 API 端文件
-	InitLogSync("log", config.Name, w.wsClient)
-
-	// 更新 logger 为 WebSocket 版本（实际写入本地文件，由游标同步传输到 API）
-	w.logger = NewWorkerLoggerWS(config.Name, w.wsClient)
+	// 更新 logger 为 MongoDB 版本（直写 MongoDB）
+	// globalMongoLogger 在 SetMongoDB 中初始化，此处仅创建 logger 壳
+	w.logger = NewWorkerLoggerWS(config.Name)
 
 	// 设置控制信号处理函数
 	w.wsClient.SetControlHandler(func(taskId, action string) {
@@ -374,7 +371,7 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 				IsSelfSigned: r.IsSelfSigned,
 			}
 		}
-		return w.saveCertResultsDirect(ctx, req.WorkspaceId, req.MainTaskId, certs)
+		return w.saveCertResultsDirect(ctx, req.MainTaskId, certs)
 	})
 	w.resultQueue.SetLogger(func(level, format string, args ...interface{}) {
 		w.logger.Info("[ResultQueue] "+format, args...)
@@ -387,6 +384,8 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 func (w *Worker) SetMongoDB(client *mongo.Client, db *mongo.Database) {
 	w.mongoClient = client
 	w.mongoDB = db
+	// 初始化 MongoDB 直写日志器（在 db 就绪后执行，避免 nil pointer）
+	InitMongoLogger(db, w.config.Name)
 }
 
 // SetRedis 设置 Redis 客户端并创建 SchedulerClient，用于直连 Redis 调度
@@ -455,10 +454,10 @@ func (w *Worker) handleWorkerControl(action, param string) {
 	case "rename":
 		w.logger.Info("Renaming worker to: %s", param)
 		w.config.Name = param
-		// 更新文件日志器的 worker 名称
-		UpdateGlobalFileLoggerWorkerName(param)
+		// 更新 MongoDB 日志器的 worker 名称
+		UpdateGlobalMongoLoggerWorkerName(param)
 		// 更新日志前缀（使用 WebSocket 版本）
-		w.logger = NewWorkerLoggerWS(param, w.wsClient)
+		w.logger = NewWorkerLoggerWS(param)
 		// 立即发送心跳，让服务端更新状态
 		go w.sendHeartbeat()
 	case "setConcurrency":
@@ -840,12 +839,17 @@ func getStackTrace() []byte {
 func (w *Worker) pullTask() bool {
 	ctx := context.Background()
 
+	// 修复 #27：读取 concurrency 时加 RLock，避免与 applyConcurrency 写入竞争
+	w.mu.RLock()
+	concurrency := w.config.Concurrency
+	w.mu.RUnlock()
+
 	// 检查是否有空闲槽位
 	pendingCount := len(w.taskChan)
 	if w.taskQueue != nil {
 		pendingCount += w.taskQueue.Size()
 	}
-	if pendingCount >= w.config.Concurrency {
+	if pendingCount >= concurrency {
 		return false
 	}
 
@@ -860,11 +864,10 @@ func (w *Worker) pullTask() bool {
 		}
 		if resp.IsExist && !resp.IsFinished {
 			task = &scheduler.TaskInfo{
-				TaskId:      resp.TaskId,
-				MainTaskId:  resp.MainTaskId,
-				WorkspaceId: resp.WorkspaceId,
-				TaskName:    "scan",
-				Config:      resp.Config,
+				TaskId:     resp.TaskId,
+				MainTaskId: resp.MainTaskId,
+				TaskName:   "scan",
+				Config:     resp.Config,
 			}
 		}
 	} else {
@@ -876,11 +879,10 @@ func (w *Worker) pullTask() bool {
 		}
 		if resp.IsExist && !resp.IsFinished {
 			task = &scheduler.TaskInfo{
-				TaskId:      resp.TaskId,
-				MainTaskId:  resp.MainTaskId,
-				WorkspaceId: resp.WorkspaceId,
-				TaskName:    "scan",
-				Config:      resp.Config,
+				TaskId:     resp.TaskId,
+				MainTaskId: resp.MainTaskId,
+				TaskName:   "scan",
+				Config:     resp.Config,
 			}
 		}
 	}
@@ -895,18 +897,30 @@ func (w *Worker) pullTask() bool {
 	if w.taskQueue != nil {
 		priority := GetTaskPriority(task)
 		if !w.taskQueue.Enqueue(task, priority) {
-			w.logger.Warn("pullTask: task %s rejected by TaskQueue (full or low-priority dropped)", task.TaskId)
+			w.logger.Warn("pullTask: task %s rejected by TaskQueue (full or low-priority dropped), requeuing", task.TaskId)
+			// 修复 #15：本地入队失败时回滚到 Redis 队列，避免任务在 processing 中孤立
+			if w.schedClient != nil {
+				if err := w.schedClient.RequeueTask(ctx, task); err != nil {
+					w.logger.Error("pullTask: requeue task %s failed: %v", task.TaskId, err)
+				}
+			}
 			return false
 		}
 		w.logger.Info("pullTask: task %s enqueued with priority %d (queue size: %d/%d)",
-			task.TaskId, priority, w.taskQueue.Size(), w.config.Concurrency)
+			task.TaskId, priority, w.taskQueue.Size(), concurrency)
 		return true
 	}
 
+	// 修复 #8：非阻塞发送，并发上调后 taskChan 容量不匹配时不会死锁
 	w.logger.Info("pullTask: pushing task %s to taskChan (channel size: %d/%d)", task.TaskId, len(w.taskChan), cap(w.taskChan))
-	w.taskChan <- task
-	w.logger.Info("pullTask: task %s pushed to taskChan successfully", task.TaskId)
-	return true
+	select {
+	case w.taskChan <- task:
+		w.logger.Info("pullTask: task %s pushed to taskChan successfully", task.TaskId)
+		return true
+	case <-w.stopChan:
+		w.logger.Warn("pullTask: worker stopping, task %s not pushed", task.TaskId)
+		return false
+	}
 }
 
 // recoverOrphanedTasks Worker 启动时恢复之前未完成的任务
@@ -925,7 +939,7 @@ func (w *Worker) recoverOrphanedTasks() {
 	if resp.RecoveredCount > 0 {
 		w.logger.Info("Recovered %d orphaned tasks:", resp.RecoveredCount)
 		for _, task := range resp.RecoveredTasks {
-			w.logger.Info("  - Task %s (workspace: %s, status: %s)", task.TaskId, task.WorkspaceId, task.Status)
+			w.logger.Info("  - Task %s (status: %s)", task.TaskId, task.Status)
 		}
 	} else {
 		w.logger.Info("No orphaned tasks found")
@@ -958,6 +972,11 @@ func (w *Worker) Stop() {
 	}
 
 	w.wg.Wait()
+
+	// 修复 #7：flush MongoDB 日志缓冲，避免停机/重启时丢失未落库的关键日志
+	if globalMongoLogger != nil {
+		globalMongoLogger.Close()
+	}
 
 	// 关闭 MongoDB 直连连接池（在途写入已随 wg.Wait 结束）
 	if w.mongoClient != nil {
@@ -1524,7 +1543,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 		// 通过 HTTP 接口获取 Subfinder 配置
 		var providerConfig map[string][]string
-		providerResp, err := w.httpClient.GetSubfinderProviders(ctx, task.WorkspaceId)
+		providerResp, err := w.httpClient.GetSubfinderProviders(ctx)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelWarn, "Failed to get subfinder providers: %v", err)
 		} else if providerResp != nil && len(providerResp.Providers) > 0 {
@@ -1571,11 +1590,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		if config.DomainScan.Subfinder {
 			if s, ok := w.scanners["subfinder"]; ok {
 				result, err := s.Scan(ctx, &scanner.ScanConfig{
-					Target:      domainScanTarget,
-					WorkspaceId: task.WorkspaceId,
-					MainTaskId:  task.MainTaskId,
-					Options:     subfinderOpts,
-					TaskLogger:  domainTaskLogger,
+					Target:     domainScanTarget,
+					MainTaskId: task.MainTaskId,
+					Options:    subfinderOpts,
+					TaskLogger: domainTaskLogger,
 					OnTargetDone: func(domain string, assets []*scanner.Asset) {
 						// 流式入库：单域名子域名枚举完成立即保存
 						if len(assets) == 0 {
@@ -1584,10 +1602,9 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 						for _, asset := range assets {
 							asset.Source = "subfinder"
 						}
-						w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+						w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
 					},
 				})
-
 				if err != nil {
 					w.taskLog(task.TaskId, LevelError, "Subfinder error: %v", err)
 				} else if result != nil && len(result.Assets) > 0 {
@@ -1686,11 +1703,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 							}
 						}
 						bruteResult, err := bruteScanner.Scan(ctx, &scanner.ScanConfig{
-							Target:      domainScanTarget,
-							WorkspaceId: task.WorkspaceId,
-							MainTaskId:  task.MainTaskId,
-							Options:     bruteforceOpts,
-							TaskLogger:  domainTaskLogger,
+							Target:     domainScanTarget,
+							MainTaskId: task.MainTaskId,
+							Options:    bruteforceOpts,
+							TaskLogger: domainTaskLogger,
 							OnTargetDone: func(domain string, assets []*scanner.Asset) {
 								// 流式入库：单域名暴力破解完成立即保存增量资产
 								var newAssets []*scanner.Asset
@@ -1701,7 +1717,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 									}
 								}
 								if len(newAssets) > 0 {
-									w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, newAssets)
+									w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, newAssets)
 								}
 							},
 						})
@@ -1921,7 +1937,7 @@ domainScanDone:
 					for _, asset := range assets {
 						asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
 					}
-					w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+					w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
 				},
 			})
 			// 检查是否有目标超过端口阈值（不终止任务，只记录警告）
@@ -2018,6 +2034,17 @@ domainScanDone:
 
 			identifiedAssets := w.executePortIdentify(ctx, task, allAssets, config.PortIdentify, orgId)
 			if len(identifiedAssets) > 0 {
+				// 合并而非替换：保留 nmap 未处理的域名资产（port=0），
+				// 避免 subfinder 发现的子域名在内存中丢失导致后续阶段无法扫描。
+				identifiedHostPorts := make(map[string]bool)
+				for _, a := range identifiedAssets {
+					identifiedHostPorts[fmt.Sprintf("%s:%d", a.Host, a.Port)] = true
+				}
+				for _, a := range allAssets {
+					if a.Port == 0 && !identifiedHostPorts[fmt.Sprintf("%s:%d", a.Host, a.Port)] {
+						identifiedAssets = append(identifiedAssets, a)
+					}
+				}
 				allAssets = identifiedAssets
 				// 结果已通过 executePortIdentify 内部流式入库
 			}
@@ -2164,11 +2191,11 @@ domainScanDone:
 						select {
 						case <-assetBuffer.GetFlushChan():
 							assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-								w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+								w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
 							})
 						case <-ticker.C:
 							assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-								w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+								w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
 							})
 						case <-fpCtx.Done():
 							return
@@ -2186,7 +2213,7 @@ domainScanDone:
 					},
 					OnCertFound: func(cert *scanner.CertResult) {
 						// 流式入库：单证书采集完成立即保存
-						w.saveCertResultsDirect(ctx, task.WorkspaceId, task.MainTaskId, []*scanner.CertResult{cert})
+						w.saveCertResultsDirect(ctx, task.MainTaskId, []*scanner.CertResult{cert})
 					},
 				})
 				fpCancel()
@@ -2232,7 +2259,7 @@ domainScanDone:
 
 					// 刷新流式缓冲区剩余资产
 					assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-						w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, assets)
+						w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
 					})
 
 					// 证书采集结果已通过 OnCertFound 流式入库
@@ -2491,11 +2518,11 @@ domainScanDone:
 									return
 								case <-vulBuffer.flushChan:
 									vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-										w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+										w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
 									})
 								case <-ticker.C:
 									vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-										w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+										w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
 									})
 								}
 							}
@@ -2560,7 +2587,7 @@ domainScanDone:
 
 						// 扫描完成后，刷新剩余的漏洞
 						vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-							w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+							w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
 						})
 
 						if vulCount > 0 {
@@ -2604,11 +2631,11 @@ domainScanDone:
 								return
 							case <-vulBuffer.flushChan:
 								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-									w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+									w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
 								})
 							case <-ticker.C:
 								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-									w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+									w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
 								})
 							}
 						}
@@ -2655,7 +2682,7 @@ domainScanDone:
 
 					// 扫描完成后，刷新剩余的漏洞
 					vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-						w.saveVulResultDirect(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+						w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
 					})
 
 					if vulCount > 0 {
@@ -2790,7 +2817,7 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 	}
 
 	if w.schedClient != nil {
-		resp, err := w.schedClient.IncrSubTaskDone(ctx, task.MainTaskId, task.WorkspaceId, phase, incrAmount)
+		resp, err := w.schedClient.IncrSubTaskDone(ctx, task.MainTaskId, phase, incrAmount)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done: %v", err)
 			return
@@ -2811,7 +2838,6 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 	resp, err := w.httpClient.IncrSubTaskDone(ctx, &SubTaskDoneReq{
 		TaskId:      task.TaskId,
 		MainTaskId:  task.MainTaskId,
-		WorkspaceId: task.WorkspaceId,
 		Phase:       phase,
 		IsCompleted: isCompleted,
 		IncrAmount:  incrAmount,
@@ -2893,4 +2919,3 @@ func calculateAssetBatchBoundaries(assets []*scanner.Asset) []assetBatchRange {
 	}
 	return boundaries
 }
-

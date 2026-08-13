@@ -235,10 +235,9 @@ func NewAssetListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetLi
 	}
 }
 
-func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) (resp *types.AssetListResp, err error) {
-	// 添加调试日志
+func (l *AssetListLogic) AssetList(req *types.AssetListReq) (resp *types.AssetListResp, err error) {
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	l.Logger.Infof("AssetList查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
+	l.Logger.Infof("AssetList查询: page=%d, pageSize=%d", req.Page, req.PageSize)
 
 	// 构建查询条件
 	filter := bson.M{}
@@ -325,98 +324,25 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 	var total int64
 	var assets []model.Asset
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Infof("AssetList查询工作空间列表: %v", wsIds)
+	assetModel := l.svcCtx.GetAssetModel()
 
-	// 如果查询多个工作空间
-	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 优化点：原 maxPerWorkspace = pageSize*3 只能覆盖前 3 页，翻到第 4 页及以后会丢数据
-		// 改为 needTotal = page * pageSize 覆盖到当前页末尾，保证跨 ws 分页正确性
-		// FindWithSort 已走 AssetListProjection（排除 body/header/cert/banner/screenshot/icon_hash_bytes）
-		needTotal := req.Page * req.PageSize
-		// 安全上限：避免用户翻到极深页时拉取过多数据
-		if needTotal > 50000 {
-			needTotal = 50000
-		}
-		var allAssets []model.Asset
+	total, err = assetModel.Count(l.ctx, filter)
+	if err != nil {
+		return &types.AssetListResp{Code: 500, Msg: "查询失败"}, nil
+	}
 
-		for _, wsId := range wsIds {
-			assetModel := l.svcCtx.GetAssetModel(wsId)
-
-			// 先检查该工作空间是否有数据
-			wsTotal, err := assetModel.Count(l.ctx, filter)
-			if err != nil || wsTotal == 0 {
-				continue // 跳过没有数据的工作空间
-			}
-			total += wsTotal
-
-			// 每个 ws 最多拉 needTotal 条（覆盖到当前页末尾），wsTotal 不足时按实际数拉
-			limit := needTotal
-			if wsTotal < int64(limit) {
-				limit = int(wsTotal)
-			}
-
-			// 按时间排序查询
-			sortField := "update_time"
-			if !req.SortByUpdate {
-				sortField = "create_time"
-			}
-
-			wsAssets, err := assetModel.FindWithSort(l.ctx, filter, 1, limit, sortField)
-			if err != nil {
-				l.Logger.Errorf("查询工作空间 %s 资产失败: %v", wsId, err)
-				continue
-			}
-			allAssets = append(allAssets, wsAssets...)
-		}
-
-		// 如果没有找到任何资产
-		if len(allAssets) == 0 {
-			return &types.AssetListResp{
-				Code:  0,
-				Msg:   "success",
-				Total: 0,
-				List:  []types.Asset{},
-			}, nil
-		}
-
-		// 按时间排序所有资产
-		sortAssetsByTime(allAssets, req.SortByUpdate)
-
-		// 分页
-		start := (req.Page - 1) * req.PageSize
-		end := start + req.PageSize
-		if start > len(allAssets) {
-			assets = []model.Asset{}
-		} else {
-			if end > len(allAssets) {
-				end = len(allAssets)
-			}
-			assets = allAssets[start:end]
-		}
+	// 查询列表 - 支持按风险评分排序
+	if req.SortByRisk {
+		assets, err = assetModel.FindByRiskScore(l.ctx, filter, req.Page, req.PageSize, false)
 	} else {
-		// 查询指定工作空间
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-
-		total, err = assetModel.Count(l.ctx, filter)
-		if err != nil {
-			return &types.AssetListResp{Code: 500, Msg: "查询失败"}, nil
+		sortField := "update_time"
+		if !req.SortByUpdate {
+			sortField = "create_time"
 		}
-
-		// 查询列表 - 支持按风险评分排序
-		if req.SortByRisk {
-			assets, err = assetModel.FindByRiskScore(l.ctx, filter, req.Page, req.PageSize, false)
-		} else {
-			sortField := "update_time"
-			if !req.SortByUpdate {
-				sortField = "create_time"
-			}
-			assets, err = assetModel.FindWithSort(l.ctx, filter, req.Page, req.PageSize, sortField)
-		}
-		if err != nil {
-			return &types.AssetListResp{Code: 500, Msg: "查询失败"}, nil
-		}
+		assets, err = assetModel.FindWithSort(l.ctx, filter, req.Page, req.PageSize, sortField)
+	}
+	if err != nil {
+		return &types.AssetListResp{Code: 500, Msg: "查询失败"}, nil
 	}
 
 	// 构建组织ID到名称的映射（走带缓存版的 LoadOrgMap，避免每次 list 都全表加载 organization）
@@ -523,188 +449,97 @@ func NewAssetStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetSt
 	}
 }
 
-func (l *AssetStatLogic) AssetStat(workspaceId string) (resp *types.AssetStatResp, err error) {
-	// 聚合统计走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
-	// 原实现每个 ws 跑 7 次聚合（overview/port/service/app/title/iconHash/riskLevel），多 ws 时是 7×N 次 collection scan
-	cacheKey := "asset_stat:" + workspaceId
+func (l *AssetStatLogic) AssetStat() (resp *types.AssetStatResp, err error) {
+	cacheKey := "asset_stat"
 	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		return l.loadAssetStat(workspaceId)
+		return l.loadAssetStat()
 	})
 	if cacheErr != nil {
-		return l.loadAssetStat(workspaceId)
+		return l.loadAssetStat()
 	}
 	if r, ok := cached.(*types.AssetStatResp); ok {
 		return r, nil
 	}
-	return l.loadAssetStat(workspaceId)
+	return l.loadAssetStat()
 }
 
-func (l *AssetStatLogic) loadAssetStat(workspaceId string) (*types.AssetStatResp, error) {
+func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
 	var totalAsset, totalHost, newCount, updatedCount int64
 	var topPorts, topService, topApp, topTitle []types.StatItem
 	var topIconHash []types.IconHashStatItem
 	var riskDistribution map[string]int
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	assetModel := l.svcCtx.GetAssetModel()
 
-	// 如果查询多个工作空间
-	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		portMap := make(map[int]int)
-		serviceMap := make(map[string]int)
-		appMap := make(map[string]int)
-		titleMap := make(map[string]int)
-		iconHashMap := make(map[string]*types.IconHashStatItem)
-		riskMap := make(map[string]int)
-
-		for _, wsId := range wsIds {
-			assetModel := l.svcCtx.GetAssetModel(wsId)
-
-			// 概览统计（总数/新资产/更新资产）
-			overview, statErr := assetModel.AggregateOverviewStats(l.ctx)
-			if statErr != nil || overview.TotalAsset == 0 {
-				l.Logger.Infof("跳过空工作空间: %s", wsId)
-				continue
-			}
-
-			totalAsset += overview.TotalAsset
-			totalHost += overview.TotalAsset
-			newCount += overview.NewCount
-			updatedCount += overview.UpdatedCount
-
-			// 聚合端口
-			portStats, _ := assetModel.AggregatePort(l.ctx, 20)
-			for _, s := range portStats {
-				portMap[s.Port] += s.Count
-			}
-
-			// 聚合服务
-			serviceStats, _ := assetModel.Aggregate(l.ctx, "service", 20)
-			for _, s := range serviceStats {
-				serviceMap[s.Field] += s.Count
-			}
-
-			// 聚合应用（使用专门的AggregateApp方法展开数组）
-			appStats, _ := assetModel.AggregateApp(l.ctx, 20)
-			for _, s := range appStats {
-				appMap[s.Field] += s.Count
-			}
-
-			// 聚合标题
-			titleStats, _ := assetModel.Aggregate(l.ctx, "title", 20)
-			for _, s := range titleStats {
-				if s.Field != "" {
-					titleMap[s.Field] += s.Count
-				}
-			}
-
-			// 聚合 IconHash
-			iconHashStats, _ := assetModel.AggregateIconHash(l.ctx, 20)
-			for _, s := range iconHashStats {
-				if existing, ok := iconHashMap[s.IconHash]; ok {
-					existing.Count += s.Count
-				} else {
-					iconData := ""
-					if len(s.IconData) > 0 && isValidImageBytes(s.IconData) {
-						iconData = base64.StdEncoding.EncodeToString(s.IconData)
-					}
-					iconHashMap[s.IconHash] = &types.IconHashStatItem{
-						IconHash:      s.IconHash,
-						IconData:      iconData,
-						IconHashBytes: iconData,
-						Count:         s.Count,
-					}
-				}
-			}
-
-			// 聚合风险等级
-			wsRisk, _ := assetModel.AggregateRiskLevel(l.ctx)
-			for k, v := range wsRisk {
-				riskMap[k] += v
-			}
-		}
-
-		// 转换为排序后的列表（返回top50，前端默认展示top10，支持展开更多）
-		const statTopN = 50
-		topPorts = sortMapToStatItemsInt(portMap, statTopN)
-		topService = sortMapToStatItems(serviceMap, statTopN)
-		topApp = sortMapToStatItems(appMap, statTopN)
-		topTitle = sortMapToStatItems(titleMap, statTopN)
-		topIconHash = sortIconHashMap(iconHashMap, statTopN)
-		riskDistribution = riskMap
-	} else {
-		assetModel := l.svcCtx.GetAssetModel(workspaceId)
-
-		// 概览统计（总数/新资产/更新资产）
-		overview, _ := assetModel.AggregateOverviewStats(l.ctx)
-		if overview != nil {
-			totalAsset = overview.TotalAsset
-			totalHost = overview.TotalAsset
-			newCount = overview.NewCount
-			updatedCount = overview.UpdatedCount
-		}
-
-		// Top端口（返回top50，前端默认展示top10）
-		portStats, _ := assetModel.AggregatePort(l.ctx, 50)
-		topPorts = make([]types.StatItem, 0, len(portStats))
-		for _, s := range portStats {
-			topPorts = append(topPorts, types.StatItem{
-				Name:  strconv.Itoa(s.Port),
-				Count: s.Count,
-			})
-		}
-
-		// Top服务
-		serviceStats, _ := assetModel.Aggregate(l.ctx, "service", 50)
-		topService = make([]types.StatItem, 0, len(serviceStats))
-		for _, s := range serviceStats {
-			topService = append(topService, types.StatItem{
-				Name:  s.Field,
-				Count: s.Count,
-			})
-		}
-
-		// Top应用（使用专门的AggregateApp方法展开数组）
-		appStats, _ := assetModel.AggregateApp(l.ctx, 50)
-		topApp = make([]types.StatItem, 0, len(appStats))
-		for _, s := range appStats {
-			topApp = append(topApp, types.StatItem{
-				Name:  s.Field,
-				Count: s.Count,
-			})
-		}
-
-		// Top标题
-		titleStats, _ := assetModel.Aggregate(l.ctx, "title", 50)
-		topTitle = make([]types.StatItem, 0, len(titleStats))
-		for _, s := range titleStats {
-			if s.Field != "" {
-				topTitle = append(topTitle, types.StatItem{
-					Name:  s.Field,
-					Count: s.Count,
-				})
-			}
-		}
-
-		// Top IconHash
-		iconHashStats, _ := assetModel.AggregateIconHash(l.ctx, 50)
-		topIconHash = make([]types.IconHashStatItem, 0, len(iconHashStats))
-		for _, s := range iconHashStats {
-			iconData := ""
-			if len(s.IconData) > 0 && isValidImageBytes(s.IconData) {
-				iconData = base64.StdEncoding.EncodeToString(s.IconData)
-			}
-			topIconHash = append(topIconHash, types.IconHashStatItem{
-				IconHash:      s.IconHash,
-				IconData:      iconData,
-				IconHashBytes: iconData,
-				Count:         s.Count,
-			})
-		}
-
-		// 风险等级分布
-		riskDistribution, _ = assetModel.AggregateRiskLevel(l.ctx)
+	// 概览统计（总数/新资产/更新资产）
+	overview, _ := assetModel.AggregateOverviewStats(l.ctx)
+	if overview != nil {
+		totalAsset = overview.TotalAsset
+		totalHost = overview.TotalAsset
+		newCount = overview.NewCount
+		updatedCount = overview.UpdatedCount
 	}
+
+	// Top端口（返回top50，前端默认展示top10）
+	portStats, _ := assetModel.AggregatePort(l.ctx, 50)
+	topPorts = make([]types.StatItem, 0, len(portStats))
+	for _, s := range portStats {
+		topPorts = append(topPorts, types.StatItem{
+			Name:  strconv.Itoa(s.Port),
+			Count: s.Count,
+		})
+	}
+
+	// Top服务
+	serviceStats, _ := assetModel.Aggregate(l.ctx, "service", 50)
+	topService = make([]types.StatItem, 0, len(serviceStats))
+	for _, s := range serviceStats {
+		topService = append(topService, types.StatItem{
+			Name:  s.Field,
+			Count: s.Count,
+		})
+	}
+
+	// Top应用（使用专门的AggregateApp方法展开数组）
+	appStats, _ := assetModel.AggregateApp(l.ctx, 50)
+	topApp = make([]types.StatItem, 0, len(appStats))
+	for _, s := range appStats {
+		topApp = append(topApp, types.StatItem{
+			Name:  s.Field,
+			Count: s.Count,
+		})
+	}
+
+	// Top标题
+	titleStats, _ := assetModel.Aggregate(l.ctx, "title", 50)
+	topTitle = make([]types.StatItem, 0, len(titleStats))
+	for _, s := range titleStats {
+		if s.Field != "" {
+			topTitle = append(topTitle, types.StatItem{
+				Name:  s.Field,
+				Count: s.Count,
+			})
+		}
+	}
+
+	// Top IconHash
+	iconHashStats, _ := assetModel.AggregateIconHash(l.ctx, 50)
+	topIconHash = make([]types.IconHashStatItem, 0, len(iconHashStats))
+	for _, s := range iconHashStats {
+		iconData := ""
+		if len(s.IconData) > 0 && isValidImageBytes(s.IconData) {
+			iconData = base64.StdEncoding.EncodeToString(s.IconData)
+		}
+		topIconHash = append(topIconHash, types.IconHashStatItem{
+			IconHash:      s.IconHash,
+			IconData:      iconData,
+			IconHashBytes: iconData,
+			Count:         s.Count,
+		})
+	}
+
+	// 风险等级分布
+	riskDistribution, _ = assetModel.AggregateRiskLevel(l.ctx)
 
 	return &types.AssetStatResp{
 		Code:             0,
@@ -737,14 +572,8 @@ func NewAssetDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Asset
 	}
 }
 
-func (l *AssetDeleteLogic) AssetDelete(req *types.AssetDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	// 优先使用请求中的 workspaceId，如果没有则使用从上下文获取的
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
-	}
-
-	assetModel := l.svcCtx.GetAssetModel(wsId)
+func (l *AssetDeleteLogic) AssetDelete(req *types.AssetDeleteReq) (resp *types.BaseResp, err error) {
+	assetModel := l.svcCtx.GetAssetModel()
 	err = assetModel.Delete(l.ctx, req.Id)
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
@@ -767,12 +596,12 @@ func NewAssetBatchDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 	}
 }
 
-func (l *AssetBatchDeleteLogic) AssetBatchDelete(req *types.AssetBatchDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
+func (l *AssetBatchDeleteLogic) AssetBatchDelete(req *types.AssetBatchDeleteReq) (resp *types.BaseResp, err error) {
 	if len(req.Ids) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的资产"}, nil
 	}
 
-	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	assetModel := l.svcCtx.GetAssetModel()
 	deleted, err := assetModel.BatchDelete(l.ctx, req.Ids)
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
@@ -795,40 +624,21 @@ func NewAssetClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetC
 	}
 }
 
-func (l *AssetClearLogic) AssetClear(workspaceId string) (resp *types.BaseResp, err error) {
-	var totalDeleted int64
-
-	// 获取需要清空的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	// 清空所有相关工作空间的资产
-	for _, wsId := range wsIds {
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-		deleted, err := assetModel.Clear(l.ctx)
-		if err != nil {
-			l.Logger.Errorf("清空工作空间 %s 资产失败: %v", wsId, err)
-			continue
-		}
-		totalDeleted += deleted
-
-		// 清空对应的资产历史表
-		historyModel := l.svcCtx.GetAssetHistoryModel(wsId)
-		historyModel.Clear(l.ctx)
-
-		// 失效 stat 缓存，避免清空后统计数据残留
-		l.svcCtx.QueryCache.Delete("asset_stat:" + wsId)
+func (l *AssetClearLogic) AssetClear() (resp *types.BaseResp, err error) {
+	assetModel := l.svcCtx.GetAssetModel()
+	deleted, err := assetModel.Clear(l.ctx)
+	if err != nil {
+		return &types.BaseResp{Code: 500, Msg: "清空资产失败"}, nil
 	}
 
-	// 清理可能残留的 all_asset 集合（早期 bug 误写入数据到此集合）
-	if workspaceId == "" || workspaceId == "all" {
-		allAssetModel := l.svcCtx.GetAssetModel("all")
-		if deleted, err := allAssetModel.Clear(l.ctx); err == nil && deleted > 0 {
-			l.Logger.Infof("清理残留 all_asset 集合: %d 条", deleted)
-			totalDeleted += deleted
-		}
-	}
+	// 清空对应的资产历史表
+	historyModel := l.svcCtx.GetAssetHistoryModel()
+	historyModel.Clear(l.ctx)
 
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 条资产"}, nil
+	// 失效 stat 缓存
+	l.svcCtx.QueryCache.Delete("asset_stat")
+
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 条资产"}, nil
 }
 
 // DomainClearLogic 清空域名
@@ -846,24 +656,18 @@ func NewDomainClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Domai
 	}
 }
 
-func (l *DomainClearLogic) DomainClear(workspaceId string) (resp *types.BaseResp, err error) {
-	var totalDeleted int64
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		filter := bson.M{
-			"$or": []bson.M{
-				{"category": "domain"},
-				{"domain": bson.M{"$exists": true, "$ne": ""}},
-				{"source": "subfinder"},
-			},
-		}
-		deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
-		totalDeleted += deleted
+func (l *DomainClearLogic) DomainClear() (resp *types.BaseResp, err error) {
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
+	filter := bson.M{
+		"$or": []bson.M{
+			{"category": "domain"},
+			{"domain": bson.M{"$exists": true, "$ne": ""}},
+			{"source": "subfinder"},
+		},
 	}
+	deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
 
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 个域名"}, nil
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 个域名"}, nil
 }
 
 // IPClearLogic 清空 IP
@@ -881,24 +685,17 @@ func NewIPClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *IPClearLo
 	}
 }
 
-func (l *IPClearLogic) IPClear(workspaceId string) (resp *types.BaseResp, err error) {
-	var totalDeleted int64
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		// IP 类型资产：host 是 IP 地址
-		filter := bson.M{
-			"$and": []bson.M{
-				{"host": bson.M{"$exists": true, "$ne": ""}},
-				{"host": bson.M{"$regex": `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$`}},
-			},
-		}
-		deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
-		totalDeleted += deleted
+func (l *IPClearLogic) IPClear() (resp *types.BaseResp, err error) {
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
+	filter := bson.M{
+		"$and": []bson.M{
+			{"host": bson.M{"$exists": true, "$ne": ""}},
+			{"host": bson.M{"$regex": `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$`}},
+		},
 	}
+	deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
 
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 个 IP"}, nil
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 个 IP"}, nil
 }
 
 // SiteClearLogic 清空站点
@@ -916,21 +713,14 @@ func NewSiteClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SiteCle
 	}
 }
 
-func (l *SiteClearLogic) SiteClear(workspaceId string) (resp *types.BaseResp, err error) {
-	var totalDeleted int64
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		// 站点类型资产：有 httpStatus 字段
-		filter := bson.M{
-			"httpStatus": bson.M{"$exists": true, "$ne": ""},
-		}
-		deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
-		totalDeleted += deleted
+func (l *SiteClearLogic) SiteClear() (resp *types.BaseResp, err error) {
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
+	filter := bson.M{
+		"httpStatus": bson.M{"$exists": true, "$ne": ""},
 	}
+	deleted, _ := assetModel.DeleteByFilter(l.ctx, filter)
 
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 个站点"}, nil
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 个站点"}, nil
 }
 
 // PortClearLogic 清空端口
@@ -969,21 +759,14 @@ func NewScreenshotsClearLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 	}
 }
 
-func (l *ScreenshotsClearLogic) ScreenshotsClear(workspaceId string) (resp *types.BaseResp, err error) {
-	var totalUpdated int64
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		result, err := assetModel.UpdateManyByFilter(l.ctx, bson.M{"screenshot": bson.M{"$exists": true, "$ne": ""}}, bson.M{"$set": bson.M{"screenshot": ""}})
-		if err != nil {
-			l.Logger.Errorf("清空工作空间 %s 截图失败: %v", wsId, err)
-			continue
-		}
-		totalUpdated += result
+func (l *ScreenshotsClearLogic) ScreenshotsClear() (resp *types.BaseResp, err error) {
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
+	result, err := assetModel.UpdateManyByFilter(l.ctx, bson.M{"screenshot": bson.M{"$exists": true, "$ne": ""}}, bson.M{"$set": bson.M{"screenshot": ""}})
+	if err != nil {
+		return &types.BaseResp{Code: 500, Msg: "清空截图失败"}, nil
 	}
 
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalUpdated, 10) + " 条截图"}, nil
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(result, 10) + " 条截图"}, nil
 }
 
 // AssetImportLogic 导入资产
@@ -1001,17 +784,14 @@ func NewAssetImportLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Asset
 	}
 }
 
-func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId string) (resp *types.AssetImportResp, err error) {
+func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq) (resp *types.AssetImportResp, err error) {
 	if len(req.Targets) == 0 {
 		return &types.AssetImportResp{Code: 400, Msg: "请输入要导入的目标"}, nil
 	}
 
-	// "all"/空 需解析为真实 workspaceId，否则会错误写入 "default" 集合，
-	// 而前端实际 workspace 列表里不含 default → 清单不可见
-	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
-	assetModel := l.svcCtx.GetAssetModel(workspaceId)
-	metaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
-	historyModel := l.svcCtx.GetAssetHistoryModel(workspaceId)
+	assetModel := l.svcCtx.GetAssetModel()
+	metaModel := l.svcCtx.GetAssetTargetMetaModel()
+	historyModel := l.svcCtx.GetAssetHistoryModel()
 
 	var newCount, skipCount, errorCount int
 	var errorDetails []string
@@ -1064,7 +844,7 @@ func (l *AssetImportLogic) AssetImport(req *types.AssetImportReq, workspaceId st
 		}
 
 		// 同步创建/刷新顶层资产 meta，否则顶层资产列表（只读 {ws}_asset_target_meta）不会展示手动导入的资产
-		if err := upsertAssetTargetMeta(l.ctx, metaModel, workspaceId, host, "", nil); err != nil {
+		if err := upsertAssetTargetMeta(l.ctx, metaModel, host, "", nil); err != nil {
 			l.Logger.Errorf("[AssetImport] upsert target meta host=%s fail: %v", host, err)
 		}
 		invalidateAssetTargetCaches(l.svcCtx, "")
@@ -1121,7 +901,7 @@ func NewAssetSaveLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetSa
 	}
 }
 
-func (l *AssetSaveLogic) AssetSave(req *types.AssetSaveReq, workspaceId string) (resp *types.AssetSaveResp, err error) {
+func (l *AssetSaveLogic) AssetSave(req *types.AssetSaveReq) (resp *types.AssetSaveResp, err error) {
 	host := strings.TrimSpace(req.Host)
 	if host == "" {
 		return nil, xerr.NewCodeErrorMsg(xerr.ParamError, "主机不能为空")
@@ -1151,9 +931,8 @@ func (l *AssetSaveLogic) AssetSave(req *types.AssetSaveReq, workspaceId string) 
 		Source:    "manual",
 	}
 
-	wsId := common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
-	assetModel := l.svcCtx.GetAssetModel(wsId)
-	historyModel := l.svcCtx.GetAssetHistoryModel(wsId)
+	assetModel := l.svcCtx.GetAssetModel()
+	historyModel := l.svcCtx.GetAssetHistoryModel()
 
 	// 预读 existing 以驱动 helper 的 diff / 状态字段门控 / 历史写入
 	existing, _ := assetModel.FindByAuthorityOnly(l.ctx, authority)
@@ -1189,7 +968,7 @@ func (l *AssetSaveLogic) AssetSave(req *types.AssetSaveReq, workspaceId string) 
 	}
 
 	// 同步创建/刷新顶层资产 meta，否则顶层资产列表不会展示手动添加的资产
-	if err := upsertAssetTargetMeta(l.ctx, l.svcCtx.GetAssetTargetMetaModel(wsId), wsId, host, "", req.Labels); err != nil {
+	if err := upsertAssetTargetMeta(l.ctx, l.svcCtx.GetAssetTargetMetaModel(), host, "", req.Labels); err != nil {
 		l.Logger.Errorf("[AssetSave] upsert target meta host=%s fail: %v", host, err)
 	}
 	invalidateAssetTargetCaches(l.svcCtx, "")
@@ -1291,8 +1070,8 @@ func parseTarget(target string) (host string, port int, scheme string, err error
 // 与扫描结果保存（Worker 直连 MongoDB）保持一致，避免顶层资产列表只见手动新增。
 //
 // labels 在 Upsert 时按 $set 覆盖；nil 则保留原值。
-func upsertAssetTargetMeta(ctx context.Context, metaModel *model.AssetTargetMetaModel, wsId, host, domain string, labels []string) error {
-	return metaModel.EnsureForAsset(ctx, wsId, host, domain, labels)
+func upsertAssetTargetMeta(ctx context.Context, metaModel *model.AssetTargetMetaModel, host, domain string, labels []string) error {
+	return metaModel.EnsureForAsset(ctx, host, domain, labels)
 }
 
 // isValidHost 校验主机名是否为有效的IP或域名

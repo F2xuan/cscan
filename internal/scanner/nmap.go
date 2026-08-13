@@ -267,8 +267,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError)
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets:      assets,
 	}, nil
 }
@@ -312,6 +311,12 @@ func (s *NmapScanner) runNmapWithLogger(
 		go func() {
 			defer wg.Done()
 			for task := range taskChan {
+				// ctx 取消时立即退出，不再消费后续端口
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				// 每个端口使用独立的超时context，互不影响
 				result := s.scanSinglePortWithLogger(ctx, targets, task.port, opts, logInfo, logError)
 				if len(result) > 0 {
@@ -335,11 +340,15 @@ func (s *NmapScanner) runNmapWithLogger(
 		}()
 	}
 
-	// 分发任务
+	// 分发任务（带 ctx 取消检查，防止 worker 因 ctx 停止消费后 dispatch 永久阻塞）
+dispatch:
 	for i, port := range ports {
-		taskChan <- scanTask{port: port, index: i}
+		select {
+		case taskChan <- scanTask{port: port, index: i}:
+		case <-ctx.Done():
+			break dispatch
+		}
 	}
-
 	close(taskChan)
 	wg.Wait()
 

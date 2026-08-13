@@ -23,14 +23,14 @@ func NewAssetDirScansLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ass
 }
 
 // AssetDirScans retrieves directory scan results for a specific asset
-func (l *AssetDirScansLogic) AssetDirScans(req *types.AssetDirScansReq, workspaceId string) (*types.AssetDirScansResp, error) {
+func (l *AssetDirScansLogic) AssetDirScans(req *types.AssetDirScansReq) (*types.AssetDirScansResp, error) {
 	// Validate asset ID
 	if req.AssetId == "" {
 		return nil, xerr.NewParamError("asset_id is required")
 	}
 
 	// Fetch asset to get authority, host, port
-	assetModel := model.NewAssetModel(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName), workspaceId)
+	assetModel := model.NewAssetModel(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
 	asset, err := assetModel.FindById(l.ctx, req.AssetId)
 	if err != nil {
 		return nil, fmt.Errorf("查询资产失败: %w", err)
@@ -43,8 +43,7 @@ func (l *AssetDirScansLogic) AssetDirScans(req *types.AssetDirScansReq, workspac
 	scanResultService := svc.NewScanResultService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
 
 	scanReq := &svc.GetDirScanResultsReq{
-		WorkspaceId: workspaceId,
-		Authority:   asset.Authority,
+		Authority: asset.Authority,
 		Host:        asset.Host,
 		Port:        asset.Port,
 		Limit:       req.Limit,

@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -135,7 +134,7 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 }
 
 // convertAssetToInventoryItem 将 Asset 模型转换为清单展示项
-func convertAssetToInventoryItem(asset model.Asset, wsId string) types.AssetInventoryItem {
+func convertAssetToInventoryItem(asset model.Asset) types.AssetInventoryItem {
 	ip := ""
 	var ips []string
 	if len(asset.Ip.IpV4) > 0 {
@@ -162,7 +161,6 @@ func convertAssetToInventoryItem(asset model.Asset, wsId string) types.AssetInve
 
 	return types.AssetInventoryItem{
 		Id:              asset.Id.Hex(),
-		WorkspaceId:     wsId,
 		Host:            asset.Host,
 		IP:              ip,
 		Ips:             ips,
@@ -187,33 +185,24 @@ func convertAssetToInventoryItem(asset model.Asset, wsId string) types.AssetInve
 }
 
 // AssetInventory 获取资产清单
-func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq, workspaceId string) (resp *types.AssetInventoryResp, err error) {
+func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq) (resp *types.AssetInventoryResp, err error) {
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	l.Logger.Infof("AssetInventory查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	if len(wsIds) == 0 {
-		return &types.AssetInventoryResp{Code: 0, Msg: "success", Total: 0, List: []types.AssetInventoryItem{}}, nil
-	}
-
-	// 统一通过 $unionWith + $facet 在服务端完成跨工作空间聚合、排序与分页
 	filter := l.buildInventoryFilter(req)
 	sortField := inventorySortField(req.SortBy)
 	skip := int64((req.Page - 1) * req.PageSize)
 	limit := int64(req.PageSize)
 
-	// 以第一个 ws 集合作为主集合，其它通过 $unionWith 合入
-	assetModel := l.svcCtx.GetAssetModel(wsIds[0])
-	total, assets, err := assetModel.AggregateInventoryPaged(l.ctx, wsIds, filter, skip, limit, sortField)
+	assetModel := l.svcCtx.GetAssetModel()
+	total, assets, err := assetModel.AggregateInventoryPaged(l.ctx, filter, skip, limit, sortField)
 	if err != nil {
 		l.Logger.Errorf("[AssetInventory] AggregateInventoryPaged 失败: %v", err)
 		return &types.AssetInventoryResp{Code: 500, Msg: "查询失败"}, nil
 	}
 
 	resultItems := make([]types.AssetInventoryItem, 0, len(assets))
-	for _, item := range assets {
-		resultItems = append(resultItems, convertAssetToInventoryItem(item.Asset, item.WsId))
+	for _, asset := range assets {
+		resultItems = append(resultItems, convertAssetToInventoryItem(asset))
 	}
 
 	return &types.AssetInventoryResp{

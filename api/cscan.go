@@ -15,7 +15,6 @@ import (
 	"cscan/api/internal/config"
 	"cscan/api/internal/handler"
 	"cscan/api/internal/logic"
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
 	"cscan/internal/onlineapi"
@@ -115,15 +114,15 @@ func main() {
 	// T3.3：注入弱口令持续复验器
 	reverifier := scheduler.NewWeakPassReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
 	schedulerSvc.SetWeakPassReverifier(reverifier, "")
-	svcCtx.RunWeakPassReverify = func(ctx context.Context, workspaceId string) error {
-		return reverifier.RunWorkspace(ctx, workspaceId)
+	svcCtx.RunWeakPassReverify = func(ctx context.Context) error {
+		return reverifier.RunWorkspace(ctx)
 	}
 
 	// T3.4：注入敏感信息（暴露面）持续复验器
 	exposureReverifier := scheduler.NewExposureReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
 	schedulerSvc.SetExposureReverifier(exposureReverifier, "")
-	svcCtx.RunExposureReverify = func(ctx context.Context, workspaceId string) error {
-		return exposureReverifier.RunWorkspace(ctx, workspaceId)
+	svcCtx.RunExposureReverify = func(ctx context.Context) error {
+		return exposureReverifier.RunWorkspace(ctx)
 	}
 
 	// 启动定时任务执行消息订阅
@@ -148,7 +147,6 @@ type CronExecuteMessage struct {
 	// 通用字段
 	TaskType    string `json:"taskType"`    // 任务类型：scan / space_engine
 	CronTaskId  string `json:"cronTaskId"`  // 定时任务ID
-	WorkspaceId string `json:"workspaceId"` // 工作空间ID
 	TaskName    string `json:"taskName"`    // 任务名称
 
 	// 资产扫描任务字段（taskType=scan）
@@ -248,17 +246,12 @@ func startCronExecuteSubscriber(svcCtx *svc.ServiceContext, sched *scheduler.Sch
 
 // createAndPushCronTask 创建定时任务的 MainTask 并推送到队列
 func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sched *scheduler.Scheduler, msg *CronExecuteMessage) error {
-	workspaceId := msg.WorkspaceId
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-
 	// === 目标实时解析（执行时获取最新资产） ===
 	finalTarget := msg.Target
 
 	// 如果是资产选择模式，实时从 AssetTargetMeta 查询最新资产
 	if msg.TargetMode == "asset" && len(msg.AssetIds) > 0 {
-		metaModel := svcCtx.GetAssetTargetMetaModel(workspaceId)
+		metaModel := svcCtx.GetAssetTargetMetaModel()
 		metas, err := metaModel.FindByIDs(ctx, msg.AssetIds)
 		if err != nil {
 			logx.Errorf("Failed to resolve asset targets for cron task %s: %v, falling back to stored target", msg.CronTaskId, err)
@@ -320,7 +313,7 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 
 		if len(rootDomains) > 0 {
 			// 从 Asset 集合中查询属于这些根域名的子域名（host 字段）
-			assetModel := svcCtx.GetAssetModel(workspaceId)
+			assetModel := svcCtx.GetAssetModel()
 			subdomainHosts, err := assetModel.FindSubdomainHostsByRootDomain(ctx, rootDomains)
 			if err != nil {
 				logx.Errorf("Failed to query subdomains for roots %v: %v", rootDomains, err)
@@ -355,7 +348,7 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 	newTaskId := uuid.New().String()
 
 	// 创建新的 MainTask
-	taskModel := svcCtx.GetMainTaskModel(workspaceId)
+	taskModel := svcCtx.GetMainTaskModel()
 	newTask := &model.MainTask{
 		TaskId:   newTaskId,
 		Name:     fmt.Sprintf("%s (定时)", msg.TaskName),
@@ -476,7 +469,6 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 	// 保存主任务信息到 Redis
 	taskInfoKey := "cscan:task:info:" + newTaskId
 	taskInfoData, err := json.Marshal(map[string]interface{}{
-		"workspaceId":    workspaceId,
 		"mainTaskId":     newTask.Id.Hex(),
 		"subTaskCount":   subTaskCount,
 		"batchCount":     len(batches),
@@ -521,10 +513,9 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 		}
 
 		schedTask := &scheduler.TaskInfo{
-			TaskId:      subTaskId,
-			MainTaskId:  newTask.Id.Hex(),
-			WorkspaceId: workspaceId,
-			TaskName:    newTask.Name,
+			TaskId:     subTaskId,
+			MainTaskId: newTask.Id.Hex(),
+			TaskName:   newTask.Name,
 			Config:      string(subConfigBytes),
 			Priority:    0,
 			Workers:     workers,
@@ -541,7 +532,6 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 		if len(batches) > 1 {
 			subTaskInfoKey := "cscan:task:info:" + subTaskId
 			subTaskInfoData, err := json.Marshal(map[string]interface{}{
-				"workspaceId":  workspaceId,
 				"mainTaskId":   newTask.Id.Hex(),
 				"subTaskCount": subTaskCount,
 			})
@@ -561,10 +551,6 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 // 复用 onlineapilogic.ImportAll 的在线搜索+资产导入逻辑，并创建一条标记为 space_engine 来源的 MainTask。
 // 该任务不入扫描队列，而是在主侧 API 进程中同步执行（定时触发通常在夜间，执行时间可接受）。
 func createAndPushSpaceEngineTask(ctx context.Context, svcCtx *svc.ServiceContext, sched *scheduler.Scheduler, msg *CronExecuteMessage) error {
-	workspaceId := msg.WorkspaceId
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
 	platform := strings.ToLower(strings.TrimSpace(msg.Platform))
 	if platform != "fofa" && platform != "hunter" && platform != "quake" {
 		return fmt.Errorf("unsupported platform for space engine task: %s", msg.Platform)
@@ -574,35 +560,16 @@ func createAndPushSpaceEngineTask(ctx context.Context, svcCtx *svc.ServiceContex
 	}
 
 	// 1) 获取 API 配置
-	// 修复 H-10：禁止跨 workspace fallback，严格按 workspace 隔离 API 密钥。
-	// 原实现会遍历所有 *_api_config 集合并取任意启用密钥，破坏 workspace 隔离，
-	// 导致 A workspace 能使用 B workspace 的付费 API 配额。
-	// 查找顺序：当前 workspace → default workspace（default 作为全局默认是显式约定，非越权）
-	var apiCfg *model.APIConfig
-	tryWorkspaces := []string{workspaceId}
-	if workspaceId != "default" {
-		tryWorkspaces = append(tryWorkspaces, "default")
+	configModel := model.NewAPIConfigModel(svcCtx.MongoDB)
+	apiCfg, err := configModel.FindByPlatform(ctx, platform)
+	if err != nil || apiCfg == nil {
+		return fmt.Errorf("api key not configured for platform=%s", platform)
 	}
 
-	for _, ws := range tryWorkspaces {
-		configModel := model.NewAPIConfigModel(svcCtx.MongoDB, ws)
-		cfg, err := configModel.FindByPlatform(ctx, platform)
-		if err == nil && cfg != nil {
-			apiCfg = cfg
-			logx.Infof("Found %s API config in workspace=%s", platform, ws)
-			break
-		}
-	}
-
-	if apiCfg == nil {
-		return fmt.Errorf("api key not configured for platform=%s workspace=%s (tried current and default workspace)", platform, workspaceId)
-	}
-
-	// 2) 解析默认 workspaceId
-	realWorkspaceId := common.GetDefaultWorkspaceId(ctx, svcCtx, workspaceId)
-	assetModel := svcCtx.GetAssetModel(realWorkspaceId)
-	targetMetaModel := svcCtx.GetAssetTargetMetaModel(realWorkspaceId)
-	historyModel := svcCtx.GetAssetHistoryModel(realWorkspaceId)
+	// 2) 获取模型
+	assetModel := svcCtx.GetAssetModel()
+	targetMetaModel := svcCtx.GetAssetTargetMetaModel()
+	historyModel := svcCtx.GetAssetHistoryModel()
 
 	// 3) 分页拉取并导入资产
 	pageSize := 100
@@ -781,7 +748,7 @@ PageLoop:
 			}
 			// 同步创建/更新顶层资产（AssetTargetMeta），确保资产出现在资产概览中
 			// 使用 BuildAsset 清理后的 asset.Host（已去除URL前缀和端口）和 asset.Domain
-			if err := targetMetaModel.EnsureForAsset(ctx, realWorkspaceId, asset.Host, asset.Domain, nil); err != nil {
+			if err := targetMetaModel.EnsureForAsset(ctx, asset.Host, asset.Domain, nil); err != nil {
 				logx.Errorf("Failed to ensure target meta for host=%s: %v", asset.Host, err)
 			}
 			importedThisPage++
@@ -913,7 +880,6 @@ func (a *cronTaskSourceAdapter) FindAllCronTasks(ctx context.Context) ([]schedul
 			ScheduleType:        t.ScheduleType,
 			CronSpec:            t.CronSpec,
 			ScheduleTime:        t.ScheduleTime,
-			WorkspaceId:         "default",
 			Status:              t.Status,
 			LastRunTime:         t.LastRunTime,
 			NextRunTime:         t.NextRunTime,
@@ -948,7 +914,6 @@ func (a *cronTaskSourceAdapter) FindCronTaskByCronTaskId(ctx context.Context, cr
 		ScheduleType:        t.ScheduleType,
 		CronSpec:            t.CronSpec,
 		ScheduleTime:        t.ScheduleTime,
-		WorkspaceId:         "default",
 		Status:              t.Status,
 		LastRunTime:         t.LastRunTime,
 		NextRunTime:         t.NextRunTime,

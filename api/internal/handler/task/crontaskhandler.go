@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
 	"cscan/pkg/response"
@@ -51,7 +50,6 @@ type CronTaskItem struct {
 	ScheduleType string `json:"scheduleType"`
 	CronSpec     string `json:"cronSpec"`
 	ScheduleTime string `json:"scheduleTime"`
-	WorkspaceId  string `json:"workspaceId"`
 	Status       string `json:"status"`
 	LastRunTime  string `json:"lastRunTime"`
 	NextRunTime  string `json:"nextRunTime"`
@@ -82,7 +80,6 @@ type CronTaskSaveReq struct {
 	ScheduleType string `json:"scheduleType"`
 	CronSpec     string `json:"cronSpec,optional"`
 	ScheduleTime string `json:"scheduleTime,optional"`
-	WorkspaceId  string `json:"workspaceId,optional"`
 
 	// ===== scan 类型字段 =====
 	TargetMode          string   `json:"targetMode,optional"`
@@ -131,7 +128,6 @@ func syncCronTaskToRedis(ctx context.Context, svcCtx *svc.ServiceContext, cronTa
 		ScheduleType:        cronTask.ScheduleType,
 		CronSpec:            cronTask.CronSpec,
 		ScheduleTime:        cronTask.ScheduleTime,
-		WorkspaceId:         "default",
 		Status:              cronTask.Status,
 		LastRunTime:         cronTask.LastRunTime,
 		NextRunTime:         cronTask.NextRunTime,
@@ -185,11 +181,11 @@ func expandTemplateConfig(ctx context.Context, svcCtx *svc.ServiceContext, templ
 }
 
 // resolveAssetTargets 当 targetMode=asset 时从 AssetTargetMetaModel 获取资产列表拼接到 target
-func resolveAssetTargets(ctx context.Context, svcCtx *svc.ServiceContext, workspaceId string, assetIds []string) (string, error) {
+func resolveAssetTargets(ctx context.Context, svcCtx *svc.ServiceContext, assetIds []string) (string, error) {
 	if len(assetIds) == 0 {
 		return "", nil
 	}
-	metaModel := svcCtx.GetAssetTargetMetaModel(workspaceId)
+	metaModel := svcCtx.GetAssetTargetMetaModel()
 	metas, err := metaModel.FindByIDs(ctx, assetIds)
 	if err != nil {
 		return "", fmt.Errorf("查询资产失败: %v", err)
@@ -233,9 +229,8 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				TaskType:            task.TaskType,
 				ScheduleType:        task.ScheduleType,
 				CronSpec:            task.CronSpec,
-			ScheduleTime:        task.ScheduleTime,
-			WorkspaceId:         "default",
-			Status:              task.Status,
+				ScheduleTime:        task.ScheduleTime,
+				Status:              task.Status,
 				LastRunTime:         task.LastRunTime,
 				NextRunTime:         task.NextRunTime,
 				RunCount:            runCount,
@@ -320,7 +315,6 @@ func CronTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			ScheduleType:        cronTask.ScheduleType,
 			CronSpec:            cronTask.CronSpec,
 			ScheduleTime:        cronTask.ScheduleTime,
-			WorkspaceId:         "default",
 			Status:              cronTask.Status,
 			LastRunTime:         cronTask.LastRunTime,
 			NextRunTime:         cronTask.NextRunTime,
@@ -404,13 +398,6 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := req.WorkspaceId
-		if workspaceId == "" || workspaceId == "all" {
-			workspaceId = middleware.GetWorkspaceId(r.Context())
-		}
-		if workspaceId == "" || workspaceId == "all" {
-			workspaceId = "default"
-		}
 		ctx := r.Context()
 
 		// 构造待持久化的 CronTask 文档（先填充通用字段，类型字段在 switch 内填充）
@@ -426,8 +413,8 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			TaskType:     req.TaskType,
 			ScheduleType: req.ScheduleType,
 			CronSpec:     req.CronSpec,
-		ScheduleTime: req.ScheduleTime,
-		Status:       "enable",
+			ScheduleTime: req.ScheduleTime,
+			Status:       "enable",
 			NextRunTime:  nextRunTime,
 		}
 
@@ -458,7 +445,7 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 					response.ParamError(w, "请选择资产")
 					return
 				}
-				assetTarget, err := resolveAssetTargets(ctx, svcCtx, workspaceId, req.AssetIds)
+				assetTarget, err := resolveAssetTargets(ctx, svcCtx, req.AssetIds)
 				if err != nil {
 					response.Error(w, err)
 					return
@@ -552,8 +539,8 @@ func CronTaskSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				"task_type":      req.TaskType,
 				"schedule_type":  req.ScheduleType,
 				"cron_spec":      req.CronSpec,
-			"schedule_time":  req.ScheduleTime,
-			"next_run_time":  nextRunTime,
+				"schedule_time":  req.ScheduleTime,
+				"next_run_time":  nextRunTime,
 				"status":         "enable",
 				// scan 字段
 				"target_mode":            cronTask.TargetMode,

@@ -27,7 +27,6 @@ const (
 // 保证 (type, value) 全局唯一且 IP/主域名严格分开。
 type AssetTargetMeta struct {
 	Id           string    `bson:"_id" json:"id"`
-	WorkspaceId  string    `bson:"workspace_id" json:"workspaceId"`
 	TargetType   string    `bson:"target_type" json:"targetType"`
 	TargetValue  string    `bson:"target_value" json:"targetValue"`
 	Labels       []string  `bson:"labels,omitempty" json:"labels"`
@@ -81,7 +80,7 @@ type AssetTargetMetaModel struct {
 	coll *mongo.Collection
 }
 
-func NewAssetTargetMetaModel(db *mongo.Database, workspaceId string) *AssetTargetMetaModel {
+func NewAssetTargetMetaModel(db *mongo.Database) *AssetTargetMetaModel {
 	collName := "asset_target_meta"
 	coll := db.Collection(collName)
 
@@ -136,7 +135,6 @@ func (m *AssetTargetMetaModel) Upsert(ctx context.Context, doc *AssetTargetMeta)
 	setFields := bson.M{
 		"target_type":    doc.TargetType,
 		"target_value":   doc.TargetValue,
-		"workspace_id":   doc.WorkspaceId,
 		"update_time":   now,
 	}
 	if doc.Labels != nil {

@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -34,9 +33,8 @@ func GeneratePocHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // AIConfigGetHandler 获取AI配置
 func AIConfigGetHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAIConfigLogic(r.Context(), svcCtx)
-		resp, err := l.GetConfig(workspaceId)
+		resp, err := l.GetConfig()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -54,9 +52,8 @@ func AIConfigSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAIConfigLogic(r.Context(), svcCtx)
-		resp, err := l.SaveConfig(&req, workspaceId)
+		resp, err := l.SaveConfig(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

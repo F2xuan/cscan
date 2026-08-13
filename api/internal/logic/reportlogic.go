@@ -32,8 +32,8 @@ func NewReportDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Repo
 	}
 }
 
-func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId string) (*types.ReportDetailResp, error) {
-	l.Logger.Infof("ReportDetail: taskId=%s, workspaceId=%s", req.TaskId, workspaceId)
+func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq) (*types.ReportDetailResp, error) {
+	l.Logger.Infof("ReportDetail: taskId=%s", req.TaskId)
 
 	// 获取任务信息
 	// M-1 修复：非法 taskId 直接返回 400，避免下游 ObjectIDFromHex 失败导致 500
@@ -41,9 +41,8 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 		return &types.ReportDetailResp{Code: 400, Msg: "无效的任务ID"}, nil
 	}
 
-	// 单租户：所有任务保存在默认全局集合中
-	actualWorkspaceId := "default"
-	taskModel := l.svcCtx.GetMainTaskModel("default")
+	// 所有任务保存在全局集合中
+	taskModel := l.svcCtx.GetMainTaskModel()
 	task, err := taskModel.FindById(l.ctx, req.TaskId)
 	if err != nil {
 		l.Logger.Errorf("FindById failed: %v", err)
@@ -56,11 +55,10 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	// 资产保存时使用的是 task.Id.Hex() (ObjectID) 作为 taskId
 	// 所以查询时也需要使用 ObjectID
 	queryTaskId := task.Id.Hex()
-	l.Logger.Infof("Found task: name=%s, taskId(UUID)=%s, objectId=%s, actualWorkspaceId=%s", task.Name, task.TaskId, queryTaskId, actualWorkspaceId)
+	l.Logger.Infof("Found task: name=%s, taskId(UUID)=%s, objectId=%s", task.Name, task.TaskId, queryTaskId)
 
 	// 获取资产列表
-	l.Logger.Infof("Querying assets from workspace: %s", actualWorkspaceId)
-	assetModel := l.svcCtx.GetAssetModel(actualWorkspaceId)
+	assetModel := l.svcCtx.GetAssetModel()
 
 	// 构建查询条件：匹配主任务ID或子任务ID（子任务格式: {mainTaskId}-{index}）
 	// 注意：子任务ID格式是 {UUID}-{index}，但资产保存时使用的是 ObjectID
@@ -80,8 +78,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	l.Logger.Infof("Found %d assets for task (objectId=%s, UUID=%s)", len(assets), queryTaskId, task.TaskId)
 
 	// 获取漏洞列表
-	l.Logger.Infof("Querying vuls from workspace: %s", actualWorkspaceId)
-	vulModel := l.svcCtx.GetVulModel(actualWorkspaceId)
+	vulModel := l.svcCtx.GetVulModel()
 	// 同样匹配主任务ID或子任务ID
 	vulFilter := bson.M{
 		"$or": []bson.M{
@@ -110,7 +107,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 			{"main_task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}},
 		},
 	}
-	l.Logger.Infof("DirScan query filter: %+v, actualWorkspaceId=%s", dirScanFilter, actualWorkspaceId)
+	l.Logger.Infof("DirScan query filter: %+v", dirScanFilter)
 	dirScans, err := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 1000)
 	if err != nil {
 		l.Logger.Errorf("查询目录扫描结果失败: %v", err)
@@ -244,11 +241,9 @@ func NewReportExportLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Repo
 	}
 }
 
-func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId string) ([]byte, string, error) {
+func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq) ([]byte, string, error) {
 	// 获取任务信息
-	// 单租户：所有任务保存在默认全局集合中
-	actualWorkspaceId := "default"
-	taskModel := l.svcCtx.GetMainTaskModel("default")
+	taskModel := l.svcCtx.GetMainTaskModel()
 	task, err := taskModel.FindById(l.ctx, req.TaskId)
 	if err != nil {
 		return nil, "", fmt.Errorf("查询任务失败: %v", err)
@@ -261,7 +256,7 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 	queryTaskId := task.Id.Hex()
 
 	// 获取资产列表（匹配主任务ID或子任务ID，同时兼容UUID和ObjectID格式）
-	assetModel := l.svcCtx.GetAssetModel(actualWorkspaceId)
+	assetModel := l.svcCtx.GetAssetModel()
 	assetFilter := bson.M{
 		"$or": []bson.M{
 			{"taskId": queryTaskId},
@@ -273,7 +268,7 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 	assets, _ := assetModel.Find(l.ctx, assetFilter, 0, 0)
 
 	// 获取漏洞列表（匹配主任务ID或子任务ID，同时兼容UUID和ObjectID格式）
-	vulModel := l.svcCtx.GetVulModel(actualWorkspaceId)
+	vulModel := l.svcCtx.GetVulModel()
 	vulFilter := bson.M{
 		"$or": []bson.M{
 			{"task_id": queryTaskId},

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/utils"
@@ -40,38 +39,34 @@ func NewAssetGroupsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Asset
 }
 
 // AssetGroups 获取按域名分组的资产统计
-func (l *AssetGroupsLogic) AssetGroups(req *types.AssetGroupsReq, workspaceId string) (resp *types.AssetGroupsResp, err error) {
+func (l *AssetGroupsLogic) AssetGroups(req *types.AssetGroupsReq) (resp *types.AssetGroupsResp, err error) {
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	cacheKey := fmt.Sprintf("asset_groups:%s:%d:%d:%s", workspaceId, req.Page, req.PageSize, req.Query)
+	cacheKey := fmt.Sprintf("asset_groups:%d:%d:%s", req.Page, req.PageSize, req.Query)
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, assetGroupsCacheTTL, func() (interface{}, error) {
-		return l.buildAssetGroups(req, workspaceId)
+		return l.buildAssetGroups(req)
 	})
 	if cerr != nil {
 		l.Logger.Errorf("AssetGroups 缓存读取失败: %v", cerr)
-		return l.buildAssetGroups(req, workspaceId)
+		return l.buildAssetGroups(req)
 	}
 	if r, ok := cached.(*types.AssetGroupsResp); ok && r != nil {
 		return r, nil
 	}
-	return l.buildAssetGroups(req, workspaceId)
+	return l.buildAssetGroups(req)
 }
 
-func (l *AssetGroupsLogic) buildAssetGroups(req *types.AssetGroupsReq, workspaceId string) (*types.AssetGroupsResp, error) {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	// domain -> group，跨工作空间合并
+func (l *AssetGroupsLogic) buildAssetGroups(req *types.AssetGroupsReq) (*types.AssetGroupsResp, error) {
+	// domain -> group
 	domainGroups := make(map[string]*types.AssetGroup)
 	// domain -> 最新任务的执行时长
 	domainDuration := make(map[string]time.Duration)
 
-	for _, wsId := range wsIds {
-		// 1. 资产聚合：只投影 host/domain/create_time/update_time，避免大字段加载
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-		rows, err := assetModel.AggregateGroupByDomain(l.ctx)
-		if err != nil {
-			l.Logger.Errorf("查询工作空间 %s 资产聚合失败: %v", wsId, err)
-			continue
-		}
+	// 1. 资产聚合：只投影 host/domain/create_time/update_time，避免大字段加载
+	assetModel := l.svcCtx.GetAssetModel()
+	rows, err := assetModel.AggregateGroupByDomain(l.ctx)
+	if err != nil {
+		l.Logger.Errorf("查询资产聚合失败: %v", err)
+	} else {
 		for _, row := range rows {
 			domain := resolveRootDomain(row.Host, row.Domain)
 			if domain == "" {
@@ -96,14 +91,14 @@ func (l *AssetGroupsLogic) buildAssetGroups(req *types.AssetGroupsReq, workspace
 				group.LatestUpdate = row.UpdateTime
 			}
 		}
+	}
 
-		// 2. 任务状态推断：仅查最近 N 条任务，按 update_time 降序覆盖域名状态
-		taskModel := l.svcCtx.GetMainTaskModel(wsId)
-		tasks, err := taskModel.FindRecent(l.ctx, assetGroupsRecentTaskLimit)
-		if err != nil {
-			l.Logger.Errorf("查询工作空间 %s 最近任务失败: %v", wsId, err)
-			continue
-		}
+	// 2. 任务状态推断：仅查最近 N 条任务，按 update_time 降序覆盖域名状态
+	taskModel := l.svcCtx.GetMainTaskModel()
+	tasks, err := taskModel.FindRecent(l.ctx, assetGroupsRecentTaskLimit)
+	if err != nil {
+		l.Logger.Errorf("查询最近任务失败: %v", err)
+	} else {
 		domainStatusSet := make(map[string]struct{})
 		for _, task := range tasks {
 			for _, target := range strings.Split(task.Target, "\n") {

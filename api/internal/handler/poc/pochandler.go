@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -167,9 +166,8 @@ func CustomPocScanAssetsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewCustomPocScanAssetsLogic(r.Context(), svcCtx)
-		resp, err := l.CustomPocScanAssets(&req, workspaceId)
+		resp, err := l.CustomPocScanAssets(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -301,9 +299,8 @@ func PocValidateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewPocValidateLogic(r.Context(), svcCtx)
-		resp, err := l.PocValidate(&req, workspaceId)
+		resp, err := l.PocValidate(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -321,9 +318,8 @@ func PocBatchValidateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewPocBatchValidateLogic(r.Context(), svcCtx)
-		resp, err := l.PocBatchValidate(&req, workspaceId)
+		resp, err := l.PocBatchValidate(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -369,4 +365,3 @@ func ValidatePocSyntaxHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
-

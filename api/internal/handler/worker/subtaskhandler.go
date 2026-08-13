@@ -17,7 +17,6 @@ import (
 type WorkerSubTaskDoneReq struct {
 	TaskId      string `json:"taskId"`
 	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
 	Phase       string `json:"phase"`
 	IsCompleted bool   `json:"isCompleted"`
 	IncrAmount  int    `json:"incrAmount"`
@@ -50,7 +49,7 @@ func WorkerSubTaskDoneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.WorkspaceId, req.Phase, req.IncrAmount)
+		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.Phase, req.IncrAmount)
 		if err != nil {
 			logx.Errorf("[WorkerSubTaskDone] IncrSubTaskDone error: %v", err)
 			response.Error(w, err)

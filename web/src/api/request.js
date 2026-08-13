@@ -135,3 +135,12 @@ request.interceptors.response.use(
 )
 
 export default request
+
+// 长超时请求封装：用于批量操作 / 导出 / 任务创建等耗时接口
+// 用法：longRequest.post('/task/create', params)
+export const longRequest = {
+  get: (url, config = {}) => request.get(url, { ...config, timeout: 300000 }),
+  post: (url, data, config = {}) => request.post(url, data, { ...config, timeout: 300000 }),
+  put: (url, data, config = {}) => request.put(url, data, { ...config, timeout: 300000 }),
+  delete: (url, config = {}) => request.delete(url, { ...config, timeout: 300000 })
+}

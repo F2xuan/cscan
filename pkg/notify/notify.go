@@ -20,7 +20,6 @@ type NotifyResult struct {
 	Duration    string    `json:"duration"`
 	StartTime   time.Time `json:"startTime"`
 	EndTime     time.Time `json:"endTime"`
-	WorkspaceId string    `json:"workspaceId"`
 	ReportURL   string    `json:"reportUrl"` // 报告URL地址
 	// 高危检测结果
 	HighRiskInfo *HighRiskInfo `json:"highRiskInfo,omitempty"`
@@ -166,7 +165,6 @@ func FormatMessage(result *NotifyResult, template string) string {
 		"{{duration}}", result.Duration,
 		"{{startTime}}", result.StartTime.Format("2006-01-02 15:04:05"),
 		"{{endTime}}", result.EndTime.Format("2006-01-02 15:04:05"),
-		"{{workspaceId}}", result.WorkspaceId,
 		"{{reportUrl}}", result.ReportURL,
 		"{{highRiskDetails}}", highRiskDetails,
 	)

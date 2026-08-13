@@ -78,8 +78,7 @@ type SubfinderResult struct {
 // Scan 执行子域名扫描
 func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets:      make([]*Asset, 0),
 	}
 

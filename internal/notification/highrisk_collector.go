@@ -12,8 +12,7 @@ import (
 )
 
 // collectHighRiskInfo 收集任务的高危信息。
-// 高危结果收集器，独立于 svc.ServiceContext。
-func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
+func collectHighRiskInfo(ctx context.Context, db *mongo.Database, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
 	hasHighRiskFilter := false
 	hasNewAssetNotify := false
 	newRiskEnabled := false
@@ -52,7 +51,7 @@ func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, m
 		HighRiskVulSeverities: make(map[string]int),
 	}
 
-	assetModel := model.NewAssetModel(db, workspaceId)
+	assetModel := model.NewAssetModel(db)
 
 	// 高危指纹
 	if len(allFingerprints) > 0 {
@@ -94,7 +93,7 @@ func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, m
 
 	// 高危漏洞统计
 	if len(allSeverities) > 0 {
-		vulModel := model.NewVulModel(db, workspaceId)
+		vulModel := model.NewVulModel(db)
 		vuls, err := vulModel.Find(ctx, bson.M{"task_id": mainTaskId}, 0, 0)
 		if err == nil {
 			sevSet := make(map[string]bool, len(allSeverities))
@@ -112,11 +111,11 @@ func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, m
 
 	// 新资产数量 + 明细
 	if hasNewAssetNotify {
-		diffModel := model.NewScanDiffModel(db, workspaceId)
-		if added, err := diffModel.CountByTaskIdAndType(ctx, workspaceId, mainTaskId, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded); err == nil {
+		diffModel := model.NewScanDiffModel(db)
+		if added, err := diffModel.CountByTaskIdAndType(ctx, mainTaskId, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded); err == nil {
 			info.NewAssetCount = int(added)
 		}
-		docs, total, err := diffModel.FindByTaskId(ctx, workspaceId, mainTaskId, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded, 1, 0)
+		docs, total, err := diffModel.FindByTaskId(ctx, mainTaskId, model.ScanDiffTypeAsset, model.ScanDiffChangeAdded, 1, 0)
 		if err == nil {
 			list := make([]notify.AssetSummary, 0, len(docs))
 			for _, d := range docs {
@@ -137,8 +136,8 @@ func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, m
 
 	// 新风险明细
 	if newRiskEnabled {
-		diffModel := model.NewScanDiffModel(db, workspaceId)
-		docs, _, err := diffModel.FindByTaskId(ctx, workspaceId, mainTaskId, model.ScanDiffTypeVul, model.ScanDiffChangeAdded, 1, 0)
+		diffModel := model.NewScanDiffModel(db)
+		docs, _, err := diffModel.FindByTaskId(ctx, mainTaskId, model.ScanDiffTypeVul, model.ScanDiffChangeAdded, 1, 0)
 		if err == nil {
 			list := make([]notify.RiskSummary, 0, len(docs))
 			for _, d := range docs {
@@ -156,14 +155,14 @@ func collectHighRiskInfo(ctx context.Context, db *mongo.Database, workspaceId, m
 
 	// 已修复漏洞数
 	if fixedEnabled {
-		vulModel := model.NewVulModel(db, workspaceId)
+		vulModel := model.NewVulModel(db)
 		if n, err := vulModel.Count(ctx, bson.M{"task_id": mainTaskId, "status": "fixed"}); err == nil {
 			info.FixedVulCount = int(n)
 		}
 	}
 
-	logx.Infof("[Notification] HighRiskInfo collected: workspaceId=%s, mainTaskId=%s, newAsset=%d, newAssetList=%d, newRisks=%d, fixedVul=%d",
-		workspaceId, mainTaskId, info.NewAssetCount, len(info.NewAssetList), len(info.NewRisks), info.FixedVulCount)
+	logx.Infof("[Notification] HighRiskInfo collected: mainTaskId=%s, newAsset=%d, newAssetList=%d, newRisks=%d, fixedVul=%d",
+		mainTaskId, info.NewAssetCount, len(info.NewAssetList), len(info.NewRisks), info.FixedVulCount)
 
 	return info
 }

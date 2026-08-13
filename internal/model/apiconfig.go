@@ -30,7 +30,7 @@ type APIConfigModel struct {
 }
 
 // NewAPIConfigModel 创建API配置模型
-func NewAPIConfigModel(db *mongo.Database, workspaceId string) *APIConfigModel {
+func NewAPIConfigModel(db *mongo.Database) *APIConfigModel {
 	return &APIConfigModel{
 		coll: db.Collection("api_config"),
 	}

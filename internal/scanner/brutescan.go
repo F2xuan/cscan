@@ -277,7 +277,6 @@ func (s *BruteScanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	wg.Wait()
 
 	return &ScanResult{
-		WorkspaceId:     config.WorkspaceId,
 		MainTaskId:      config.MainTaskId,
 		Vulnerabilities: vulns,
 	}, nil

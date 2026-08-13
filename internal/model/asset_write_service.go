@@ -59,7 +59,6 @@ type SaveAssetsResult struct {
 // AssetWriteService 资产写入服务，封装完整的资产保存业务逻辑
 type AssetWriteService struct {
 	db              *mongo.Database
-	workspaceId     string
 	assetModel      *AssetModel
 	historyModel    *AssetHistoryModel
 	diffModel       *ScanDiffModel
@@ -67,17 +66,13 @@ type AssetWriteService struct {
 }
 
 // NewAssetWriteService 创建资产写入服务
-func NewAssetWriteService(db *mongo.Database, workspaceId string) *AssetWriteService {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func NewAssetWriteService(db *mongo.Database) *AssetWriteService {
 	return &AssetWriteService{
 		db:              db,
-		workspaceId:     workspaceId,
-		assetModel:      NewAssetModel(db, workspaceId),
-		historyModel:    NewAssetHistoryModel(db, workspaceId),
-		diffModel:       NewScanDiffModel(db, workspaceId),
-		targetMetaModel: NewAssetTargetMetaModel(db, workspaceId),
+		assetModel:      NewAssetModel(db),
+		historyModel:    NewAssetHistoryModel(db),
+		diffModel:       NewScanDiffModel(db),
+		targetMetaModel: NewAssetTargetMetaModel(db),
 	}
 }
 
@@ -122,8 +117,8 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 		// 将新资产的 IP/Location 回填到基础域名资产
 		s.backfillLocationToBaseDomain(ctx, asset)
 
-		// 当保存带端口的域名资产时，删除同名的无端口资产
-		s.mergeAndDeleteNoPortAsset(ctx, asset)
+		// 从同名无端口域名资产继承元数据（不删除域名记录）
+		s.inheritFromNoPortAsset(ctx, asset)
 
 		// 检查是否已存在
 		var existing *Asset
@@ -165,12 +160,11 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 			}
 
 			diffs = append(diffs, ScanDiff{
-				TaskId:      mainTaskID,
-				WorkspaceId: s.workspaceId,
-				DiffType:    ScanDiffTypeAsset,
-				ChangeType:  ScanDiffChangeAdded,
-				TargetKey:   asset.Authority,
-				Summary:     asset.Host,
+				TaskId:     mainTaskID,
+				DiffType:   ScanDiffTypeAsset,
+				ChangeType: ScanDiffChangeAdded,
+				TargetKey:  asset.Authority,
+				Summary:    asset.Host,
 			})
 		} else {
 			// 更新已存在的资产
@@ -210,14 +204,13 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 				updateAsset++
 				if len(changes) > 0 {
 					diffs = append(diffs, ScanDiff{
-						TaskId:      mainTaskID,
-						WorkspaceId: s.workspaceId,
-						DiffType:    ScanDiffTypeAsset,
-						ChangeType:  ScanDiffChangeUpdated,
-						TargetKey:   existing.Authority,
-						Summary:     existing.Host,
-						Changes:     changes,
-					})
+					TaskId:     mainTaskID,
+					DiffType:   ScanDiffTypeAsset,
+					ChangeType: ScanDiffChangeUpdated,
+					TargetKey:  existing.Authority,
+					Summary:    existing.Host,
+					Changes:    changes,
+				})
 				}
 			}
 		}
@@ -229,7 +222,7 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 			continue
 		}
 		seenTargets[targetKey] = struct{}{}
-		if err := s.targetMetaModel.EnsureForAsset(ctx, s.workspaceId, asset.Host, asset.Domain, nil); err != nil {
+		if err := s.targetMetaModel.EnsureForAsset(ctx, asset.Host, asset.Domain, nil); err != nil {
 			logx.Errorf("[AssetWriteService] upsert target meta host=%s fail: %v", asset.Host, err)
 			continue
 		}
@@ -386,8 +379,9 @@ func (s *AssetWriteService) backfillLocationToBaseDomain(ctx context.Context, as
 	}
 }
 
-// mergeAndDeleteNoPortAsset 当保存带端口的域名资产时，删除同名的无端口资产
-func (s *AssetWriteService) mergeAndDeleteNoPortAsset(ctx context.Context, asset *Asset) {
+// inheritFromNoPortAsset 当保存带端口的域名资产时，从同名的无端口域名资产继承元数据。
+// 不删除无端口资产——它是 subfinder 发现的域名记录，子域名菜单页依赖 category="domain" 的记录。
+func (s *AssetWriteService) inheritFromNoPortAsset(ctx context.Context, asset *Asset) {
 	if asset.Port > 0 && !utils.IsIPAddress(asset.Host) {
 		noPortAsset, err := s.assetModel.FindByAuthorityOnly(ctx, asset.Host)
 		if err == nil && noPortAsset != nil {
@@ -402,10 +396,6 @@ func (s *AssetWriteService) mergeAndDeleteNoPortAsset(ctx context.Context, asset
 			}
 			if len(asset.Ip.IpV4) == 0 && len(asset.Ip.IpV6) == 0 && (len(noPortAsset.Ip.IpV4) > 0 || len(noPortAsset.Ip.IpV6) > 0) {
 				asset.Ip = noPortAsset.Ip
-			}
-
-			if deleteErr := s.assetModel.Delete(ctx, noPortAsset.Id.Hex()); deleteErr == nil {
-				logx.Infof("[AssetWriteService] 已删除同名无端口资产: %s (被 %s:%d 替代)", asset.Host, asset.Host, asset.Port)
 			}
 		}
 	}

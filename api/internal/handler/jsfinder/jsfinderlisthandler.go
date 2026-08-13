@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,11 +20,6 @@ func JSFinderListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 从中间件上下文获取workspaceId，如果请求体未指定则使用header中的值
-		if req.WorkspaceId == "" {
-			req.WorkspaceId = middleware.GetWorkspaceId(r.Context())
-		}
-
 		l := logic.NewJSFinderLogic(r.Context(), svcCtx)
 		resp, err := l.GetJSFinderList(&req)
 		if err != nil {
@@ -40,10 +34,8 @@ func JSFinderListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // JSFinderClearHandler 清空 JSFinder 结果
 func JSFinderClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
-
 		l := logic.NewJSFinderLogic(r.Context(), svcCtx)
-		err := l.ClearJSFinderResults(workspaceId)
+		err := l.ClearJSFinderResults()
 		if err != nil {
 			response.Error(w, err)
 		} else {

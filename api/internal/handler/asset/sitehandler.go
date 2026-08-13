@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func SiteListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewSiteLogic(r.Context(), svcCtx)
-		resp, err := l.SiteList(&req, workspaceId)
+		resp, err := l.SiteList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -35,9 +33,8 @@ func SiteListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // SiteStatHandler 站点统计
 func SiteStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewSiteLogic(r.Context(), svcCtx)
-		resp, err := l.SiteStat(workspaceId)
+		resp, err := l.SiteStat()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -55,9 +52,8 @@ func SiteDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewSiteLogic(r.Context(), svcCtx)
-		resp, err := l.SiteDelete(&req, workspaceId)
+		resp, err := l.SiteDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -75,9 +71,8 @@ func SiteBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewSiteLogic(r.Context(), svcCtx)
-		resp, err := l.SiteBatchDelete(&req, workspaceId)
+		resp, err := l.SiteBatchDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -89,9 +84,8 @@ func SiteBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // SiteClearHandler 清空站点
 func SiteClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewSiteClearLogic(r.Context(), svcCtx)
-		resp, err := l.SiteClear(workspaceId)
+		resp, err := l.SiteClear()
 		if err != nil {
 			response.Error(w, err)
 			return

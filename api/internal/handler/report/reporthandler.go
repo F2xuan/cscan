@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 )
@@ -19,9 +18,8 @@ func ReportDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewReportDetailLogic(r.Context(), svcCtx)
-		resp, _ := l.ReportDetail(&req, workspaceId)
+		resp, _ := l.ReportDetail(&req)
 		httpResult(w, resp)
 	}
 }
@@ -34,9 +32,8 @@ func ReportExportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewReportExportLogic(r.Context(), svcCtx)
-		data, filename, err := l.ReportExport(&req, workspaceId)
+		data, filename, err := l.ReportExport(&req)
 		if err != nil {
 			httpResult(w, &types.BaseResp{Code: 500, Msg: err.Error()})
 			return

@@ -101,9 +101,8 @@ func ScanTemplateFromTaskHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 
 		userId := middleware.GetUserId(r.Context())
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewScanTemplateFromTaskLogic(r.Context(), svcCtx)
-		resp, err := l.ScanTemplateFromTask(&req, userId, workspaceId)
+		resp, err := l.ScanTemplateFromTask(&req, userId)
 		if err != nil {
 			response.Error(w, err)
 			return

@@ -90,7 +90,7 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 					Response:         r.Response,
 				})
 			}
-			w.saveJSFinderResultDirect(ctx, task.WorkspaceId, task.MainTaskId, schedResults)
+			w.saveJSFinderResultDirect(ctx, task.MainTaskId, schedResults)
 		},
 	}
 
@@ -110,11 +110,10 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 	defer jsCancel()
 
 	result, err := jsScanner.Scan(jsCtx, &scanner.ScanConfig{
-		Assets:      httpAssets,
-		Options:     opts,
-		WorkspaceId: task.WorkspaceId,
-		MainTaskId:  task.MainTaskId,
-		TaskLogger:  jsTaskLogger,
+		Assets:     httpAssets,
+		Options:    opts,
+		MainTaskId: task.MainTaskId,
+		TaskLogger: jsTaskLogger,
 	})
 
 	if ctx.Err() != nil || jsCtx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {

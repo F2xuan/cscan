@@ -3,12 +3,10 @@ package logic
 import (
 	"context"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -31,7 +29,7 @@ func NewVulListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulListLo
 	}
 }
 
-func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp *types.VulListResp, err error) {
+func (l *VulListLogic) VulList(req *types.VulListReq) (resp *types.VulListResp, err error) {
 	// 构建查询条件
 	filter := bson.M{}
 	// 如果提供了通用 Query 且未显式指定 Authority/Host，则按多个字段模糊匹配
@@ -116,82 +114,23 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 	var total int64
 	var vuls []model.Vul
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
+	vulModel := l.svcCtx.GetVulModel()
 
-	// 如果查询多个工作空间
-	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 优化点：原实现 Find(filter, 0, 0) 把每个 ws 全部漏洞加载到内存，多 ws 时易 OOM
-		// 现改为只拉取覆盖到当前页末尾的数据量（needTotal = page * pageSize），
-		// 全局合并 + 排序 + 分页，既保证跨 ws 分页正确性又控制内存
-		req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-		needTotal := req.Page * req.PageSize
-		// 安全上限：避免用户翻到极深页时拉取过多数据
-		if needTotal > 50000 {
-			needTotal = 50000
-		}
+	// 查询总数
+	total, err = vulModel.Count(l.ctx, filter)
+	if err != nil {
+		return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
+	}
 
-		var allVuls []model.Vul
-		for _, wsId := range wsIds {
-			vulModel := l.svcCtx.GetVulModel(wsId)
-			wsTotal, _ := vulModel.Count(l.ctx, filter)
-			total += wsTotal
-
-			if wsTotal == 0 {
-				continue
-			}
-			// 每个 ws 最多拉 needTotal 条（覆盖到当前页末尾），wsTotal 不足时按实际数拉
-			limit := needTotal
-			if wsTotal < int64(limit) {
-				limit = int(wsTotal)
-			}
-			wsVuls, _ := vulModel.Find(l.ctx, filter, 1, limit)
-			allVuls = append(allVuls, wsVuls...)
-		}
-
-		// 排序：T4.3 支持严重度排序，否则维持原创建时间排序
-		sort.Slice(allVuls, func(i, j int) bool {
-			if req.Sort == "severity" {
-				if severityRank(allVuls[i].Severity) != severityRank(allVuls[j].Severity) {
-					return severityRank(allVuls[i].Severity) > severityRank(allVuls[j].Severity)
-				}
-				if !allVuls[i].FirstSeenTime.Equal(allVuls[j].FirstSeenTime) {
-					return allVuls[i].FirstSeenTime.After(allVuls[j].FirstSeenTime)
-				}
-				return allVuls[i].CreateTime.After(allVuls[j].CreateTime)
-			}
-			return allVuls[i].CreateTime.After(allVuls[j].CreateTime)
-		})
-
-		// 分页
-		start := (req.Page - 1) * req.PageSize
-		end := start + req.PageSize
-		if start > len(allVuls) {
-			start = len(allVuls)
-		}
-		if end > len(allVuls) {
-			end = len(allVuls)
-		}
-		vuls = allVuls[start:end]
+	// 查询列表
+	if req.Sort == "severity" {
+		vuls, err = vulModel.FindBySeveritySort(l.ctx, filter, req.Page, req.PageSize)
 	} else {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-
-		// 查询总数
-		total, err = vulModel.Count(l.ctx, filter)
-		if err != nil {
-			return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
-		}
-
-		// 查询列表
-		if req.Sort == "severity" {
-			// T4.3: 严重度等级降序 + first_seen_time 降序（服务端聚合排序，分页正确）
-			vuls, err = vulModel.FindBySeveritySort(l.ctx, filter, req.Page, req.PageSize)
-		} else {
-			vuls, err = vulModel.Find(l.ctx, filter, req.Page, req.PageSize)
-		}
-		if err != nil {
-			return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
-		}
+		vuls, err = vulModel.Find(l.ctx, filter, req.Page, req.PageSize)
+	}
+	if err != nil {
+		return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
 	}
 
 	// 转换响应
@@ -274,86 +213,36 @@ func NewVulLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulLogic {
 	}
 }
 
-func (l *VulLogic) VulDelete(req *types.VulDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	// 如果是全部空间模式，需要遍历查找并删除
-	if workspaceId == "" || workspaceId == "all" {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
-		deleted := false
-		for _, wsId := range wsIds {
-			vulModel := l.svcCtx.GetVulModel(wsId)
-			count, err := vulModel.Delete(l.ctx, req.Id)
-			if err == nil && count > 0 {
-				deleted = true
-				break
-			}
-		}
-		if !deleted {
-			return &types.BaseResp{Code: 404, Msg: "漏洞不存在或删除失败"}, nil
-		}
-	} else {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-		count, err := vulModel.Delete(l.ctx, req.Id)
-		if err != nil {
-			return &types.BaseResp{Code: 500, Msg: "删除失败: " + err.Error()}, nil
-		}
-		if count == 0 {
-			return &types.BaseResp{Code: 404, Msg: "漏洞不存在"}, nil
-		}
+func (l *VulLogic) VulDelete(req *types.VulDeleteReq) (resp *types.BaseResp, err error) {
+	vulModel := l.svcCtx.GetVulModel()
+	count, err := vulModel.Delete(l.ctx, req.Id)
+	if err != nil {
+		return &types.BaseResp{Code: 500, Msg: "删除失败: " + err.Error()}, nil
+	}
+	if count == 0 {
+		return &types.BaseResp{Code: 404, Msg: "漏洞不存在"}, nil
 	}
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }
 
-func (l *VulLogic) VulBatchDelete(req *types.VulBatchDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	var totalDeleted int64
-
-	// 如果是全部空间模式，需要遍历所有工作空间删除
-	if workspaceId == "" || workspaceId == "all" {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
-		for _, wsId := range wsIds {
-			vulModel := l.svcCtx.GetVulModel(wsId)
-			deleted, err := vulModel.BatchDelete(l.ctx, req.Ids)
-			if err != nil {
-				logx.Errorf("[VulBatchDelete] 删除工作空间 %s 漏洞失败: %v", wsId, err)
-				continue
-			}
-			totalDeleted += deleted
-		}
-	} else {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-		deleted, err := vulModel.BatchDelete(l.ctx, req.Ids)
-		if err != nil {
-			return &types.BaseResp{Code: 500, Msg: "删除失败: " + err.Error()}, nil
-		}
-		totalDeleted = deleted
+func (l *VulLogic) VulBatchDelete(req *types.VulBatchDeleteReq) (resp *types.BaseResp, err error) {
+	vulModel := l.svcCtx.GetVulModel()
+	deleted, err := vulModel.BatchDelete(l.ctx, req.Ids)
+	if err != nil {
+		return &types.BaseResp{Code: 500, Msg: "删除失败: " + err.Error()}, nil
 	}
 
-	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(totalDeleted, 10) + " 条记录"}, nil
+	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(deleted, 10) + " 条记录"}, nil
 }
 
-func (l *VulLogic) VulClear(workspaceId string) (resp *types.BaseResp, err error) {
-	var totalDeleted int64
-
-	if workspaceId == "" || workspaceId == "all" {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
-		for _, wsId := range wsIds {
-			vulModel := l.svcCtx.GetVulModel(wsId)
-			deleted, err := vulModel.Clear(l.ctx)
-			if err != nil {
-				logx.Errorf("[VulClear] 清空工作空间 %s 漏洞失败: %v", wsId, err)
-				continue
-			}
-			totalDeleted += deleted
-		}
-	} else {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-		deleted, err := vulModel.Clear(l.ctx)
-		if err != nil {
-			return &types.BaseResp{Code: 500, Msg: "清空失败: " + err.Error()}, nil
-		}
-		totalDeleted = deleted
+func (l *VulLogic) VulClear() (resp *types.BaseResp, err error) {
+	vulModel := l.svcCtx.GetVulModel()
+	deleted, err := vulModel.Clear(l.ctx)
+	if err != nil {
+		return &types.BaseResp{Code: 500, Msg: "清空失败: " + err.Error()}, nil
 	}
 
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 条漏洞"}, nil
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 条漏洞"}, nil
 }
 
 // VulStatLogic 漏洞统计逻辑
@@ -371,33 +260,27 @@ func NewVulStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulStatLo
 	}
 }
 
-func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err error) {
+func (l *VulStatLogic) VulStat() (resp *types.VulStatResp, err error) {
 	// 聚合统计走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
-	cacheKey := "vul_stat:" + workspaceId
+	cacheKey := "vul_stat"
 	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
 		var total, critical, high, medium, low, info, week, month, open, fixed, ignored int64
 		now := time.Now()
 
-		// 获取需要查询的工作空间列表
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-		for _, wsId := range wsIds {
-			vulModel := l.svcCtx.GetVulModel(wsId)
-			stats, statErr := vulModel.AggregateStats(l.ctx, now)
-			if statErr != nil {
-				continue
-			}
-			total += stats.Total
-			critical += stats.Critical
-			high += stats.High
-			medium += stats.Medium
-			low += stats.Low
-			info += stats.Info
-			week += stats.Week
-			month += stats.Month
-			open += stats.Open
-			fixed += stats.Fixed
-			ignored += stats.Ignored
+		vulModel := l.svcCtx.GetVulModel()
+		stats, statErr := vulModel.AggregateStats(l.ctx, now)
+		if statErr == nil {
+			total = stats.Total
+			critical = stats.Critical
+			high = stats.High
+			medium = stats.Medium
+			low = stats.Low
+			info = stats.Info
+			week = stats.Week
+			month = stats.Month
+			open = stats.Open
+			fixed = stats.Fixed
+			ignored = stats.Ignored
 		}
 
 		return &types.VulStatResp{
@@ -440,27 +323,15 @@ func NewVulDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulDeta
 	}
 }
 
-func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq, workspaceId string) (resp *types.VulDetailResp, err error) {
+func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq) (resp *types.VulDetailResp, err error) {
 	if req.Id == "" {
 		return &types.VulDetailResp{Code: 400, Msg: "漏洞ID不能为空"}, nil
 	}
 
 	var vul *model.Vul
 
-	// 如果是全部空间模式，遍历所有工作空间查找
-	if workspaceId == "" || workspaceId == "all" {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
-		for _, wsId := range wsIds {
-			vulModel := l.svcCtx.GetVulModel(wsId)
-			if v, err := vulModel.FindById(l.ctx, req.Id); err == nil && v != nil {
-				vul = v
-				break
-			}
-		}
-	} else {
-		vulModel := l.svcCtx.GetVulModel(workspaceId)
-		vul, err = vulModel.FindById(l.ctx, req.Id)
-	}
+	vulModel := l.svcCtx.GetVulModel()
+	vul, err = vulModel.FindById(l.ctx, req.Id)
 
 	if vul == nil {
 		return &types.VulDetailResp{Code: 404, Msg: "漏洞不存在"}, nil
@@ -546,7 +417,7 @@ func NewVulUpdateStatusLogic(ctx context.Context, svcCtx *svc.ServiceContext) *V
 
 // VulUpdateStatus 批量更新漏洞生命周期状态（open/fixed/ignored）。
 // 校验状态合法性；对所有相关 workspace 执行批量更新并汇总实际修改条数。
-func (l *VulUpdateStatusLogic) VulUpdateStatus(req *types.VulUpdateStatusReq, workspaceId string) (resp *types.VulUpdateStatusResp, err error) {
+func (l *VulUpdateStatusLogic) VulUpdateStatus(req *types.VulUpdateStatusReq) (resp *types.VulUpdateStatusResp, err error) {
 	if len(req.Ids) == 0 {
 		return &types.VulUpdateStatusResp{Code: 400, Msg: "请选择要更新的漏洞"}, nil
 	}
@@ -560,26 +431,19 @@ func (l *VulUpdateStatusLogic) VulUpdateStatus(req *types.VulUpdateStatusReq, wo
 		return &types.VulUpdateStatusResp{Code: 400, Msg: "非法的漏洞状态: " + req.Status}, nil
 	}
 
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	source := model.VulFixSourceManual
+	vulModel := l.svcCtx.GetVulModel()
 	var totalUpdated int64
-	for _, wsId := range wsIds {
-		vulModel := l.svcCtx.GetVulModel(wsId)
-		var n int64
-		var uerr error
-		switch req.Status {
-		case model.VulStatusFixed:
-			n, uerr = vulModel.MarkFixed(l.ctx, req.Ids, source)
-		case model.VulStatusOpen:
-			n, uerr = vulModel.MarkOpen(l.ctx, req.Ids, source)
-		case model.VulStatusIgnored:
-			n, uerr = vulModel.MarkIgnored(l.ctx, req.Ids)
-		}
-		if uerr != nil {
-			l.Logger.Errorf("[VulUpdateStatus] update workspace=%s failed: %v", wsId, uerr)
-			continue
-		}
-		totalUpdated += n
+	switch req.Status {
+	case model.VulStatusFixed:
+		totalUpdated, err = vulModel.MarkFixed(l.ctx, req.Ids, source)
+	case model.VulStatusOpen:
+		totalUpdated, err = vulModel.MarkOpen(l.ctx, req.Ids, source)
+	case model.VulStatusIgnored:
+		totalUpdated, err = vulModel.MarkIgnored(l.ctx, req.Ids)
+	}
+	if err != nil {
+		l.Logger.Errorf("[VulUpdateStatus] update failed: %v", err)
 	}
 
 	return &types.VulUpdateStatusResp{

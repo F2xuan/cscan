@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -22,9 +21,8 @@ func VulListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulListLogic(r.Context(), svcCtx)
-		resp, err := l.VulList(&req, workspaceId)
+		resp, err := l.VulList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -46,9 +44,8 @@ func VulDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulDetailLogic(r.Context(), svcCtx)
-		resp, err := l.VulDetail(&req, workspaceId)
+		resp, err := l.VulDetail(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -70,9 +67,8 @@ func VulDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulLogic(r.Context(), svcCtx)
-		resp, err := l.VulDelete(&req, workspaceId)
+		resp, err := l.VulDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -94,9 +90,8 @@ func VulBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulLogic(r.Context(), svcCtx)
-		resp, err := l.VulBatchDelete(&req, workspaceId)
+		resp, err := l.VulBatchDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -108,9 +103,8 @@ func VulBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // VulClearHandler 清空漏洞
 func VulClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulLogic(r.Context(), svcCtx)
-		resp, err := l.VulClear(workspaceId)
+		resp, err := l.VulClear()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -122,9 +116,8 @@ func VulClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // VulStatHandler 漏洞统计
 func VulStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulStatLogic(r.Context(), svcCtx)
-		resp, err := l.VulStat(workspaceId)
+		resp, err := l.VulStat()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -146,9 +139,8 @@ func VulUpdateStatusHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewVulUpdateStatusLogic(r.Context(), svcCtx)
-		resp, err := l.VulUpdateStatus(&req, workspaceId)
+		resp, err := l.VulUpdateStatus(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

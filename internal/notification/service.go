@@ -29,7 +29,7 @@ func NewService(db *mongo.Database, rdb *redis.Client) *Service {
 
 // NotifyTaskCompleted 任务完成时触发通知（幂等）。
 // 使用 Redis SETNX cscan:task:notified:{id} TTL 24h 防止重复触发。
-func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, workspaceID, status string) error {
+func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, status string) error {
 	// 1. 幂等检查：SETNX cscan:task:notified:{taskId} "1" 86400
 	notifiedKey := fmt.Sprintf("cscan:task:notified:%s", mainTaskID)
 	ok, err := s.rdb.SetNX(ctx, notifiedKey, "1", 24*time.Hour).Result()
@@ -42,7 +42,7 @@ func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, workspace
 	}
 
 	// 2. 查询主任务信息
-	taskModel := model.NewMainTaskModel(s.db, workspaceID)
+	taskModel := model.NewMainTaskModel(s.db)
 	task, err := taskModel.FindById(ctx, mainTaskID)
 	if err != nil {
 		return fmt.Errorf("find task: %w", err)
@@ -54,18 +54,18 @@ func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, workspace
 	// 3. Baseline 抑制：首次扫描完成时建立基线，首次新增不进通知
 	baselineModel := model.NewWorkspaceBaselineModel(s.db)
 	baselineJustEstablished := false
-	if existing, gerr := baselineModel.Get(ctx, workspaceID); gerr == nil && existing == nil {
-		if _, eerr := baselineModel.Establish(ctx, workspaceID, mainTaskID); eerr != nil {
+	if existing, gerr := baselineModel.Get(ctx, ""); gerr == nil && existing == nil {
+		if _, eerr := baselineModel.Establish(ctx, "", mainTaskID); eerr != nil {
 			logx.Errorf("[Notification] baseline establish failed: %v", eerr)
 		} else {
 			baselineJustEstablished = true
-			logx.Infof("[Notification] baseline established for workspace=%s task=%s", workspaceID, mainTaskID)
+			logx.Infof("[Notification] baseline established for task=%s", mainTaskID)
 		}
 	}
 
 	// 4. 查询资产和漏洞统计
-	assetModel := model.NewAssetModel(s.db, workspaceID)
-	vulModel := model.NewVulModel(s.db, workspaceID)
+	assetModel := model.NewAssetModel(s.db)
+	vulModel := model.NewVulModel(s.db)
 	assetCount, _ := assetModel.CountByTaskId(ctx, mainTaskID)
 	vulCount, _ := vulModel.CountByTaskId(ctx, mainTaskID)
 
@@ -124,7 +124,6 @@ func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, workspace
 		Status:      status,
 		AssetCount:  int(assetCount),
 		VulCount:    int(vulCount),
-		WorkspaceId: workspaceID,
 		ReportURL:   reportURL,
 	}
 	if task.StartTime != nil {
@@ -145,7 +144,7 @@ func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, workspace
 	}
 
 	// 10. 收集高危信息
-	result.HighRiskInfo = collectHighRiskInfo(ctx, s.db, workspaceID, mainTaskID, configItems)
+	result.HighRiskInfo = collectHighRiskInfo(ctx, s.db, mainTaskID, configItems)
 
 	// 11. 首次扫描（刚建立基线）不产生新增资产通知
 	if baselineJustEstablished && result.HighRiskInfo != nil {

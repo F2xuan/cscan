@@ -43,14 +43,13 @@ type TaskCheckReq struct {
 
 // TaskCheckResp 任务拉取响应
 type TaskCheckResp struct {
-	Code        int    `json:"code"`
-	Msg         string `json:"msg"`
-	IsExist     bool   `json:"isExist"`
-	IsFinished  bool   `json:"isFinished"`
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
-	Config      string `json:"config"`
+	Code       int    `json:"code"`
+	Msg        string `json:"msg"`
+	IsExist    bool   `json:"isExist"`
+	IsFinished bool   `json:"isFinished"`
+	TaskId     string `json:"taskId"`
+	MainTaskId string `json:"mainTaskId"`
+	Config     string `json:"config"`
 }
 
 // TaskUpdateReq 任务状态更新请求
@@ -112,7 +111,6 @@ type AssetDocument struct {
 
 // TaskResultReq 资产结果上报请求
 type TaskResultReq struct {
-	WorkspaceId string          `json:"workspaceId"`
 	MainTaskId  string          `json:"mainTaskId"`
 	OrgId       string          `json:"orgId"`
 	Assets      []AssetDocument `json:"assets"`
@@ -158,15 +156,13 @@ type VulDocument struct {
 
 // VulResultReq 漏洞结果上报请求
 type VulResultReq struct {
-	WorkspaceId string        `json:"workspaceId"`
 	MainTaskId  string        `json:"mainTaskId"`
 	Vuls        []VulDocument `json:"vuls"`
 }
 
 // VulReverifyReq 漏洞复验结果上报请求
 type VulReverifyReq struct {
-	WorkspaceId string `json:"workspaceId"`
-	VulnId      string `json:"vulnId"`
+	VulnId     string `json:"vulnId"`
 	Conclusion  string `json:"conclusion"`
 	Reviewer    string `json:"reviewer"`
 	Message     string `json:"message"`
@@ -209,7 +205,6 @@ type HeartbeatResp struct {
 type SubTaskDoneReq struct {
 	TaskId      string `json:"taskId"`
 	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
 	Phase       string `json:"phase"`
 	IsCompleted bool   `json:"isCompleted"`
 	IncrAmount  int    `json:"incrAmount"`
@@ -278,7 +273,6 @@ type FingerprintsResp struct {
 
 // SubfinderReq Subfinder配置获取请求
 type SubfinderReq struct {
-	WorkspaceId string `json:"workspaceId"`
 }
 
 // SubfinderProvider Subfinder数据源
@@ -673,10 +667,8 @@ func (c *WorkerHTTPClient) GetFingerprints(ctx context.Context, req *Fingerprint
 }
 
 // GetSubfinderProviders 获取Subfinder配置
-func (c *WorkerHTTPClient) GetSubfinderProviders(ctx context.Context, workspaceId string) (*SubfinderResp, error) {
-	req := &SubfinderReq{
-		WorkspaceId: workspaceId,
-	}
+func (c *WorkerHTTPClient) GetSubfinderProviders(ctx context.Context) (*SubfinderResp, error) {
+	req := &SubfinderReq{}
 
 	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/config/subfinder", req)
 	if err != nil {
@@ -1047,7 +1039,6 @@ type JSFinderResultItem struct {
 
 // SaveJSFinderResultReq 保存 JSFinder 扫描结果请求
 type SaveJSFinderResultReq struct {
-	WorkspaceId string                `json:"workspaceId"`
 	MainTaskId  string                `json:"mainTaskId,omitempty"`
 	Results     []*JSFinderResultItem `json:"results"`
 }
@@ -1093,7 +1084,6 @@ type CertResultItem struct {
 
 // SaveCertResultReq 保存证书采集结果请求
 type SaveCertResultReq struct {
-	WorkspaceId string            `json:"workspaceId"`
 	MainTaskId  string            `json:"mainTaskId,omitempty"`
 	Results     []*CertResultItem `json:"results"`
 }
@@ -1169,7 +1159,6 @@ type TaskRecoveryReq struct {
 type RecoveredTaskInfo struct {
 	TaskId      string `json:"taskId"`
 	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
 	Status      string `json:"status"`
 	StartTime   string `json:"startTime"`
 }

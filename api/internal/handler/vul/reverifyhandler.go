@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
@@ -19,9 +18,6 @@ func ReverifyHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		if err := httpx.Parse(r, &req); err != nil {
 			httpx.OkJson(w, &types.VulReverifyResp{Code: 400, Msg: err.Error()})
 			return
-		}
-		if req.WorkspaceId == "" {
-			req.WorkspaceId = middleware.GetWorkspaceId(r.Context())
 		}
 
 		l := logic.NewVulReverifyLogic(r.Context(), svcCtx)

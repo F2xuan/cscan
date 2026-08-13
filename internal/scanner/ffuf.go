@@ -78,8 +78,7 @@ type ffufCLIOutput struct {
 // Scan 执行目录扫描
 func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 	}
 
 	opts := &FFufOptions{

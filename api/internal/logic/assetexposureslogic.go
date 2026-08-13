@@ -3,7 +3,6 @@ package logic
 import (
 	"context"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -26,24 +25,16 @@ func NewAssetExposuresLogic(ctx context.Context, svcCtx *svc.ServiceContext) *As
 	}
 }
 
-func (l *AssetExposuresLogic) AssetExposures(req *types.AssetExposuresReq, workspaceId string) (resp *types.AssetExposuresResp, err error) {
-	// 获取资产信息 - 当 workspaceId 为 "all" 时，需要遍历所有工作空间查找资产
-	var asset *model.Asset
-	var actualWorkspaceId string
-
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	for _, wsId := range workspaceIds {
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-		found, err := assetModel.FindById(l.ctx, req.AssetId)
-		if err == nil && found != nil {
-			asset = found
-			actualWorkspaceId = wsId
-			break
-		}
+func (l *AssetExposuresLogic) AssetExposures(req *types.AssetExposuresReq) (resp *types.AssetExposuresResp, err error) {
+	// 获取资产信息
+	assetModel := l.svcCtx.GetAssetModel()
+	asset, err := assetModel.FindById(l.ctx, req.AssetId)
+	if err != nil {
+		l.Logger.Errorf("[AssetExposures] FindById 失败: %v", err)
+		return &types.AssetExposuresResp{Code: 500, Msg: "查询失败"}, nil
 	}
-
 	if asset == nil {
-		l.Logger.Errorf("资产不存在: assetId=%s, workspaceId=%s, 搜索的工作空间=%v", req.AssetId, workspaceId, workspaceIds)
+		l.Logger.Errorf("资产不存在: assetId=%s", req.AssetId)
 		return &types.AssetExposuresResp{Code: 404, Msg: "资产不存在"}, nil
 	}
 
@@ -51,23 +42,11 @@ func (l *AssetExposuresLogic) AssetExposures(req *types.AssetExposuresReq, works
 	dirScanModel := model.NewDirScanResultModel(l.svcCtx.MongoDB)
 
 	// 构建查询条件：优先使用资产的 authority，同时支持 host+port 回退匹配
-	var dirScanFilter bson.M
-	if actualWorkspaceId != "" && actualWorkspaceId != "all" {
-		// 使用 $or 条件同时匹配 authority 或 host+port
-		dirScanFilter = bson.M{
-			"workspace_id": actualWorkspaceId,
-			"$or": []bson.M{
-				{"authority": asset.Authority},
-				{"host": asset.Host, "port": asset.Port},
-			},
-		}
-	} else {
-		dirScanFilter = bson.M{
-			"$or": []bson.M{
-				{"authority": asset.Authority},
-				{"host": asset.Host, "port": asset.Port},
-			},
-		}
+	dirScanFilter := bson.M{
+		"$or": []bson.M{
+			{"authority": asset.Authority},
+			{"host": asset.Host, "port": asset.Port},
+		},
 	}
 
 	dirScans, err := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 0, 100) // 最多返回100条
@@ -77,7 +56,7 @@ func (l *AssetExposuresLogic) AssetExposures(req *types.AssetExposuresReq, works
 	}
 
 	// 查询漏洞扫描结果
-	vulModel := l.svcCtx.GetVulModel(actualWorkspaceId)
+	vulModel := l.svcCtx.GetVulModel()
 	vulFilter := bson.M{
 		"host": asset.Host,
 		"port": asset.Port,

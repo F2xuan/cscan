@@ -169,7 +169,6 @@ func (o *NucleiOptions) Validate() error {
 // Scan 执行 Nuclei 扫描
 func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
-		WorkspaceId:     config.WorkspaceId,
 		MainTaskId:      config.MainTaskId,
 		Vulnerabilities: make([]*Vulnerability, 0),
 	}

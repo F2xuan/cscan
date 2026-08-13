@@ -13,7 +13,6 @@ import (
 // JSFinderResult JSFinder 扫描结果
 type JSFinderResult struct {
 	Id               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	WorkspaceId      string             `bson:"workspace_id" json:"workspaceId"`
 	MainTaskId       string             `bson:"main_task_id,omitempty" json:"mainTaskId,omitempty"`
 	TaskName         string             `bson:"task_name,omitempty" json:"taskName,omitempty"`
 	Authority        string             `bson:"authority" json:"authority"`
@@ -50,8 +49,8 @@ type JSFinderResultModel struct {
 	coll *mongo.Collection
 }
 
-// NewJSFinderResultModel 多租户模型实例化
-func NewJSFinderResultModel(db *mongo.Database, workspaceId string) *JSFinderResultModel {
+// NewJSFinderResultModel creates a new JSFinderResultModel
+func NewJSFinderResultModel(db *mongo.Database) *JSFinderResultModel {
 	coll := db.Collection("jsfinder")
 	return &JSFinderResultModel{coll: coll}
 }
@@ -113,7 +112,6 @@ func (m *JSFinderResultModel) UpsertMany(ctx context.Context, results []*JSFinde
 			// $setOnInsert：仅插入时设置的不可变字段（不可与 $set 字段重叠，否则 MongoDB 报冲突）
 			setOnInsert := bson.M{
 				"_id":          primitive.NewObjectID(),
-				"workspace_id": r.WorkspaceId,
 				"create_time":  r.CreateTime,
 			}
 

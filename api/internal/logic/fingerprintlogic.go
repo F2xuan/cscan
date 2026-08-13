@@ -19,8 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cscan/api/internal/logic/common"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -1095,12 +1093,11 @@ func (l *FingerprintValidateLogic) FingerprintValidate(req *types.FingerprintVal
 	configBytes, _ := json.Marshal(taskConfig)
 
 	task := &scheduler.TaskInfo{
-		TaskId:      taskId,
-		MainTaskId:  taskId,
-		WorkspaceId: "default",
-		TaskName:    "指纹验证",
-		Config:      string(configBytes),
-		Priority:    2,
+		TaskId:     taskId,
+		MainTaskId: taskId,
+		TaskName:   "指纹验证",
+		Config:     string(configBytes),
+		Priority:   2,
 	}
 
 	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
@@ -2380,12 +2377,11 @@ func (l *FingerprintBatchValidateLogic) runActiveFingerprintBatch(ctx context.Co
 			fpConfigBytes, _ := json.Marshal(fpTaskConfig)
 
 			fpTask := &scheduler.TaskInfo{
-				TaskId:      fpTaskId,
-				MainTaskId:  fpTaskId,
-				WorkspaceId: "default",
-				TaskName:    "主动指纹验证",
-				Config:      string(fpConfigBytes),
-				Priority:    2,
+				TaskId:     fpTaskId,
+				MainTaskId: fpTaskId,
+				TaskName:   "主动指纹验证",
+				Config:     string(fpConfigBytes),
+				Priority:   2,
 			}
 
 			if err := l.svcCtx.Scheduler.PushTask(ctx, fpTask); err != nil {
@@ -2540,15 +2536,14 @@ func NewFingerprintMatchAssetsLogic(ctx context.Context, svcCtx *svc.ServiceCont
 }
 
 // FingerprintMatchAssets 验证指纹匹配现有资产
-func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.FingerprintMatchAssetsReq, workspaceId string) (*types.FingerprintMatchAssetsResp, error) {
+func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.FingerprintMatchAssetsReq) (*types.FingerprintMatchAssetsResp, error) {
 	if req.FingerprintId == "" {
 		return &types.FingerprintMatchAssetsResp{Code: 400, Msg: "指纹ID不能为空"}, nil
 	}
 
 	startTime := time.Now()
 
-	// 调试：记录 workspaceId
-	l.Logger.Infof("FingerprintMatchAssets: START, fingerprintId=%s, workspaceId=%s", req.FingerprintId, workspaceId)
+	l.Logger.Infof("FingerprintMatchAssets: START, fingerprintId=%s", req.FingerprintId)
 
 	// 获取指纹
 	fp, err := l.svcCtx.FingerprintModel.FindById(l.ctx, req.FingerprintId)
@@ -2572,31 +2567,17 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 		},
 	}
 
-	// 获取需要查询的工作空间列表（支持多工作空间查询）
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Infof("FingerprintMatchAssets: querying workspaces: %v", wsIds)
-
-	// 收集所有工作空间的资产
-	var allAssets []model.Asset
-	for _, wsId := range wsIds {
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-		assets, err := assetModel.FindForFingerprint(l.ctx, filter, 0, 0)
-		if err != nil {
-			l.Logger.Errorf("FingerprintMatchAssets: query assets failed for workspace %s, err=%v", wsId, err)
-			continue
-		}
-		l.Logger.Infof("FingerprintMatchAssets: workspace %s found %d assets", wsId, len(assets))
-		allAssets = append(allAssets, assets...)
+	assetModel := l.svcCtx.GetAssetModel()
+	assets, err := assetModel.FindForFingerprint(l.ctx, filter, 0, 0)
+	if err != nil {
+		l.Logger.Errorf("FingerprintMatchAssets: query assets failed, err=%v", err)
+		return &types.FingerprintMatchAssetsResp{Code: 500, Msg: "查询资产失败"}, nil
 	}
-
-	assets := allAssets
-	l.Logger.Infof("FingerprintMatchAssets: total assets found across all workspaces: %d, rule=%s", len(assets), fp.Rule)
+	l.Logger.Infof("FingerprintMatchAssets: found %d assets, rule=%s", len(assets), fp.Rule)
 
 	// 安全告警：当待匹配资产数量过大时提示 OOM 风险
-	// FindFull 已通过 AssetFingerprintProjection 排除 screenshot/cert/banner，单文档内存占用大幅下降
-	// 但若资产规模超过 10 万仍建议按工作空间分批执行
 	if len(assets) > 100000 {
-		l.Logger.Errorf("FingerprintMatchAssets: WARNING 资产数量 %d 超过 10 万，存在 OOM 风险，建议按工作空间分批匹配", len(assets))
+		l.Logger.Errorf("FingerprintMatchAssets: WARNING 资产数量 %d 超过 10 万，存在 OOM 风险，建议分批匹配", len(assets))
 	}
 
 	l.Logger.Infof("FingerprintMatchAssets: fingerprintId=%s, name=%s, totalAssets=%d, updateAsset=%v, rule=%s", req.FingerprintId, fp.Name, len(assets), req.UpdateAsset, fp.Rule)
@@ -2668,20 +2649,7 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 					newApps := append([]string{}, asset.App...)
 					newApps = append(newApps, fp.Name)
 
-					// 找到该资产所属的工作空间
-					assetWorkspaceId := common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
-					if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-						// 如果是多工作空间查询，需要找到该资产实际所属的工作空间
-						for _, wsId := range wsIds {
-							testAssetModel := l.svcCtx.GetAssetModel(wsId)
-							foundAsset, err := testAssetModel.FindById(l.ctx, asset.Id.Hex())
-							if err == nil && foundAsset != nil {
-								assetWorkspaceId = wsId
-								break
-							}
-						}
-					}
-					assetModel := l.svcCtx.GetAssetModel(assetWorkspaceId)
+					assetModel := l.svcCtx.GetAssetModel()
 
 					// 通过 helper 构造更新文档：app 走 $addToSet，diff 触发 update_time 推进。
 					// 指纹匹配是管理员触发的"主动发现"，标记资产为已更新并推进
@@ -3300,14 +3268,8 @@ func (l *FingerprintBatchValidateLogic) syncValidateResultsToAssets(ctx context.
 	}
 	isHttp := scheme == "http" || scheme == "https"
 
-	// 获取默认workspace
-	workspaceId := common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, middleware.GetWorkspaceId(l.ctx))
-	if workspaceId == "" || workspaceId == "all" {
-		workspaceId = "default"
-	}
-
-	assetModel := l.svcCtx.GetAssetModel(workspaceId)
-	targetMetaModel := l.svcCtx.GetAssetTargetMetaModel(workspaceId)
+	assetModel := l.svcCtx.GetAssetModel()
+	targetMetaModel := l.svcCtx.GetAssetTargetMetaModel()
 	now := time.Now()
 
 	// 收集匹配的app名称（去重）
@@ -3374,7 +3336,7 @@ func (l *FingerprintBatchValidateLogic) syncValidateResultsToAssets(ctx context.
 
 	// 确保AssetTargetMeta存在并更新暴露面计数
 	domain := ""
-	if err := targetMetaModel.EnsureForAsset(ctx, workspaceId, host, domain, nil); err != nil {
+	if err := targetMetaModel.EnsureForAsset(ctx, host, domain, nil); err != nil {
 		l.Logger.Errorf("syncValidateResultsToAssets: EnsureForAsset failed: %v", err)
 	}
 }

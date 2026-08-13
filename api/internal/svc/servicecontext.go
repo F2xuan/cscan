@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -64,24 +63,14 @@ type ServiceContext struct {
 	// 容器日志采集器(后台写本地文件,可选)
 	LogCollector *LogCollector
 
-	// Worker 日志写入器（有界 channel + flush，接收 Worker 同步来的日志写文件）
-	WorkerLogWriter *WorkerLogWriter
-	// Worker 日志读取器（读取 Worker 日志文件）
+	// Worker 日志读取器（从 MongoDB worker_log 集合读取）
 	WorkerLogReader *WorkerLogReader
 
-	// TriggerWorkerLogSync 触发指定 Worker 的日志同步（由 routes.go 注入）
-	// 用户点击刷新按钮时调用，向 Worker 发送 LOG_SYNC_REQ
-	TriggerWorkerLogSync func(workerName string)
-
-	// TriggerAllWorkerLogSync 触发所有已连接 Worker 的日志同步并等待落盘（由 routes.go 注入）
-	// 任务日志刷新时调用，确保读取前已把各 Worker 最新日志拉取到 API 本地文件
-	TriggerAllWorkerLogSync func()
-
 	// 弱口令复验立即触发（由 cscan.go 注入；T3.3 runNow 端点调用，解耦 scheduler 依赖）
-	RunWeakPassReverify func(ctx context.Context, workspaceId string) error
+	RunWeakPassReverify func(ctx context.Context) error
 
 	// 敏感信息（暴露面）复验立即触发（由 cscan.go 注入；T3.4 runNow 端点复用，解耦 scheduler 依赖）
-	RunExposureReverify func(ctx context.Context, workspaceId string) error
+	RunExposureReverify func(ctx context.Context) error
 
 	// 缓存的模板元数据（并发安全）
 	templateMu         sync.RWMutex
@@ -89,7 +78,7 @@ type ServiceContext struct {
 	TemplateTags       []string
 	TemplateStats      map[string]int
 
-	// 查询聚合结果缓存（filterOptions/iconStat/appStat/siteStat/vulStat/assetStat/workspaceIds/orgMap）
+	// 查询聚合结果缓存（filterOptions/iconStat/appStat/siteStat/vulStat/assetStat/orgMap）
 	// 短 TTL（30~60s）+ singleflight 防击穿，扫描完成可主动失效
 	QueryCache *cache.LocalCache
 }
@@ -194,10 +183,8 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		lc.Start()
 	}
 
-	// 初始化 Worker 日志写入器/读取器
-	workerLogBaseDir := filepath.Dir(c.Docker.LogDir) // log
-	svcCtx.WorkerLogWriter = NewWorkerLogWriter(workerLogBaseDir)
-	svcCtx.WorkerLogReader = NewWorkerLogReader(workerLogBaseDir)
+	// 初始化 Worker 日志读取器（从 MongoDB 读取）
+	svcCtx.WorkerLogReader = NewWorkerLogReader(svcCtx.MongoDB)
 
 	// 初始化同步服务
 	svcCtx.SyncMethods = svcsync.NewSyncMethods(
@@ -268,44 +255,24 @@ func (s *ServiceContext) ValidateWorkerKey(ctx context.Context, providedKey stri
 	return false, false
 }
 
-// GetAssetModel 根据workspaceId获取资产模型
-func (s *ServiceContext) GetAssetModel(workspaceId string) *model.AssetModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewAssetModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetAssetModel() *model.AssetModel {
+	return model.NewAssetModel(s.MongoDB)
 }
 
-// GetMainTaskModel 根据workspaceId获取主任务模型
-func (s *ServiceContext) GetMainTaskModel(workspaceId string) *model.MainTaskModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewMainTaskModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetMainTaskModel() *model.MainTaskModel {
+	return model.NewMainTaskModel(s.MongoDB)
 }
 
-// GetVulModel 根据workspaceId获取漏洞模型
-func (s *ServiceContext) GetVulModel(workspaceId string) *model.VulModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewVulModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetVulModel() *model.VulModel {
+	return model.NewVulModel(s.MongoDB)
 }
 
-// GetAssetHistoryModel 根据workspaceId获取资产历史模型
-func (s *ServiceContext) GetAssetHistoryModel(workspaceId string) *model.AssetHistoryModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewAssetHistoryModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetAssetHistoryModel() *model.AssetHistoryModel {
+	return model.NewAssetHistoryModel(s.MongoDB)
 }
 
-// GetAssetTargetMetaModel 根据workspaceId获取顶层资产元信息模型
-func (s *ServiceContext) GetAssetTargetMetaModel(workspaceId string) *model.AssetTargetMetaModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewAssetTargetMetaModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetAssetTargetMetaModel() *model.AssetTargetMetaModel {
+	return model.NewAssetTargetMetaModel(s.MongoDB)
 }
 
 // GetDirScanResultModel 获取目录扫描结果模型
@@ -357,22 +324,15 @@ func (s *ServiceContext) ImportCustomPocAndFingerprints() {
 	s.SyncMethods.ImportCustomPocAndFingerprints()
 }
 
-func (s *ServiceContext) GetJSFinderResultModel(workspaceId string) *model.JSFinderResultModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewJSFinderResultModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetJSFinderResultModel() *model.JSFinderResultModel {
+	return model.NewJSFinderResultModel(s.MongoDB)
 }
 
-// GetCertModel 返回指定工作空间的证书多租户模型（ARL 风格，集合 {workspaceId}_cert）
-func (s *ServiceContext) GetCertModel(workspaceId string) *model.CertModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-	return model.NewCertModel(s.MongoDB, workspaceId)
+func (s *ServiceContext) GetCertModel() *model.CertModel {
+	return model.NewCertModel(s.MongoDB)
 }
 
-// GetReverifyConfigModel 返回复验配置模型（T3.3/T3.4，单集合 + workspace_id 隔离）
+// GetReverifyConfigModel 返回复验配置模型（T3.3/T3.4，单集合）
 func (s *ServiceContext) GetReverifyConfigModel() *model.ReverifyConfigModel {
 	return model.NewReverifyConfigModel(s.MongoDB)
 }

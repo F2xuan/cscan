@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"cscan/api/internal/logic/common"
@@ -53,15 +51,7 @@ func NewMainTaskListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Main
 	}
 }
 
-func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId string) (resp *types.MainTaskListResp, err error) {
-	// 优先使用请求体中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
-	}
-	l.Logger.Infof("MainTaskList: reqWorkspaceId=%s, headerWorkspaceId=%s, using=%s, page=%d, pageSize=%d",
-		req.WorkspaceId, workspaceId, wsId, req.Page, req.PageSize)
-
+func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq) (resp *types.MainTaskListResp, err error) {
 	// 设置查询超时
 	ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
 	defer cancel()
@@ -79,124 +69,32 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		filter["tags"] = bson.M{"$in": req.Tags}
 	}
 
-	var total int64
+	taskModel := l.svcCtx.GetMainTaskModel()
 
-	// 任务及其所属工作空间
-	type taskWithWorkspace struct {
-		task        model.MainTask
-		workspaceId string
+	// 查询总数
+	total, err := taskModel.Count(ctx, filter)
+	if err != nil {
+		return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 	}
-	var tasksWithWs []taskWithWorkspace
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(ctx, l.svcCtx, wsId)
-	l.Logger.Infof("MainTaskList: querying workspaces: %v", wsIds)
+	page, pageSize := model.NormalizePage(req.Page, req.PageSize)
 
-	// 单工作空间查询上限：避免某个工作空间任务过多导致内存溢出
-	const maxTasksPerWorkspace = 1000
-
-	// 如果查询多个工作空间
-	if len(wsIds) > 1 || wsId == "" || wsId == "all" {
-		// 使用并发查询提高性能
-		type wsResult struct {
-			tasks []model.MainTask
-			count int64
-			wsId  string
-		}
-		resultChan := make(chan wsResult, len(wsIds))
-		var wg sync.WaitGroup
-
-		for _, ws := range wsIds {
-			wg.Add(1)
-			go func(workspaceId string) {
-				defer wg.Done()
-				taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
-				wsTotal, _ := taskModel.Count(ctx, filter)
-				// 限制单工作空间返回任务数，防止 OOM
-				wsTasks, _ := taskModel.Find(ctx, filter, 1, maxTasksPerWorkspace)
-				resultChan <- wsResult{tasks: wsTasks, count: wsTotal, wsId: workspaceId}
-			}(ws)
-		}
-
-		// 等待所有 goroutine 完成后再收集结果
-		wg.Wait()
-
-		// 收集结果
-		for i := 0; i < len(wsIds); i++ {
-			result := <-resultChan
-			total += result.count
-			l.Logger.Infof("MainTaskList: workspace=%s, taskCount=%d", result.wsId, result.count)
-			for _, t := range result.tasks {
-				tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: result.wsId})
-			}
-		}
-		close(resultChan)
-
-		// 按创建时间排序
-		sort.Slice(tasksWithWs, func(i, j int) bool {
-			return tasksWithWs[i].task.CreateTime.After(tasksWithWs[j].task.CreateTime)
-		})
-
-		// 分页保护
-		page := req.Page
-		if page < 1 {
-			page = 1
-		}
-		pageSize := req.PageSize
-		if pageSize <= 0 {
-			pageSize = 20
-		}
-		// L-2 修复：补充 pageSize 上限（100），防止超大页导致全量返回或 OOM
-		page, pageSize = model.NormalizePage(page, pageSize)
-
-		// 分页
-		start := (page - 1) * pageSize
-		end := start + pageSize
-		if start > len(tasksWithWs) {
-			start = len(tasksWithWs)
-		}
-		if end > len(tasksWithWs) {
-			end = len(tasksWithWs)
-		}
-		tasksWithWs = tasksWithWs[start:end]
-	} else {
-		taskModel := l.svcCtx.GetMainTaskModel(wsId)
-
-		// 查询总数
-		total, err = taskModel.Count(ctx, filter)
-		if err != nil {
-			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
-		}
-
-		// 限制 pageSize 上限，防止一次查询过多导致 OOM
-		pageSize := req.PageSize
-		if pageSize <= 0 {
-			pageSize = 20
-		}
-		if pageSize > maxTasksPerWorkspace {
-			pageSize = maxTasksPerWorkspace
-		}
-
-		// 查询列表
-		tasks, err := taskModel.Find(ctx, filter, req.Page, pageSize)
-		if err != nil {
-			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
-		}
-		for _, t := range tasks {
-			tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: wsId})
-		}
+	// 查询列表
+	tasks, err := taskModel.Find(ctx, filter, page, pageSize)
+	if err != nil {
+		return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 	}
 
 	// 转换响应
-	list := make([]types.MainTask, 0, len(tasksWithWs))
+	list := make([]types.MainTask, 0, len(tasks))
 
 	// 批量获取Redis进度数据，减少Redis调用次数
 	progressMap := make(map[string]map[string]interface{})
 	if l.svcCtx.RedisClient != nil {
-		taskIds := make([]string, 0, len(tasksWithWs))
-		for _, tw := range tasksWithWs {
-			if tw.task.Status == "STARTED" || tw.task.Status == "PENDING" {
-				taskIds = append(taskIds, tw.task.TaskId)
+		taskIds := make([]string, 0, len(tasks))
+		for _, t := range tasks {
+			if t.Status == "STARTED" || t.Status == "PENDING" {
+				taskIds = append(taskIds, t.TaskId)
 			}
 		}
 
@@ -221,8 +119,7 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		}
 	}
 
-	for _, tw := range tasksWithWs {
-		t := tw.task
+	for _, t := range tasks {
 		progress := t.Progress
 		currentPhase := t.CurrentPhase
 		subTaskDone := t.SubTaskDone
@@ -298,7 +195,6 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 			EndTime:      endTime,
 			SubTaskCount: t.SubTaskCount,
 			SubTaskDone:  subTaskDone,
-			WorkspaceId:  tw.workspaceId,
 		})
 	}
 
@@ -325,8 +221,7 @@ func NewMainTaskDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 }
 
 // MainTaskDetail 按 id 查询单个任务详情，复用列表的状态推断与实时进度逻辑。
-// 通知中心/快捷入口跳转只携带任务 id，故 workspaceId 为空时跨工作空间查找。
-func (l *MainTaskDetailLogic) MainTaskDetail(req *types.MainTaskDetailReq, headerWorkspaceId string) (*types.MainTaskDetailResp, error) {
+func (l *MainTaskDetailLogic) MainTaskDetail(req *types.MainTaskDetailReq) (*types.MainTaskDetailResp, error) {
 	if req.Id == "" {
 		return &types.MainTaskDetailResp{Code: 400, Msg: "id不能为空"}, nil
 	}
@@ -334,45 +229,11 @@ func (l *MainTaskDetailLogic) MainTaskDetail(req *types.MainTaskDetailReq, heade
 	ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
 	defer cancel()
 
-	// 确定优先查询的工作空间：优先请求体，其次 header
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = headerWorkspaceId
+	task, err := l.svcCtx.GetMainTaskModel().FindById(ctx, req.Id)
+	if err != nil {
+		l.Logger.Errorf("MainTaskDetail: query failed, id=%s, err=%v", req.Id, err)
+		return &types.MainTaskDetailResp{Code: 500, Msg: "查询失败"}, nil
 	}
-
-	var task *model.MainTask
-	var foundWsId string
-
-	// 1. 优先在指定工作空间直查（绝大多数场景命中）
-	if wsId != "" && wsId != "all" {
-		t, err := l.svcCtx.GetMainTaskModel(wsId).FindById(ctx, req.Id)
-		if err != nil {
-			l.Logger.Errorf("MainTaskDetail: query failed, id=%s, ws=%s, err=%v", req.Id, wsId, err)
-			return &types.MainTaskDetailResp{Code: 500, Msg: "查询失败"}, nil
-		}
-		if t != nil {
-			task = t
-			foundWsId = wsId
-		}
-	}
-
-	// 2. 未命中则跨工作空间查找（跨空间快捷入口只带 id）
-	if task == nil {
-		wsIds := common.GetWorkspaceIds(ctx, l.svcCtx, "all")
-		for _, ws := range wsIds {
-			if ws == wsId {
-				continue // 已查过
-			}
-			t, err := l.svcCtx.GetMainTaskModel(ws).FindById(ctx, req.Id)
-			if err != nil || t == nil {
-				continue
-			}
-			task = t
-			foundWsId = ws
-			break
-		}
-	}
-
 	if task == nil {
 		return &types.MainTaskDetailResp{Code: 404, Msg: "任务不存在"}, nil
 	}
@@ -452,7 +313,6 @@ func (l *MainTaskDetailLogic) MainTaskDetail(req *types.MainTaskDetailReq, heade
 			EndTime:      endTime,
 			SubTaskCount: t.SubTaskCount,
 			SubTaskDone:  subTaskDone,
-			WorkspaceId:  foundWsId,
 		},
 	}, nil
 }
@@ -471,19 +331,7 @@ func NewMainTaskCreateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 	}
 }
 
-func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, workspaceId string) (resp *types.BaseRespWithId, err error) {
-	// 优先使用请求体中的 workspaceId；单租户化后为空时回退到默认工作空间
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
-	}
-	if wsId == "" {
-		wsId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, wsId)
-	}
-
-	l.Logger.Infof("MainTaskCreate: name=%s, reqWorkspaceId=%s, headerWorkspaceId=%s, using=%s",
-		req.Name, req.WorkspaceId, workspaceId, wsId)
-
+func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq) (resp *types.BaseRespWithId, err error) {
 	// 校验目标格式
 	if req.Target == "" {
 		return &types.BaseRespWithId{Code: 400, Msg: "扫描目标不能为空"}, nil
@@ -492,7 +340,7 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 		return &types.BaseRespWithId{Code: 400, Msg: common.FormatValidationErrors(validationErrors)}, nil
 	}
 
-	taskModel := l.svcCtx.GetMainTaskModel(wsId)
+	taskModel := l.svcCtx.GetMainTaskModel()
 
 	// 构建任务配置
 	taskConfig := map[string]interface{}{
@@ -596,16 +444,16 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 		return &types.BaseRespWithId{Code: 500, Msg: "创建任务失败: " + err.Error()}, nil
 	}
 
-	l.Logger.Infof("Task created: taskId=%s, workspaceId=%s", taskId, wsId)
+	l.Logger.Infof("Task created: taskId=%s", taskId)
 
 	// 使用 TaskBuilder 统一处理任务启动逻辑
 	builder := common.NewTaskBuilder(l.ctx, l.svcCtx)
-	batchCount, err := builder.BuildAndPushSubTasks(wsId, task, taskConfig)
+	batchCount, err := builder.BuildAndPushSubTasks(task, taskConfig)
 	if err != nil {
 		l.Logger.Errorf("MainTaskCreate: failed to start task %s: %v", taskId, err)
 		// 注意：任务已创建但启动失败，用户可以在前端点击重试/开始
 	} else {
-		l.Logger.Infof("Task created and started: taskId=%s, workspaceId=%s, batches=%d", taskId, wsId, batchCount)
+		l.Logger.Infof("Task created and started: taskId=%s, batches=%d", taskId, batchCount)
 	}
 
 	return &types.BaseRespWithId{Code: 0, Msg: "任务创建成功", Id: task.Id.Hex()}, nil
@@ -725,17 +573,8 @@ func NewMainTaskDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 	}
 }
 
-func (l *MainTaskDeleteLogic) MainTaskDelete(req *types.MainTaskDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	// 优先使用请求体中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
-	}
-	if wsId == "" || wsId == "all" {
-		return &types.BaseResp{Code: 400, Msg: "删除任务需要指定工作空间"}, nil
-	}
-
-	taskModel := l.svcCtx.GetMainTaskModel(wsId)
+func (l *MainTaskDeleteLogic) MainTaskDelete(req *types.MainTaskDeleteReq) (resp *types.BaseResp, err error) {
+	taskModel := l.svcCtx.GetMainTaskModel()
 
 	// 先获取任务信息，发送停止信号
 	task, err := taskModel.FindById(l.ctx, req.Id)
@@ -773,21 +612,12 @@ func NewMainTaskBatchDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext
 	}
 }
 
-func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
+func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchDeleteReq) (resp *types.BaseResp, err error) {
 	if len(req.Ids) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的任务"}, nil
 	}
 
-	// 优先使用请求体中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
-	}
-	if wsId == "" || wsId == "all" {
-		return &types.BaseResp{Code: 400, Msg: "删除任务需要指定工作空间"}, nil
-	}
-
-	taskModel := l.svcCtx.GetMainTaskModel(wsId)
+	taskModel := l.svcCtx.GetMainTaskModel()
 
 	// 先获取所有任务信息，发送停止信号
 	for _, id := range req.Ids {
@@ -827,41 +657,16 @@ func NewMainTaskRetryLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Mai
 	}
 }
 
-func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq, workspaceId string) (resp *types.BaseRespWithId, err error) {
-	// 当 workspaceId 为 "all" 或空时，需要遍历所有工作空间查找任务
-	var oldTask *model.MainTask
-	var actualWorkspaceId string
-
-	if workspaceId == "" || workspaceId == "all" {
-		// 单租户：直接在默认全局集合中查找任务
-		taskModel := l.svcCtx.GetMainTaskModel("default")
-		found, findErr := taskModel.FindById(l.ctx, req.Id)
-		if findErr != nil {
-			l.Logger.Errorf("MainTaskRetry: find task failed, id=%s, error=%v", req.Id, findErr)
-			return &types.BaseRespWithId{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		oldTask = found
-		if oldTask == nil {
-			return &types.BaseRespWithId{Code: 400, Msg: "任务不存在"}, nil
-		}
-		actualWorkspaceId = "default"
-	} else {
-		actualWorkspaceId = workspaceId
-		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
-		var err error
-		oldTask, err = taskModel.FindById(l.ctx, req.Id)
-		if err != nil {
-			l.Logger.Errorf("MainTaskRestart: find task failed, id=%s, error=%v", req.Id, err)
-			return &types.BaseRespWithId{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		if oldTask == nil {
-			return &types.BaseRespWithId{Code: 400, Msg: "任务不存在"}, nil
-		}
+func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq) (resp *types.BaseRespWithId, err error) {
+	taskModel := l.svcCtx.GetMainTaskModel()
+	oldTask, err := taskModel.FindById(l.ctx, req.Id)
+	if err != nil {
+		l.Logger.Errorf("MainTaskRetry: find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseRespWithId{Code: 500, Msg: "查询任务失败"}, nil
 	}
-
-	// 使用实际的工作空间ID
-	taskModel := l.svcCtx.GetMainTaskModel(actualWorkspaceId)
-	workspaceId = actualWorkspaceId
+	if oldTask == nil {
+		return &types.BaseRespWithId{Code: 400, Msg: "任务不存在"}, nil
+	}
 
 	// 构建任务配置
 	taskConfig := map[string]interface{}{
@@ -923,7 +728,7 @@ func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq, workspac
 
 	// 使用 TaskBuilder 统一处理任务启动逻辑
 	builder := common.NewTaskBuilder(l.ctx, l.svcCtx)
-	batchCount, err := builder.BuildAndPushSubTasks(workspaceId, newTask, taskConfig)
+	batchCount, err := builder.BuildAndPushSubTasks(newTask, taskConfig)
 	if err != nil {
 		l.Logger.Errorf("MainTaskRetry: failed to start task %s: %v", newTaskId, err)
 	} else {
@@ -948,52 +753,22 @@ func NewMainTaskStartLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Mai
 	}
 }
 
-func (l *MainTaskStartLogic) MainTaskStart(req *types.MainTaskControlReq, workspaceId string) (resp *types.BaseResp, err error) {
+func (l *MainTaskStartLogic) MainTaskStart(req *types.MainTaskControlReq) (resp *types.BaseResp, err error) {
 	l.Logger.Infof("[MainTaskStart] ========== START ==========")
-	l.Logger.Infof("[MainTaskStart] id=%s, reqWorkspaceId='%s', headerWorkspaceId='%s'", req.Id, req.WorkspaceId, workspaceId)
+	l.Logger.Infof("[MainTaskStart] id=%s", req.Id)
 
-	// 优先使用请求中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
+	taskModel := l.svcCtx.GetMainTaskModel()
+	task, err := taskModel.FindById(l.ctx, req.Id)
+	if err != nil {
+		l.Logger.Errorf("MainTaskStart: find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+	}
+	if task == nil {
+		l.Logger.Errorf("MainTaskStart: task not found, id=%s", req.Id)
+		return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 	}
 
-	// 当 workspaceId 为 "all" 或空时，遍历所有工作空间查找任务
-	var task *model.MainTask
-	var taskModel *model.MainTaskModel
-	if wsId == "" || wsId == "all" {
-		wsIds := []string{"default"}
-		for _, ws := range wsIds {
-			tm := l.svcCtx.GetMainTaskModel(ws)
-			t, err := tm.FindById(l.ctx, req.Id)
-			if err == nil && t != nil {
-				task = t
-				taskModel = tm
-				wsId = ws
-				break
-			}
-		}
-		if task == nil {
-			l.Logger.Errorf("MainTaskStart: task not found in any workspace, id=%s", req.Id)
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
-	} else {
-		taskModel = l.svcCtx.GetMainTaskModel(wsId)
-		var err error
-		task, err = taskModel.FindById(l.ctx, req.Id)
-		if err != nil {
-			l.Logger.Errorf("MainTaskStart: find task failed, id=%s, wsId=%s, error=%v", req.Id, wsId, err)
-			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		if task == nil {
-			l.Logger.Errorf("MainTaskStart: task not found, id=%s, wsId=%s", req.Id, wsId)
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
-	}
-
-	l.Logger.Infof("[MainTaskStart] using workspaceId='%s'", wsId)
-
-	l.Logger.Infof("MainTaskStart: found task, id=%s, taskId=%s, currentStatus='%s', workspaceId=%s", req.Id, task.TaskId, task.Status, wsId)
+	l.Logger.Infof("MainTaskStart: found task, id=%s, taskId=%s, currentStatus='%s'", req.Id, task.TaskId, task.Status)
 
 	// 检查状态：只有CREATED状态或空状态可以启动
 	if task.Status != model.TaskStatusCreated && task.Status != "" {
@@ -1015,7 +790,7 @@ func (l *MainTaskStartLogic) MainTaskStart(req *types.MainTaskControlReq, worksp
 
 	// 使用 TaskBuilder 统一处理任务启动逻辑
 	builder := common.NewTaskBuilder(l.ctx, l.svcCtx)
-	batchCount, err := builder.BuildAndPushSubTasks(wsId, task, taskConfig)
+	batchCount, err := builder.BuildAndPushSubTasks(task, taskConfig)
 	if err != nil {
 		l.Logger.Errorf("MainTaskStart: failed to start task %s: %v", task.TaskId, err)
 		return &types.BaseResp{Code: 500, Msg: fmt.Sprintf("启动任务失败: %v", err)}, nil
@@ -1041,46 +816,18 @@ func NewMainTaskPauseLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Mai
 	}
 }
 
-func (l *MainTaskPauseLogic) MainTaskPause(req *types.MainTaskControlReq, workspaceId string) (resp *types.BaseResp, err error) {
-	// 优先使用请求中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
-	}
-	l.Logger.Infof("MainTaskPause: received request, id=%s, reqWorkspaceId=%s, headerWorkspaceId=%s, using=%s",
-		req.Id, req.WorkspaceId, workspaceId, wsId)
+func (l *MainTaskPauseLogic) MainTaskPause(req *types.MainTaskControlReq) (resp *types.BaseResp, err error) {
+	l.Logger.Infof("MainTaskPause: received request, id=%s", req.Id)
 
-	// 当 workspaceId 为 "all" 或空时，遍历所有工作空间查找任务
-	var task *model.MainTask
-	var taskModel *model.MainTaskModel
-	if wsId == "" || wsId == "all" {
-		wsIds := []string{"default"}
-		for _, ws := range wsIds {
-			tm := l.svcCtx.GetMainTaskModel(ws)
-			t, err := tm.FindById(l.ctx, req.Id)
-			if err == nil && t != nil {
-				task = t
-				taskModel = tm
-				wsId = ws
-				break
-			}
-		}
-		if task == nil {
-			l.Logger.Errorf("MainTaskPause: task not found in any workspace, id=%s", req.Id)
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
-	} else {
-		taskModel = l.svcCtx.GetMainTaskModel(wsId)
-		var err error
-		task, err = taskModel.FindById(l.ctx, req.Id)
-		if err != nil {
-			l.Logger.Errorf("MainTaskPause: find task failed, id=%s, error=%v", req.Id, err)
-			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		if task == nil {
-			l.Logger.Errorf("MainTaskPause: task not found, id=%s", req.Id)
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
+	taskModel := l.svcCtx.GetMainTaskModel()
+	task, err := taskModel.FindById(l.ctx, req.Id)
+	if err != nil {
+		l.Logger.Errorf("MainTaskPause: find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
+	}
+	if task == nil {
+		l.Logger.Errorf("MainTaskPause: task not found, id=%s", req.Id)
+		return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 	}
 
 	l.Logger.Infof("MainTaskPause: found task, id=%s, taskId=%s, status='%s', progress=%d, subTaskCount=%d, subTaskDone=%d",
@@ -1139,46 +886,18 @@ func NewMainTaskResumeLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 	}
 }
 
-func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq, workspaceId string) (resp *types.BaseResp, err error) {
-	// 优先使用请求中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
+func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq) (resp *types.BaseResp, err error) {
+	l.Logger.Infof("MainTaskResume: id=%s", req.Id)
+
+	taskModel := l.svcCtx.GetMainTaskModel()
+	task, err := taskModel.FindById(l.ctx, req.Id)
+	if err != nil {
+		l.Logger.Errorf("MainTaskResume: find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
 	}
-
-	l.Logger.Infof("MainTaskResume: id=%s, workspaceId=%s", req.Id, wsId)
-
-	// 当 workspaceId 为 "all" 或空时，遍历所有工作空间查找任务
-	var task *model.MainTask
-	var taskModel *model.MainTaskModel
-	if wsId == "" || wsId == "all" {
-		wsIds := []string{"default"}
-		for _, ws := range wsIds {
-			tm := l.svcCtx.GetMainTaskModel(ws)
-			t, err := tm.FindById(l.ctx, req.Id)
-			if err == nil && t != nil {
-				task = t
-				taskModel = tm
-				wsId = ws
-				break
-			}
-		}
-		if task == nil {
-			l.Logger.Errorf("MainTaskResume: task not found in any workspace, id=%s", req.Id)
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
-	} else {
-		taskModel = l.svcCtx.GetMainTaskModel(wsId)
-		var err error
-		task, err = taskModel.FindById(l.ctx, req.Id)
-		if err != nil {
-			l.Logger.Errorf("MainTaskResume: find task failed, id=%s, error=%v", req.Id, err)
-			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		if task == nil {
-			l.Logger.Errorf("MainTaskResume: task not found, id=%s", req.Id)
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
+	if task == nil {
+		l.Logger.Errorf("MainTaskResume: task not found, id=%s", req.Id)
+		return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 	}
 
 	l.Logger.Infof("MainTaskResume: found task, taskId=%s, status=%s, subTaskCount=%d, subTaskDone=%d",
@@ -1266,13 +985,12 @@ func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq, work
 		}
 
 		schedTask := &scheduler.TaskInfo{
-			TaskId:      subTaskId,
-			MainTaskId:  task.Id.Hex(),
-			WorkspaceId: wsId,
-			TaskName:    task.Name,
-			Config:      string(subConfigBytes),
-			Priority:    1,
-			Workers:     workers,
+			TaskId:     subTaskId,
+			MainTaskId: task.Id.Hex(),
+			TaskName:   task.Name,
+			Config:     string(subConfigBytes),
+			Priority:   1,
+			Workers:    workers,
 		}
 		schedTasks = append(schedTasks, schedTask)
 
@@ -1280,7 +998,6 @@ func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq, work
 		if len(batches) > 1 {
 			subTaskInfoKey := "cscan:task:info:" + subTaskId
 			subTaskInfoData, _ := json.Marshal(map[string]interface{}{
-				"workspaceId":  wsId,
 				"mainTaskId":   task.Id.Hex(),
 				"parentTaskId": task.TaskId,
 				"subTaskCount": task.SubTaskCount,
@@ -1315,42 +1032,15 @@ func NewMainTaskStopLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Main
 	}
 }
 
-func (l *MainTaskStopLogic) MainTaskStop(req *types.MainTaskControlReq, workspaceId string) (resp *types.BaseResp, err error) {
-	// 优先使用请求中的 workspaceId
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = workspaceId
+func (l *MainTaskStopLogic) MainTaskStop(req *types.MainTaskControlReq) (resp *types.BaseResp, err error) {
+	taskModel := l.svcCtx.GetMainTaskModel()
+	task, err := taskModel.FindById(l.ctx, req.Id)
+	if err != nil {
+		l.Logger.Errorf("MainTaskStop: find task failed, id=%s, error=%v", req.Id, err)
+		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
 	}
-
-	// 当 workspaceId 为 "all" 或空时，遍历所有工作空间查找任务
-	var task *model.MainTask
-	var taskModel *model.MainTaskModel
-	if wsId == "" || wsId == "all" {
-		wsIds := []string{"default"}
-		for _, ws := range wsIds {
-			tm := l.svcCtx.GetMainTaskModel(ws)
-			t, err := tm.FindById(l.ctx, req.Id)
-			if err == nil && t != nil {
-				task = t
-				taskModel = tm
-				wsId = ws
-				break
-			}
-		}
-		if task == nil {
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
-	} else {
-		taskModel = l.svcCtx.GetMainTaskModel(wsId)
-		var err error
-		task, err = taskModel.FindById(l.ctx, req.Id)
-		if err != nil {
-			l.Logger.Errorf("MainTaskStop: find task failed, id=%s, error=%v", req.Id, err)
-			return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
-		}
-		if task == nil {
-			return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
-		}
+	if task == nil {
+		return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 	}
 
 	// 检查状态：STARTED, PAUSED, PENDING, CREATED 或空状态可以停止
@@ -1410,7 +1100,7 @@ func NewTaskStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *TaskStat
 	}
 }
 
-func (l *TaskStatLogic) TaskStat(workspaceId string) (resp *types.TaskStatResp, err error) {
+func (l *TaskStatLogic) TaskStat() (resp *types.TaskStatResp, err error) {
 	var total, completed, running, failed, pending int64
 	trendDays := make([]string, 7)
 	trendCompleted := make([]int, 7)
@@ -1423,47 +1113,37 @@ func (l *TaskStatLogic) TaskStat(workspaceId string) (resp *types.TaskStatResp, 
 		trendDays[6-i] = day.Format("01-02")
 	}
 
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	taskModel := l.svcCtx.GetMainTaskModel()
 
-	for _, wsId := range wsIds {
-		taskModel := l.svcCtx.GetMainTaskModel(wsId)
+	// 统计总数
+	total, _ = taskModel.Count(l.ctx, bson.M{})
 
-		// 统计总数
-		c, _ := taskModel.Count(l.ctx, bson.M{})
-		total += c
+	// 按状态统计
+	completed, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusSuccess})
+	running, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusStarted})
+	failed, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusFailure})
+	pending, _ = taskModel.Count(l.ctx, bson.M{"status": bson.M{"$in": []string{model.TaskStatusPending, model.TaskStatusCreated}}})
 
-		// 按状态统计
-		c, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusSuccess})
-		completed += c
-		c, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusStarted})
-		running += c
-		c, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusFailure})
-		failed += c
-		c, _ = taskModel.Count(l.ctx, bson.M{"status": bson.M{"$in": []string{model.TaskStatusPending, model.TaskStatusCreated}}})
-		pending += c
+	// 近7天每日趋势统计
+	for i := 6; i >= 0; i-- {
+		day := now.AddDate(0, 0, -i)
+		dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
+		dayEnd := dayStart.AddDate(0, 0, 1)
+		idx := 6 - i
 
-		// 近7天每日趋势统计
-		for i := 6; i >= 0; i-- {
-			day := now.AddDate(0, 0, -i)
-			dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
-			dayEnd := dayStart.AddDate(0, 0, 1)
-			idx := 6 - i
+		// 统计当天完成的任务
+		c, _ := taskModel.Count(l.ctx, bson.M{
+			"status":      model.TaskStatusSuccess,
+			"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
+		})
+		trendCompleted[idx] = int(c)
 
-			// 统计当天完成的任务
-			c, _ = taskModel.Count(l.ctx, bson.M{
-				"status":      model.TaskStatusSuccess,
-				"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
-			})
-			trendCompleted[idx] += int(c)
-
-			// 统计当天失败的任务
-			c, _ = taskModel.Count(l.ctx, bson.M{
-				"status":      model.TaskStatusFailure,
-				"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
-			})
-			trendFailed[idx] += int(c)
-		}
+		// 统计当天失败的任务
+		c, _ = taskModel.Count(l.ctx, bson.M{
+			"status":      model.TaskStatusFailure,
+			"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
+		})
+		trendFailed[idx] = int(c)
 	}
 
 	return &types.TaskStatResp{
@@ -1495,8 +1175,8 @@ func NewMainTaskUpdateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 	}
 }
 
-func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq, workspaceId string) (resp *types.BaseResp, err error) {
-	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq) (resp *types.BaseResp, err error) {
+	taskModel := l.svcCtx.GetMainTaskModel()
 
 	// 如果更新了目标，校验目标格式
 	if req.Target != "" {
@@ -1612,7 +1292,7 @@ func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq, works
 		return &types.BaseResp{Code: 500, Msg: "更新任务失败"}, nil
 	}
 
-	l.Logger.Infof("MainTaskUpdate: task updated, id=%s, workspaceId=%s", req.Id, workspaceId)
+	l.Logger.Infof("MainTaskUpdate: task updated, id=%s", req.Id)
 	return &types.BaseResp{Code: 0, Msg: "任务更新成功"}, nil
 }
 
@@ -1644,16 +1324,9 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 		limit = 10000
 	}
 
-	// 从 Worker 日志文件读取，按 taskId 过滤
-	// 遍历所有 Worker 的日志文件
+	// 从 MongoDB worker_log 集合读取，按 taskId 过滤
 	if l.svcCtx.WorkerLogReader == nil {
 		return &types.GetTaskLogsResp{Code: 0, Msg: "日志读取器未初始化", List: []types.TaskLogEntry{}}, nil
-	}
-
-	// 刷新前主动触发一次日志同步（向所有已连接 Worker 发送 LOG_SYNC_REQ 并等待落盘），
-	// 确保读取到的是最新日志，而不是依赖后台 5s 轮询的滞后数据。
-	if l.svcCtx.TriggerAllWorkerLogSync != nil {
-		l.svcCtx.TriggerAllWorkerLogSync()
 	}
 
 	// 获取最新日期

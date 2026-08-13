@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 )
@@ -20,9 +19,8 @@ func ReportPeriodicExportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewReportPeriodicExportLogic(r.Context(), svcCtx)
-		data, filename, err := l.PeriodicExport(&req, workspaceId)
+		data, filename, err := l.PeriodicExport(&req)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(&types.BaseResp{Code: 500, Msg: err.Error()})

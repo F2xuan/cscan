@@ -5,7 +5,7 @@ MaxBytes: 104857600  # 100MB
 Timeout: 300000      # 5分钟超时 (毫秒)
 
 Log:
-  Level: debug
+  Level: info
   Stat: false
   Mode: console
   Encoding: plain

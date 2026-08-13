@@ -460,7 +460,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, reactive, computed, nextTick } from 'vue'
 import { Refresh, Delete, Edit, RefreshRight, Download, Monitor, Document, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import { useI18n } from 'vue-i18n'
 import { useThemeStore } from '@/stores/theme'
@@ -774,6 +774,16 @@ async function loadInstallCommand() {
 }
 
 async function refreshInstallKey() {
+  const workerCount = tableData.value.length
+  try {
+    await ElMessageBox.confirm(
+      t('worker.refreshKeyConfirmMsg', { count: workerCount }),
+      t('worker.refreshKeyConfirmTitle'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
+    )
+  } catch (e) {
+    return
+  }
   refreshKeyLoading.value = true
   try {
     const res = await request.post('/worker/install/refresh')
@@ -862,8 +872,7 @@ async function fetchWorkerLogs() {
   try {
     const res = await request.post('/worker/logs/history', {
       worker: workerName,
-      limit: 500,
-      refresh: true
+      limit: 500
     })
     if (res.code === 0) {
       const list = res.list || []

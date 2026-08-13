@@ -27,14 +27,13 @@ func NewChunkManager(rdb *redis.Client, config *ChunkConfig) *ChunkManager {
 
 // ChunkTaskRequest 分片任务请求
 type ChunkTaskRequest struct {
-	TaskId      string                 `json:"taskId"`      // 主任务ID
-	TaskName    string                 `json:"taskName"`    // 任务名称
-	Target      string                 `json:"target"`      // 目标列表
-	Config      map[string]interface{} `json:"config"`      // 任务配置
-	WorkspaceId string                 `json:"workspaceId"` // 工作空间ID
-	MainTaskId  string                 `json:"mainTaskId"`  // 主任务文档ID
-	Priority    int                    `json:"priority"`    // 优先级
-	Workers     []string               `json:"workers"`     // 指定Worker列表
+	TaskId     string                 `json:"taskId"`     // 主任务ID
+	TaskName   string                 `json:"taskName"`   // 任务名称
+	Target     string                 `json:"target"`     // 目标列表
+	Config     map[string]interface{} `json:"config"`     // 任务配置
+	MainTaskId string                 `json:"mainTaskId"` // 主任务文档ID
+	Priority   int                    `json:"priority"`   // 优先级
+	Workers    []string               `json:"workers"`    // 指定Worker列表
 }
 
 // ChunkTaskResponse 分片任务响应
@@ -95,13 +94,12 @@ func (cm *ChunkManager) CreateChunkedTask(ctx context.Context, req *ChunkTaskReq
 
 		// 创建调度任务
 		schedTask := &TaskInfo{
-			TaskId:      chunk.ChunkId,
-			MainTaskId:  req.MainTaskId,
-			WorkspaceId: req.WorkspaceId,
-			TaskName:    req.TaskName,
-			Config:      string(chunkConfigBytes),
-			Priority:    chunk.Priority,
-			Workers:     req.Workers,
+			TaskId:     chunk.ChunkId,
+			MainTaskId: req.MainTaskId,
+			TaskName:   req.TaskName,
+			Config:     string(chunkConfigBytes),
+			Priority:   chunk.Priority,
+			Workers:    req.Workers,
 		}
 
 		schedTasks = append(schedTasks, schedTask)
@@ -356,14 +354,13 @@ func (cm *ChunkManager) saveChunkTaskInfo(ctx context.Context, chunkId string, r
 	// 完整保存 TaskInfo，确保 getSchedulerTasks 能还原所有字段
 	// 字段对齐 scheduler.TaskInfo 结构，避免类型断言失败
 	taskInfo := map[string]interface{}{
-		"taskId":      chunkId,
-		"mainTaskId":  req.MainTaskId,
-		"workspaceId": req.WorkspaceId,
-		"taskName":    req.TaskName,
-		"config":      string(chunkConfigBytes), // 完整的分片配置 JSON
-		"priority":    chunk.Priority,
-		"workers":     req.Workers,
-		"chunkId":     chunkId,
+		"taskId":       chunkId,
+		"mainTaskId":   req.MainTaskId,
+		"taskName":     req.TaskName,
+		"config":       string(chunkConfigBytes), // 完整的分片配置 JSON
+		"priority":     chunk.Priority,
+		"workers":      req.Workers,
+		"chunkId":      chunkId,
 		"parentTaskId": req.TaskId,
 		"chunkIndex":   chunk.Index,
 		"targetCount":  chunk.TargetCount,
@@ -429,7 +426,6 @@ func (cm *ChunkManager) getSchedulerTasks(ctx context.Context, taskId string) ([
 		// 安全的类型断言：使用 fmt.Sprint 兜底，避免 panic
 		// JSON 反序列化 map[string]interface{} 后，string 字段是 string，但防御性编程更稳妥
 		mainTaskId, _ := info["mainTaskId"].(string)
-		workspaceId, _ := info["workspaceId"].(string)
 		taskName, _ := info["taskName"].(string)
 		config, _ := info["config"].(string)
 		// priority 是 int，JSON 反序列化后是 float64
@@ -453,10 +449,9 @@ func (cm *ChunkManager) getSchedulerTasks(ctx context.Context, taskId string) ([
 
 		// 完整还原 TaskInfo（包含 Config）
 		task := &TaskInfo{
-			TaskId:      chunk.ChunkId,
-			MainTaskId:  mainTaskId,
-			WorkspaceId: workspaceId,
-			TaskName:    taskName,
+			TaskId:     chunk.ChunkId,
+			MainTaskId: mainTaskId,
+			TaskName:   taskName,
 			Config:      config,
 			Priority:    priority,
 			Workers:     workers,

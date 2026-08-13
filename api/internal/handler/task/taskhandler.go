@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func MainTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskListLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskList(&req, workspaceId)
+		resp, err := l.MainTaskList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -41,9 +39,8 @@ func MainTaskDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskDetailLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskDetail(&req, workspaceId)
+		resp, err := l.MainTaskDetail(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -61,9 +58,8 @@ func MainTaskCreateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskCreateLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskCreate(&req, workspaceId)
+		resp, err := l.MainTaskCreate(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -81,9 +77,8 @@ func MainTaskDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskDeleteLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskDelete(&req, workspaceId)
+		resp, err := l.MainTaskDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -101,9 +96,8 @@ func MainTaskBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskBatchDeleteLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskBatchDelete(&req, workspaceId)
+		resp, err := l.MainTaskBatchDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -121,9 +115,8 @@ func MainTaskRetryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskRetryLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskRetry(&req, workspaceId)
+		resp, err := l.MainTaskRetry(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -141,9 +134,8 @@ func MainTaskStartHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskStartLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskStart(&req, workspaceId)
+		resp, err := l.MainTaskStart(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -161,9 +153,8 @@ func MainTaskPauseHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskPauseLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskPause(&req, workspaceId)
+		resp, err := l.MainTaskPause(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -181,9 +172,8 @@ func MainTaskResumeHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskResumeLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskResume(&req, workspaceId)
+		resp, err := l.MainTaskResume(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -201,9 +191,8 @@ func MainTaskStopHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskStopLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskStop(&req, workspaceId)
+		resp, err := l.MainTaskStop(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -266,9 +255,8 @@ func TaskProfileDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // TaskStatHandler 任务统计
 func TaskStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewTaskStatLogic(r.Context(), svcCtx)
-		resp, err := l.TaskStat(workspaceId)
+		resp, err := l.TaskStat()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -286,9 +274,8 @@ func MainTaskUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewMainTaskUpdateLogic(r.Context(), svcCtx)
-		resp, err := l.MainTaskUpdate(&req, workspaceId)
+		resp, err := l.MainTaskUpdate(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

@@ -225,8 +225,8 @@ func NewAIConfigLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AIConfig
 }
 
 // GetConfig 获取AI配置
-func (l *AIConfigLogic) GetConfig(workspaceId string) (*types.AIConfigGetResp, error) {
-	configModel := model.NewAPIConfigModel(l.svcCtx.MongoDB, workspaceId)
+func (l *AIConfigLogic) GetConfig() (*types.AIConfigGetResp, error) {
+	configModel := model.NewAPIConfigModel(l.svcCtx.MongoDB)
 	doc, err := configModel.FindByPlatform(l.ctx, "ai")
 	if err != nil || doc == nil {
 		return &types.AIConfigGetResp{
@@ -265,8 +265,8 @@ func (l *AIConfigLogic) GetConfig(workspaceId string) (*types.AIConfigGetResp, e
 }
 
 // SaveConfig 保存AI配置
-func (l *AIConfigLogic) SaveConfig(req *types.AIConfigSaveReq, workspaceId string) (*types.BaseResp, error) {
-	configModel := model.NewAPIConfigModel(l.svcCtx.MongoDB, workspaceId)
+func (l *AIConfigLogic) SaveConfig(req *types.AIConfigSaveReq) (*types.BaseResp, error) {
+	configModel := model.NewAPIConfigModel(l.svcCtx.MongoDB)
 
 	// 查找现有配置
 	existing, err := configModel.FindByPlatform(l.ctx, "ai")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,7 +13,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -166,10 +164,6 @@ func NewJSFinderLogic(ctx context.Context, svcCtx *svc.ServiceContext) *JSFinder
 
 // SaveJSFinderResult 保存 JSFinder 扫描结果
 func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) error {
-	if req.WorkspaceId == "" {
-		return xerr.NewParamError("workspaceId cannot be empty")
-	}
-
 	if len(req.Results) == 0 {
 		return nil
 	}
@@ -177,7 +171,6 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 	modelResults := make([]*model.JSFinderResult, 0, len(req.Results))
 	for _, r := range req.Results {
 		modelResults = append(modelResults, &model.JSFinderResult{
-			WorkspaceId:      req.WorkspaceId,
 			MainTaskId:       req.MainTaskId,
 			Authority:        r.Authority,
 			Host:             r.Host,
@@ -195,7 +188,7 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 		})
 	}
 
-	m := l.svcCtx.GetJSFinderResultModel(req.WorkspaceId)
+	m := l.svcCtx.GetJSFinderResultModel()
 	// 确保索引存在
 	_ = m.EnsureIndexes(l.ctx)
 
@@ -212,14 +205,10 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 
 // GetJSFinderList 获取 JSFinder 结果列表（带 30s 缓存）
 func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
-	wsKey := req.WorkspaceId
-	if wsKey == "" {
-		wsKey = "all"
-	}
 	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	cacheKey := fmt.Sprintf("jsfinder_list:%s:%d:%d:%s:%s:%s:%s:%s:%s:%v",
-		wsKey, req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.AIResult, req.TagsAny)
+	cacheKey := fmt.Sprintf("jsfinder_list:%d:%d:%s:%s:%s:%s:%s:%s:%s:%v",
+		req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.AIResult, req.TagsAny)
 
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, jsfinderListCacheTTL, func() (interface{}, error) {
 		return l.getJSFinderListUncached(req)
@@ -236,8 +225,6 @@ func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFi
 
 // getJSFinderListUncached 无缓存版本：实际查询逻辑
 func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
-	workspaceId := req.WorkspaceId
-
 	// 使用 $and 数组组合所有条件，避免多个 $or 互相覆盖
 	var andConditions []bson.M
 
@@ -293,85 +280,30 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 		req.PageSize = 10
 	}
 
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	m := l.svcCtx.GetJSFinderResultModel()
 
 	var total int64
 	var allResults []*model.JSFinderResult
+	var err error
 
-	// 支持多工作空间查询
-	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 跨工作空间分页正确性：从每个 ws 按 create_time 降序拉取覆盖到当前页末尾的数据量
-		// （needTotal = page * pageSize），合并排序后在内存中按页切片。
-		// OOM 防护改由 jsfinderListProjection 投影剥离 request/response/curl_command 大字段实现，
-		// 单行内存占用大幅下降，故不再设硬上限 —— 原上限会令 page*pageSize 超限后的所有页空数据。
-		needTotal := req.Page * req.PageSize
-
-		// 跨工作空间合并：filter 为空时使用 EstimatedCount（O(1)），避免逐 ws CountDocuments 扫描
-		emptyFilter := len(filter) == 0
-		for _, wsId := range wsIds {
-			m := l.svcCtx.GetJSFinderResultModel(wsId)
-			var wsTotal int64
-			if emptyFilter {
-				wsTotal, _ = m.EstimatedCount(l.ctx)
-			} else {
-				wsTotal, _ = m.Count(l.ctx, filter)
-			}
-			total += wsTotal
-
-			if wsTotal == 0 {
-				continue
-			}
-			// 每个 ws 最多拉 needTotal 条（覆盖到当前页末尾），按 create_time 降序
-			limit := int64(needTotal)
-			if wsTotal < limit {
-				limit = wsTotal
-			}
-			opt := options.Find().
-				SetLimit(limit).
-				SetSort(bson.D{{Key: "create_time", Value: -1}}).
-				SetProjection(jsfinderListProjection)
-			wsResults, _ := m.Find(l.ctx, filter, opt)
-			allResults = append(allResults, wsResults...)
-		}
-
-		// 按创建时间排序
-		sort.Slice(allResults, func(i, j int) bool {
-			return allResults[i].CreateTime.After(allResults[j].CreateTime)
-		})
-
-		// 内存分页
-		start := (req.Page - 1) * req.PageSize
-		end := start + req.PageSize
-		if start > len(allResults) {
-			start = len(allResults)
-		}
-		if end > len(allResults) {
-			end = len(allResults)
-		}
-		allResults = allResults[start:end]
+	if len(filter) == 0 {
+		total, err = m.EstimatedCount(l.ctx)
 	} else {
-		m := l.svcCtx.GetJSFinderResultModel(workspaceId)
+		total, err = m.Count(l.ctx, filter)
+	}
+	if err != nil {
+		return nil, xerr.NewServerError("Count JSFinderResult Error: " + err.Error())
+	}
 
-		var err error
-		if len(filter) == 0 {
-			total, err = m.EstimatedCount(l.ctx)
-		} else {
-			total, err = m.Count(l.ctx, filter)
-		}
-		if err != nil {
-			return nil, xerr.NewServerError("Count JSFinderResult Error: " + err.Error())
-		}
+	opt := options.Find().
+		SetSkip(int64((req.Page - 1) * req.PageSize)).
+		SetLimit(int64(req.PageSize)).
+		SetSort(bson.D{{Key: "create_time", Value: -1}}).
+		SetProjection(jsfinderListProjection)
 
-		opt := options.Find().
-			SetSkip(int64((req.Page - 1) * req.PageSize)).
-			SetLimit(int64(req.PageSize)).
-			SetSort(bson.D{{Key: "create_time", Value: -1}}).
-			SetProjection(jsfinderListProjection)
-
-		allResults, err = m.Find(l.ctx, filter, opt)
-		if err != nil {
-			return nil, xerr.NewServerError("Find JSFinderResult Error: " + err.Error())
-		}
+	allResults, err = m.Find(l.ctx, filter, opt)
+	if err != nil {
+		return nil, xerr.NewServerError("Find JSFinderResult Error: " + err.Error())
 	}
 
 	respList := make([]*types.JSFinderResult, 0, len(allResults))
@@ -382,7 +314,6 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 		}
 		respList = append(respList, &types.JSFinderResult{
 			Id:               r.Id.Hex(),
-			WorkspaceId:      r.WorkspaceId,
 			MainTaskId:       r.MainTaskId,
 			TaskName:         r.TaskName,
 			Authority:        r.Authority,
@@ -416,79 +347,61 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 }
 
 // ClearJSFinderResults 清空 JSFinder 结果
-func (l *JSFinderLogic) ClearJSFinderResults(workspaceId string) error {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	for _, wsId := range wsIds {
-		m := l.svcCtx.GetJSFinderResultModel(wsId)
-		_, err := m.DeleteMany(l.ctx, bson.M{})
-		if err != nil {
-			l.Logger.Errorf("ClearJSFinderResults Error for workspace %s: %v", wsId, err)
-			return xerr.NewServerError("清空JSFinder结果失败: " + err.Error())
-		}
+func (l *JSFinderLogic) ClearJSFinderResults() error {
+	m := l.svcCtx.GetJSFinderResultModel()
+	_, err := m.DeleteMany(l.ctx, bson.M{})
+	if err != nil {
+		l.Logger.Errorf("ClearJSFinderResults Error: %v", err)
+		return xerr.NewServerError("清空JSFinder结果失败: " + err.Error())
 	}
 
 	return nil
 }
 
 // GetJSFinderDetail 按 id 取单条 JSFinder 结果（含 request/response/curl_command 大字段）。
-// 列表查询已投影剥离这些大字段，详情按需回填；id 在哪个 workspace 由前端随 id 一并给出。
-// workspaceId 为空/"all" 时遍历所有工作空间定位，命中后返回。
+// 列表查询已投影剥离这些大字段，详情按需回填。
 func (l *JSFinderLogic) GetJSFinderDetail(req *types.JSFinderDetailReq) (*types.JSFinderDetailResp, error) {
 	id := strings.TrimSpace(req.Id)
 	if id == "" {
 		return &types.JSFinderDetailResp{Code: 400, Msg: "id 不能为空"}, nil
 	}
 
-	wsIds := []string{strings.TrimSpace(req.WorkspaceId)}
-	if wsIds[0] == "" || wsIds[0] == "all" {
-		wsIds = common.GetWorkspaceIds(l.ctx, l.svcCtx, req.WorkspaceId)
+	doc, err := l.svcCtx.GetJSFinderResultModel().FindByID(l.ctx, id)
+	if err != nil || doc == nil {
+		return &types.JSFinderDetailResp{Code: 404, Msg: "未找到该 JSFinder 结果"}, nil
 	}
-
-	for _, wsId := range wsIds {
-		doc, err := l.svcCtx.GetJSFinderResultModel(wsId).FindByID(l.ctx, id)
-		if err != nil {
-			continue // 该 ws 无此 id 或集合缺失，尝试下一个
-		}
-		if doc == nil {
-			continue
-		}
-		aiAnalyzedAt := ""
-		if !doc.AIAnalyzedAt.IsZero() {
-			aiAnalyzedAt = doc.AIAnalyzedAt.Format("2006-01-02 15:04:05")
-		}
-		return &types.JSFinderDetailResp{
-			Code: 0,
-			Msg:  "success",
-			Data: &types.JSFinderResult{
-				Id:               doc.Id.Hex(),
-				WorkspaceId:      doc.WorkspaceId,
-				MainTaskId:       doc.MainTaskId,
-				TaskName:         doc.TaskName,
-				Authority:        doc.Authority,
-				Host:             doc.Host,
-				Port:             doc.Port,
-				URL:              doc.URL,
-				Severity:         doc.Severity,
-				VulName:          doc.VulName,
-				Result:           doc.Result,
-				Tags:             doc.Tags,
-				MatcherName:      doc.MatcherName,
-				ExtractedResults: doc.ExtractedResults,
-				CurlCommand:      doc.CurlCommand,
-				Request:          doc.Request,
-				Response:         doc.Response,
-				CreateTime:       doc.CreateTime.Format("2006-01-02 15:04:05"),
-				UpdateTime:       doc.UpdateTime.Format("2006-01-02 15:04:05"),
-				AIStatus:         doc.AIStatus,
-				AIResult:         doc.AIResult,
-				AIAnalyzedAt:     aiAnalyzedAt,
-				AIReason:         doc.AIReason,
-			},
-		}, nil
+	aiAnalyzedAt := ""
+	if !doc.AIAnalyzedAt.IsZero() {
+		aiAnalyzedAt = doc.AIAnalyzedAt.Format("2006-01-02 15:04:05")
 	}
-
-	return &types.JSFinderDetailResp{Code: 404, Msg: "未找到该 JSFinder 结果"}, nil
+	return &types.JSFinderDetailResp{
+		Code: 0,
+		Msg:  "success",
+		Data: &types.JSFinderResult{
+			Id:               doc.Id.Hex(),
+			MainTaskId:       doc.MainTaskId,
+			TaskName:         doc.TaskName,
+			Authority:        doc.Authority,
+			Host:             doc.Host,
+			Port:             doc.Port,
+			URL:              doc.URL,
+			Severity:         doc.Severity,
+			VulName:          doc.VulName,
+			Result:           doc.Result,
+			Tags:             doc.Tags,
+			MatcherName:      doc.MatcherName,
+			ExtractedResults: doc.ExtractedResults,
+			CurlCommand:      doc.CurlCommand,
+			Request:          doc.Request,
+			Response:         doc.Response,
+			CreateTime:       doc.CreateTime.Format("2006-01-02 15:04:05"),
+			UpdateTime:       doc.UpdateTime.Format("2006-01-02 15:04:05"),
+			AIStatus:         doc.AIStatus,
+			AIResult:         doc.AIResult,
+			AIAnalyzedAt:     aiAnalyzedAt,
+			AIReason:         doc.AIReason,
+		},
+	}, nil
 }
 
 // ==================== JSFinder AI研判 ====================
@@ -533,19 +446,14 @@ func init() {
 
 // AnalyzeSingle 对单条JSFinder结果进行AI研判
 func (l *JSFinderLogic) AnalyzeSingle(req *types.JSFinderAIAnalyzeReq) (*types.JSFinderAIAnalyzeResp, error) {
-	workspaceId := req.WorkspaceId
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-
 	// 1. 加载AI配置
-	aiCfg, err := l.loadAIConfig(workspaceId)
+	aiCfg, err := l.loadAIConfig()
 	if err != nil {
 		return &types.JSFinderAIAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
 	// 2. 查找目标记录（需要含result/extracted_results内容，不使用列表投影）
-	m := l.svcCtx.GetJSFinderResultModel(workspaceId)
+	m := l.svcCtx.GetJSFinderResultModel()
 	doc, err := m.FindByID(l.ctx, req.Id)
 	if err != nil {
 		return &types.JSFinderAIAnalyzeResp{Code: 404, Msg: "未找到该记录"}, nil
@@ -582,13 +490,6 @@ func (l *JSFinderLogic) AnalyzeSingle(req *types.JSFinderAIAnalyzeReq) (*types.J
 // 2. req.Ids 为空但有筛选条件：研判符合筛选条件的未研判数据
 // 3. 都为空：研判所有未研判数据
 func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) (*types.JSFinderAIBatchAnalyzeResp, error) {
-	workspaceId := req.WorkspaceId
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
 	// 构造与列表查询一致的过滤条件（使用 $and 组合，避免 $or 互相覆盖）
 	var andConditions []bson.M
 	if req.Query != "" {
@@ -625,9 +526,10 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 	}
 
 	var pendingDocs []*model.JSFinderResult
+	m := l.svcCtx.GetJSFinderResultModel()
 
 	if len(req.Ids) > 0 {
-		// 模式1：按选中的ID列表（跨workspace查找）
+		// 模式1：按选中的ID列表
 		oids := make([]primitive.ObjectID, 0, len(req.Ids))
 		for _, id := range req.Ids {
 			oid, err := primitive.ObjectIDFromHex(id)
@@ -639,22 +541,10 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 			"_id":       bson.M{"$in": oids},
 			"ai_status": bson.M{"$ne": "completed"},
 		}
-		for _, wsId := range wsIds {
-			m := l.svcCtx.GetJSFinderResultModel(wsId)
-			docs, err := m.Find(l.ctx, idFilter, options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}))
-			if err == nil {
-				pendingDocs = append(pendingDocs, docs...)
-			}
-		}
+		pendingDocs, _ = m.Find(l.ctx, idFilter, options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}))
 	} else {
 		// 模式2/3：按过滤条件（可能为空，表示所有未研判）
-		for _, wsId := range wsIds {
-			m := l.svcCtx.GetJSFinderResultModel(wsId)
-			docs, err := m.Find(l.ctx, filter, options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}))
-			if err == nil {
-				pendingDocs = append(pendingDocs, docs...)
-			}
-		}
+		pendingDocs, _ = m.Find(l.ctx, filter, options.Find().SetSort(bson.D{{Key: "create_time", Value: -1}}))
 	}
 
 	if len(pendingDocs) == 0 {
@@ -662,7 +552,7 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 	}
 
 	// 提前校验AI配置，避免启动goroutine后才发现配置缺失
-	if _, err := l.loadAIConfig(workspaceId); err != nil {
+	if _, err := l.loadAIConfig(); err != nil {
 		return &types.JSFinderAIBatchAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
@@ -676,7 +566,7 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 	jsfinderAIBatchTasks.Store(taskId, state)
 
 	// 启动goroutine异步处理
-	go l.runBatchAnalysis(wsIds, taskId, state, pendingDocs, clampAIConcurrency(req.Concurrency))
+	go l.runBatchAnalysis(taskId, state, pendingDocs, clampAIConcurrency(req.Concurrency))
 
 	return &types.JSFinderAIBatchAnalyzeResp{
 		Code: 0, Msg: "批量研判任务已启动", TaskId: taskId, Total: int64(len(pendingDocs)),
@@ -684,12 +574,12 @@ func (l *JSFinderLogic) BatchAnalyzeAsync(req *types.JSFinderAIBatchAnalyzeReq) 
 }
 
 // runBatchAnalysis 批量研判实际执行逻辑（在独立goroutine中运行）
-func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *batchTaskState, pendingDocs []*model.JSFinderResult, concurrency int) {
+func (l *JSFinderLogic) runBatchAnalysis(taskId string, state *batchTaskState, pendingDocs []*model.JSFinderResult, concurrency int) {
 	// 使用独立的Background context，避免HTTP请求context被cancel导致后台任务中断
 	bgCtx := context.Background()
 
 	// 1. 加载AI配置（全局配置）
-	aiCfg, err := l.loadAIConfigWithCtx(bgCtx, "")
+	aiCfg, err := l.loadAIConfigWithCtx(bgCtx)
 	if err != nil {
 		state.mu.Lock()
 		state.Status = "failed"
@@ -704,6 +594,7 @@ func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *b
 	var wg sync.WaitGroup
 
 	stopped := int32(0) // 原子标记是否已停止/熔断
+	m := l.svcCtx.GetJSFinderResultModel()
 
 	for _, doc := range pendingDocs {
 		// 检查是否收到停止信号
@@ -727,13 +618,6 @@ func (l *JSFinderLogic) runBatchAnalysis(wsIds []string, taskId string, state *b
 			if atomic.LoadInt32(&stopped) == 1 {
 				return
 			}
-
-			// 根据文档的workspaceId获取对应的model进行回写
-			wsId := d.WorkspaceId
-			if wsId == "" {
-				wsId = "default"
-			}
-			m := l.svcCtx.GetJSFinderResultModel(wsId)
 
 			result, reason, err := l.callAIAnalysis(aiCfg, d)
 			if err != nil {
@@ -835,28 +719,17 @@ func (l *JSFinderLogic) GetBatchProgress(req *types.JSFinderAIBatchProgressReq) 
 
 // ==================== AI研判辅助方法 ====================
 
-// loadAIConfig 加载AI配置（全局配置，跨workspace查找）
-// AI配置是系统级配置，不按workspace隔离，优先使用当前workspace，找不到则遍历其他workspace
-func (l *JSFinderLogic) loadAIConfig(workspaceId string) (*model.APIConfig, error) {
-	return l.loadAIConfigWithCtx(l.ctx, workspaceId)
+// loadAIConfig 加载AI配置（系统级配置）
+func (l *JSFinderLogic) loadAIConfig() (*model.APIConfig, error) {
+	return l.loadAIConfigWithCtx(l.ctx)
 }
 
 // loadAIConfigWithCtx 使用指定context加载AI配置（供后台goroutine使用独立context）
-func (l *JSFinderLogic) loadAIConfigWithCtx(ctx context.Context, workspaceId string) (*model.APIConfig, error) {
-	// 按优先级尝试的workspace列表
-	tryWorkspaces := []string{}
-	if workspaceId != "" {
-		tryWorkspaces = append(tryWorkspaces, workspaceId)
-	}
-	tryWorkspaces = append(tryWorkspaces, "all", "default")
-
-	// 1. 先尝试已知的workspace
-	for _, wsId := range tryWorkspaces {
-		cfgModel := model.NewAPIConfigModel(l.svcCtx.MongoDB, wsId)
-		doc, err := cfgModel.FindByPlatform(ctx, "ai")
-		if err == nil && doc != nil {
-			return doc, nil
-		}
+func (l *JSFinderLogic) loadAIConfigWithCtx(ctx context.Context) (*model.APIConfig, error) {
+	cfgModel := model.NewAPIConfigModel(l.svcCtx.MongoDB)
+	doc, err := cfgModel.FindByPlatform(ctx, "ai")
+	if err == nil && doc != nil {
+		return doc, nil
 	}
 
 	return nil, fmt.Errorf("未配置AI服务，请先在系统设置中配置AI")

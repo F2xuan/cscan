@@ -197,7 +197,7 @@ func (s *JSFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRe
 	targets := s.collectTargets(config.Assets)
 	if len(targets) == 0 {
 		logWarn("[JSFinder] 无可用 HTTP 目标")
-		return &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId}, nil
+		return &ScanResult{MainTaskId: config.MainTaskId}, nil
 	}
 
 	logInfo("[JSFinder] 开始扫描，目标数: %d，sourcemap=%v，未授权检测=%v", len(targets), opts.EnableSourcemap, opts.EnableUnauthCheck)
@@ -205,7 +205,7 @@ func (s *JSFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRe
 	client := newJSFinderHTTPClient(opts.Timeout)
 	defer client.CloseIdleConnections()
 
-	result := &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId}
+	result := &ScanResult{MainTaskId: config.MainTaskId}
 	var mu sync.Mutex
 
 	totalTargets := len(targets)

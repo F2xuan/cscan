@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -24,9 +23,8 @@ func OnlineSearchHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewOnlineAPILogic(r.Context(), svcCtx)
-		resp, err := l.Search(&req, workspaceId)
+		resp, err := l.Search(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -43,8 +41,6 @@ func OnlineImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, err.Error())
 			return
 		}
-
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 
 		// 复制资产数据，避免请求结束后数据被回收
 		assets := make([]types.OnlineSearchResult, len(req.Assets))
@@ -78,7 +74,7 @@ func OnlineImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			l := logic.NewOnlineAPILogic(bgCtx, svcCtx)
 			state, _ := logic.GetOnlineImportTaskState(taskId)
 
-			resp, err := l.Import(&req, workspaceId, state)
+			resp, err := l.Import(&req, state)
 			if err != nil {
 				logx.Errorf("OnlineImport async failed: %v", err)
 				state.Status = "failed"
@@ -142,9 +138,8 @@ func OnlineImportResultHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // APIConfigListHandler API配置列表
 func APIConfigListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewOnlineAPILogic(r.Context(), svcCtx)
-		resp, err := l.ConfigList(workspaceId)
+		resp, err := l.ConfigList()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -162,9 +157,8 @@ func APIConfigSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewOnlineAPILogic(r.Context(), svcCtx)
-		resp, err := l.ConfigSave(&req, workspaceId)
+		resp, err := l.ConfigSave(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -181,8 +175,6 @@ func OnlineImportAllHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			response.ParamError(w, err.Error())
 			return
 		}
-
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 
 		// 生成taskId并初始化任务状态（原子写入，避免竞态）
 		taskId := logic.SubmitImportTask(req.Platform, "all", 0)
@@ -211,7 +203,7 @@ func OnlineImportAllHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			l := logic.NewOnlineAPILogic(bgCtx, svcCtx)
 			state, _ := logic.GetOnlineImportTaskState(taskId)
 
-			resp, err := l.ImportAll(&req, workspaceId, state)
+			resp, err := l.ImportAll(&req, state)
 			if err != nil {
 				logx.Errorf("OnlineImportAll async failed: %v", err)
 				state.Status = "failed"

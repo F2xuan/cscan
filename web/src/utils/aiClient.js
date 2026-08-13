@@ -1,7 +1,7 @@
 import { getAIConfig } from '@/api/ai'
 
 // Platform-wide AI call entry: all modules needing AI capability import from here.
-// Config is workspace-scoped, maintained on the /ai-config page.
+// Config is maintained on the /ai-config page.
 
 export const DEFAULT_AI_CONFIG = {
   protocol: 'openai',

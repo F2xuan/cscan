@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func DashboardChangesHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewDashboardChangesLogic(r.Context(), svcCtx)
-		resp, err := l.DashboardChanges(&req, workspaceId)
+		resp, err := l.DashboardChanges(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -262,7 +263,13 @@ func (m *TaskRecoveryManager) recoverTask(taskId string, execInfo *TaskExecution
 	// 根据任务类型选择队列：原指定 Worker 离线时回退到公共队列，避免任务沉淀在已死亡 Worker 的专属队列
 	var queueKey string
 	if len(taskInfo.Workers) > 0 && m.isWorkerOnline(taskInfo.Workers[0]) {
-		queueKey = fmt.Sprintf("cscan:task:queue:worker:%s", taskInfo.Workers[0])
+		// 修复大小写不一致：scheduler.GetWorkerQueueKey 使用 strings.ToLower，
+		// recovery 必须保持一致，否则 Worker 名含大写时任务写入与弹出 Key 不匹配
+		if m.scheduler != nil {
+			queueKey = m.scheduler.GetWorkerQueueKey(taskInfo.Workers[0])
+		} else {
+			queueKey = fmt.Sprintf("cscan:task:queue:worker:%s", strings.ToLower(taskInfo.Workers[0]))
+		}
 	} else if m.scheduler != nil && m.scheduler.IsPriorityBucketEnabled() {
 		// 修复 C1：分桶模式下恢复任务必须路由到对应优先级桶，否则 CheckTask 无法消费
 		// 原逻辑回退到 m.queueKey（"cscan:task:queue"），但 popFromBuckets 不读此 key

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -28,8 +27,8 @@ func NewDeleteAssetGroupLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 }
 
 // DeleteAssetGroup 删除资产分组及其下的所有资产和相关任务
-func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq, workspaceId string) (resp *types.DeleteAssetGroupResp, err error) {
-	l.Logger.Infof("DeleteAssetGroup: workspaceId=%s, domain=%s", workspaceId, req.Domain)
+func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq) (resp *types.DeleteAssetGroupResp, err error) {
+	l.Logger.Infof("DeleteAssetGroup: domain=%s", req.Domain)
 
 	if req.Domain == "" {
 		return &types.DeleteAssetGroupResp{
@@ -38,122 +37,113 @@ func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq,
 		}, nil
 	}
 
-	// 获取需要操作的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Infof("DeleteAssetGroup工作空间列表: %v", wsIds)
-
 	totalDeleted := int64(0)
 	totalTasksDeleted := int64(0)
 
-	// 遍历所有工作空间，删除匹配的资产和任务
-	for _, wsId := range wsIds {
-		// 1. 删除资产
-		assetModel := l.svcCtx.GetAssetModel(wsId)
+	// 1. 删除资产
+	assetModel := l.svcCtx.GetAssetModel()
 
-		// 先查询所有资产，然后筛选出属于该分组的资产
-		// 这样可以确保使用和分组查询相同的逻辑
-		allAssets, err := assetModel.Find(l.ctx, bson.M{}, 0, 0)
+	// 先查询所有资产，然后筛选出属于该分组的资产
+	// 这样可以确保使用和分组查询相同的逻辑
+	allAssets, err := assetModel.Find(l.ctx, bson.M{}, 0, 0)
+	if err != nil {
+		l.Logger.Errorf("查询资产失败: %v", err)
+	}
+
+	// 收集需要删除的资产ID
+	var idsToDelete []string
+	// 记录被删除资产的host，用于清理历史记录
+	var hostsToDelete []string
+	for _, asset := range allAssets {
+		// 使用和分组查询相同的逻辑提取主域名
+		mainDomain := extractMainDomainForDelete(asset.Host)
+		if mainDomain == req.Domain {
+			idsToDelete = append(idsToDelete, asset.Id.Hex())
+			hostsToDelete = append(hostsToDelete, asset.Host)
+		}
+	}
+
+	l.Logger.Infof("找到 %d 个匹配的资产", len(idsToDelete))
+
+	// 批量删除资产
+	if len(idsToDelete) > 0 {
+		deletedCount, err := assetModel.BatchDelete(l.ctx, idsToDelete)
 		if err != nil {
-			l.Logger.Errorf("查询工作空间 %s 的资产失败: %v", wsId, err)
-			continue
+			l.Logger.Errorf("删除资产失败: %v", err)
+		} else {
+			l.Logger.Infof("删除了 %d 个资产", deletedCount)
+			totalDeleted += deletedCount
 		}
 
-		// 收集需要删除的资产ID
-		var idsToDelete []string
-		// 记录被删除资产的host，用于清理历史记录
-		var hostsToDelete []string
-		for _, asset := range allAssets {
-			// 使用和分组查询相同的逻辑提取主域名
-			mainDomain := extractMainDomainForDelete(asset.Host)
-			if mainDomain == req.Domain {
-				idsToDelete = append(idsToDelete, asset.Id.Hex())
-				hostsToDelete = append(hostsToDelete, asset.Host)
-			}
-		}
-
-		l.Logger.Infof("工作空间 %s 找到 %d 个匹配的资产", wsId, len(idsToDelete))
-
-		// 批量删除资产
-		if len(idsToDelete) > 0 {
-			deletedCount, err := assetModel.BatchDelete(l.ctx, idsToDelete)
+		// 删除资产历史记录（ScanResultHistoryModel）
+		historyModel := model.NewScanResultHistoryModel(l.svcCtx.MongoDB)
+		historyDeleted := int64(0)
+		for _, host := range hostsToDelete {
+			// 按 host 删除历史记录
+			filter := bson.M{"host": host}
+			result, err := historyModel.DeleteByFilter(l.ctx, filter)
 			if err != nil {
-				l.Logger.Errorf("删除工作空间 %s 的资产失败: %v", wsId, err)
+				l.Logger.Errorf("删除资产历史记录失败: host=%s, err=%v", host, err)
 			} else {
-				l.Logger.Infof("工作空间 %s 删除了 %d 个资产", wsId, deletedCount)
-				totalDeleted += deletedCount
+				historyDeleted += result
 			}
-
-			// 删除资产历史记录（ScanResultHistoryModel）
-			historyModel := model.NewScanResultHistoryModel(l.svcCtx.MongoDB, wsId)
-			historyDeleted := int64(0)
-			for _, host := range hostsToDelete {
-				// 按 host 删除历史记录
-				filter := bson.M{"host": host}
-				result, err := historyModel.DeleteByFilter(l.ctx, wsId, filter)
-				if err != nil {
-					l.Logger.Errorf("删除工作空间 %s 的资产历史记录失败: host=%s, err=%v", wsId, host, err)
-				} else {
-					historyDeleted += result
-				}
-			}
-			l.Logger.Infof("工作空间 %s 已清理 %d 条资产历史记录", wsId, historyDeleted)
-
-			// 删除 JSFinder 结果
-			jsfinderModel := l.svcCtx.GetJSFinderResultModel(wsId)
-			jsfinderDeleted := int64(0)
-			for _, host := range hostsToDelete {
-				filter := bson.M{"host": host}
-				result, err := jsfinderModel.DeleteMany(l.ctx, filter)
-				if err != nil {
-					l.Logger.Errorf("删除工作空间 %s 的 JSFinder 结果失败: host=%s, err=%v", wsId, host, err)
-				} else {
-					jsfinderDeleted += result
-				}
-			}
-			l.Logger.Infof("工作空间 %s 已清理 %d 条 JSFinder 结果", wsId, jsfinderDeleted)
 		}
+		l.Logger.Infof("已清理 %d 条资产历史记录", historyDeleted)
 
-		// 2. 删除相关任务
-		taskModel := l.svcCtx.GetMainTaskModel(wsId)
+		// 删除 JSFinder 结果
+		jsfinderModel := l.svcCtx.GetJSFinderResultModel()
+		jsfinderDeleted := int64(0)
+		for _, host := range hostsToDelete {
+			filter := bson.M{"host": host}
+			result, err := jsfinderModel.DeleteMany(l.ctx, filter)
+			if err != nil {
+				l.Logger.Errorf("删除 JSFinder 结果失败: host=%s, err=%v", host, err)
+			} else {
+				jsfinderDeleted += result
+			}
+		}
+		l.Logger.Infof("已清理 %d 条 JSFinder 结果", jsfinderDeleted)
+	}
 
-		// 查询所有任务
-		allTasks, err := taskModel.Find(l.ctx, bson.M{}, 0, 0)
+	// 2. 删除相关任务
+	taskModel := l.svcCtx.GetMainTaskModel()
+
+	// 查询所有任务
+	allTasks, err := taskModel.Find(l.ctx, bson.M{}, 0, 0)
+	if err != nil {
+		l.Logger.Errorf("查询任务失败: %v", err)
+	}
+
+	// 收集需要删除的任务ID
+	var taskIdsToDelete []string
+	for _, task := range allTasks {
+		// 从任务目标中提取域名
+		targets := strings.Split(task.Target, "\n")
+		for _, target := range targets {
+			target = strings.TrimSpace(target)
+			if target == "" {
+				continue
+			}
+
+			// 提取主域名
+			domain := extractMainDomainFromTargetForDelete(target)
+			if domain == req.Domain {
+				taskIdsToDelete = append(taskIdsToDelete, task.Id.Hex())
+				break // 找到匹配的目标就跳出，避免重复添加
+			}
+		}
+	}
+
+	l.Logger.Infof("找到 %d 个匹配的任务", len(taskIdsToDelete))
+
+	// 批量删除任务
+	if len(taskIdsToDelete) > 0 {
+		deletedTaskCount, err := taskModel.BatchDelete(l.ctx, taskIdsToDelete)
 		if err != nil {
-			l.Logger.Errorf("查询工作空间 %s 的任务失败: %v", wsId, err)
-			continue
-		}
-
-		// 收集需要删除的任务ID
-		var taskIdsToDelete []string
-		for _, task := range allTasks {
-			// 从任务目标中提取域名
-			targets := strings.Split(task.Target, "\n")
-			for _, target := range targets {
-				target = strings.TrimSpace(target)
-				if target == "" {
-					continue
-				}
-
-				// 提取主域名
-				domain := extractMainDomainFromTargetForDelete(target)
-				if domain == req.Domain {
-					taskIdsToDelete = append(taskIdsToDelete, task.Id.Hex())
-					break // 找到匹配的目标就跳出，避免重复添加
-				}
-			}
-		}
-
-		l.Logger.Infof("工作空间 %s 找到 %d 个匹配的任务", wsId, len(taskIdsToDelete))
-
-		// 批量删除任务
-		if len(taskIdsToDelete) > 0 {
-			deletedTaskCount, err := taskModel.BatchDelete(l.ctx, taskIdsToDelete)
-			if err != nil {
-				l.Logger.Errorf("删除工作空间 %s 的任务失败: %v", wsId, err)
-			} else {
-				l.Logger.Infof("工作空间 %s 删除了 %d 个任务", wsId, deletedTaskCount)
-				totalTasksDeleted += deletedTaskCount
-			}
+			l.Logger.Errorf("删除任务失败: %v", err)
+		} else {
+			l.Logger.Infof("删除了 %d 个任务", deletedTaskCount)
+			totalTasksDeleted += deletedTaskCount
 		}
 	}
 

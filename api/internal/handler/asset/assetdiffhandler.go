@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
@@ -20,9 +19,8 @@ func AssetDiffListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetDiffListLogic(r.Context(), svcCtx)
-		resp, err := l.AssetDiffList(&req, workspaceId)
+		resp, err := l.AssetDiffList(&req)
 		if err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
@@ -40,9 +38,8 @@ func AssetDiffStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetDiffStatLogic(r.Context(), svcCtx)
-		resp, err := l.AssetDiffStat(&req, workspaceId)
+		resp, err := l.AssetDiffStat(&req)
 		if err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return

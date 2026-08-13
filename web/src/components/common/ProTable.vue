@@ -455,7 +455,7 @@ function querySearch(queryString, cb) {
         if (typeof val === 'string' || typeof val === 'number') {
           // Skip long IDs and dates
           const strVal = String(val)
-          if (strVal.length < 50 && !strVal.includes('T00:00:00') && key !== 'id' && key !== 'workspaceId') {
+          if (strVal.length < 50 && !strVal.includes('T00:00:00') && key !== 'id') {
             uniqueValues.add(strVal)
           }
         } else if (Array.isArray(val)) {

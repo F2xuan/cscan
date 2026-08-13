@@ -14,6 +14,32 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
+// maxOutputBytes 单次 Execute 的 stdout/stderr 缓冲上限，防止大输出 OOM
+const maxOutputBytes = 128 * 1024 * 1024 // 128MB
+
+// cappedBuffer 带容量限制的 Buffer，超限后丢弃写入但返回成功以防管道阻塞
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	maxBytes  int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.buf.Len()+len(p) > c.maxBytes {
+		c.truncated = true
+		remaining := c.maxBytes - c.buf.Len()
+		if remaining > 0 {
+			c.buf.Write(p[:remaining])
+		}
+		return len(p), nil
+	}
+	return c.buf.Write(p)
+}
+
+func (c *cappedBuffer) String() string {
+	return c.buf.String()
+}
+
 // CmdExecutor 统一子进程执行器
 type CmdExecutor struct {
 	binaryPath     string
@@ -57,6 +83,7 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 	defer cancel()
 
 	cmd := exec.CommandContext(execCtx, e.binaryPath, args...)
+	setSysProcAttr(cmd)
 	if opts.WorkingDir != "" {
 		cmd.Dir = opts.WorkingDir
 	}
@@ -64,9 +91,10 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 		cmd.Env = opts.Env
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	stdoutBuf := &cappedBuffer{maxBytes: maxOutputBytes}
+	stderrBuf := &cappedBuffer{maxBytes: maxOutputBytes}
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
 
 	startTime := time.Now()
 	err := cmd.Start()
@@ -80,12 +108,14 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 
 	select {
 	case <-execCtx.Done():
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		killProcessTree(cmd)
 		<-done
 		result.Duration = time.Since(startTime)
+		result.Stdout = stdoutBuf.String()
 		result.Stderr = stderrBuf.String()
+		if stdoutBuf.truncated {
+			result.Stderr += fmt.Sprintf("\n[stdout truncated at %d bytes]", maxOutputBytes)
+		}
 		return result, fmt.Errorf("%s: timeout after %v", e.binaryPath, timeout)
 	case err := <-done:
 		result.Stdout = stdoutBuf.String()
@@ -97,6 +127,9 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 			}
 		}
 		result.Duration = time.Since(startTime)
+		if stdoutBuf.truncated {
+			logx.Infof("[%s] stdout truncated at %d bytes", e.binaryPath, maxOutputBytes)
+		}
 		return result, err
 	}
 }
@@ -113,6 +146,7 @@ func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler fu
 	defer cancel()
 
 	cmd := exec.CommandContext(execCtx, e.binaryPath, args...)
+	setSysProcAttr(cmd)
 	if opts.WorkingDir != "" {
 		cmd.Dir = opts.WorkingDir
 	}
@@ -136,13 +170,10 @@ func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler fu
 		return fmt.Errorf("start: %w", err)
 	}
 
-	// Context watcher: on cancellation, kill process promptly to unblock scanner.Scan()
-	// exec.CommandContext also kills on context done, but explicit kill ensures pipe closes without delay
+	// Context watcher: on cancellation, kill process tree promptly to unblock scanner.Scan()
 	go func() {
 		<-execCtx.Done()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		killProcessTree(cmd)
 	}()
 
 	done := make(chan error, 1)
@@ -166,13 +197,13 @@ func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler fu
 		}
 		cont, err := handler(line)
 		if err != nil {
-			_ = cmd.Process.Kill()
+			killProcessTree(cmd)
 			<-done
 			stdoutPipe.Close()
 			return fmt.Errorf("handler error: %w", err)
 		}
 		if !cont {
-			_ = cmd.Process.Kill()
+			killProcessTree(cmd)
 			break
 		}
 	}

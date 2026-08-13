@@ -30,20 +30,15 @@ type ScannerCert struct {
 
 // CertWriteService 证书写入服务，封装完整的证书保存业务逻辑
 type CertWriteService struct {
-	db          *mongo.Database
-	workspaceId string
-	certModel   *CertModel
+	db        *mongo.Database
+	certModel *CertModel
 }
 
 // NewCertWriteService 创建证书写入服务
-func NewCertWriteService(db *mongo.Database, workspaceId string) *CertWriteService {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func NewCertWriteService(db *mongo.Database) *CertWriteService {
 	return &CertWriteService{
-		db:          db,
-		workspaceId: workspaceId,
-		certModel:   NewCertModel(db, workspaceId),
+		db:        db,
+		certModel: NewCertModel(db),
 	}
 }
 
@@ -66,7 +61,6 @@ func (s *CertWriteService) SaveCerts(ctx context.Context, mainTaskID string, cer
 		}
 
 		docs = append(docs, &Cert{
-			WorkspaceId:  s.workspaceId,
 			TaskId:       mainTaskID,
 			Host:         c.Host,
 			Port:         c.Port,

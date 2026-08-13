@@ -9,13 +9,10 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-4.5-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.0-green)](VERSION)
 
-[中文](README.md) · [English](README_EN.md)
 
 </div>
-
----
 
 <table width="100%">
   <tr>
@@ -36,31 +33,21 @@
   </tr>
 </table>
 
----
-## 功能特性
-### 核心能力
-
-- **分布式架构** - Master/Worker 分离，支持多节点弹性扩缩容
-- **流水线编排** - 扫描阶段自动串联，前序结果自动传递给后续阶段
-- **弱口令字典管理** - 内置默认字典，支持自定义字典增删改查、导入导出
-- **定时任务** - Cron 表达式驱动的周期性扫描任务
-- **资产分组** - 按域名自动聚合资产，实时反映任务状态
-- **通知订阅** - 扫描结果实时推送（钉钉/飞书/企业微信/邮件/Webhook）
-
----
-
 ## 快速开始
 
 ```bash
 # 克隆项目
 git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
+
+# 复制环境变量模板并填值
+cp .env.example .env
+
+# 启动全部服务
 docker compose up -d
-#关闭
-#docker compose down
 ```
 
-> 访问 `https://ip:7777`，默认账号 `admin / 123456`
+> 访问 `https://ip:7777`
 ---
 
 ## 本地开发
@@ -75,5 +62,3 @@ docker compose up -d
 ## License
 
 MIT
-
-<img src="images/wechat.jpg" width = " 50% ">

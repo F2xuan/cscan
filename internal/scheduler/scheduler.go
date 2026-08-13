@@ -87,10 +87,9 @@ func (m *PriorityQueueMetrics) GetStats() map[string]interface{} {
 
 // TaskInfo 任务信息
 type TaskInfo struct {
-	TaskId      string   `json:"taskId"`
-	MainTaskId  string   `json:"mainTaskId"`
-	WorkspaceId string   `json:"workspaceId"`
-	TaskName    string   `json:"taskName"`
+	TaskId     string   `json:"taskId"`
+	MainTaskId string   `json:"mainTaskId"`
+	TaskName   string   `json:"taskName"`
 	Config      string   `json:"config"`
 	Priority    int      `json:"priority"`
 	CreateTime  string   `json:"createTime"`
@@ -642,8 +641,9 @@ func (s *Scheduler) PushTaskBatch(ctx context.Context, tasks []*TaskInfo) error 
 		task.CreateTime = baseTime.Local().Format("2006-01-02 15:04:05")
 
 		// 使用统一的优先级分数计算
-		// 同一批次的任务按顺序递增分数，保持顺序
-		score := s.calculatePriorityScore(task.Priority, baseTime) + float64(i)*0.001
+		// 同一批次的任务按 i 微秒递增创建时间，保持顺序
+		// 修复：原 float64(i)*0.001 在 UnixMicro（~1.75e15）量级被 float64 ULP（~0.25）吞掉
+		score := s.calculatePriorityScore(task.Priority, baseTime.Add(time.Duration(i)*time.Microsecond))
 
 		// 如果指定了 Workers，推送到每个 Worker 的专属队列
 		if len(task.Workers) > 0 {

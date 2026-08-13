@@ -27,8 +27,8 @@ func NewAssetDiffListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ass
 }
 
 // AssetDiffList 按任务/时间范围/类型查询变化明细
-func (l *AssetDiffListLogic) AssetDiffList(req *types.AssetDiffListReq, workspaceId string) (*types.AssetDiffListResp, error) {
-	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB, workspaceId)
+func (l *AssetDiffListLogic) AssetDiffList(req *types.AssetDiffListReq) (*types.AssetDiffListResp, error) {
+	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB)
 
 	page := int64(req.Page)
 	if page <= 0 {
@@ -40,7 +40,7 @@ func (l *AssetDiffListLogic) AssetDiffList(req *types.AssetDiffListReq, workspac
 		pageSize = 20
 	}
 
-	docs, total, err := diffModel.FindByTaskId(l.ctx, workspaceId, req.TaskId, req.DiffType, req.ChangeType, page, pageSize)
+	docs, total, err := diffModel.FindByTaskId(l.ctx, req.TaskId, req.DiffType, req.ChangeType, page, pageSize)
 	if err != nil {
 		l.Errorf("[AssetDiff] list query failed: %v", err)
 		return &types.AssetDiffListResp{Code: -1, Msg: "查询变化列表失败"}, nil

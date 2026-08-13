@@ -6,11 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
-	"cscan/internal/model"
 	"cscan/internal/scheduler"
 
 	"github.com/google/uuid"
@@ -86,38 +84,30 @@ func (l *VulReverifyLogic) VulReverify(req *types.VulReverifyReq) (*types.VulRev
 	if !l.hasOnlineWorker() {
 		return &types.VulReverifyResp{Code: 400, Msg: "当前无在线 Worker 节点，请先启动 Worker 后再执行复验"}, nil
 	}
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = "default"
-	}
 
 	reviewer := middleware.GetUsername(l.ctx)
 	if reviewer == "" {
 		reviewer = "system"
 	}
 
-	// 列表接口在 workspaceId 为 ""/"all" 时跨全部 workspace 聚合展示，
-	// 单条漏洞的真实归属 workspace 未知。复验时同样展开候选 workspace 逐一查找，
-	// 避免把 "all" 当作字面集合名（all_vul）导致 FindById 全部落空。
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, wsId)
+	vulModel := l.svcCtx.GetVulModel()
 
 	var taskIds []string
 	var reverified []string
 	for _, id := range req.Ids {
 		// 读取漏洞基础信息，随任务下发，worker 无需再次查询即可复测
-		v, foundWs, err := l.findVulInWorkspaces(id, wsIds)
+		v, err := vulModel.FindById(l.ctx, id)
 		if err != nil || v == nil {
 			l.Logger.Errorf("[VulReverify] vuln %s not found (err=%v), skip", id, err)
 			continue
 		}
-		vulModel := l.svcCtx.GetVulModel(foundWs)
 
 		// 先下发任务到队列；成功后再标记"复验中"，避免下发失败时前端卡在"复验中"
 		taskId := uuid.New().String()
 		cfg := map[string]interface{}{
 			"taskType":    "vuln_reverify",
 			"vulnId":      id,
-			"workspaceId": foundWs,
+			"workspaceId": "",
 			"reviewer":    reviewer,
 			"authority":   v.Authority,
 			"host":        v.Host,
@@ -136,7 +126,6 @@ func (l *VulReverifyLogic) VulReverify(req *types.VulReverifyReq) (*types.VulRev
 		task := &scheduler.TaskInfo{
 			TaskId:      taskId,
 			MainTaskId:  taskId,
-			WorkspaceId: foundWs,
 			TaskName:    "vuln_reverify",
 			Config:      string(cfgBytes),
 			Priority:    scheduler.PriorityHigh,
@@ -166,22 +155,4 @@ func (l *VulReverifyLogic) VulReverify(req *types.VulReverifyReq) (*types.VulRev
 		TaskIds:    taskIds,
 		Reverified: reverified,
 	}, nil
-}
-
-// findVulInWorkspaces 在候选 workspace 集合中按 ID 查找漏洞，返回漏洞及其所属 workspace。
-// 列表为跨 workspace 聚合视图，前端复验时只传漏洞 ID、不传归属 workspace，
-// 故需在候选集合内逐一尝试，命中第一个即返回。
-func (l *VulReverifyLogic) findVulInWorkspaces(id string, wsIds []string) (*model.Vul, string, error) {
-	var lastErr error
-	for _, ws := range wsIds {
-		v, err := l.svcCtx.GetVulModel(ws).FindById(l.ctx, id)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if v != nil {
-			return v, ws, nil
-		}
-	}
-	return nil, "", lastErr
 }

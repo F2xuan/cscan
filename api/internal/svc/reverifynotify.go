@@ -33,7 +33,7 @@ func (s *ServiceContext) SendReverifyNotify(ctx context.Context, result *notify.
 		return err
 	}
 	if err := mgr.Send(ctx, result); err != nil {
-		logx.Errorf("[ReverifyNotify] workspace=%s 发送修复通知失败: %v", result.WorkspaceId, err)
+		logx.Errorf("[ReverifyNotify] 发送修复通知失败: %v", err)
 		return err
 	}
 	return nil

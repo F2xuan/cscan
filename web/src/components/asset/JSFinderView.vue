@@ -622,7 +622,6 @@ async function showDetail(row) {
   if (!row.request && !row.response && row.id) {
     try {
       const res = await getJSFinderDetail({
-        workspaceId: row.workspaceId || '',
         id: row.id
       })
       if (res.code === 0 && res.data) {
@@ -757,7 +756,7 @@ function refresh() {
 async function handleSingleAnalyze(row) {
   analyzingId.value = row.id
   try {
-    const res = await analyzeJSByAI({ id: row.id, workspaceId: row.workspaceId || '' })
+    const res = await analyzeJSByAI({ id: row.id })
     if (res.code === 0 && res.data) {
       // 回填到当前行
       row.aiStatus = res.data.aiStatus
@@ -784,7 +783,7 @@ async function handleSingleAnalyze(row) {
 async function handleBatchAnalyze() {
   // 确定批量研判的范围和确认文案
   let confirmMsg = t('jsfinder.batchAIAnalyzeConfirm')
-  const params = { workspaceId: props.extraParams?.workspaceId || '', concurrency: aiConcurrency.value }
+  const params = { concurrency: aiConcurrency.value }
 
   const selected = selectedRows.value
   if (selected.length > 0) {

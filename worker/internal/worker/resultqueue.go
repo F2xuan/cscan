@@ -117,7 +117,8 @@ func (q *ResultQueue) Stop() {
 
 // 缺陷 2 防御：入队落盘前对超大字段做截断，避免队列文件（含完整 httpBody / screenshot /
 // iconData base64）撑爆磁盘。截断仅在落盘副本上进行，不修改调用方的原始 req。
-const maxQueuedFieldSize = 4 * 1024
+const maxQueuedFieldSize = 4 * 1024         // 文本字段上限（HttpBody 等）
+const maxQueuedBinarySize = 1 * 1024 * 1024 // 二进制媒体字段上限（Screenshot/IconData，1MB）
 
 func truncateStr(s string) string {
 	if len(s) > maxQueuedFieldSize {
@@ -126,9 +127,25 @@ func truncateStr(s string) string {
 	return s
 }
 
+// truncateBinaryStr 用于截图等 base64 编码的媒体字段，使用更大的上限避免数据损坏
+func truncateBinaryStr(s string) string {
+	if len(s) > maxQueuedBinarySize {
+		return s[:maxQueuedBinarySize] + fmt.Sprintf("...[truncated %d bytes]", len(s)-maxQueuedBinarySize)
+	}
+	return s
+}
+
 func truncateBytes(b []byte) []byte {
 	if len(b) > maxQueuedFieldSize {
 		return b[:maxQueuedFieldSize]
+	}
+	return b
+}
+
+// truncateBinaryBytes 用于图标等原始二进制字段，使用更大的上限避免 hash 不一致
+func truncateBinaryBytes(b []byte) []byte {
+	if len(b) > maxQueuedBinarySize {
+		return b[:maxQueuedBinarySize]
 	}
 	return b
 }
@@ -145,8 +162,8 @@ func truncateTaskReqForQueue(req *TaskResultReq) *TaskResultReq {
 		for i := range req.Assets {
 			c := req.Assets[i]
 			c.HttpBody = truncateStr(c.HttpBody)
-			c.Screenshot = truncateStr(c.Screenshot)
-			c.IconData = truncateBytes(c.IconData)
+		c.Screenshot = truncateBinaryStr(c.Screenshot)
+		c.IconData = truncateBinaryBytes(c.IconData)
 			clone.Assets[i] = c
 		}
 	}
@@ -239,9 +256,8 @@ func (q *ResultQueue) EnqueueVul(req *TaskResultReq, vuls []VulDocument) error {
 	}
 
 	vulReq := &VulResultReq{
-		WorkspaceId: req.WorkspaceId,
-		MainTaskId:  req.MainTaskId,
-		Vuls:        vuls,
+		MainTaskId: req.MainTaskId,
+		Vuls:       vuls,
 	}
 	vulReq.Vuls = truncateVulSlice(vulReq.Vuls)
 	entry := queuedVulResult{

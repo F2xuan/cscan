@@ -83,7 +83,7 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 	}
 
 	if len(config.Assets) == 0 {
-		return &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
+		return &ScanResult{MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
 	logx.Infof("Fingerprintx(CLI): scanning %d assets", len(config.Assets))
@@ -95,7 +95,7 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 	identifiedAssets := s.runFingerprintxCLI(ctx, config.Assets, opts, config.TaskLogger, config.OnProgress)
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets: identifiedAssets,
 	}, nil
 }

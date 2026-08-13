@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.mongodb.org/mongo-driver/mongo"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -71,23 +72,18 @@ func (l *WorkerLogger) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
 }
 
-// ==================== File-based Logger (本地文件 + 游标同步) ====================
+// ==================== MongoDB Logger (直写 MongoDB) ====================
 
 // WorkerLoggerWS Worker 日志记录器
-// 日志先写入本地文件（事实源），通过游标同步机制传输到 API 端
-// 不再使用内存缓冲区，断连时日志持续写入文件，重连后从游标续传
+// 日志直写 MongoDB（worker_log 集合），不再经过 WebSocket 游标同步
 type WorkerLoggerWS struct {
 	workerName string
-	fileLogger *FileLogger
 }
 
 // NewWorkerLoggerWS 创建日志记录器
-// wsClient 参数保留兼容性，但日志不再通过 wsClient.SendLogImmediate 发送
-// 实际同步由 LogSyncManager 通过游标协议完成
-func NewWorkerLoggerWS(workerName string, wsClient *WorkerWSClient) *WorkerLoggerWS {
+func NewWorkerLoggerWS(workerName string) *WorkerLoggerWS {
 	return &WorkerLoggerWS{
 		workerName: workerName,
-		fileLogger: globalFileLogger,
 	}
 }
 
@@ -99,9 +95,9 @@ func (l *WorkerLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
 
-	// 写入本地文件（事实源），游标同步机制会自动将其传输到 API
-	if l.fileLogger != nil {
-		l.fileLogger.Write(level, "", msg)
+	// 直写 MongoDB（动态引用 globalMongoLogger，支持 SetMongoDB 后懒初始化）
+	if globalMongoLogger != nil {
+		globalMongoLogger.Write(level, "", msg)
 	}
 }
 
@@ -122,20 +118,17 @@ func (l *WorkerLoggerWS) Error(format string, args ...interface{}) {
 }
 
 // TaskLoggerWS 任务日志记录器
-// 日志先写入本地文件（事实源），通过游标同步机制传输到 API 端
-// 不再使用内存缓冲区，断连时日志持续写入文件，重连后从游标续传
+// 日志直写 MongoDB（worker_log 集合），不再经过 WebSocket 游标同步
 type TaskLoggerWS struct {
 	workerName string
 	taskId     string
-	fileLogger *FileLogger
 }
 
 // NewTaskLoggerWS 创建任务日志记录器
-func NewTaskLoggerWS(workerName, taskId string, wsClient *WorkerWSClient) *TaskLoggerWS {
+func NewTaskLoggerWS(workerName, taskId string) *TaskLoggerWS {
 	return &TaskLoggerWS{
 		workerName: workerName,
 		taskId:     taskId,
-		fileLogger: globalFileLogger,
 	}
 }
 
@@ -147,12 +140,11 @@ func (l *TaskLoggerWS) log(level, format string, args ...interface{}) {
 	// 输出到控制台
 	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
 
-	// 写入本地文件（事实源），游标同步机制会自动将其传输到 API
-	// 说明：不再在写入端丢弃 DEBUG 级别日志。DEBUG 默认在 API 读取端（GetTaskLogs）
-	// 按需过滤，这样任务日志视图默认不显示 DEBUG（避免指纹探测等大量噪音），
-	// 但必要时可通过 IncludeDebug 参数拉取完整日志，与容器日志对齐排查。
-	if l.fileLogger != nil {
-		l.fileLogger.Write(level, l.taskId, msg)
+	// 直写 MongoDB（动态引用 globalMongoLogger，支持 SetMongoDB 后懒初始化）
+	// 说明：不在写入端丢弃 DEBUG 级别日志。DEBUG 默认在 API 读取端（GetTaskLogs）
+	// 按需过滤，这样任务日志视图默认不显示 DEBUG，但可通过 IncludeDebug 拉取完整日志。
+	if globalMongoLogger != nil {
+		globalMongoLogger.Write(level, l.taskId, msg)
 	}
 }
 
@@ -172,20 +164,19 @@ func (l *TaskLoggerWS) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
 }
 
-// ==================== 全局 FileLogger 实例 ====================
+// ==================== 全局 MongoLogger 实例 ====================
 
-// globalFileLogger 全局文件日志器，由 Worker 初始化时设置
-// 所有 Logger 实例共享同一个 FileLogger，日志统一写入同一文件
-var globalFileLogger *FileLogger
+// globalMongoLogger 全局 MongoDB 日志写入器，由 Worker 初始化时设置
+var globalMongoLogger *MongoLogger
 
-// InitGlobalFileLogger 初始化全局文件日志器
-func InitGlobalFileLogger(logDir, workerName string) {
-	globalFileLogger = NewFileLogger(logDir, workerName)
+// InitGlobalMongoLogger 初始化全局 MongoDB 日志写入器
+func InitGlobalMongoLogger(db *mongo.Database, workerName string) {
+	globalMongoLogger = NewMongoLogger(db, workerName)
 }
 
-// UpdateGlobalFileLoggerWorkerName 更新全局文件日志器的 worker 名称（rename 后调用）
-func UpdateGlobalFileLoggerWorkerName(name string) {
-	if globalFileLogger != nil {
-		globalFileLogger.SetWorkerName(name)
+// UpdateGlobalMongoLoggerWorkerName 更新全局日志器的 worker 名称（rename 后调用）
+func UpdateGlobalMongoLoggerWorkerName(name string) {
+	if globalMongoLogger != nil {
+		globalMongoLogger.SetWorkerName(name)
 	}
 }

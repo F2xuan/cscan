@@ -42,8 +42,8 @@
       [MongoDB]         [Redis]
           │                │
        全局集合     [Sorted Set 任务队列 cscan:task:queue
-       workspace_id   / Worker 负载 Hash / Pub/Sub 唤醒与 Cron 频道]
-       字段隔离        │
+                     / Worker 负载 Hash / Pub/Sub 唤醒与 Cron 频道]
+                    │
                   [Scheduler (internal/scheduler/)]
                   │  分块 / 优先级 / 负载均衡 / 定时 / 孤儿恢复 / 资产复核
                   │
@@ -57,7 +57,6 @@
 
 ### 1.4 核心架构模式
 
-- **数据隔离（字段级）**: 所有集合均为全局单集合，按 `workspace_id` 字段过滤；工作空间经请求头 `X-Workspace-Id` 传入（`middleware.GetWorkspaceId(ctx)`）。无独立 workspace 模型与路由
 - **任务流**: MainTask → ChunkManager 分块（默认 30 目标/片，范围 10-100）→ 每片生成 TaskInfo 入 Redis Sorted Set → Worker 通过 `ZPOPMIN` 原子竞争拉取（纯 Pull 模型，任务不预绑定 Worker）→ 阶段化执行 → REST 上报
 - **优先级调度**: ZSet score = `createTime.UnixMicro() - priority * 1_000_000`（小者先出）；5 级优先级 Background/Low/Normal/High/Urgent；可选的 5 桶分队列模式 `cscan:task:queue:p{0..4}`（默认关闭）
 - **负载均衡**: 任务统一进公共队列，空闲 Worker 竞争获取；`cscan:worker:load` Hash 记录各 Worker 负载（心跳上报），可用性筛选（心跳 >30s 超时 / 槽位满 / CPU>90 / Mem>90 剔除），负载评分 = 任务占用量×0.5 + CPU×0.3 + Mem×0.2
@@ -88,7 +87,7 @@ cscan/
 │       │   └── weakpass/ openapi/
 │       ├── logic/                # 业务逻辑层（平铺，{动作}{实体}logic.go）
 │       ├── middleware/           # 中间件
-│       │   ├── authmiddleware.go # JWT + PAT 双路径认证、GetUserId/GetRole/GetWorkspaceId、RequireAdmin
+│       │   ├── authmiddleware.go # JWT + PAT 双路径认证、GetUserId/GetRole、RequireAdmin
 │       │   ├── workerauth.go     # Worker Install Key 认证（X-Worker-Key）
 │       │   ├── ratelimit.go      # TokenRateLimiter 固定窗口限流（429 + Retry-After）
 │       │   └── scopes.go         # 开放平台 scope 定义与校验（分组 × CRUD 动作矩阵）
@@ -122,7 +121,7 @@ cscan/
 │           ├── mapper.go / sysinfo.go / loadavg_*.go / restart_*.go
 │           └── *_test.go         # 单元测试
 ├── internal/                     # 工程内部公共模块
-│   ├── model/                    # MongoDB 数据模型（全局单集合 + workspace_id 字段）
+│   ├── model/                    # MongoDB 数据模型（全局单集合）
 │   │   ├── asset.go / asset_history.go / vul.go / task.go / scanresult.go
 │   │   ├── scan_diff.go（变化基线）
 │   │   ├── cert.go / jsfinder.go / dirscan.go / dirscan_result.go
@@ -132,7 +131,7 @@ cscan/
 │   │   ├── poc.go / nuclei_template.go / tag_mapping.go
 │   │   ├── blacklist.go / notifyconfig.go / subdomain_dict.go / weakpass_dict.go
 │   │   ├── subfinderconfig.go / apiconfig.go / commandhistory.go
-│   │   ├── reverify_config.go / workspace_baseline.go
+│   │   ├── reverify_config.go
 │   │   ├── indexes.go / base.go / errors.go
 │   ├── scanner/                  # 扫描模块
 │   │   ├── target.go / target_preprocessor.go # 目标解析与预处理
@@ -227,11 +226,10 @@ cscan/
 | 报告 | `handler/report` | `Report.vue` | 报告详情/导出/周期报告 |
 | 扫描模板 | `handler/task` | `ScanTemplate.vue` | 扫描配置模板管理（task/template） |
 | 开放平台 | `handler/openapi` | — | `/api/open/v1` 只读 API（PAT + 限流） |
-| 工作空间 | —（无独立模块） | — | 经 `X-Workspace-Id` 请求头过滤，无 CRUD 路由 |
 
-### 2.3 MongoDB 集合清单（全局单集合，35 个）
+### 2.3 MongoDB 集合清单（全局单集合，34 个）
 
-`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`、`reverify_config`、`workspace_baseline`
+`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`、`reverify_config`
 
 ---
 
@@ -247,7 +245,7 @@ cscan/
 | 导出函数 | PascalCase | `GetAsset()`, `NewWorker()` |
 | 未导出函数 | camelCase | `parseResult()`, `recoverOrphanedTasks()` |
 | 常量 | PascalCase | `PriorityUrgent`, `TaskStatusSuccess` |
-| Context Key | 具名类型 `ContextKey` | `UserIdKey`, `WorkspaceIdKey` |
+| Context Key | 具名类型 `ContextKey` | `UserIdKey` |
 | Handler 函数 | `{Entity}{Action}Handler` | `AssetListHandler`, `WorkerHeartbeatHandler` |
 | Logic 文件 | `{动作}{实体}logic.go` | `loginlogic.go`, `jsfinderlogic.go` |
 
@@ -296,10 +294,10 @@ import { useUserStore } from '@/stores/user'
 // 工厂函数创建，所有依赖通过构造函数注入
 svcCtx := svc.NewServiceContext(config)
 
-// 模型工厂（workspaceId 仅作兼容参数；集合为全局单集合，隔离靠字段过滤）
-assetModel := svcCtx.GetAssetModel(workspaceId)    // 集合: asset
-taskModel := svcCtx.GetMainTaskModel(workspaceId)  // 集合: maintask
-vulModel := svcCtx.GetVulModel(workspaceId)        // 集合: vul```
+// 模型工厂（集合为全局单集合）
+assetModel := svcCtx.GetAssetModel()    // 集合: asset
+taskModel := svcCtx.GetMainTaskModel()  // 集合: maintask
+vulModel := svcCtx.GetVulModel()        // 集合: vul```
 
 **服务构造器模式**：
 ```go
@@ -314,7 +312,7 @@ func NewAssetAggregationService(db *mongo.Database) *AssetAggregationService {
 
 **MongoDB 模型构造器模式**：
 ```go
-func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
+func NewAssetModel(db *mongo.Database) *AssetModel {
     coll := db.Collection("asset")  // 全局单集合
     return &AssetModel{coll: coll}
 }
@@ -338,7 +336,6 @@ func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
 | 400-500 | HTTP 标准码 | `ParamError=400`, `Unauthorized=401`, `Forbidden=403`, `NotFound=404`, `ServerError=500` |
 | 10001-10099 | 用户错误 | `UserNotFound=10001`, `UserPasswordError=10002`, `UserDisabled=10003` |
 | 10101-10199 | 任务错误 | `TaskNotFound=10101`, `TaskStatusError=10103` |
-| 10201-10299 | 工作空间错误 | `WorkspaceNotFound=10201` |
 | 10301-10399 | 资产错误 | `AssetNotFound=10301` |
 | 10401-10699 | 其他业务错误 | `VulNotFound=10401`, `FingerprintNotFound=10501`, `PocNotFound=10601` |
 
@@ -362,8 +359,7 @@ response.ParamError(w, "参数校验失败")          // 参数错误
 
 ### 3.7 参数校验与认证
 
-- 前端请求拦截器自动注入 `Authorization: Bearer <token>` 和 `X-Workspace-Id` Header
-- 后端通过 `middleware.GetWorkspaceId(ctx)` 从 Context 获取 workspaceId
+- 前端请求拦截器自动注入 `Authorization: Bearer <token>` Header
 - 用户信息：`GetUserId(ctx)` / `GetUsername(ctx)` / `GetRole(ctx)`；管理员检查：`middleware.RequireAdmin(next)`（校验 `role == "admin"` 或 `"superadmin"`）
 - **PAT 认证**：`Authorization` 令牌以 `cscan_pat_` 开头走 PAT 路径（`AuthMiddleware.WithPAT`），校验状态/过期 + `ScopeAllowed` scope；PAT 明文仅创建时返回一次，库中存 HMAC 哈希；修改/重置密码吊销该用户全部 PAT
 - **开放 API**：`/api/open/v1/*` 复用 PAT 认证（只读 scope）+ `TokenRateLimiter`（120 次/分，key = tokenId > userId > IP，超频 429）
@@ -378,7 +374,6 @@ type Asset struct {
     Id         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
     Host       string             `bson:"host" json:"host"`
     Port       int                `bson:"port" json:"port"`
-    WorkspaceId string            `bson:"workspace_id" json:"workspaceId"`
     CreateTime time.Time          `bson:"create_time" json:"createTime"`
     UpdateTime time.Time          `bson:"update_time" json:"updateTime"`
 }
@@ -422,7 +417,7 @@ type Asset struct {
 - **UI 组件**：Element Plus 全量引入，图标全局注册（可直接在模板中使用 `<Edit />`）
 - **样式**：SCSS，使用 Element Plus CSS 变量实现暗色模式
 - **国际化**：模板中使用 `$t('key')`，语言文件位于 `web/src/i18n/locales/`（zh-CN / en-US，按 section 嵌套）
-- **状态管理**：Pinia stores 位于 `web/src/stores/`（user 内含 workspaceId）
+- **状态管理**：Pinia stores 位于 `web/src/stores/`（user 内含用户状态）
 - **路由懒加载**：所有组件通过 `lazyLoad()` 包装，chunk 加载失败自动刷新
 - **路由 meta 字段**：`requiresAuth`（默认 true）、`title`（中文标题）、`icon`（Element Plus 图标名）、`hidden`（隐藏菜单）
 - **纯 JavaScript 项目**：无 TypeScript，所有文件为 `.js` / `.vue`
@@ -457,13 +452,12 @@ parameters.MinSuccessfulTests = 100
 properties := gopter.NewProperties(parameters)
 
 properties.Property("属性描述", prop.ForAll(
-    func(workspaceId string, port int) bool {
-        if workspaceId == "" || port <= 0 || port > 65535 {
+    func(port int) bool {
+        if port <= 0 || port > 65535 {
             return true  // guard clause 跳过无效输入
         }
-        return someInvariant(workspaceId, port)
+        return someInvariant(port)
     },
-    gen.AlphaString().SuchThat(func(s string) bool { return len(s) > 0 }),
     gen.IntRange(1, 65535),
 ))
 properties.TestingRun(t)
@@ -553,19 +547,23 @@ npm run test:coverage                                 # 覆盖率
 ### 5.4 生产部署
 
 ```bash
-# 全栈部署（redis/mongodb/api/web/worker 五服务 + 资源限制）
-docker-compose up -d
+# 全栈部署（redis/mongodb/api/web/worker 五服务）
+docker compose pull
+docker compose up -d
 
 # 独立 Worker 探针部署
 CSCAN_SERVER=http://your-server:8888 CSCAN_KEY=your-key \
-  docker-compose -f docker-compose-worker.yaml up -d
+  CSCAN_MONGO_URI=mongodb://user:pass@host:27017/cscan?authSource=admin \
+  CSCAN_REDIS_ADDR=host:6379 CSCAN_REDIS_PASSWORD=pass \
+  docker compose -f docker-compose-worker.yaml up -d
 
 # 一键启动脚本
 ./cscan.sh        # Linux/macOS
 .\cscan.bat       # Windows
 ```
 
-访问 `https://ip:7777`（web 容器 443→7777，80→3000），默认账号 `admin / 123456`
+访问 `https://ip:7777`（web 容器 443→7777，80→3000）；首次部署按页面引导注册第一个管理员账号（首个注册用户自动获得超级管理员权限，无内置默认账号）。
+配置全部经环境变量注入（见 `.env.example`）：`CSCAN_JWT_SECRET` / `CSCAN_MONGO_ROOT_*` / `CSCAN_REDIS_PASSWORD` / `CSCAN_WORKER_KEY`。Mongo URI 必须带 `?authSource=admin`（root 用户位于 admin 库）。
 
 ### 5.5 本地编译与浏览器/接口验证
 
@@ -664,7 +662,7 @@ docs/                # 本地文档（已被忽略）
 
 ## 八、关键规则
 
-1. **数据隔离**: 所有集合均为全局单集合，查询**必须**按 `workspace_id` 字段过滤；workspaceId 经 `X-Workspace-Id` Header 获取（`middleware.GetWorkspaceId(ctx)`）
+1. **全局集合**: 所有集合均为全局单集合，无 workspace 隔离
 2. **保留用户数据**: 更新资产时**必须**保留 `labels`、`memo`、`color_tag`、布尔标志（`isNew`/`isUpdated`）、风险字段、任务追踪字段
 3. **API 稳定性**: 禁止修改已有端点路径或 HTTP 方法；新增兼容接口可映射到同一处理器（别名路由模式）
 4. **错误码**: 使用 `pkg/xerr/errcode.go` 中的错误码常量

@@ -382,7 +382,7 @@ function formatSize(bytes) {
 async function showDetail(row) {
   if (!row.request && !row.response && row.id) {
     try {
-      const res = await getDirScanDetail({ workspaceId: row.workspaceId || '', id: row.id })
+      const res = await getDirScanDetail({ id: row.id })
       if (res.code === 0 && res.data) {
         currentDetail.value = res.data
       } else {
@@ -434,7 +434,7 @@ async function handleClear() {
 async function handleSingleAnalyze(row) {
   analyzingId.value = row.id
   try {
-    const res = await analyzeDirByAI({ id: row.id, workspaceId: row.workspaceId || '' })
+    const res = await analyzeDirByAI({ id: row.id })
     if (res.code === 0 && res.data) {
       row.aiStatus = res.data.aiStatus
       row.aiResult = res.data.aiResult
@@ -456,7 +456,7 @@ async function handleSingleAnalyze(row) {
 
 async function handleBatchAnalyze() {
   let confirmMsg = t('dirscan.batchAIAnalyzeConfirm')
-  const params = { workspaceId: props.extraParams?.workspaceId || '', concurrency: aiConcurrency.value }
+  const params = { concurrency: aiConcurrency.value }
   const selected = selectedRows.value
   if (selected.length > 0) {
     params.ids = selected.map(r => r.id)

@@ -15,19 +15,18 @@ import (
 
 // RecoveredTaskInfo 恢复的任务信息
 type RecoveredTaskInfo struct {
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
-	Status      string `json:"status"`
-	StartTime   string `json:"startTime"`
+	TaskId     string `json:"taskId"`
+	MainTaskId string `json:"mainTaskId"`
+	Status     string `json:"status"`
+	StartTime  string `json:"startTime"`
 }
 
 // requeueTask 将任务重新入队到公共队列
 // 1. 更新 MongoDB 状态为 PENDING
 // 2. 注入 resumeState（如有 TaskState）
 // 3. 推入 Redis 公共队列
-func requeueTask(ctx context.Context, svcCtx *svc.ServiceContext, task *model.MainTask, workspaceId string) (*RecoveredTaskInfo, error) {
-	taskModel := svcCtx.GetMainTaskModel(workspaceId)
+func requeueTask(ctx context.Context, svcCtx *svc.ServiceContext, task *model.MainTask) (*RecoveredTaskInfo, error) {
+	taskModel := svcCtx.GetMainTaskModel()
 	if err := taskModel.UpdateByTaskId(ctx, task.TaskId, bson.M{
 		"status":      "PENDING",
 		"update_time": time.Now(),
@@ -48,13 +47,12 @@ func requeueTask(ctx context.Context, svcCtx *svc.ServiceContext, task *model.Ma
 	}
 
 	taskInfo := map[string]interface{}{
-		"taskId":      task.TaskId,
-		"mainTaskId":  task.TaskId,
-		"workspaceId": workspaceId,
-		"taskName":    task.Name,
-		"config":      configStr,
-		"priority":    5,
-		"createTime":  time.Now().Format("2006-01-02 15:04:05"),
+		"taskId":     task.TaskId,
+		"mainTaskId": task.Id.Hex(),
+		"taskName":   task.Name,
+		"config":     configStr,
+		"priority":   5,
+		"createTime": time.Now().Format("2006-01-02 15:04:05"),
 	}
 
 	taskData, _ := json.Marshal(taskInfo)
@@ -73,22 +71,21 @@ func requeueTask(ctx context.Context, svcCtx *svc.ServiceContext, task *model.Ma
 	}
 
 	return &RecoveredTaskInfo{
-		TaskId:      task.TaskId,
-		MainTaskId:  task.TaskId,
-		WorkspaceId: workspaceId,
-		Status:      task.Status,
-		StartTime:   startTimeStr,
+		TaskId:     task.TaskId,
+		MainTaskId: task.Id.Hex(),
+		Status:     task.Status,
+		StartTime:  startTimeStr,
 	}, nil
 }
 
-// findStartedTask 查找指定 taskId 且状态为 STARTED 的任务（单租户：default）
-func findStartedTask(ctx context.Context, svcCtx *svc.ServiceContext, taskId string) (*model.MainTask, string) {
-	taskModel := svcCtx.GetMainTaskModel("default")
+// findStartedTask 查找指定 taskId 且状态为 STARTED 的任务
+func findStartedTask(ctx context.Context, svcCtx *svc.ServiceContext, taskId string) *model.MainTask {
+	taskModel := svcCtx.GetMainTaskModel()
 	task, err := taskModel.FindByTaskId(ctx, taskId)
 	if err == nil && task != nil && task.Status == "STARTED" {
-		return task, "default"
+		return task
 	}
-	return nil, ""
+	return nil
 }
 
 // RecoverOrphanedByHeartbeat 通过 Redis 心跳快速检测离线 Worker 的任务并恢复
@@ -130,12 +127,12 @@ func RecoverOrphanedByHeartbeat(ctx context.Context, svcCtx *svc.ServiceContext)
 
 		svcCtx.RedisClient.SRem(ctx, processingKey, taskId)
 
-		foundTask, workspaceId := findStartedTask(ctx, svcCtx, taskId)
+		foundTask := findStartedTask(ctx, svcCtx, taskId)
 		if foundTask == nil {
 			continue
 		}
 
-		info, err := requeueTask(ctx, svcCtx, foundTask, workspaceId)
+		info, err := requeueTask(ctx, svcCtx, foundTask)
 		if err != nil {
 			logx.Errorf("[OrphanedTaskRecovery] Failed to requeue task %s: %v", taskId, err)
 			continue
@@ -153,7 +150,7 @@ func RecoverOrphanedTasks(ctx context.Context, svcCtx *svc.ServiceContext, timeo
 	cutoffTime := time.Now().Add(-timeout)
 	var recoveredTasks []RecoveredTaskInfo
 
-	taskModel := svcCtx.GetMainTaskModel("default")
+	taskModel := svcCtx.GetMainTaskModel()
 
 	filter := bson.M{
 		"status": "STARTED",
@@ -168,9 +165,37 @@ func RecoverOrphanedTasks(ctx context.Context, svcCtx *svc.ServiceContext, timeo
 		return nil, err
 	}
 
+	processingKey := "cscan:task:processing"
+
 	for i := range tasks {
 		task := tasks[i]
-		info, err := requeueTask(ctx, svcCtx, &task, "default")
+
+		// 检查任务是否仍在 Redis 处理集合中
+		isMember, _ := svcCtx.RedisClient.SIsMember(ctx, processingKey, task.TaskId).Result()
+		if isMember {
+			// 检查 Worker 是否仍在线
+			execKey := "cscan:task:execution:" + task.TaskId
+			execData, err := svcCtx.RedisClient.Get(ctx, execKey).Result()
+			if err == nil {
+				var execInfo struct {
+					WorkerName string `json:"workerName"`
+				}
+				if json.Unmarshal([]byte(execData), &execInfo) == nil && execInfo.WorkerName != "" {
+					workerKey := "cscan:worker:" + execInfo.WorkerName
+					exists, _ := svcCtx.RedisClient.Exists(ctx, workerKey).Result()
+					if exists > 0 {
+						logx.Infof("[OrphanedTaskRecovery] Skip task %s: worker %s still online (update_time stale but heartbeat alive)",
+							task.TaskId, execInfo.WorkerName)
+						continue
+					}
+				}
+			}
+			// Worker 离线，清理 Redis 状态
+			svcCtx.RedisClient.SRem(ctx, processingKey, task.TaskId)
+			svcCtx.RedisClient.Del(ctx, execKey)
+		}
+
+		info, err := requeueTask(ctx, svcCtx, &task)
 		if err != nil {
 			logx.Errorf("[OrphanedTaskRecovery] Failed to requeue task %s: %v", task.TaskId, err)
 			continue
@@ -224,12 +249,12 @@ func RecoverWorkerTasks(ctx context.Context, svcCtx *svc.ServiceContext, workerN
 		svcCtx.RedisClient.Del(ctx, execKey)
 		svcCtx.RedisClient.Del(ctx, "cscan:task:status:"+taskId)
 
-		foundTask, workspaceId := findStartedTask(ctx, svcCtx, taskId)
+		foundTask := findStartedTask(ctx, svcCtx, taskId)
 		if foundTask == nil {
 			continue
 		}
 
-		info, err := requeueTask(ctx, svcCtx, foundTask, workspaceId)
+		info, err := requeueTask(ctx, svcCtx, foundTask)
 		if err != nil {
 			logx.Errorf("[WorkerOffline] Failed to requeue task %s: %v", taskId, err)
 			continue
@@ -283,7 +308,7 @@ func RecoverStaleMongoTasks(ctx context.Context, svcCtx *svc.ServiceContext, tim
 	cutoffTime := time.Now().Add(-timeout)
 	var recoveredTasks []RecoveredTaskInfo
 
-	taskModel := svcCtx.GetMainTaskModel("default")
+	taskModel := svcCtx.GetMainTaskModel()
 
 	// 查找 STARTED 状态且 update_time 超时的任务
 	filter := bson.M{
@@ -326,7 +351,7 @@ func RecoverStaleMongoTasks(ctx context.Context, svcCtx *svc.ServiceContext, tim
 			svcCtx.RedisClient.Del(ctx, execKey)
 		}
 
-		info, err := requeueTask(ctx, svcCtx, &task, "default")
+		info, err := requeueTask(ctx, svcCtx, &task)
 		if err != nil {
 			logx.Errorf("[StaleTaskRecovery] Failed to requeue task %s: %v", task.TaskId, err)
 			continue

@@ -82,7 +82,7 @@ func (l *DirScanLogic) getModel() *model.DirScanResultModel {
 // AnalyzeSingle 对单条目录扫描结果进行AI研判
 func (l *DirScanLogic) AnalyzeSingle(req *types.DirScanAIAnalyzeReq) (*types.DirScanAIAnalyzeResp, error) {
 	// 1. 加载AI配置
-	aiCfg, err := l.loadDirScanAIConfig(req.WorkspaceId)
+	aiCfg, err := l.loadDirScanAIConfig()
 	if err != nil {
 		return &types.DirScanAIAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
@@ -121,11 +121,6 @@ func (l *DirScanLogic) AnalyzeSingle(req *types.DirScanAIAnalyzeReq) (*types.Dir
 
 // BatchAnalyzeAsync 启动批量研判异步任务
 func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*types.DirScanAIBatchAnalyzeResp, error) {
-	workspaceId := req.WorkspaceId
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
-
 	m := l.getModel()
 
 	// 构造过滤条件（使用 $and 组合，避免 $or 冲突）
@@ -146,9 +141,6 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 	}
 	if req.Authority != "" {
 		andConditions = append(andConditions, bson.M{"authority": bson.M{"$regex": req.Authority, "$options": "i"}})
-	}
-	if workspaceId != "" && workspaceId != "all" {
-		andConditions = append(andConditions, bson.M{"workspace_id": workspaceId})
 	}
 	// 当指定了 aiResult 筛选时，按筛选条件匹配；未指定时默认只处理未研判数据
 	if req.AIResult != "" {
@@ -178,7 +170,7 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 	}
 
 	// 提前校验AI配置，避免启动goroutine后才发现配置缺失
-	if _, err := l.loadDirScanAIConfig(workspaceId); err != nil {
+	if _, err := l.loadDirScanAIConfig(); err != nil {
 		return &types.DirScanAIBatchAnalyzeResp{Code: 500, Msg: err.Error()}, nil
 	}
 
@@ -202,7 +194,7 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 func (l *DirScanLogic) runDirScanBatchAnalysis(taskId string, state *dirscanBatchTaskState, pendingDocs []*model.DirScanResult, concurrency int) {
 	bgCtx := context.Background()
 
-	aiCfg, err := l.loadDirScanAIConfigWithCtx(bgCtx, "")
+	aiCfg, err := l.loadDirScanAIConfigWithCtx(bgCtx)
 	if err != nil {
 		state.mu.Lock()
 		state.Status = "failed"
@@ -368,7 +360,6 @@ func (l *DirScanLogic) GetDirScanDetail(req *types.DirScanDetailReq) (*types.Dir
 		Code: 0, Msg: "success",
 		Data: &types.DirScanResult{
 			Id:            doc.Id.Hex(),
-			WorkspaceId:   doc.WorkspaceId,
 			MainTaskId:    doc.MainTaskId,
 			Authority:     doc.Authority,
 			Host:          doc.Host,
@@ -398,12 +389,6 @@ func (l *DirScanLogic) GetDirScanDetail(req *types.DirScanDetailReq) (*types.Dir
 
 // GetDirScanList 目录扫描列表（带投影排除大字段 + AI状态过滤 + 缓存）
 func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.DirScanResultListResp, error) {
-	workspaceId := req.WorkspaceId
-	if workspaceId == "" {
-		workspaceId = "all"
-	}
-	wsKey := workspaceId
-
 	// 列表投影：排除request/response大字段
 	projection := bson.M{
 		"request":  0,
@@ -413,9 +398,6 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 	// 构造 $and 条件
 	var andConditions []bson.M
 
-	if workspaceId != "" && workspaceId != "all" {
-		andConditions = append(andConditions, bson.M{"workspace_id": workspaceId})
-	}
 	if req.TaskId != "" {
 		andConditions = append(andConditions, bson.M{"main_task_id": req.TaskId})
 	}
@@ -530,7 +512,6 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 		docs = []model.DirScanResult{}
 	}
 
-	_ = wsKey
 	respList := make([]*types.DirScanResult, 0, len(docs))
 	for _, d := range docs {
 		respList = append(respList, dirScanToResp(&d))
@@ -560,7 +541,6 @@ func dirScanToResp(d *model.DirScanResult) *types.DirScanResult {
 	}
 	return &types.DirScanResult{
 		Id:            d.Id.Hex(),
-		WorkspaceId:   d.WorkspaceId,
 		MainTaskId:    d.MainTaskId,
 		Authority:     d.Authority,
 		Host:          d.Host,
@@ -587,23 +567,15 @@ func dirScanToResp(d *model.DirScanResult) *types.DirScanResult {
 
 // ==================== AI研判辅助方法 ====================
 
-func (l *DirScanLogic) loadDirScanAIConfig(workspaceId string) (*model.APIConfig, error) {
-	return l.loadDirScanAIConfigWithCtx(l.ctx, workspaceId)
+func (l *DirScanLogic) loadDirScanAIConfig() (*model.APIConfig, error) {
+	return l.loadDirScanAIConfigWithCtx(l.ctx)
 }
 
-func (l *DirScanLogic) loadDirScanAIConfigWithCtx(ctx context.Context, workspaceId string) (*model.APIConfig, error) {
-	tryWorkspaces := []string{}
-	if workspaceId != "" {
-		tryWorkspaces = append(tryWorkspaces, workspaceId)
-	}
-	tryWorkspaces = append(tryWorkspaces, "all", "default")
-
-	for _, wsId := range tryWorkspaces {
-		cfgModel := model.NewAPIConfigModel(l.svcCtx.MongoDB, wsId)
-		doc, err := cfgModel.FindByPlatform(ctx, "ai")
-		if err == nil && doc != nil {
-			return doc, nil
-		}
+func (l *DirScanLogic) loadDirScanAIConfigWithCtx(ctx context.Context) (*model.APIConfig, error) {
+	cfgModel := model.NewAPIConfigModel(l.svcCtx.MongoDB)
+	doc, err := cfgModel.FindByPlatform(ctx, "ai")
+	if err == nil && doc != nil {
+		return doc, nil
 	}
 
 	return nil, fmt.Errorf("未配置AI服务，请先在系统设置中配置AI")

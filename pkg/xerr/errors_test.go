@@ -154,7 +154,6 @@ func TestAllPredefinedErrors(t *testing.T) {
 		{"UserDisabled", UserDisabled},
 		{"TaskNotFound", TaskNotFound},
 		{"TaskStatusError", TaskStatusError},
-		{"WorkspaceNotFound", WorkspaceNotFound},
 		{"AssetNotFound", AssetNotFound},
 		{"VulNotFound", VulNotFound},
 		{"FingerprintNotFound", FingerprintNotFound},

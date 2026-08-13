@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -608,17 +607,13 @@ func NewPocValidateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *PocVa
 	}
 }
 
-func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId string) (resp *types.PocValidateResp, err error) {
+func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq) (resp *types.PocValidateResp, err error) {
 	if req.Url == "" {
 		return &types.PocValidateResp{Code: 400, Msg: "URL不能为空"}, nil
 	}
 	if req.Id == "" {
 		return &types.PocValidateResp{Code: 400, Msg: "POC ID不能为空"}, nil
 	}
-
-	// 确保使用有效的工作空间ID，避免漏洞保存到 all_vul 集合
-	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Debugf("POC验证使用工作空间ID: %s", workspaceId)
 
 	// 根据pocType确定POC类型
 	pocType := req.PocType
@@ -663,14 +658,12 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 		"pocId":       req.Id,
 		"pocType":     pocType,
 		"timeout":     30,
-		"workspaceId": workspaceId,
 	}
 	configBytes, _ := json.Marshal(taskConfig)
 
 	task := &scheduler.TaskInfo{
 		TaskId:      taskId,
 		MainTaskId:  taskId,
-		WorkspaceId: workspaceId,
 		TaskName:    "POC验证",
 		Config:      string(configBytes),
 		Priority:    2,
@@ -711,12 +704,10 @@ func NewPocBatchValidateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 	}
 }
 
-func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq, workspaceId string) (resp *types.PocBatchValidateResp, err error) {
+func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq) (resp *types.PocBatchValidateResp, err error) {
 	if len(req.Urls) == 0 {
 		return &types.PocBatchValidateResp{Code: 400, Msg: "URL列表不能为空"}, nil
 	}
-
-	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, workspaceId)
 
 	// 检查在线 Worker
 	if err := checkOnlineWorkers(l.ctx, l.svcCtx); err != nil {
@@ -748,7 +739,6 @@ func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq,
 		"useTemplate": req.UseTemplate,
 		"useCustom":   req.UseCustom,
 		"concurrency": req.Concurrency,
-		"workspaceId": workspaceId,
 		"batchMode":   true,
 	}
 	configBytes, _ := json.Marshal(taskConfig)
@@ -756,7 +746,6 @@ func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq,
 	task := &scheduler.TaskInfo{
 		TaskId:      taskId,
 		MainTaskId:  taskId,
-		WorkspaceId: workspaceId,
 		TaskName:    "POC批量扫描",
 		Config:      string(configBytes),
 		Priority:    2,
@@ -968,7 +957,7 @@ func NewCustomPocScanAssetsLogic(ctx context.Context, svcCtx *svc.ServiceContext
 	}
 }
 
-func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanAssetsReq, workspaceId string) (*types.CustomPocScanAssetsResp, error) {
+func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanAssetsReq) (*types.CustomPocScanAssetsResp, error) {
 	if req.PocId == "" {
 		return &types.CustomPocScanAssetsResp{Code: 400, Msg: "POC ID不能为空"}, nil
 	}
@@ -988,8 +977,7 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 	httpsPorts := []int{443, 8443, 9443, 4443}
 	allHttpPorts := append(httpPorts, httpsPorts...)
 
-	// 获取所有HTTP资产（扩展过滤条件），支持多工作空间
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	// 获取所有HTTP资产（扩展过滤条件）
 	filter := bson.M{
 		"$or": []bson.M{
 			{"is_http": true}, // is_http 标记为 true
@@ -1000,15 +988,10 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 		},
 	}
 
-	var assets []model.Asset
-	for _, wsId := range wsIds {
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-		wsAssets, err := assetModel.Find(l.ctx, filter, 0, 0)
-		if err != nil {
-			l.Logger.Errorf("查询工作空间 %s 资产失败: %v", wsId, err)
-			continue
-		}
-		assets = append(assets, wsAssets...)
+	assetModel := l.svcCtx.GetAssetModel()
+	assets, err := assetModel.Find(l.ctx, filter, 0, 0)
+	if err != nil {
+		l.Logger.Errorf("查询资产失败: %v", err)
 	}
 
 	if len(assets) == 0 {
@@ -1069,16 +1052,14 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 		"timeout":     len(urls) * 30,
 		"useTemplate": false,
 		"useCustom":   true,
-		"workspaceId": workspaceId,
 		"batchMode":   true,
 	}
 	configBytes, _ := json.Marshal(taskConfig)
 
 	task := &scheduler.TaskInfo{
-		TaskId:      taskId,
-		MainTaskId:  taskId,
-		WorkspaceId: workspaceId,
-		TaskName:    "POC批量扫描",
+		TaskId:     taskId,
+		MainTaskId: taskId,
+		TaskName:   "POC批量扫描",
 		Config:      string(configBytes),
 		Priority:    2,
 	}

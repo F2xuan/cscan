@@ -60,8 +60,7 @@ type DnsxResult struct {
 // Scan 执行 DNS 查询
 func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 	}
 
 	opts := &DnsxOptions{

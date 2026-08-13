@@ -141,8 +141,7 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	logx.Infof("PortScanner(CLI): scan completed, found %d open ports", len(assets))
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets:      assets,
 	}, nil
 }

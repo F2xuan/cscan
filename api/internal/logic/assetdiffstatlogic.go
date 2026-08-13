@@ -27,8 +27,8 @@ func NewAssetDiffStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ass
 }
 
 // AssetDiffStat 按 diff_type + change_type 聚合计数
-func (l *AssetDiffStatLogic) AssetDiffStat(req *types.AssetDiffStatReq, workspaceId string) (*types.AssetDiffStatResp, error) {
-	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB, workspaceId)
+func (l *AssetDiffStatLogic) AssetDiffStat(req *types.AssetDiffStatReq) (*types.AssetDiffStatResp, error) {
+	diffModel := model.NewScanDiffModel(l.svcCtx.MongoDB)
 
 	var start, end time.Time
 	if req.StartTime != "" {
@@ -42,7 +42,7 @@ func (l *AssetDiffStatLogic) AssetDiffStat(req *types.AssetDiffStatReq, workspac
 		}
 	}
 
-	items, err := diffModel.Stat(l.ctx, workspaceId, start, end)
+	items, err := diffModel.Stat(l.ctx, start, end)
 	if err != nil {
 		l.Errorf("[AssetDiff] stat failed: %v", err)
 		return &types.AssetDiffStatResp{Code: -1, Msg: "统计变化失败"}, nil

@@ -82,7 +82,7 @@ type MainTaskModel struct {
 	coll *mongo.Collection
 }
 
-func NewMainTaskModel(db *mongo.Database, workspaceId string) *MainTaskModel {
+func NewMainTaskModel(db *mongo.Database) *MainTaskModel {
 	coll := db.Collection("maintask")
 
 	// 创建索引
@@ -408,7 +408,7 @@ type ExecutorTaskModel struct {
 	coll *mongo.Collection
 }
 
-func NewExecutorTaskModel(db *mongo.Database, workspaceId string) *ExecutorTaskModel {
+func NewExecutorTaskModel(db *mongo.Database) *ExecutorTaskModel {
 	return &ExecutorTaskModel{
 		coll: db.Collection("executor_task"),
 	}

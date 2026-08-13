@@ -47,12 +47,11 @@ func NewSchedulerClient(rdb *redis.Client, workerName string, mongoDB *mongo.Dat
 
 // CheckTaskResponse 拉取任务响应（对齐原 HTTP TaskCheckResp）
 type CheckTaskResponse struct {
-	IsExist     bool
-	IsFinished  bool
-	TaskId      string
-	MainTaskId  string
-	WorkspaceId string
-	Config      string
+	IsExist    bool
+	IsFinished bool
+	TaskId     string
+	MainTaskId string
+	Config     string
 }
 
 // CheckTask 拉取任务（Lua 原子出队 + Pub/Sub 长轮询）
@@ -74,12 +73,11 @@ func (c *SchedulerClient) CheckTask(ctx context.Context) (*CheckTaskResponse, er
 		c.updateMainTaskStatus(ctx, task.MainTaskId, model.TaskStatusStarted, "")
 
 		return &CheckTaskResponse{
-			IsExist:     true,
-			IsFinished:  false,
-			TaskId:      task.TaskId,
-			MainTaskId:  task.MainTaskId,
-			WorkspaceId: task.WorkspaceId,
-			Config:      task.Config,
+			IsExist:    true,
+			IsFinished: false,
+			TaskId:     task.TaskId,
+			MainTaskId: task.MainTaskId,
+			Config:     task.Config,
 		}, nil
 	}
 
@@ -101,12 +99,11 @@ func (c *SchedulerClient) CheckTask(ctx context.Context) (*CheckTaskResponse, er
 		c.updateMainTaskStatus(ctx, task.MainTaskId, model.TaskStatusStarted, "")
 
 		return &CheckTaskResponse{
-			IsExist:     true,
-			IsFinished:  false,
-			TaskId:      task.TaskId,
-			MainTaskId:  task.MainTaskId,
-			WorkspaceId: task.WorkspaceId,
-			Config:      task.Config,
+			IsExist:    true,
+			IsFinished: false,
+			TaskId:     task.TaskId,
+			MainTaskId: task.MainTaskId,
+			Config:     task.Config,
 		}, nil
 	}
 
@@ -287,8 +284,8 @@ type IncrSubTaskDoneResponse struct {
 // IncrSubTaskDone 递增子任务完成数
 // 原子递增 MongoDB MainTaskModel.IncrSubTaskDoneAtomic + 更新 progress / current_phase
 // 全部完成时 MarkTaskCompleted
-func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, workspaceID, moduleName string, incrAmount int) (*IncrSubTaskDoneResponse, error) {
-	if workspaceID == "" || mainTaskID == "" {
+func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, moduleName string, incrAmount int) (*IncrSubTaskDoneResponse, error) {
+	if mainTaskID == "" {
 		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true}, nil
 	}
 
@@ -297,7 +294,7 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, works
 		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true}, nil
 	}
 
-	taskModel := model.NewMainTaskModel(c.mongoDB, workspaceID)
+	taskModel := model.NewMainTaskModel(c.mongoDB)
 
 	if incrAmount <= 0 {
 		incrAmount = 1
@@ -340,7 +337,7 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, works
 			logx.Infof("[SchedulerClient] task marked as completed, mainTaskId=%s", mainTaskID)
 			// 触发任务完成通知（幂等，同一任务只通知一次）
 			if c.notifySvc != nil {
-				if nerr := c.notifySvc.NotifyTaskCompleted(ctx, mainTaskID, workspaceID, model.TaskStatusSuccess); nerr != nil {
+				if nerr := c.notifySvc.NotifyTaskCompleted(ctx, mainTaskID, model.TaskStatusSuccess); nerr != nil {
 					logx.Errorf("[SchedulerClient] NotifyTaskCompleted failed: %v", nerr)
 				}
 			}
@@ -366,6 +363,21 @@ func (c *SchedulerClient) NotifyOffline(ctx context.Context) error {
 	return nil
 }
 
+// RequeueTask 将已弹出到 processing 的任务重新入队
+// 用于本地入队失败时回滚：PushTask 回到队列 + SRem 移除 processing 标记
+func (c *SchedulerClient) RequeueTask(ctx context.Context, task *scheduler.TaskInfo) error {
+	if c.scheduler == nil {
+		return fmt.Errorf("scheduler not available")
+	}
+	if err := c.scheduler.PushTask(ctx, task); err != nil {
+		return fmt.Errorf("push task back failed: %w", err)
+	}
+	if err := c.rdb.SRem(ctx, "cscan:task:processing", task.TaskId).Err(); err != nil {
+		logx.Errorf("[SchedulerClient] RequeueTask: SRem processing failed for %s: %v", task.TaskId, err)
+	}
+	return nil
+}
+
 // GetCancelSignalKey 获取控制信号 Key（复用 scheduler）
 func (c *SchedulerClient) GetCancelSignalKey(taskId string) string {
 	return c.scheduler.GetCancelSignalKey(taskId)
@@ -383,7 +395,7 @@ func (c *SchedulerClient) updateMainTaskStatus(ctx context.Context, mainTaskID, 
 	if mainTaskID == "" || !isValidObjectID(mainTaskID) {
 		return
 	}
-	taskModel := model.NewMainTaskModel(c.mongoDB, "")
+	taskModel := model.NewMainTaskModel(c.mongoDB)
 	now := time.Now()
 
 	switch state {
@@ -426,12 +438,11 @@ func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskIn
 	}
 
 	mainTaskId, _ := taskInfo["mainTaskId"].(string)
-	workspaceId, _ := taskInfo["workspaceId"].(string)
 	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
 		return
 	}
 
-	taskModel := model.NewMainTaskModel(c.mongoDB, workspaceId)
+	taskModel := model.NewMainTaskModel(c.mongoDB)
 	now := time.Now()
 	update := bson.M{}
 
@@ -450,7 +461,7 @@ func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskIn
 				go func() {
 					notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					if err := c.notifySvc.NotifyTaskCompleted(notifyCtx, mainTaskId, workspaceId, state); err != nil {
+					if err := c.notifySvc.NotifyTaskCompleted(notifyCtx, mainTaskId, state); err != nil {
 						logx.Errorf("[SchedulerClient] NotifyTaskCompleted (%s) failed: %v", state, err)
 					}
 				}()
@@ -504,8 +515,8 @@ func isValidObjectID(s string) bool {
 }
 
 // GetMainTaskModel 获取主任务模型（供外部使用）
-func (c *SchedulerClient) GetMainTaskModel(workspaceId string) *model.MainTaskModel {
-	return model.NewMainTaskModel(c.mongoDB, workspaceId)
+func (c *SchedulerClient) GetMainTaskModel() *model.MainTaskModel {
+	return model.NewMainTaskModel(c.mongoDB)
 }
 
 // GetScheduler 获取底层调度器实例（供外部使用）

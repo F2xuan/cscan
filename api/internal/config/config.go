@@ -31,9 +31,23 @@ type DockerConfig struct {
 	RetentionDays   int      `json:",optional"` // 日志保留天数,默认 7
 }
 
-// LoadSecretFromEnv 从环境变量加载 JWT secret，优先级高于配置文件
+// LoadSecretFromEnv 从环境变量加载敏感与基础设施配置，优先级高于配置文件。
+// 对齐 12-factor：容器部署时所有可变配置经环境变量注入，无需 envsubst 渲染模板，
+// 也避免密码中的特殊字符（@:/ 等）在模板替换时破坏连接串。
 func (c *Config) LoadSecretFromEnv() {
-	if env := os.Getenv("CSCAN_JWT_SECRET"); env != "" {
-		c.Auth.AccessSecret = env
+	if v := os.Getenv("CSCAN_JWT_SECRET"); v != "" {
+		c.Auth.AccessSecret = v
+	}
+	if v := os.Getenv("CSCAN_MONGO_URI"); v != "" {
+		c.Mongo.Uri = v
+	}
+	if v := os.Getenv("CSCAN_MONGO_DB"); v != "" {
+		c.Mongo.DbName = v
+	}
+	if v := os.Getenv("CSCAN_REDIS_HOST"); v != "" {
+		c.Redis.Host = v
+	}
+	if v := os.Getenv("CSCAN_REDIS_PASSWORD"); v != "" {
+		c.Redis.Pass = v
 	}
 }

@@ -33,7 +33,7 @@ func NewTaskBuilder(ctx context.Context, svcCtx *svc.ServiceContext) *TaskBuilde
 }
 
 // BuildAndPushSubTasks splits targets and pushes sub-tasks to Redis queue
-func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainTask, taskConfig map[string]interface{}) (int, error) {
+func (b *TaskBuilder) BuildAndPushSubTasks(task *model.MainTask, taskConfig map[string]interface{}) (int, error) {
 	// 1. Determine Batch Size — 自动计算最佳值
 	batchSize := b.CalculateOptimalBatchSize(task.Target, taskConfig)
 	b.log.Infof("TaskBuilder: auto-calculated batchSize=%d for task %s", batchSize, task.TaskId)
@@ -62,7 +62,7 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 
 	// 4. Update Main Task Status
 	now := time.Now()
-	b.svcCtx.GetMainTaskModel(workspaceId).Update(b.ctx, task.Id.Hex(), bson.M{
+	b.svcCtx.GetMainTaskModel().Update(b.ctx, task.Id.Hex(), bson.M{
 		"status":         model.TaskStatusPending,
 		"sub_task_count": subTaskCount,
 		"sub_task_done":  0,
@@ -71,7 +71,7 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	})
 
 	// 5. Cache Info to Redis
-	b.cacheTaskInfo(workspaceId, task, subTaskCount, len(batches), enabledModules)
+	b.cacheTaskInfo(task, subTaskCount, len(batches), enabledModules)
 
 	// 6. Push Sub-Tasks
 	workers := b.extractWorkers(taskConfig)
@@ -79,7 +79,7 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	b.log.Infof("TaskBuilder: pushing %d batches for task %s", len(batches), task.TaskId)
 
 	for i, batch := range batches {
-		if err := b.pushSingleBatch(workspaceId, task, taskConfig, batch, i, len(batches), workers); err != nil {
+		if err := b.pushSingleBatch(task, taskConfig, batch, i, len(batches), workers); err != nil {
 			b.log.Errorf("Failed to push batch %d: %v", i, err)
 			// Continue pushing other batches
 		}
@@ -88,7 +88,7 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	return len(batches), nil
 }
 
-func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, baseConfig map[string]interface{}, batchTarget string, index, total int, workers []string) error {
+func (b *TaskBuilder) pushSingleBatch(task *model.MainTask, baseConfig map[string]interface{}, batchTarget string, index, total int, workers []string) error {
 	// Deep copy config
 	subConfig := make(map[string]interface{})
 	for k, v := range baseConfig {
@@ -108,10 +108,9 @@ func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, 
 	}
 
 	schedTask := &scheduler.TaskInfo{
-		TaskId:      subTaskId,
-		MainTaskId:  task.Id.Hex(),
-		WorkspaceId: workspaceId,
-		TaskName:    task.Name,
+		TaskId:     subTaskId,
+		MainTaskId: task.Id.Hex(),
+		TaskName:   task.Name,
 		Config:      string(configBytes),
 		Priority:    b.Priority,
 		Workers:     workers,
@@ -120,10 +119,9 @@ func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, 
 	return b.svcCtx.Scheduler.PushTask(b.ctx, schedTask)
 }
 
-func (b *TaskBuilder) cacheTaskInfo(workspaceId string, task *model.MainTask, subTaskCount, batchCount, modules int) {
+func (b *TaskBuilder) cacheTaskInfo(task *model.MainTask, subTaskCount, batchCount, modules int) {
 	key := fmt.Sprintf("cscan:task:info:%s", task.TaskId)
 	data := map[string]interface{}{
-		"workspaceId":    workspaceId,
 		"mainTaskId":     task.Id.Hex(),
 		"subTaskCount":   subTaskCount,
 		"batchCount":     batchCount,

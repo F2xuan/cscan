@@ -7,7 +7,7 @@ import (
 )
 
 func TestAssetWriteService_MapScannerAssetToModel(t *testing.T) {
-	service := &AssetWriteService{workspaceId: "test"}
+	service := &AssetWriteService{}
 
 	sa := &ScannerAsset{
 		Authority:  "example.com:80",
@@ -41,7 +41,7 @@ func TestAssetWriteService_MapScannerAssetToModel(t *testing.T) {
 }
 
 func TestAssetWriteService_ProcessIPInfo(t *testing.T) {
-	service := &AssetWriteService{workspaceId: "test"}
+	service := &AssetWriteService{}
 
 	sa := &ScannerAsset{
 		Host: "192.168.1.1",
@@ -59,7 +59,7 @@ func TestAssetWriteService_ProcessIPInfo(t *testing.T) {
 }
 
 func TestAssetWriteService_ProcessIPInfo_IPv6(t *testing.T) {
-	service := &AssetWriteService{workspaceId: "test"}
+	service := &AssetWriteService{}
 
 	sa := &ScannerAsset{
 		Host: "example.com",

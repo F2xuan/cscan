@@ -38,7 +38,7 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	cleanupTestData(t, db, workspaceId)
 
 	// Step 1: Create test asset
-	assetModel := model.NewAssetModel(db, workspaceId)
+	assetModel := model.NewAssetModel(db)
 	testAsset := &model.Asset{
 		Id:         primitive.NewObjectID(),
 		Authority:  "example.com:443",
@@ -58,7 +58,6 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	dirResults := []model.DirScanResult{
 		{
 			Id:            primitive.NewObjectID(),
-			WorkspaceId:   workspaceId,
 			Authority:     testAsset.Authority,
 			Host:          testAsset.Host,
 			Port:          testAsset.Port,
@@ -73,7 +72,6 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 		},
 		{
 			Id:            primitive.NewObjectID(),
-			WorkspaceId:   workspaceId,
 			Authority:     testAsset.Authority,
 			Host:          testAsset.Host,
 			Port:          testAsset.Port,
@@ -93,7 +91,7 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	}
 
 	// Step 3: Create vulnerability scan results
-	scanResultModel := model.NewScanResultModel(db, workspaceId)
+	scanResultModel := model.NewScanResultModel(db)
 	vulnResult := &model.ScanResult{
 		ID:        primitive.NewObjectID(),
 		JobID:     "test-job-1",
@@ -125,7 +123,6 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	// Step 4: Test AssetService.GetAssetList with scan summaries
 	assetService := svc.NewAssetService(db)
 	assetListReq := &svc.GetAssetListReq{
-		WorkspaceId: workspaceId,
 		Page:        1,
 		PageSize:    20,
 		SortField:   "update_time",
@@ -144,7 +141,6 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	// Step 5: Test ScanResultService.GetDirScanResults
 	scanResultService := svc.NewScanResultService(db)
 	dirScanReq := &svc.GetDirScanResultsReq{
-		WorkspaceId: workspaceId,
 		Authority:   testAsset.Authority,
 		Host:        testAsset.Host,
 		Port:        testAsset.Port,
@@ -158,7 +154,6 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 
 	// Step 6: Test ScanResultService.GetVulnScanResults
 	vulnScanReq := &svc.GetVulnScanResultsReq{
-		WorkspaceId: workspaceId,
 		Authority:   testAsset.Authority,
 		Host:        testAsset.Host,
 		Port:        testAsset.Port,
@@ -199,7 +194,7 @@ func TestIntegration_RescanFlow(t *testing.T) {
 	cleanupTestData(t, db, workspaceId)
 
 	// Step 1: Create test asset
-	assetModel := model.NewAssetModel(db, workspaceId)
+	assetModel := model.NewAssetModel(db)
 	testAsset := &model.Asset{
 		Id:         primitive.NewObjectID(),
 		Authority:  "rescan.example.com:443",
@@ -217,7 +212,6 @@ func TestIntegration_RescanFlow(t *testing.T) {
 	scanResultService := svc.NewScanResultService(db)
 	firstScanTime := time.Now()
 	firstScanReq := &svc.SaveScanResultsReq{
-		WorkspaceId:   workspaceId,
 		TargetId:      testAsset.Id.Hex(),
 		Authority:     testAsset.Authority,
 		Host:          testAsset.Host,
@@ -226,7 +220,6 @@ func TestIntegration_RescanFlow(t *testing.T) {
 		DirResults: []model.DirScanResult{
 			{
 				Id:            primitive.NewObjectID(),
-				WorkspaceId:   workspaceId,
 				Authority:     testAsset.Authority,
 				Host:          testAsset.Host,
 				Port:          testAsset.Port,
@@ -245,7 +238,6 @@ func TestIntegration_RescanFlow(t *testing.T) {
 
 	// Step 3: Verify first scan results exist
 	dirScanReq := &svc.GetDirScanResultsReq{
-		WorkspaceId: workspaceId,
 		Authority:   testAsset.Authority,
 		Host:        testAsset.Host,
 		Port:        testAsset.Port,
@@ -260,7 +252,6 @@ func TestIntegration_RescanFlow(t *testing.T) {
 	time.Sleep(1 * time.Second) // Ensure different timestamp
 	secondScanTime := time.Now()
 	secondScanReq := &svc.SaveScanResultsReq{
-		WorkspaceId:   workspaceId,
 		TargetId:      testAsset.Id.Hex(),
 		Authority:     testAsset.Authority,
 		Host:          testAsset.Host,
@@ -269,7 +260,6 @@ func TestIntegration_RescanFlow(t *testing.T) {
 		DirResults: []model.DirScanResult{
 			{
 				Id:            primitive.NewObjectID(),
-				WorkspaceId:   workspaceId,
 				Authority:     testAsset.Authority,
 				Host:          testAsset.Host,
 				Port:          testAsset.Port,
@@ -295,7 +285,6 @@ func TestIntegration_RescanFlow(t *testing.T) {
 	// Step 6: Verify historical data is preserved
 	historyService := svc.NewHistoryService(db)
 	historyReq := &svc.GetResultHistoryReq{
-		WorkspaceId: workspaceId,
 		Authority:   testAsset.Authority,
 		Host:        testAsset.Host,
 		Port:        testAsset.Port,
@@ -329,7 +318,7 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	cleanupTestData(t, db, workspaceId)
 
 	// Create test asset with scan results
-	assetModel := model.NewAssetModel(db, workspaceId)
+	assetModel := model.NewAssetModel(db)
 	testAsset := &model.Asset{
 		Id:         primitive.NewObjectID(),
 		Authority:  "consistency.example.com:443",
@@ -347,7 +336,6 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		dirResult := &model.DirScanResult{
 			Id:            primitive.NewObjectID(),
-			WorkspaceId:   workspaceId,
 			Authority:     testAsset.Authority,
 			Host:          testAsset.Host,
 			Port:          testAsset.Port,
@@ -366,7 +354,6 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	// Query from AssetService (inventory view)
 	assetService := svc.NewAssetService(db)
 	assetListReq := &svc.GetAssetListReq{
-		WorkspaceId: workspaceId,
 		Page:        1,
 		PageSize:    20,
 		SortField:   "update_time",
@@ -379,7 +366,6 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	// Query from ScanResultService (screenshot dialog view)
 	scanResultService := svc.NewScanResultService(db)
 	dirScanReq := &svc.GetDirScanResultsReq{
-		WorkspaceId: workspaceId,
 		Authority:   testAsset.Authority,
 		Host:        testAsset.Host,
 		Port:        testAsset.Port,
@@ -419,7 +405,7 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 	cleanupTestData(t, db, workspaceId)
 
 	// Create test asset
-	assetModel := model.NewAssetModel(db, workspaceId)
+	assetModel := model.NewAssetModel(db)
 	testAsset := &model.Asset{
 		Id:         primitive.NewObjectID(),
 		Authority:  "legacy.example.com:443",
@@ -436,7 +422,6 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 	dirScanModel := model.NewDirScanResultModel(db)
 	legacyDirResult := &model.DirScanResult{
 		Id:            primitive.NewObjectID(),
-		WorkspaceId:   workspaceId,
 		Authority:     testAsset.Authority,
 		Host:          testAsset.Host,
 		Port:          testAsset.Port,
@@ -454,7 +439,6 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 	// Query legacy data through ScanResultService
 	scanResultService := svc.NewScanResultService(db)
 	dirScanReq := &svc.GetDirScanResultsReq{
-		WorkspaceId: workspaceId,
 		Authority:   testAsset.Authority,
 		Host:        testAsset.Host,
 		Port:        testAsset.Port,
@@ -477,7 +461,7 @@ func cleanupTestData(t *testing.T, db *mongo.Database, workspaceId string) {
 	ctx := context.Background()
 
 	// Clean up assets
-	assetModel := model.NewAssetModel(db, workspaceId)
+	assetModel := model.NewAssetModel(db)
 	_, err := assetModel.DeleteByFilter(ctx, primitive.M{})
 	if err != nil {
 		t.Logf("Warning: Failed to clean up assets: %v", err)
@@ -491,15 +475,15 @@ func cleanupTestData(t *testing.T, db *mongo.Database, workspaceId string) {
 	}
 
 	// Clean up vulnerability scan results
-	scanResultModel := model.NewScanResultModel(db, workspaceId)
+	scanResultModel := model.NewScanResultModel(db)
 	_, err = scanResultModel.DeleteMany(ctx, primitive.M{})
 	if err != nil {
 		t.Logf("Warning: Failed to clean up vulnerability scan results: %v", err)
 	}
 
 	// Clean up history
-	historyModel := model.NewScanResultHistoryModel(db, workspaceId)
-	_, err = historyModel.Clear(ctx, workspaceId)
+	historyModel := model.NewScanResultHistoryModel(db)
+	_, err = historyModel.Clear(ctx)
 	if err != nil {
 		t.Logf("Warning: Failed to clean up history: %v", err)
 	}

@@ -22,8 +22,8 @@ func WorkerVulReverifyHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.OkJson(w, &types.WorkerVulReverifyResp{Code: 400, Msg: "参数解析失败"})
 			return
 		}
-		if req.WorkspaceId == "" || req.VulnId == "" || req.Conclusion == "" {
-			httpx.OkJson(w, &types.WorkerVulReverifyResp{Code: 400, Msg: "workspaceId/vulnId/conclusion 不能为空"})
+		if req.VulnId == "" || req.Conclusion == "" {
+			httpx.OkJson(w, &types.WorkerVulReverifyResp{Code: 400, Msg: "vulnId/conclusion 不能为空"})
 			return
 		}
 
@@ -52,7 +52,7 @@ func WorkerVulReverifyHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			ReverifyAt: reverifyAt,
 		}
 
-		vulModel := svcCtx.GetVulModel(req.WorkspaceId)
+		vulModel := svcCtx.GetVulModel()
 		if err := vulModel.ApplyReverifyResult(r.Context(), req.VulnId, result); err != nil {
 			logx.Errorf("[WorkerVulReverify] ApplyReverifyResult failed for vuln %s: %v", req.VulnId, err)
 			httpx.OkJson(w, &types.WorkerVulReverifyResp{Code: 500, Msg: err.Error()})

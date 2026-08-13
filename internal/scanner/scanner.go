@@ -35,7 +35,6 @@ type ScanConfig struct {
 	Targets           []string    `json:"targets"`
 	Assets            []*Asset    `json:"assets"`
 	Options           interface{} `json:"options"`
-	WorkspaceId       string      `json:"workspaceId"`
 	MainTaskId        string      `json:"mainTaskId"`
 	WorkerConcurrency int         `json:"-"` // Worker 自适应并发数，scanner 模块用作 Worker Pool 默认值
 	// TaskLogger 任务日志回调，用于将扫描日志推送到任务日志流
@@ -67,7 +66,6 @@ func GetTypedOptions[T ScannerOptions](config *ScanConfig) (T, bool) {
 
 // ScanResult 扫描结果
 type ScanResult struct {
-	WorkspaceId     string            `json:"workspaceId"`
 	MainTaskId      string            `json:"mainTaskId"`
 	Assets          []*Asset          `json:"assets"`
 	Vulnerabilities []*Vulnerability  `json:"vulnerabilities"`

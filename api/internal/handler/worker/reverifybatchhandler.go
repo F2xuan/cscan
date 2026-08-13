@@ -30,10 +30,7 @@ func WorkerReverifyBatchHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.OkJson(w, &types.WorkerReverifyBatchResp{Code: 400, Msg: "参数解析失败"})
 			return
 		}
-		wsId := req.WorkspaceId
-		if wsId == "" {
-			wsId = "default"
-		}
+		wsId := "default"
 		if req.Kind == "" || len(req.Results) == 0 {
 			httpx.OkJson(w, &types.WorkerReverifyBatchResp{Code: 400, Msg: "kind/results 不能为空"})
 			return
@@ -69,7 +66,7 @@ func applyWeakpassReverify(ctx context.Context, svcCtx *svc.ServiceContext, wsId
 		}
 	}
 
-	vulModel := svcCtx.GetVulModel(wsId)
+	vulModel := svcCtx.GetVulModel()
 	if len(verifiedIDs) > 0 {
 		if _, e := vulModel.MarkReverified(ctx, verifiedIDs); e != nil {
 			logx.Errorf("[WorkerReverifyBatch] workspace=%s MarkReverified failed: %v", wsId, e)
@@ -129,7 +126,7 @@ func applyExposureOutcome(ctx context.Context, svcCtx *svc.ServiceContext, wsId 
 	pending := status == "pending"
 
 	if len(jsIds) > 0 {
-		jsModel := model.NewJSFinderResultModel(svcCtx.MongoDB, wsId)
+		jsModel := model.NewJSFinderResultModel(svcCtx.MongoDB)
 		if err := jsModel.MarkReverify(ctx, jsIds, status, now, pending); err != nil {
 			logx.Errorf("[WorkerReverifyBatch] workspace=%s mark jsfinder reverify failed: %v", wsId, err)
 		}
@@ -157,7 +154,6 @@ func finishReverifyRun(ctx context.Context, svcCtx *svc.ServiceContext, wsId, ta
 			TaskId:      taskId,
 			TaskName:    taskName,
 			Status:      "SUCCESS",
-			WorkspaceId: wsId,
 			HighRiskInfo: &notify.HighRiskInfo{
 				FixedVulCount: fixedCount,
 			},

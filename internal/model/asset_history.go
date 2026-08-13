@@ -13,7 +13,6 @@ import (
 // ScanResultHistory represents versioned scan results for historical tracking
 type ScanResultHistory struct {
 	Id              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	WorkspaceId     string             `bson:"workspace_id" json:"workspaceId"`
 	AssetId         string             `bson:"asset_id,omitempty" json:"assetId,omitempty"`
 	Authority       string             `bson:"authority" json:"authority"`
 	Host            string             `bson:"host" json:"host"`
@@ -33,21 +32,19 @@ type ScanResultHistoryModel struct {
 }
 
 // NewScanResultHistoryModel creates a new ScanResultHistoryModel
-func NewScanResultHistoryModel(db *mongo.Database, workspaceId string) *ScanResultHistoryModel {
+func NewScanResultHistoryModel(db *mongo.Database) *ScanResultHistoryModel {
 	coll := db.Collection("asset_history")
 
 	// Create indexes
 	ctx := context.Background()
 	indexes := []mongo.IndexModel{
-		// Index for querying by workspace and asset
+		// Index for querying by asset
 		{Keys: bson.D{
-			{Key: "workspace_id", Value: 1},
 			{Key: "asset_id", Value: 1},
 			{Key: "scan_timestamp", Value: -1},
 		}},
-		// Index for querying by workspace, authority, host, port
+		// Index for querying by authority, host, port
 		{Keys: bson.D{
-			{Key: "workspace_id", Value: 1},
 			{Key: "authority", Value: 1},
 			{Key: "host", Value: 1},
 			{Key: "port", Value: 1},
@@ -84,32 +81,29 @@ func (m *ScanResultHistoryModel) Insert(ctx context.Context, doc *ScanResultHist
 }
 
 // FindByAssetId retrieves historical scan results for a specific asset
-func (m *ScanResultHistoryModel) FindByAssetId(ctx context.Context, workspaceId, assetId string, limit int) ([]ScanResultHistory, error) {
+func (m *ScanResultHistoryModel) FindByAssetId(ctx context.Context, assetId string, limit int) ([]ScanResultHistory, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"asset_id":     assetId,
+		"asset_id": assetId,
 	}
 	return m.findWithFilter(ctx, filter, limit)
 }
 
 // FindByAuthority retrieves historical scan results by authority, host, and port
-func (m *ScanResultHistoryModel) FindByAuthority(ctx context.Context, workspaceId, authority, host string, port int, limit int) ([]ScanResultHistory, error) {
+func (m *ScanResultHistoryModel) FindByAuthority(ctx context.Context, authority, host string, port int, limit int) ([]ScanResultHistory, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"authority":    authority,
-		"host":         host,
-		"port":         port,
+		"authority": authority,
+		"host":      host,
+		"port":      port,
 	}
 	return m.findWithFilter(ctx, filter, limit)
 }
 
 // FindByTimeRange retrieves historical scan results within a time range
-func (m *ScanResultHistoryModel) FindByTimeRange(ctx context.Context, workspaceId, authority, host string, port int, startTime, endTime time.Time) ([]ScanResultHistory, error) {
+func (m *ScanResultHistoryModel) FindByTimeRange(ctx context.Context, authority, host string, port int, startTime, endTime time.Time) ([]ScanResultHistory, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"authority":    authority,
-		"host":         host,
-		"port":         port,
+		"authority": authority,
+		"host":      host,
+		"port":      port,
 		"scan_timestamp": bson.M{
 			"$gte": startTime,
 			"$lte": endTime,
@@ -119,10 +113,9 @@ func (m *ScanResultHistoryModel) FindByTimeRange(ctx context.Context, workspaceI
 }
 
 // FindByVersionId retrieves a specific version by version ID
-func (m *ScanResultHistoryModel) FindByVersionId(ctx context.Context, workspaceId, versionId string) (*ScanResultHistory, error) {
+func (m *ScanResultHistoryModel) FindByVersionId(ctx context.Context, versionId string) (*ScanResultHistory, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"version_id":   versionId,
+		"version_id": versionId,
 	}
 	var doc ScanResultHistory
 	err := m.coll.FindOne(ctx, filter).Decode(&doc)
@@ -169,21 +162,19 @@ func (m *ScanResultHistoryModel) Count(ctx context.Context, filter bson.M) (int6
 }
 
 // CountByAssetId counts historical records for a specific asset
-func (m *ScanResultHistoryModel) CountByAssetId(ctx context.Context, workspaceId, assetId string) (int64, error) {
+func (m *ScanResultHistoryModel) CountByAssetId(ctx context.Context, assetId string) (int64, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"asset_id":     assetId,
+		"asset_id": assetId,
 	}
 	return m.Count(ctx, filter)
 }
 
 // CountByAuthority counts historical records by authority, host, and port
-func (m *ScanResultHistoryModel) CountByAuthority(ctx context.Context, workspaceId, authority, host string, port int) (int64, error) {
+func (m *ScanResultHistoryModel) CountByAuthority(ctx context.Context, authority, host string, port int) (int64, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"authority":    authority,
-		"host":         host,
-		"port":         port,
+		"authority": authority,
+		"host":      host,
+		"port":      port,
 	}
 	return m.Count(ctx, filter)
 }
@@ -199,10 +190,9 @@ func (m *ScanResultHistoryModel) Delete(ctx context.Context, id string) error {
 }
 
 // DeleteByAssetId deletes all historical records for a specific asset
-func (m *ScanResultHistoryModel) DeleteByAssetId(ctx context.Context, workspaceId, assetId string) (int64, error) {
+func (m *ScanResultHistoryModel) DeleteByAssetId(ctx context.Context, assetId string) (int64, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"asset_id":     assetId,
+		"asset_id": assetId,
 	}
 	result, err := m.coll.DeleteMany(ctx, filter)
 	if err != nil {
@@ -212,12 +202,11 @@ func (m *ScanResultHistoryModel) DeleteByAssetId(ctx context.Context, workspaceI
 }
 
 // DeleteByAuthority deletes all historical records by authority, host, and port
-func (m *ScanResultHistoryModel) DeleteByAuthority(ctx context.Context, workspaceId, authority, host string, port int) (int64, error) {
+func (m *ScanResultHistoryModel) DeleteByAuthority(ctx context.Context, authority, host string, port int) (int64, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"authority":    authority,
-		"host":         host,
-		"port":         port,
+		"authority": authority,
+		"host":      host,
+		"port":      port,
 	}
 	result, err := m.coll.DeleteMany(ctx, filter)
 	if err != nil {
@@ -227,9 +216,8 @@ func (m *ScanResultHistoryModel) DeleteByAuthority(ctx context.Context, workspac
 }
 
 // DeleteOlderThan deletes historical records older than the specified time
-func (m *ScanResultHistoryModel) DeleteOlderThan(ctx context.Context, workspaceId string, olderThan time.Time) (int64, error) {
+func (m *ScanResultHistoryModel) DeleteOlderThan(ctx context.Context, olderThan time.Time) (int64, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
 		"scan_timestamp": bson.M{
 			"$lt": olderThan,
 		},
@@ -241,9 +229,9 @@ func (m *ScanResultHistoryModel) DeleteOlderThan(ctx context.Context, workspaceI
 	return result.DeletedCount, nil
 }
 
-// Clear clears all historical records for a workspace
-func (m *ScanResultHistoryModel) Clear(ctx context.Context, workspaceId string) (int64, error) {
-	filter := bson.M{"workspace_id": workspaceId}
+// Clear clears all historical records
+func (m *ScanResultHistoryModel) Clear(ctx context.Context) (int64, error) {
+	filter := bson.M{}
 	result, err := m.coll.DeleteMany(ctx, filter)
 	if err != nil {
 		return 0, err
@@ -252,9 +240,7 @@ func (m *ScanResultHistoryModel) Clear(ctx context.Context, workspaceId string) 
 }
 
 // DeleteByFilter deletes historical records matching the filter
-func (m *ScanResultHistoryModel) DeleteByFilter(ctx context.Context, workspaceId string, filter bson.M) (int64, error) {
-	// 添加 workspace_id 到过滤条件
-	filter["workspace_id"] = workspaceId
+func (m *ScanResultHistoryModel) DeleteByFilter(ctx context.Context, filter bson.M) (int64, error) {
 	result, err := m.coll.DeleteMany(ctx, filter)
 	if err != nil {
 		return 0, err

@@ -281,7 +281,6 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	}
 
 	result := &ScanResult{
-		WorkspaceId: config.WorkspaceId,
 		MainTaskId:  config.MainTaskId,
 		Assets:      make([]*Asset, 0),
 	}
@@ -409,7 +408,7 @@ dispatch:
 	taskLog("INFO", "Fingerprint: completed passive scan, scanned %d assets", len(httpAssets))
 
 	// 证书抓取（ARL 风格附加功能）：对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，
-	// 采集结果经 worker.handleResult 落入 {workspaceId}_cert 集合。受 opts.Cert 开关控制，默认关闭。
+	// 采集结果经 worker.handleResult 落入 cert 集合。受 opts.Cert 开关控制，默认关闭。
 	if opts.Cert {
 		taskLog("DEBUG", "Fingerprint: cert fetch enabled, checking %d assets for cert targets", len(httpAssets))
 		certFetched := s.fetchCertsForAssets(ctx, httpAssets, result, taskLog, config.OnCertFound)

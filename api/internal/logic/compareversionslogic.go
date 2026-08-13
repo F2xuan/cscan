@@ -22,7 +22,7 @@ func NewCompareVersionsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *C
 }
 
 // CompareVersions compares two historical scan versions
-func (l *CompareVersionsLogic) CompareVersions(req *types.CompareVersionsReq, workspaceId string) (*types.CompareVersionsResp, error) {
+func (l *CompareVersionsLogic) CompareVersions(req *types.CompareVersionsReq) (*types.CompareVersionsResp, error) {
 	// Validate version IDs
 	if req.VersionId1 == "" || req.VersionId2 == "" {
 		return nil, xerr.NewParamError("both version IDs are required")
@@ -31,9 +31,8 @@ func (l *CompareVersionsLogic) CompareVersions(req *types.CompareVersionsReq, wo
 	// Call HistoryService to compare versions
 	historyService := svc.NewHistoryService(l.svcCtx.MongoDB)
 	compareReq := &svc.CompareVersionsReq{
-		WorkspaceId: workspaceId,
-		VersionId1:  req.VersionId1,
-		VersionId2:  req.VersionId2,
+		VersionId1: req.VersionId1,
+		VersionId2: req.VersionId2,
 	}
 
 	compareResp, err := historyService.CompareVersions(l.ctx, compareReq)

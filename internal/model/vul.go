@@ -133,7 +133,7 @@ type VulModel struct {
 	coll *mongo.Collection
 }
 
-func NewVulModel(db *mongo.Database, workspaceId string) *VulModel {
+func NewVulModel(db *mongo.Database) *VulModel {
 	coll := db.Collection("vul")
 	// T1.3: 新增 status / risk_source 维度索引，支撑漏洞状态机统计与复验查询（T3.3/T3.4）。
 	indexes := []mongo.IndexModel{

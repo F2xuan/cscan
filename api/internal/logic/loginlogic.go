@@ -95,17 +95,13 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 		return nil, err
 	}
 
-	// 单租户：统一返回 "default" 工作空间，确保前端 X-Workspace-Id 头非空
-	workspaceId := "default"
-
 	return &types.LoginResp{
-		Code:        0,
-		Msg:         "登录成功",
-		Token:       token,
-		UserId:      user.Id.Hex(),
-		Username:    user.Username,
-		Role:        role,
-		WorkspaceId: workspaceId,
+		Code:     0,
+		Msg:      "登录成功",
+		Token:    token,
+		UserId:   user.Id.Hex(),
+		Username: user.Username,
+		Role:     role,
 	}, nil
 }
 

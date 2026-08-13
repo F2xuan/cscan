@@ -9,17 +9,20 @@ Log:
   Stat: false
   Mode: console
   Encoding: plain
-  TimeFormat: 2006-01-02 15:04:05
-  
+  TimeFormat: "2006-01-02 15:04:05"
+
 Auth:
-  AccessSecret: ${JWT_SECRET}
+  # 留空，由环境变量 CSCAN_JWT_SECRET 注入（见 config.LoadSecretFromEnv）
+  AccessSecret: ""
   AccessExpire: 86400
 
 Mongo:
+  # 默认指向 compose 内部主机名；生产凭证由 CSCAN_MONGO_URI 覆盖（需含 authSource）
   Uri: "mongodb://mongodb:27017"
   DbName: "cscan"
 
 Redis:
+  # 默认指向 compose 内部主机名；密码由 CSCAN_REDIS_PASSWORD 注入
   Host: "redis:6379"
   Pass: ""
   Type: node

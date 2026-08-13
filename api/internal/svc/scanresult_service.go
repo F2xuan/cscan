@@ -27,7 +27,6 @@ func NewScanResultService(db *mongo.Database) *ScanResultService {
 
 // GetDirScanResultsReq represents a request to get directory scan results
 type GetDirScanResultsReq struct {
-	WorkspaceId string
 	Authority   string
 	Host        string
 	Port        int
@@ -44,7 +43,6 @@ type GetDirScanResultsResp struct {
 
 // GetVulnScanResultsReq represents a request to get vulnerability scan results
 type GetVulnScanResultsReq struct {
-	WorkspaceId string
 	Authority   string
 	Host        string
 	Port        int
@@ -61,7 +59,6 @@ type GetVulnScanResultsResp struct {
 
 // GetScanResultSummaryReq represents a request to get scan result summaries
 type GetScanResultSummaryReq struct {
-	WorkspaceId string
 	AssetIds    []string
 }
 
@@ -82,16 +79,15 @@ type ScanResultSummary struct {
 // ==================== Service Methods ====================
 
 // GetDirScanResults retrieves directory scan results for an asset
-// Uses workspace_id + authority + host + port for association
-// Falls back to workspace_id + host + port if authority is missing
+// Uses authority + host + port for association
+// Falls back to host + port if authority is missing
 func (s *ScanResultService) GetDirScanResults(ctx context.Context, req *GetDirScanResultsReq) (*GetDirScanResultsResp, error) {
 	dirScanModel := model.NewDirScanResultModel(s.db)
 
 	// Build filter with primary association criteria
 	filter := bson.M{
-		"workspace_id": req.WorkspaceId,
-		"host":         req.Host,
-		"port":         req.Port,
+		"host": req.Host,
+		"port": req.Port,
 	}
 
 	// Add authority to filter if provided (primary match)
@@ -150,10 +146,10 @@ func (s *ScanResultService) GetDirScanResults(ctx context.Context, req *GetDirSc
 }
 
 // GetVulnScanResults retrieves vulnerability scan results for an asset
-// Uses workspace_id + authority + host + port for association
-// Falls back to workspace_id + host + port if authority is missing
+// Uses authority + host + port for association
+// Falls back to host + port if authority is missing
 func (s *ScanResultService) GetVulnScanResults(ctx context.Context, req *GetVulnScanResultsReq) (*GetVulnScanResultsResp, error) {
-	scanResultModel := model.NewScanResultModel(s.db, req.WorkspaceId)
+	scanResultModel := model.NewScanResultModel(s.db)
 
 	// Build filter with primary association criteria
 	filter := bson.M{
@@ -222,9 +218,9 @@ func (s *ScanResultService) GetScanResultSummary(ctx context.Context, req *GetSc
 	summaries := make(map[string]ScanResultSummary)
 
 	// Get asset model to fetch asset details
-	assetModel := model.NewAssetModel(s.db, req.WorkspaceId)
+	assetModel := model.NewAssetModel(s.db)
 	dirScanModel := model.NewDirScanResultModel(s.db)
-	scanResultModel := model.NewScanResultModel(s.db, req.WorkspaceId)
+	scanResultModel := model.NewScanResultModel(s.db)
 
 	// For each asset ID, fetch and aggregate scan results
 	for _, assetId := range req.AssetIds {
@@ -245,9 +241,8 @@ func (s *ScanResultService) GetScanResultSummary(ctx context.Context, req *GetSc
 
 		// Count directory scan results
 		dirFilter := bson.M{
-			"workspace_id": req.WorkspaceId,
-			"host":         asset.Host,
-			"port":         asset.Port,
+			"host": asset.Host,
+			"port": asset.Port,
 		}
 		if asset.Authority != "" {
 			dirFilter["authority"] = asset.Authority
@@ -308,7 +303,6 @@ func (s *ScanResultService) GetScanResultSummary(ctx context.Context, req *GetSc
 
 // SaveScanResultsReq represents a request to save scan results with history preservation
 type SaveScanResultsReq struct {
-	WorkspaceId   string
 	TargetId      string
 	TaskId        string
 	Authority     string
@@ -327,9 +321,6 @@ type SaveScanResultsReq struct {
 // 4. Implement merge logic to preserve unchanged asset fields
 func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req *SaveScanResultsReq) error {
 	// Validate required parameters
-	if req.WorkspaceId == "" {
-		return model.ErrValidationFailed.WithDetails("workspace_id is required")
-	}
 	if req.Host == "" {
 		return model.ErrValidationFailed.WithDetails("host is required")
 	}
@@ -344,13 +335,12 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 
 	// Step 1: Check if target has existing results
 	dirScanModel := model.NewDirScanResultModel(s.db)
-	scanResultModel := model.NewScanResultModel(s.db, req.WorkspaceId)
+	scanResultModel := model.NewScanResultModel(s.db)
 
 	// Build filter for existing results
 	dirFilter := bson.M{
-		"workspace_id": req.WorkspaceId,
-		"host":         req.Host,
-		"port":         req.Port,
+		"host": req.Host,
+		"port": req.Port,
 	}
 	if req.Authority != "" {
 		dirFilter["authority"] = req.Authority
@@ -381,7 +371,6 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 	if hasExistingResults {
 		historyService := NewHistoryService(s.db)
 		archiveReq := &ArchiveResultsReq{
-			WorkspaceId: req.WorkspaceId,
 			TargetId:    req.TargetId,
 			Authority:   req.Authority,
 			Host:        req.Host,
@@ -415,7 +404,7 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 
 	// Save vulnerability scan results
 	// Use VulModel instead of ScanResultModel for proper Upsert
-	vulModel := model.NewVulModel(s.db, req.WorkspaceId)
+	vulModel := model.NewVulModel(s.db)
 	for i := range req.VulnResults {
 		req.VulnResults[i].ScanTime = req.ScanTimestamp
 		req.VulnResults[i].Version = 1
@@ -429,8 +418,8 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 	_ = vulModel // Suppress unused warning - can be used for Vul-specific operations
 
 	// Step 4: Update asset with merge logic and record changes
-	assetModel := model.NewAssetModel(s.db, req.WorkspaceId)
-	assetHistoryModel := model.NewAssetHistoryModel(s.db, req.WorkspaceId)
+	assetModel := model.NewAssetModel(s.db)
+	assetHistoryModel := model.NewAssetHistoryModel(s.db)
 
 	// Try to find existing asset
 	var existingAsset *model.Asset

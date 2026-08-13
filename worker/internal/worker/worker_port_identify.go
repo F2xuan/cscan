@@ -173,7 +173,7 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 			}
 			identifiedAssets = append(identifiedAssets, nmapResult.Assets...)
 			// 流式入库：单主机端口识别完成立即保存
-			w.saveAssetResultDirect(ctx, task.WorkspaceId, task.MainTaskId, orgId, nmapResult.Assets)
+			w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, nmapResult.Assets)
 		} else {
 			// Nmap没有结果时，使用原始资产
 			for _, asset := range hostAssets[host] {
@@ -230,10 +230,9 @@ func (w *Worker) executePortIdentifyWithFingerprintx(ctx context.Context, task *
 
 	// 创建扫描配置
 	scanConfig := &scanner.ScanConfig{
-		Assets:      assets,
-		Options:     fpxOpts,
-		WorkspaceId: task.WorkspaceId,
-		MainTaskId:  task.TaskId,
+		Assets:     assets,
+		Options:    fpxOpts,
+		MainTaskId: task.TaskId,
 		TaskLogger: func(level, format string, args ...interface{}) {
 			w.taskLog(task.TaskId, level, format, args...)
 		},

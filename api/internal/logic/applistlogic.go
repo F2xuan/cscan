@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"cscan/api/internal/logic/common"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -40,8 +39,7 @@ func (l *AppListLogic) AppList(req *types.AppListReq) (*types.AppListResp, error
 		req.PageSize = 10
 	}
 
-	workspaceId := middleware.GetWorkspaceId(l.ctx)
-	stats, err := l.aggregateAppStats(workspaceId)
+	stats, err := l.aggregateAppStats()
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +74,7 @@ func (l *AppListLogic) AppList(req *types.AppListReq) (*types.AppListResp, error
 	for _, s := range pageItems {
 		pageApps = append(pageApps, s.Field)
 	}
-	assetsByApp, err := l.findAppAssetsBatch(workspaceId, pageApps)
+	assetsByApp, err := l.findAppAssetsBatch(pageApps)
 	if err != nil {
 		return nil, err
 	}
@@ -115,13 +113,12 @@ func (l *AppListLogic) AppList(req *types.AppListReq) (*types.AppListResp, error
 }
 
 func (l *AppListLogic) AppStat() (*types.AppStatResp, error) {
-	workspaceId := middleware.GetWorkspaceId(l.ctx)
-	stats, err := l.aggregateAppStats(workspaceId)
+	stats, err := l.aggregateAppStats()
 	if err != nil {
 		return nil, err
 	}
 
-	newCount, err := l.countNewAppAssets(workspaceId)
+	newCount, err := l.countNewAppAssets()
 	if err != nil {
 		return nil, err
 	}
@@ -129,33 +126,20 @@ func (l *AppListLogic) AppStat() (*types.AppStatResp, error) {
 	return &types.AppStatResp{Code: 0, Msg: "success", Total: len(stats), NewCount: int(newCount)}, nil
 }
 
-func (l *AppListLogic) aggregateAppStats(workspaceId string) ([]model.StatResult, error) {
-	// 聚合结果走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
-	cacheKey := "app_stats:" + workspaceId
+func (l *AppListLogic) aggregateAppStats() ([]model.StatResult, error) {
+	cacheKey := "app_stats"
 	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-		merged := make(map[string]int)
-		for _, wsId := range wsIds {
-			stats, err := l.svcCtx.GetAssetModel(wsId).AggregateApp(l.ctx, 1000)
-			if err != nil {
-				return nil, err
-			}
-			for _, stat := range stats {
-				merged[stat.Field] += stat.Count
-			}
+		stats, err := l.svcCtx.GetAssetModel().AggregateApp(l.ctx, 1000)
+		if err != nil {
+			return nil, err
 		}
-
-		results := make([]model.StatResult, 0, len(merged))
-		for field, count := range merged {
-			results = append(results, model.StatResult{Field: field, Count: count})
-		}
-		sort.Slice(results, func(i, j int) bool {
-			if results[i].Count == results[j].Count {
-				return results[i].Field < results[j].Field
+		sort.Slice(stats, func(i, j int) bool {
+			if stats[i].Count == stats[j].Count {
+				return stats[i].Field < stats[j].Field
 			}
-			return results[i].Count > results[j].Count
+			return stats[i].Count > stats[j].Count
 		})
-		return results, nil
+		return stats, nil
 	})
 	if err != nil {
 		return nil, err
@@ -169,27 +153,23 @@ func (l *AppListLogic) aggregateAppStats(workspaceId string) ([]model.StatResult
 // findAppAssetsBatch 批量查询多个 app 对应的资产（替代 N+1 的 findAppAssets）
 // 一次 $in 查询所有 app，再按 app 分组，每个 app 最多保留 20 条最新资产
 // 优化点：用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner 等大字段
-func (l *AppListLogic) findAppAssetsBatch(workspaceId string, apps []string) (map[string][]model.Asset, error) {
+func (l *AppListLogic) findAppAssetsBatch(apps []string) (map[string][]model.Asset, error) {
 	if len(apps) == 0 {
 		return make(map[string][]model.Asset), nil
 	}
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	result := make(map[string][]model.Asset, len(apps))
 
-	// 每个 ws 一次 $in 查询；app 是数组字段，$in 会匹配数组中包含任一值的文档
 	limit := int64(len(apps) * 20)
 	filter := bson.M{"app": bson.M{"$in": apps}}
 
-	for _, wsId := range wsIds {
-		assets, err := l.svcCtx.GetAssetModel(wsId).FindWithSort(l.ctx, filter, 1, int(limit), "update_time")
-		if err != nil {
-			return nil, err
-		}
-		for _, asset := range assets {
-			for _, app := range asset.App {
-				if containsString(apps, app) {
-					result[app] = append(result[app], asset)
-				}
+	assets, err := l.svcCtx.GetAssetModel().FindWithSort(l.ctx, filter, 1, int(limit), "update_time")
+	if err != nil {
+		return nil, err
+	}
+	for _, asset := range assets {
+		for _, app := range asset.App {
+			if containsString(apps, app) {
+				result[app] = append(result[app], asset)
 			}
 		}
 	}
@@ -216,17 +196,8 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-func (l *AppListLogic) countNewAppAssets(workspaceId string) (int64, error) {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	var total int64
-	for _, wsId := range wsIds {
-		count, err := l.svcCtx.GetAssetModel(wsId).Count(l.ctx, bson.M{"app": bson.M{"$exists": true, "$ne": bson.A{}}, "new": true})
-		if err != nil {
-			return 0, err
-		}
-		total += count
-	}
-	return total, nil
+func (l *AppListLogic) countNewAppAssets() (int64, error) {
+	return l.svcCtx.GetAssetModel().Count(l.ctx, bson.M{"app": bson.M{"$exists": true, "$ne": bson.A{}}, "new": true})
 }
 
 func (l *AppListLogic) AppBatchDelete(req *types.AppBatchDeleteReq) (*types.BaseResp, error) {
@@ -234,7 +205,7 @@ func (l *AppListLogic) AppBatchDelete(req *types.AppBatchDeleteReq) (*types.Base
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的应用"}, nil
 	}
 
-	deleted, err := l.deleteAppAssets(middleware.GetWorkspaceId(l.ctx), bson.M{"app": bson.M{"$in": req.Ids}})
+	deleted, err := l.deleteAppAssets(bson.M{"app": bson.M{"$in": req.Ids}})
 	if err != nil {
 		return nil, err
 	}
@@ -245,22 +216,13 @@ func (l *AppListLogic) AppBatchDelete(req *types.AppBatchDeleteReq) (*types.Base
 }
 
 func (l *AppListLogic) AppClear() (*types.BaseResp, error) {
-	deleted, err := l.deleteAppAssets(middleware.GetWorkspaceId(l.ctx), bson.M{"app": bson.M{"$exists": true, "$ne": bson.A{}}})
+	deleted, err := l.deleteAppAssets(bson.M{"app": bson.M{"$exists": true, "$ne": bson.A{}}})
 	if err != nil {
 		return nil, err
 	}
 	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 条资产"}, nil
 }
 
-func (l *AppListLogic) deleteAppAssets(workspaceId string, filter bson.M) (int64, error) {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	var total int64
-	for _, wsId := range wsIds {
-		deleted, err := l.svcCtx.GetAssetModel(wsId).DeleteByFilter(l.ctx, filter)
-		if err != nil {
-			return 0, err
-		}
-		total += deleted
-	}
-	return total, nil
+func (l *AppListLogic) deleteAppAssets(filter bson.M) (int64, error) {
+	return l.svcCtx.GetAssetModel().DeleteByFilter(l.ctx, filter)
 }

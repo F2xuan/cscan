@@ -49,7 +49,6 @@ type SaveVulsResult struct {
 // VulWriteService 漏洞写入服务，封装完整的漏洞保存业务逻辑
 type VulWriteService struct {
 	db           *mongo.Database
-	workspaceId  string
 	vulModel     *VulModel
 	assetModel   *AssetModel
 	diffModel    *ScanDiffModel
@@ -114,17 +113,13 @@ func (c *AssetCache) getOrCreate(ctx context.Context, assetModel *AssetModel, hi
 }
 
 // NewVulWriteService 创建漏洞写入服务
-func NewVulWriteService(db *mongo.Database, workspaceId string) *VulWriteService {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func NewVulWriteService(db *mongo.Database) *VulWriteService {
 	return &VulWriteService{
 		db:           db,
-		workspaceId:  workspaceId,
-		vulModel:     NewVulModel(db, workspaceId),
-		assetModel:   NewAssetModel(db, workspaceId),
-		diffModel:    NewScanDiffModel(db, workspaceId),
-		historyModel: NewAssetHistoryModel(db, workspaceId),
+		vulModel:     NewVulModel(db),
+		assetModel:   NewAssetModel(db),
+		diffModel:    NewScanDiffModel(db),
+		historyModel: NewAssetHistoryModel(db),
 		assetCache:   NewAssetCache(),
 	}
 }
@@ -238,13 +233,12 @@ func (s *VulWriteService) SaveVuls(ctx context.Context, mainTaskID string, vuls 
 			newVulCount++
 			assetVulCount[key]++
 			vulDiffs = append(vulDiffs, ScanDiff{
-				TaskId:      mainTaskID,
-				WorkspaceId: s.workspaceId,
-				DiffType:    ScanDiffTypeVul,
-				ChangeType:  ScanDiffChangeAdded,
-				Severity:    pbVul.Severity,
-				TargetKey:   fmt.Sprintf("%s:%d:%s", host, port, pbVul.PocFile),
-				Summary:     vul.VulName,
+				TaskId:     mainTaskID,
+				DiffType:   ScanDiffTypeVul,
+				ChangeType: ScanDiffChangeAdded,
+				Severity:   pbVul.Severity,
+				TargetKey:  fmt.Sprintf("%s:%d:%s", host, port, pbVul.PocFile),
+				Summary:    vul.VulName,
 			})
 		}
 	}

@@ -17,7 +17,6 @@ const (
 	TaskNotFound        = 10101
 	ProfileNotFound     = 10102
 	TaskStatusError     = 10103
-	WorkspaceNotFound   = 10201
 	AssetNotFound       = 10301
 	VulNotFound         = 10401
 	FingerprintNotFound = 10501
@@ -39,7 +38,6 @@ var codeMsg = map[int]string{
 	TaskNotFound:        "任务不存在",
 	ProfileNotFound:     "任务配置不存在",
 	TaskStatusError:     "任务状态不允许此操作",
-	WorkspaceNotFound:   "工作空间不存在",
 	AssetNotFound:       "资产不存在",
 	VulNotFound:         "漏洞不存在",
 	FingerprintNotFound: "指纹不存在",

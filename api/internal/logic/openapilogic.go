@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -22,14 +21,6 @@ const (
 	openMaxPageSize = 100
 	openDefPageSize = 20
 )
-
-func openWorkspace(ctx context.Context) (string, error) {
-	wsId := middleware.GetWorkspaceId(ctx)
-	if wsId == "" {
-		return "", errors.New("缺少工作空间标识（X-Workspace-Id）")
-	}
-	return wsId, nil
-}
 
 func openPage(page, pageSize int) (int, int) {
 	if page <= 0 {
@@ -86,10 +77,6 @@ func NewOpenAssetsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *OpenAs
 }
 
 func (l *OpenAssetsLogic) Assets(req *types.OpenAssetsReq) (*types.OpenAssetsResp, error) {
-	wsId, err := openWorkspace(l.ctx)
-	if err != nil {
-		return nil, err
-	}
 	page, pageSize := openPage(req.Page, req.PageSize)
 	filter := bson.M{}
 	if kw := keywordFilter([]string{"authority", "host", "domain", "title", "server"}, req.Keyword); kw != nil {
@@ -101,7 +88,7 @@ func (l *OpenAssetsLogic) Assets(req *types.OpenAssetsReq) (*types.OpenAssetsRes
 	if req.RiskLevel != "" {
 		filter["risk_level"] = req.RiskLevel
 	}
-	m := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+	m := model.NewAssetModel(l.svcCtx.MongoDB)
 	docs, err := m.Find(l.ctx, filter, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -131,14 +118,10 @@ func NewOpenAssetDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *O
 }
 
 func (l *OpenAssetDetailLogic) AssetDetail(req *types.OpenAssetDetailReq) (*types.OpenAssetDetailResp, error) {
-	wsId, err := openWorkspace(l.ctx)
-	if err != nil {
-		return nil, err
-	}
 	if req.Id == "" {
 		return nil, errors.New("缺少资产 id")
 	}
-	m := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+	m := model.NewAssetModel(l.svcCtx.MongoDB)
 	doc, err := m.FindById(l.ctx, req.Id)
 	if err != nil {
 		return nil, err
@@ -192,10 +175,6 @@ func NewOpenVulnsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *OpenVul
 }
 
 func (l *OpenVulnsLogic) Vulns(req *types.OpenVulnsReq) (*types.OpenVulnsResp, error) {
-	wsId, err := openWorkspace(l.ctx)
-	if err != nil {
-		return nil, err
-	}
 	page, pageSize := openPage(req.Page, req.PageSize)
 	filter := bson.M{}
 	if kw := keywordFilter([]string{"url", "authority", "host", "vul_name"}, req.Keyword); kw != nil {
@@ -207,7 +186,7 @@ func (l *OpenVulnsLogic) Vulns(req *types.OpenVulnsReq) (*types.OpenVulnsResp, e
 	if req.Status != "" {
 		filter["status"] = req.Status
 	}
-	m := model.NewVulModel(l.svcCtx.MongoDB, wsId)
+	m := model.NewVulModel(l.svcCtx.MongoDB)
 	docs, err := m.Find(l.ctx, filter, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -237,14 +216,10 @@ func NewOpenVulnDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Op
 }
 
 func (l *OpenVulnDetailLogic) VulnDetail(req *types.OpenVulnDetailReq) (*types.OpenVulnDetailResp, error) {
-	wsId, err := openWorkspace(l.ctx)
-	if err != nil {
-		return nil, err
-	}
 	if req.Id == "" {
 		return nil, errors.New("缺少漏洞 id")
 	}
-	m := model.NewVulModel(l.svcCtx.MongoDB, wsId)
+	m := model.NewVulModel(l.svcCtx.MongoDB)
 	doc, err := m.FindById(l.ctx, req.Id)
 	if err != nil {
 		return nil, err
@@ -292,16 +267,12 @@ func NewOpenCertsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *OpenCer
 }
 
 func (l *OpenCertsLogic) Certs(req *types.OpenCertsReq) (*types.OpenCertsResp, error) {
-	wsId, err := openWorkspace(l.ctx)
-	if err != nil {
-		return nil, err
-	}
 	page, pageSize := openPage(req.Page, req.PageSize)
 	filter := bson.M{}
 	if kw := keywordFilter([]string{"subject_dn", "issuer_dn", "authority", "host", "sans"}, req.Keyword); kw != nil {
 		filter = mergeFilter(filter, kw)
 	}
-	m := model.NewCertModel(l.svcCtx.MongoDB, wsId)
+	m := model.NewCertModel(l.svcCtx.MongoDB)
 	opt := options.Find().
 		SetSkip(int64((page - 1) * pageSize)).
 		SetLimit(int64(pageSize)).
@@ -335,14 +306,10 @@ func NewOpenCertDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Op
 }
 
 func (l *OpenCertDetailLogic) CertDetail(req *types.OpenCertDetailReq) (*types.OpenCertDetailResp, error) {
-	wsId, err := openWorkspace(l.ctx)
-	if err != nil {
-		return nil, err
-	}
 	if req.Id == "" {
 		return nil, errors.New("缺少证书 id")
 	}
-	m := model.NewCertModel(l.svcCtx.MongoDB, wsId)
+	m := model.NewCertModel(l.svcCtx.MongoDB)
 	doc, err := m.FindByID(l.ctx, req.Id)
 	if err != nil {
 		return nil, err

@@ -19,17 +19,12 @@ import (
 // ==================== WebSocket Message Types ====================
 
 const (
-	WSTypeAuth        = "AUTH"          // 认证请求
-	WSTypeAuthOK      = "AUTH_OK"       // 认证成功
-	WSTypeAuthFail    = "AUTH_FAIL"     // 认证失败
-	WSTypePing        = "PING"          // 心跳请求
-	WSTypePong        = "PONG"          // 心跳响应
-	WSTypeLog         = "LOG"           // 日志消息
-	WSTypeLogBatch    = "LOG_BATCH"     // 批量日志消息
-	WSTypeControl     = "CONTROL"       // 控制信号
-	WSTypeLogSyncReq  = "LOG_SYNC_REQ"  // API 请求 Worker 同步日志
-	WSTypeLogSyncResp = "LOG_SYNC_RESP" // Worker 返回同步日志数据
-	WSTypeLogSyncAck  = "LOG_SYNC_ACK"  // API 确认日志已写入文件
+	WSTypeAuth     = "AUTH"      // 认证请求
+	WSTypeAuthOK   = "AUTH_OK"   // 认证成功
+	WSTypeAuthFail = "AUTH_FAIL" // 认证失败
+	WSTypePing     = "PING"      // 心跳请求
+	WSTypePong     = "PONG"      // 心跳响应
+	WSTypeControl  = "CONTROL"   // 控制信号
 )
 
 // WSMessage WebSocket消息结构
@@ -44,75 +39,37 @@ type WSAuthPayload struct {
 	InstallKey string `json:"installKey"`
 }
 
-// WSLogPayload 日志消息载荷
-type WSLogPayload struct {
-	TaskId    string `json:"taskId"`
-	Level     string `json:"level"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
-}
-
-// WSLogBatchPayload 批量日志消息载荷
-type WSLogBatchPayload struct {
-	Logs []WSLogPayload `json:"logs"`
-}
-
 // WSControlPayload 控制信号载荷
 type WSControlPayload struct {
 	TaskId string `json:"taskId"`
 	Action string `json:"action"` // STOP, PAUSE, RESUME
 }
 
-// WSLogSyncReqPayload 日志同步请求载荷（API → Worker）
-type WSLogSyncReqPayload struct {
-	Filename string `json:"filename"` // 上次同步到的文件名 (YYYY-MM-DD.jsonl)，首次为空
-	Offset   int64  `json:"offset"`   // 上次同步到的字节偏移
-}
-
-// WSLogSyncRespPayload 日志同步响应载荷（Worker → API）
-type WSLogSyncRespPayload struct {
-	Filename  string         `json:"filename"`  // 当前读取的文件名
-	Logs      []FileLogEntry `json:"logs"`      // 读取到的日志
-	NewOffset int64          `json:"newOffset"` // 读取后的新偏移
-	HasMore   bool           `json:"hasMore"`   // 是否还有更多数据
-	NextFile  string         `json:"nextFile"`  // 下一个待读文件（跨日续读）
-}
-
-// WSLogSyncAckPayload 日志同步确认载荷（API → Worker）
-type WSLogSyncAckPayload struct {
-	Filename string `json:"filename"` // 已写入的文件名
-	Offset   int64  `json:"offset"`   // 已写入的字节偏移
-}
-
 // ==================== WebSocket Client ====================
 
 // WSClientConfig WebSocket客户端配�?
 type WSClientConfig struct {
-	ServerURL       string        // WebSocket服务器URL (e.g., ws://server:8888/api/v1/worker/ws)
-	WorkerName      string        // Worker名称
-	InstallKey      string        // 安装密钥
-	ReconnectDelay  time.Duration // 初始重连延迟
-	MaxReconnect    time.Duration // 最大重连延�?
-	PingInterval    time.Duration // 心跳间隔
-	WriteTimeout    time.Duration // 写超�?
-	ReadTimeout     time.Duration // 读超�?
-	LogBatchSize    int           // 日志批量发送大�?
-	LogFlushTimeout time.Duration // 日志刷新超时
+	ServerURL      string        // WebSocket服务器URL (e.g., ws://server:8888/api/v1/worker/ws)
+	WorkerName     string        // Worker名称
+	InstallKey     string        // 安装密钥
+	ReconnectDelay time.Duration // 初始重连延迟
+	MaxReconnect   time.Duration // 最大重连延�?
+	PingInterval   time.Duration // 心跳间隔
+	WriteTimeout   time.Duration // 写超时
+	ReadTimeout    time.Duration // 读超时
 }
 
 // DefaultWSClientConfig 默认配置
 func DefaultWSClientConfig(serverURL, workerName, installKey string) *WSClientConfig {
 	return &WSClientConfig{
-		ServerURL:       serverURL,
-		WorkerName:      workerName,
-		InstallKey:      installKey,
-		ReconnectDelay:  1 * time.Second,
-		MaxReconnect:    30 * time.Second,
-		PingInterval:    30 * time.Second,
-		WriteTimeout:    10 * time.Second,
-		ReadTimeout:     90 * time.Second,
-		LogBatchSize:    50,
-		LogFlushTimeout: 1 * time.Second,
+		ServerURL:      serverURL,
+		WorkerName:     workerName,
+		InstallKey:     installKey,
+		ReconnectDelay: 1 * time.Second,
+		MaxReconnect:   30 * time.Second,
+		PingInterval:   30 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		ReadTimeout:    90 * time.Second,
 	}
 }
 
@@ -122,10 +79,7 @@ type ControlHandler func(taskId, action string)
 // WorkerControlHandler Worker级别控制处理函数类型
 type WorkerControlHandler func(action string, param string)
 
-// LogSyncHandler 日志同步请求处理函数类型
-type LogSyncHandler func(req WSLogSyncReqPayload) WSLogSyncRespPayload
-
-// WorkerWSClient Worker WebSocket客户�?
+// WorkerWSClient Worker WebSocket客户端
 type WorkerWSClient struct {
 	config               *WSClientConfig
 	conn                 net.Conn
@@ -135,11 +89,8 @@ type WorkerWSClient struct {
 	closeChan            chan struct{}
 	closeOnce            sync.Once
 	sendChan             chan []byte
-	logBuffer            []WSLogPayload
-	logMu                sync.Mutex
 	controlHandler       ControlHandler
 	workerControlHandler WorkerControlHandler
-	logSyncHandler       LogSyncHandler
 	lastPong             time.Time
 	pongMu               sync.RWMutex
 	reconnecting         atomic.Bool
@@ -154,7 +105,6 @@ func NewWorkerWSClient(config *WSClientConfig) *WorkerWSClient {
 		config:    config,
 		closeChan: make(chan struct{}),
 		sendChan:  make(chan []byte, 4096),
-		logBuffer: make([]WSLogPayload, 0, config.LogBatchSize),
 		lastPong:  time.Now(),
 	}
 }
@@ -167,11 +117,6 @@ func (c *WorkerWSClient) SetControlHandler(handler ControlHandler) {
 // SetWorkerControlHandler 设置Worker级别控制处理函数
 func (c *WorkerWSClient) SetWorkerControlHandler(handler WorkerControlHandler) {
 	c.workerControlHandler = handler
-}
-
-// SetLogSyncHandler 设置日志同步请求处理函数
-func (c *WorkerWSClient) SetLogSyncHandler(handler LogSyncHandler) {
-	c.logSyncHandler = handler
 }
 
 // IsConnected 检查是否已连接
@@ -676,8 +621,10 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 				continue
 			}
 
-			// 发送PING
-			c.sendMessage(&WSMessage{Type: WSTypePing})
+			// 发送PING（绕过 sendChan，避免日志背压导致 PING 丢失引发误重连）
+			if err := c.sendPingDirect(); err != nil {
+				logx.Infof("[WSClient] PING send failed: %v", err)
+			}
 		}
 	}
 }
@@ -717,14 +664,6 @@ func (c *WorkerWSClient) handleMessage(msg *WSMessage) {
 	case WSTypeControl:
 		// 收到控制信号
 		c.handleControl(msg.Payload)
-
-	case WSTypeLogSyncReq:
-		// 收到日志同步请求
-		c.handleLogSyncReq(msg.Payload)
-
-	case WSTypeLogSyncAck:
-		// 收到日志同步确认，更新本地游标
-		c.handleLogSyncAck(msg.Payload)
 
 	default:
 		logx.Infof("[WSClient] Unknown message type: %s", msg.Type)
@@ -813,53 +752,20 @@ func (c *WorkerWSClient) sendMessage(msg *WSMessage) error {
 	}
 }
 
-// ==================== Log Sync Handlers ====================
-
-// handleLogSyncReq 处理 API 发来的日志同步请求
-// 从本地文件游标位置读取日志，返回给 API
-func (c *WorkerWSClient) handleLogSyncReq(payload json.RawMessage) {
-	var req WSLogSyncReqPayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		logx.Infof("[WSClient] Invalid log sync request payload: %v", err)
-		return
+// sendPingDirect 直接写入 PING JSON 消息，绕过 sendChan
+// 修复 #18：日志堵住 sendChan 时 PING 会被丢弃，导致心跳超时误触发重连
+func (c *WorkerWSClient) sendPingDirect() error {
+	data, err := json.Marshal(&WSMessage{Type: WSTypePing})
+	if err != nil {
+		return err
 	}
-
-	if c.logSyncHandler == nil {
-		logx.Infof("[WSClient] Log sync handler not set")
-		return
+	c.connMu.RLock()
+	conn := c.conn
+	if conn == nil {
+		c.connMu.RUnlock()
+		return fmt.Errorf("not connected")
 	}
-
-	// 调用 handler 读取本地文件日志
-	resp := c.logSyncHandler(req)
-
-	payloadData, _ := json.Marshal(resp)
-	if err := c.sendMessage(&WSMessage{
-		Type:    WSTypeLogSyncResp,
-		Payload: payloadData,
-	}); err != nil {
-		logx.Infof("[WSClient] Failed to send log sync response: %v", err)
-	}
-}
-
-// handleLogSyncAck 处理 API 发来的日志同步确认
-// API 确认日志已写入文件后，更新本地游标
-// 修复 M-14：ACK 后触发旧日志清理，根据已同步游标删除过期文件，避免磁盘无限增长
-func (c *WorkerWSClient) handleLogSyncAck(payload json.RawMessage) {
-	var ack WSLogSyncAckPayload
-	if err := json.Unmarshal(payload, &ack); err != nil {
-		logx.Infof("[WSClient] Invalid log sync ack payload: %v", err)
-		return
-	}
-
-	// 更新本地持久化游标
-	if globalCursorManager != nil {
-		if err := globalCursorManager.Update(ack.Filename, ack.Offset); err != nil {
-			logx.Infof("[WSClient] Failed to update sync cursor: %v", err)
-		}
-		// 根据新游标清理已同步的旧日志文件
-		if globalFileLogger != nil {
-			cursor := globalCursorManager.Get()
-			globalFileLogger.Cleanup(cursor)
-		}
-	}
+	err = wsutil.WriteClientMessage(conn, ws.OpText, data)
+	c.connMu.RUnlock()
+	return err
 }

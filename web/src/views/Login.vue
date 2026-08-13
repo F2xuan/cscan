@@ -1,5 +1,13 @@
 <template>
-  <div class="login-container">
+  <!-- 系统状态检测中：骨架加载，避免登录表单先闪现再切换到向导 -->
+  <div v-if="systemChecking" class="login-loading">
+    <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+  </div>
+  <!-- 首次部署：渲染引导式注册向导 -->
+  <SetupWizard v-else-if="showSetupWizard" @completed="onWizardCompleted" />
+
+  <!-- 正常登录/注册 -->
+  <div v-else class="login-container">
     <!-- 主题和语言切换按钮 -->
     <div class="controls">
       <!-- 语言切换 -->
@@ -17,9 +25,7 @@
     <div :class="['login-box', `style-${themeStore.themeStyle}`]">
       <div class="login-header">
         <h1>{{ brandingStore.displayTitle }}</h1>
-        <p v-if="systemHasUsers === false" class="first-deploy-hint">
-          {{ $t('auth.firstDeployHint') }}
-        </p>
+        <p v-if="isRegisterMode">{{ $t('auth.register') }}</p>
         <p v-else>{{ $t('auth.loginTitle') }}</p>
       </div>
 
@@ -126,6 +132,7 @@ import { useLocaleStore } from '@/stores/locale'
 import { useBrandingStore } from '@/stores/branding'
 import { Sunny, Moon, Position } from '@element-plus/icons-vue'
 import { register as apiRegister } from '@/api/auth'
+import SetupWizard from '@/components/SetupWizard.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -141,6 +148,8 @@ const loginLoading = ref(false)
 const registerLoading = ref(false)
 const systemHasUsers = ref(null) // null=未检测, false=无用户(首次部署), true=已有用户
 
+const showSetupWizard = computed(() => systemHasUsers.value === false)
+
 const loginForm = reactive({
   username: '',
   password: ''
@@ -152,7 +161,7 @@ const registerForm = reactive({
   confirmPassword: ''
 })
 
-// 检测系统是否已有用户（首次部署时自动切换到注册模式）
+// 检测系统是否已有用户（首次部署时显示引导式注册向导）
 async function checkSystemStatus() {
   try {
     const res = await fetch('/api/v1/system/status', {
@@ -163,10 +172,6 @@ async function checkSystemStatus() {
     const data = await res.json()
     if (data.code === 0) {
       systemHasUsers.value = data.hasUsers
-      // 首次部署：系统无用户，自动显示注册模式
-      if (data.isFirstDeploy) {
-        isRegisterMode.value = true
-      }
     }
   } catch (e) {
     // 检测失败不影响正常登录流程
@@ -174,9 +179,13 @@ async function checkSystemStatus() {
 }
 
 onMounted(() => {
-  // 首次部署检测：系统无用户时自动切换到注册模式
   checkSystemStatus()
 })
+
+// 向导完成后刷新系统状态，切回登录界面
+function onWizardCompleted() {
+  systemHasUsers.value = true
+}
 
 const validateConfirmPassword = (rule, value, callback) => {
   if (!value) {
@@ -210,7 +219,11 @@ function toggleMode() {
 }
 
 async function handleLogin() {
-  await loginFormRef.value.validate()
+  try {
+    await loginFormRef.value.validate()
+  } catch (e) {
+    return
+  }
   loginLoading.value = true
   try {
     const res = await userStore.login(loginForm)
@@ -224,13 +237,19 @@ async function handleLogin() {
     } else {
       ElMessage.error(res.msg || t('auth.loginFailed'))
     }
+  } catch (e) {
+    // 网络异常已由全局响应拦截器统一提示，此处仅兜底防止未处理拒绝
   } finally {
     loginLoading.value = false
   }
 }
 
 async function handleRegister() {
-  await registerFormRef.value.validate()
+  try {
+    await registerFormRef.value.validate()
+  } catch (e) {
+    return
+  }
   registerLoading.value = true
   try {
     const res = await apiRegister({
@@ -250,6 +269,8 @@ async function handleRegister() {
     } else {
       ElMessage.error(res.msg || t('auth.registerFailed'))
     }
+  } catch (e) {
+    // 网络异常已由全局响应拦截器统一提示，此处仅兜底防止未处理拒绝
   } finally {
     registerLoading.value = false
   }
@@ -265,6 +286,15 @@ async function handleRegister() {
   background: hsl(var(--background));
   position: relative;
   transition: background 0.3s;
+}
+
+.login-loading {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
 }
 
 .controls {
@@ -307,6 +337,7 @@ async function handleRegister() {
 
 .login-box {
   width: 400px;
+  max-width: 100%;
   padding: 40px;
   background: hsl(var(--card));
   border-radius: 12px;
@@ -396,12 +427,6 @@ async function handleRegister() {
     &:hover {
       text-decoration: underline;
     }
-  }
-
-  :deep(.first-deploy-hint) {
-    color: hsl(var(--primary));
-    font-weight: 500;
-    font-size: 14px;
   }
 }
 </style>

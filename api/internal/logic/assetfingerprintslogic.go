@@ -4,8 +4,6 @@ import (
 	"context"
 	"time"
 
-	"cscan/api/internal/logic/common"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
@@ -28,22 +26,17 @@ func NewAssetFingerprintsListLogic(ctx context.Context, svcCtx *svc.ServiceConte
 }
 
 func (l *AssetFingerprintsListLogic) AssetFingerprintsList(req *types.AssetFingerprintsListReq) (*types.AssetFingerprintsListResp, error) {
-	workspaceId := middleware.GetWorkspaceId(l.ctx)
-
-	// 缓存键：按 workspaceId 维度隔离；Limit 在缓存后再裁剪，不影响缓存命中率
-	cacheKey := "asset_fingerprints:" + workspaceId
+	// Limit 在缓存后再裁剪，不影响缓存命中率
+	cacheKey := "asset_fingerprints"
 	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 		fpSet := make(map[string]struct{})
 
-		// 资产字段名是 app（数组），集合名是 <wsId>_asset；旧代码用 "assets"/"fingerprints" 永远返回空
-		for _, wsId := range wsIds {
-			assetModel := l.svcCtx.GetAssetModel(wsId)
-			values, err := assetModel.Distinct(l.ctx, "app", nil)
-			if err != nil {
-				l.Logger.Errorf("获取工作空间 %s 指纹列表失败: %v", wsId, err)
-				continue
-			}
+		// 资产字段名是 app（数组）
+		assetModel := l.svcCtx.GetAssetModel()
+		values, err := assetModel.Distinct(l.ctx, "app", nil)
+		if err != nil {
+			l.Logger.Errorf("获取指纹列表失败: %v", err)
+		} else {
 			for _, v := range values {
 				if s, ok := v.(string); ok && s != "" {
 					fpSet[s] = struct{}{}
@@ -97,22 +90,16 @@ func NewAssetPortsStatsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *A
 }
 
 func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, error) {
-	workspaceId := middleware.GetWorkspaceId(l.ctx)
-
-	// 缓存键：按 workspaceId 维度隔离
-	cacheKey := "asset_ports_stats:" + workspaceId
+	cacheKey := "asset_ports_stats"
 	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 		merged := make(map[int]*types.PortStatItem)
 
-		// 资产集合名是 <wsId>_asset；端口字段是 port（int），AssetModel.AggregatePort 已封装聚合管道
-		for _, wsId := range wsIds {
-			assetModel := l.svcCtx.GetAssetModel(wsId)
-			stats, err := assetModel.AggregatePort(l.ctx, 200)
-			if err != nil {
-				l.Logger.Errorf("获取工作空间 %s 端口统计失败: %v", wsId, err)
-				continue
-			}
+		// 端口字段是 port（int），AssetModel.AggregatePort 已封装聚合管道
+		assetModel := l.svcCtx.GetAssetModel()
+		stats, err := assetModel.AggregatePort(l.ctx, 200)
+		if err != nil {
+			l.Logger.Errorf("获取端口统计失败: %v", err)
+		} else {
 			for _, s := range stats {
 				if s.Port <= 0 {
 					continue

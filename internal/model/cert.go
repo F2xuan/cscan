@@ -22,11 +22,9 @@ type CertNameInfo struct {
 }
 
 // Cert TLS 证书采集结果（ARL 风格：host+port+task_id 关联，结构化证书详情）。
-// 集合命名：{workspaceId}_cert，多租户隔离。
 // 不含监控语义（无 status/daysLeft/告警档位），仅作为指纹识别附加产出的证书快照。
 type Cert struct {
 	Id           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	WorkspaceId  string             `bson:"workspace_id" json:"workspaceId"`
 	TaskId       string             `bson:"task_id,omitempty" json:"taskId,omitempty"`
 	Host         string             `bson:"host" json:"host"`
 	Port         int                `bson:"port" json:"port"`
@@ -52,8 +50,8 @@ type CertModel struct {
 	coll *mongo.Collection
 }
 
-// NewCertModel 多租户模型实例化
-func NewCertModel(db *mongo.Database, workspaceId string) *CertModel {
+// NewCertModel creates a new CertModel
+func NewCertModel(db *mongo.Database) *CertModel {
 	return &CertModel{coll: db.Collection("cert")}
 }
 
@@ -72,7 +70,6 @@ func (m *CertModel) UpsertMany(ctx context.Context, results []*Cert) error {
 		}
 		update := bson.M{
 			"$setOnInsert": bson.M{
-				"workspace_id": r.WorkspaceId,
 				"task_id":      r.TaskId,
 				"create_time":  now,
 			},

@@ -23,14 +23,14 @@ func NewAssetVulnScansLogic(ctx context.Context, svcCtx *svc.ServiceContext) *As
 }
 
 // AssetVulnScans retrieves vulnerability scan results for a specific asset
-func (l *AssetVulnScansLogic) AssetVulnScans(req *types.AssetVulnScansReq, workspaceId string) (*types.AssetVulnScansResp, error) {
+func (l *AssetVulnScansLogic) AssetVulnScans(req *types.AssetVulnScansReq) (*types.AssetVulnScansResp, error) {
 	// Validate asset ID
 	if req.AssetId == "" {
 		return nil, xerr.NewParamError("asset_id is required")
 	}
 
 	// Fetch asset to get authority, host, port
-	assetModel := model.NewAssetModel(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName), workspaceId)
+	assetModel := model.NewAssetModel(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
 	asset, err := assetModel.FindById(l.ctx, req.AssetId)
 	if err != nil {
 		return nil, fmt.Errorf("查询资产失败: %w", err)
@@ -43,8 +43,7 @@ func (l *AssetVulnScansLogic) AssetVulnScans(req *types.AssetVulnScansReq, works
 	scanResultService := svc.NewScanResultService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
 
 	scanReq := &svc.GetVulnScanResultsReq{
-		WorkspaceId: workspaceId,
-		Authority:   asset.Authority,
+		Authority: asset.Authority,
 		Host:        asset.Host,
 		Port:        asset.Port,
 		Limit:       req.Limit,

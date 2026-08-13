@@ -484,7 +484,6 @@ const useMockData = false
 const mockAssets = [
   {
     id: '1',
-    workspaceId: 'default',
     host: 'business.leapmotor.com',
     port: 443,
     status: '200',
@@ -501,7 +500,6 @@ const mockAssets = [
   },
   {
     id: '2',
-    workspaceId: 'default',
     host: 'cscan.txf7.cn',
     port: 80,
     status: '200',
@@ -564,7 +562,6 @@ const loadData = async () => {
         // 转换后端数据格式为前端格式
         assets.value = (res.list || []).map(item => ({
           id: item.id,
-          workspaceId: item.workspaceId, // 淇濆瓨宸ヤ綔绌洪棿ID锛岀敤浜庡垹
           host: item.host,
           port: item.port,
           status: String(item.status || ''),
@@ -714,8 +711,7 @@ const handleAddNewLabel = async () => {
   try {
     const res = await updateAssetLabels({
       id: currentAsset.value.id,
-      labels: currentAsset.value.labels,
-      workspaceId: currentAsset.value.workspaceId // 明确传递资产所属的工作空间ID
+      labels: currentAsset.value.labels
     })
 
     if (res.code === 0) {
@@ -747,8 +743,7 @@ const handleRemoveLabel = async (asset, index) => {
     try {
       const res = await updateAssetLabels({
         id: asset.id,
-        labels: asset.labels,
-        workspaceId: asset.workspaceId // 明确传递资产所属的工作空间ID
+        labels: asset.labels
       })
 
       if (res.code === 0) {
@@ -784,10 +779,9 @@ const handleDelete = async (asset) => {
       }
     )
 
-    // 调用删除 API，传递资产 ID 和工作空间 ID
+    // 调用删除 API，传递资产 ID
     const res = await deleteAsset({
-      id: asset.id,
-      workspaceId: asset.workspaceId
+      id: asset.id
     })
     if (res.code === 0) {
       ElMessage.success(t('asset.assetInventoryTab.deleteSuccess'))
@@ -845,7 +839,7 @@ const handleCardClick = async (asset) => {
 
   // 列表投影已排除 body/header/banner 等大字段，按需拉取详情补全抽屉所需数据
   if (asset.id) {
-    getAssetDetail({ id: asset.id, workspaceId: asset.workspaceId })
+    getAssetDetail({ id: asset.id })
       .then(res => {
         if (res.code === 0 && res.data && detailAsset.value) {
           detailAsset.value.httpHeader = res.data.httpHeader || ''

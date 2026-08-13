@@ -5,7 +5,7 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  # Redis
+  # Redis（官方镜像）
   redis:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/redis:7-alpine
     container_name: cscan_redis
@@ -15,7 +15,6 @@ services:
       - cscan_redis_data:/data
     environment:
       - TZ=Asia/Shanghai
-      - REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
     restart: unless-stopped
     networks:
       - cscan_network
@@ -25,16 +24,16 @@ services:
       timeout: 5s
       retries: 3
 
-  # MongoDB
+  # MongoDB（官方镜像）
   mongodb:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/mongo:6
-    container_name: cscan_mongodb
     logging: *default-logging
     volumes:
       - cscan_mongodb_data:/data/db
       - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     environment:
       - TZ=Asia/Shanghai
+      - MONGO_INITDB_DATABASE=cscan
       - MONGO_INITDB_ROOT_USERNAME=${CSCAN_MONGO_ROOT_USERNAME}
       - MONGO_INITDB_ROOT_PASSWORD=${CSCAN_MONGO_ROOT_PASSWORD}
     restart: unless-stopped
@@ -53,8 +52,12 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan?authSource=admin
+      - CSCAN_MONGO_DB=cscan
+      - CSCAN_REDIS_HOST=redis:6379
       - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
+      - CSCAN_JWT_SECRET=${CSCAN_JWT_SECRET}
+      - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY}
     volumes:
       - cscan_api_data:/app/data
       - ./log:/app/log
@@ -104,7 +107,7 @@ services:
       - CSCAN_SERVER=http://cscan-api:8888
       - CSCAN_KEY=${CSCAN_WORKER_KEY}
       - CSCAN_NAME=cscan-default-worker
-      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME}:${CSCAN_MONGO_ROOT_PASSWORD}@mongodb:27017/cscan?authSource=admin
       - CSCAN_REDIS_ADDR=redis:6379
       - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD}
     depends_on:

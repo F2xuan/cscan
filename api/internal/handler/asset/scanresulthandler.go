@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func AssetsWithScansHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetsWithScansLogic(r.Context(), svcCtx)
-		resp, err := l.AssetsWithScans(&req, workspaceId)
+		resp, err := l.AssetsWithScans(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -41,9 +39,8 @@ func AssetDirScansHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetDirScansLogic(r.Context(), svcCtx)
-		resp, err := l.AssetDirScans(&req, workspaceId)
+		resp, err := l.AssetDirScans(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -61,9 +58,8 @@ func AssetVulnScansHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetVulnScansLogic(r.Context(), svcCtx)
-		resp, err := l.AssetVulnScans(&req, workspaceId)
+		resp, err := l.AssetVulnScans(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -81,9 +77,8 @@ func AssetHistoryV2Handler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewAssetHistoryV2Logic(r.Context(), svcCtx)
-		resp, err := l.AssetHistoryV2(&req, workspaceId)
+		resp, err := l.AssetHistoryV2(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -101,9 +96,8 @@ func CompareVersionsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewCompareVersionsLogic(r.Context(), svcCtx)
-		resp, err := l.CompareVersions(&req, workspaceId)
+		resp, err := l.CompareVersions(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

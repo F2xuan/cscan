@@ -1,12 +1,11 @@
 package logic
 
-import "cscan/internal/model"
-
 import (
 	"context"
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/internal/model"
 
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -24,7 +23,7 @@ func NewAssetsWithScansLogic(ctx context.Context, svcCtx *svc.ServiceContext) *A
 }
 
 // AssetsWithScans retrieves assets with scan result summaries
-func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq, workspaceId string) (*types.AssetsWithScansResp, error) {
+func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq) (resp *types.AssetsWithScansResp, err error) {
 	// Build filter based on request parameters
 	filter := bson.M{}
 	if req.Query != "" {
@@ -49,8 +48,7 @@ func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq, wo
 	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	assetReq := &svc.GetAssetListReq{
-		WorkspaceId: workspaceId,
-		Filter:      filter,
+		Filter:    filter,
 		Page:        req.Page,
 		PageSize:    req.PageSize,
 		SortField:   "update_time",

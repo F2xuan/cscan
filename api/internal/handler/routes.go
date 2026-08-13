@@ -51,18 +51,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	// 初始化WebSocket处理器
 	WorkerWSHandlerInstance = worker.NewWorkerWSHandler(svcCtx)
 
-	// 注入日志同步触发回调（用户点击刷新按钮时调用）
-	svcCtx.TriggerWorkerLogSync = func(workerName string) {
-		if conn, ok := WorkerWSHandlerInstance.GetConnection(workerName); ok {
-			worker.TriggerLogSync(conn)
-		}
-	}
-
-	// 注入"触发全部 Worker 日志同步并等待"回调（任务日志刷新时调用，立即拉取最新日志）
-	svcCtx.TriggerAllWorkerLogSync = func() {
-		WorkerWSHandlerInstance.SyncAllAndWait(3 * time.Second)
-	}
-
 	// 健康检查处理函数（统一的健康检查逻辑）
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -209,11 +197,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// 引导式首次体验（T4.2）：查询/完成首次引导
 		{Method: http.MethodPost, Path: "/api/v1/user/onboarding/status", Handler: user.UserOnboardingStatusHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/onboarding/complete", Handler: user.UserOnboardingCompleteHandler(svcCtx)},
-
-		// Worker日志（需要认证）
-		{Method: http.MethodPost, Path: "/api/v1/worker/logs/history", Handler: worker.WorkerLogsHistoryHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/logs/export", Handler: worker.WorkerLogsExportHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/logs/clear", Handler: worker.WorkerLogsClearHandler(svcCtx)},
 
 		// 组织管理（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/organization/list", Handler: organization.OrganizationListHandler(svcCtx)},
@@ -546,6 +529,10 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// Worker安装管理（install key 是 Worker 主密钥,必须管理员权限）
 		{Method: http.MethodPost, Path: "/api/v1/worker/install/command", Handler: worker.WorkerInstallCommandHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/install/refresh", Handler: worker.WorkerRefreshKeyHandler(svcCtx)},
+		// Worker日志（含任务详情/目标IP等敏感信息,限管理员读取）
+		{Method: http.MethodPost, Path: "/api/v1/worker/logs/history", Handler: worker.WorkerLogsHistoryHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/logs/export", Handler: worker.WorkerLogsExportHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/logs/clear", Handler: worker.WorkerLogsClearHandler(svcCtx)},
 		// 全局品牌配置（写权限限管理员）
 		{Method: http.MethodPost, Path: "/api/v1/branding/config/save", Handler: notify.BrandingConfigSaveHandler(svcCtx)},
 		// AI配置（含明文 apiKey，读写均限管理员）

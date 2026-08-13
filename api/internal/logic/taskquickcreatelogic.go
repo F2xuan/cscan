@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"cscan/api/internal/logic/common"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/svc/sync"
 	"cscan/api/internal/types"
@@ -41,16 +40,6 @@ func NewTaskQuickCreateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *T
 
 // TaskQuickCreate 智能识别目标类型并选扫描阶段创建任务
 func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*types.TaskQuickCreateResp, error) {
-	wsId := req.WorkspaceId
-	if wsId == "" {
-		wsId = middleware.GetWorkspaceId(l.ctx)
-	}
-	// 工作台默认选中"全部工作空间"时 header 为 "all"。一键扫描是写操作，必须把任务落到真实工作空间集合，
-	// 否则会插入到 bogus 的 all_maintask 集合，而详情跨工作空间检索只枚举真实工作空间 → 永远查不到 → "任务不存在或已被删除"。
-	wsId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, wsId)
-	if wsId == "" {
-		return &types.TaskQuickCreateResp{Code: 400, Msg: "workspaceId不能为空"}, nil
-	}
 	if strings.TrimSpace(req.Targets) == "" {
 		return &types.TaskQuickCreateResp{Code: 400, Msg: "扫描目标不能为空"}, nil
 	}
@@ -105,7 +94,7 @@ func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*
 		Config:      mustJSON(taskConfig),
 		Status:      model.TaskStatusCreated,
 	}
-	taskModel := l.svcCtx.GetMainTaskModel(wsId)
+	taskModel := l.svcCtx.GetMainTaskModel()
 	if err := taskModel.Insert(l.ctx, task); err != nil {
 		l.Logger.Errorf("TaskQuickCreate: insert failed, taskId=%s, error=%v", taskId, err)
 		return &types.TaskQuickCreateResp{Code: 500, Msg: "创建任务失败: " + err.Error()}, nil
@@ -114,7 +103,7 @@ func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*
 	// 复用统一任务启动逻辑
 	// 修复 M-16：启动失败时必须明确返回错误状态及任务 ID，避免前端误判任务已成功启动
 	builder := common.NewTaskBuilder(l.ctx, l.svcCtx)
-	if _, err := builder.BuildAndPushSubTasks(wsId, task, taskConfig); err != nil {
+	if _, err := builder.BuildAndPushSubTasks(task, taskConfig); err != nil {
 		l.Logger.Errorf("TaskQuickCreate: failed to start task %s: %v", taskId, err)
 		// 任务已创建但未启动，返回明确的部分成功状态码供前端提示用户
 		return &types.TaskQuickCreateResp{

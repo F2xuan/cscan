@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
@@ -29,42 +28,38 @@ func NewDashboardChangesLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 
 // DashboardChanges 聚合工作台"资产变化"与"漏洞变化"，窗口默认为 7 天
 // 数据源：资产 first_seen_time 窗口 + 漏洞 status/first_seen_time/fixed_at 窗口（T1.1/T1.3 口径）
-func (l *DashboardChangesLogic) DashboardChanges(req *types.DashboardChangesReq, workspaceId string) (*types.DashboardChangesResp, error) {
+func (l *DashboardChangesLogic) DashboardChanges(req *types.DashboardChangesReq) (*types.DashboardChangesResp, error) {
 	days := req.Days
 	if days <= 0 {
 		days = 7
 	}
 	cutoff := time.Now().AddDate(0, 0, -days)
 
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
 	asset := &types.AssetChanges{Total: 0, NewInWindow: 0, ByCategory: map[string]int64{}}
 	risk := &types.RiskChanges{Open: 0, NewInWindow: 0, FixedInWindow: 0, BySeverity: map[string]int64{}}
 
-	for _, wsId := range wsIds {
-		assetModel := l.svcCtx.GetAssetModel(wsId)
-		aStats, err := assetModel.AggregateChangesStats(l.ctx, cutoff)
-		if err != nil {
-			l.Logger.Errorf("[DASHBOARD] asset changes stat failed ws=%s: %v", wsId, err)
-		} else {
-			asset.Total += aStats.Total
-			asset.NewInWindow += aStats.NewInWindow
-			for k, v := range aStats.ByCategory {
-				asset.ByCategory[k] += v
-			}
+	assetModel := l.svcCtx.GetAssetModel()
+	aStats, err := assetModel.AggregateChangesStats(l.ctx, cutoff)
+	if err != nil {
+		l.Logger.Errorf("[DASHBOARD] asset changes stat failed: %v", err)
+	} else {
+		asset.Total = aStats.Total
+		asset.NewInWindow = aStats.NewInWindow
+		for k, v := range aStats.ByCategory {
+			asset.ByCategory[k] = v
 		}
+	}
 
-		vulModel := l.svcCtx.GetVulModel(wsId)
-		vStats, err := vulModel.AggregateChangesStats(l.ctx, cutoff)
-		if err != nil {
-			l.Logger.Errorf("[DASHBOARD] vul changes stat failed ws=%s: %v", wsId, err)
-		} else {
-			risk.Open += vStats.Open
-			risk.NewInWindow += vStats.NewInWindow
-			risk.FixedInWindow += vStats.FixedInWindow
-			for k, v := range vStats.BySeverity {
-				risk.BySeverity[k] += v
-			}
+	vulModel := l.svcCtx.GetVulModel()
+	vStats, err := vulModel.AggregateChangesStats(l.ctx, cutoff)
+	if err != nil {
+		l.Logger.Errorf("[DASHBOARD] vul changes stat failed: %v", err)
+	} else {
+		risk.Open = vStats.Open
+		risk.NewInWindow = vStats.NewInWindow
+		risk.FixedInWindow = vStats.FixedInWindow
+		for k, v := range vStats.BySeverity {
+			risk.BySeverity[k] = v
 		}
 	}
 

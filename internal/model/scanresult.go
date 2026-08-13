@@ -13,7 +13,7 @@ type ScanResultModel struct {
 }
 
 // NewScanResultModel creates a new ScanResultModel
-func NewScanResultModel(db *mongo.Database, workspaceId string) *ScanResultModel {
+func NewScanResultModel(db *mongo.Database) *ScanResultModel {
 	coll := db.Collection("scanresult")
 
 	// Create indexes
@@ -27,7 +27,6 @@ func NewScanResultModel(db *mongo.Database, workspaceId string) *ScanResultModel
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 		// New composite index for efficient scan result queries
 		{Keys: bson.D{
-			{Key: "workspace_id", Value: 1},
 			{Key: "authority", Value: 1},
 			{Key: "host", Value: 1},
 			{Key: "port", Value: 1},

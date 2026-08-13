@@ -14,17 +14,12 @@ func invalidateAssetTargetCaches(svcCtx *svc.ServiceContext, targetId string) {
 	_ = targetId
 }
 
-// locateOwningWsMeta 遍历 wsIds 找到 targetId 所在 workspace，返回 owning wsId；未找到返回空串。
+// targetMetaExists 检查 targetId 是否存在；存在返回 true。
 // 供 update / delete logic 复用；context 走调用方传入以避免绑定特定 logic 结构。
-func locateOwningWsMeta(ctx context.Context, svcCtx *svc.ServiceContext, wsIds []string, targetId string) string {
-	for _, wsId := range wsIds {
-		m, err := svcCtx.GetAssetTargetMetaModel(wsId).FindByID(ctx, targetId)
-		if err != nil {
-			continue
-		}
-		if m != nil {
-			return wsId
-		}
+func targetMetaExists(ctx context.Context, svcCtx *svc.ServiceContext, targetId string) bool {
+	m, err := svcCtx.GetAssetTargetMetaModel().FindByID(ctx, targetId)
+	if err != nil {
+		return false
 	}
-	return ""
+	return m != nil
 }

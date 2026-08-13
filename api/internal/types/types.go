@@ -34,7 +34,6 @@ type LoginResp struct {
 	UserId        string `json:"userId"`
 	Username      string `json:"username"`
 	Role          string `json:"role"`
-	WorkspaceId   string `json:"workspaceId"`
 }
 
 type UserInfo struct {
@@ -413,8 +412,7 @@ type AssetDiffStatResp struct {
 }
 
 type AssetDeleteReq struct {
-	Id          string `json:"id"`
-	WorkspaceId string `json:"workspaceId,optional"` // 可选，用于跨工作空间删除
+	Id string `json:"id"`
 }
 
 type AssetBatchDeleteReq struct {
@@ -639,7 +637,6 @@ type AssetInventoryReq struct {
 
 type AssetInventoryItem struct {
 	Id              string   `json:"id"`
-	WorkspaceId     string   `json:"workspaceId"` // 所属工作空间ID
 	Host            string   `json:"host"`
 	IP              string   `json:"ip"`
 	Ips             []string `json:"ips"`
@@ -697,7 +694,6 @@ type ScreenshotsReq struct {
 
 type ScreenshotItem struct {
 	Id           string       `json:"id"`
-	WorkspaceId  string       `json:"workspaceId"` // 工作空间ID
 	Name         string       `json:"name"`        // 主机名
 	Port         int          `json:"port"`
 	IP           string       `json:"ip"`
@@ -804,7 +800,6 @@ type MainTask struct {
 	EndTime      string   `json:"endTime"`      // 结束时间
 	SubTaskCount int      `json:"subTaskCount"` // 子任务总数
 	SubTaskDone  int      `json:"subTaskDone"`  // 已完成子任务数
-	WorkspaceId  string   `json:"workspaceId"`  // 所属工作空间ID
 }
 
 type MainTaskListReq struct {
@@ -813,7 +808,6 @@ type MainTaskListReq struct {
 	Name        string   `json:"name,optional"`
 	Status      string   `json:"status,optional"`
 	Tags        []string `json:"tags,optional"`        // 标签过滤
-	WorkspaceId string   `json:"workspaceId,optional"` // 支持从请求体传递，优先级高于header
 }
 
 type MainTaskListResp struct {
@@ -825,8 +819,7 @@ type MainTaskListResp struct {
 
 // MainTaskDetailReq 任务详情请求
 type MainTaskDetailReq struct {
-	Id          string `json:"id"`                   // 任务ID（MainTask.Id.Hex()）
-	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID，为空时跨工作空间查找
+	Id string `json:"id"` // 任务ID（MainTask.Id.Hex()）
 }
 
 // MainTaskDetailResp 任务详情响应
@@ -845,16 +838,14 @@ type MainTaskCreateReq struct {
 	OrgId       string   `json:"orgId,optional"`
 	Tags        []string `json:"tags,optional"`        // 任务标签
 	Workers     []string `json:"workers,optional"`     // 指定执行任务的 Worker 列表
-	WorkspaceId string   `json:"workspaceId,optional"` // 任务所属工作空间ID
 }
 
 // ===== T4.1 一键扫描 + 智能模板推荐 =====
 
 // TaskQuickCreateReq 一键扫描请求：仅传目标 + 可选模式，后端智能识别类型并选扫描阶段
 type TaskQuickCreateReq struct {
-	Targets     string `json:"targets"`              // 目标字符串，支持逗号/换行/分号分隔
-	Mode        string `json:"mode,optional"`        // 扫描模式：quick（默认）/ full
-	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID
+	Targets string `json:"targets"`       // 目标字符串，支持逗号/换行/分号分隔
+	Mode    string `json:"mode,optional"` // 扫描模式：quick（默认）/ full
 }
 
 // TaskQuickCreateResp 一键扫描响应
@@ -907,13 +898,11 @@ type TaskProfileDeleteReq struct {
 }
 
 type MainTaskDeleteReq struct {
-	Id          string `json:"id"`
-	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID
+	Id string `json:"id"`
 }
 
 type MainTaskBatchDeleteReq struct {
-	Ids         []string `json:"ids"`
-	WorkspaceId string   `json:"workspaceId,optional"` // 任务所属工作空间ID
+	Ids []string `json:"ids"`
 }
 
 type MainTaskRetryReq struct {
@@ -921,8 +910,7 @@ type MainTaskRetryReq struct {
 }
 
 type MainTaskControlReq struct {
-	Id          string `json:"id"`
-	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID
+	Id string `json:"id"`
 }
 
 // MainTaskUpdateReq 更新任务请求
@@ -2086,9 +2074,8 @@ type ReportExportReq struct {
 
 // ==================== 周期报告（日报/周报/月报） T5.1 ====================
 type ReportPeriodicGenerateReq struct {
-	Period      string `json:"period"`       // daily / weekly / monthly
-	End         string `json:"end,optional"` // 截止日期 2006-01-02，默认今天
-	WorkspaceId string `json:"workspaceId,optional"`
+	Period string `json:"period"`       // daily / weekly / monthly
+	End    string `json:"end,optional"` // 截止日期 2006-01-02，默认今天
 }
 
 // ReportPeriodicItem 周期报告中最紧急事项明细
@@ -2139,10 +2126,9 @@ type ReportPeriodicGenerateResp struct {
 }
 
 type ReportPeriodicExportReq struct {
-	Period      string `json:"period"`
-	End         string `json:"end,optional"`
-	WorkspaceId string `json:"workspaceId,optional"`
-	Format      string `json:"format,optional"` // excel（默认）
+	Period string `json:"period"`
+	End    string `json:"end,optional"`
+	Format string `json:"format,optional"` // excel（默认）
 }
 
 // ==================== 用户扫描配置 ====================
@@ -3000,21 +2986,18 @@ type BrandingConfigSaveReq struct {
 
 // ==================== 资产标签管理 ====================
 type AssetUpdateLabelsReq struct {
-	Id          string   `json:"id"`
-	Labels      []string `json:"labels"`
-	WorkspaceId string   `json:"workspaceId,optional"` // 可选，指定工作空间
+	Id     string   `json:"id"`
+	Labels []string `json:"labels"`
 }
 
 type AssetAddLabelReq struct {
-	Id          string `json:"id"`
-	Label       string `json:"label"`
-	WorkspaceId string `json:"workspaceId,optional"` // 可选，指定工作空间
+	Id    string `json:"id"`
+	Label string `json:"label"`
 }
 
 type AssetRemoveLabelReq struct {
-	Id          string `json:"id"`
-	Label       string `json:"label"`
-	WorkspaceId string `json:"workspaceId,optional"` // 可选，指定工作空间
+	Id    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // ==================== 资产过滤器选项 ====================
@@ -3070,10 +3053,9 @@ type AssetExposuresResp struct {
 
 // AssetsWithScansReq 获取带扫描摘要的资产列表请求
 type AssetsWithScansReq struct {
-	WorkspaceId string `json:"workspaceId,optional"` // 工作空间ID（从中间件获取）
-	Page        int    `json:"page,default=1"`
-	PageSize    int    `json:"pageSize,default=20"`
-	Query       string `json:"query,optional"`
+	Page     int    `json:"page,default=1"`
+	PageSize int    `json:"pageSize,default=20"`
+	Query    string `json:"query,optional"`
 	Host        string `json:"host,optional"`
 	Port        int    `json:"port,optional"`
 	Service     string `json:"service,optional"`
@@ -3368,7 +3350,6 @@ type JSFinderConfigSaveReq struct {
 
 type JSFinderResult struct {
 	Id               string   `json:"id,omitempty"`
-	WorkspaceId      string   `json:"workspaceId,omitempty"`
 	MainTaskId       string   `json:"mainTaskId,omitempty"`
 	TaskName         string   `json:"taskName,omitempty"`
 	Authority        string   `json:"authority"`
@@ -3394,13 +3375,11 @@ type JSFinderResult struct {
 }
 
 type SaveJSFinderResultReq struct {
-	WorkspaceId string            `json:"workspaceId"`
 	MainTaskId  string            `json:"mainTaskId,omitempty"`
 	Results     []*JSFinderResult `json:"results"`
 }
 
 type JSFinderListReq struct {
-	WorkspaceId string   `json:"workspaceId,optional" form:"workspaceId,optional"`
 	Query       string   `json:"query,optional" form:"query,optional"`
 	Page        int      `json:"page,default=1" form:"page,default=1"`
 	PageSize    int      `json:"pageSize,default=10" form:"pageSize,default=10"`
@@ -3421,10 +3400,9 @@ type JSFinderListResp struct {
 
 // JSFinderDetailReq 单条 JSFinder 结果详情请求
 // 列表查询已投影排除 request/response/curl_command 等大字段，
-// 详情按 workspaceId + id 按需回填这些字段。
+// 详情按 id 按需回填这些字段。
 type JSFinderDetailReq struct {
-	WorkspaceId string `json:"workspaceId,optional"`
-	Id          string `json:"id"`
+	Id string `json:"id"`
 }
 
 type JSFinderDetailResp struct {
@@ -3437,8 +3415,7 @@ type JSFinderDetailResp struct {
 
 // JSFinderAIAnalyzeReq 单条AI研判请求
 type JSFinderAIAnalyzeReq struct {
-	WorkspaceId string `json:"workspaceId,optional"`
-	Id          string `json:"id"` // 单条记录ID
+	Id string `json:"id"` // 单条记录ID
 }
 
 // JSFinderAIAnalyzeResp 单条AI研判响应
@@ -3462,7 +3439,6 @@ type JSFinderAIAnalyzeData struct {
 // 2. 指定筛选条件（Query/Severity/Tags/MatcherName等）：研判符合条件的未研判数据
 // 3. 都不指定：研判所有未研判数据
 type JSFinderAIBatchAnalyzeReq struct {
-	WorkspaceId string   `json:"workspaceId,optional"`
 	Ids         []string `json:"ids,optional"` // 选中的记录ID列表，优先级最高
 
 	// 筛选条件（与列表查询一致，不传则查询所有未研判）
@@ -3518,7 +3494,6 @@ type JSFinderAIStopBatchResp struct {
 // DirScanResult 目录扫描结果响应项（与model.DirScanResult对应，时间为字符串）
 type DirScanResult struct {
 	Id            string `json:"id"`
-	WorkspaceId   string `json:"workspaceId"`
 	MainTaskId    string `json:"mainTaskId,omitempty"`
 	Authority     string `json:"authority"`
 	Host          string `json:"host"`
@@ -3548,7 +3523,6 @@ type DirScanResult struct {
 
 // DirScanResultListReq 目录扫描列表请求
 type DirScanResultListReq struct {
-	WorkspaceId string `json:"workspaceId,optional"`
 	TaskId      string `json:"taskId,optional"`
 	Authority   string `json:"authority,optional"`
 	Url         string `json:"url,optional"`
@@ -3575,8 +3549,7 @@ type DirScanResultListResp struct {
 
 // DirScanDetailReq 单条详情请求
 type DirScanDetailReq struct {
-	WorkspaceId string `json:"workspaceId,optional"`
-	Id          string `json:"id"`
+	Id string `json:"id"`
 }
 
 // DirScanDetailResp 单条详情响应
@@ -3588,8 +3561,7 @@ type DirScanDetailResp struct {
 
 // DirScanAIAnalyzeReq 单条AI研判请求
 type DirScanAIAnalyzeReq struct {
-	WorkspaceId string `json:"workspaceId,optional"`
-	Id          string `json:"id"`
+	Id string `json:"id"`
 }
 
 // DirScanAIAnalyzeData 单条AI研判返回数据
@@ -3610,7 +3582,6 @@ type DirScanAIAnalyzeResp struct {
 
 // DirScanAIBatchAnalyzeReq 批量研判请求
 type DirScanAIBatchAnalyzeReq struct {
-	WorkspaceId string   `json:"workspaceId,optional"`
 	Ids         []string `json:"ids,optional"`
 	Query       string   `json:"query,optional"`
 	StatusCode  int      `json:"statusCode,optional"`
@@ -3674,7 +3645,6 @@ type CertNameInfo struct {
 // Cert 证书采集结果（指纹识别阶段附加产出，对齐 model.Cert）
 type Cert struct {
 	Id           string            `json:"id,omitempty"`
-	WorkspaceId  string            `json:"workspaceId,omitempty"`
 	TaskId       string            `json:"taskId,omitempty"`
 	Host         string            `json:"host"`
 	Port         int               `json:"port"`
@@ -3697,14 +3667,12 @@ type Cert struct {
 
 // SaveCertReq worker 上报证书结果请求
 type SaveCertReq struct {
-	WorkspaceId string  `json:"workspaceId"`
 	MainTaskId  string  `json:"mainTaskId,omitempty"`
 	Results     []*Cert `json:"results"`
 }
 
 // CertListReq 证书列表请求
 type CertListReq struct {
-	WorkspaceId   string `json:"workspaceId,optional" form:"workspaceId,optional"`
 	Query         string `json:"query,optional" form:"query,optional"`                 // 按 host/authority/subjectDN/issuerDN/SAN 模糊匹配
 	Issuer        string `json:"issuer,optional" form:"issuer,optional"`               // 按颁发机构 DN 模糊过滤
 	ExpiredBefore string `json:"expiredBefore,optional" form:"expiredBefore,optional"` // 到期时间 <= 该时间戳（秒）
@@ -3725,7 +3693,6 @@ type CertListResp struct {
 
 // CertDetailReq 证书详情请求
 type CertDetailReq struct {
-	WorkspaceId string `json:"workspaceId,optional"`
 	Id          string `json:"id"`
 }
 
@@ -3741,7 +3708,6 @@ type CertDetailResp struct {
 // ReverifyConfig 复验配置（API 层表示，对齐 model.ReverifyConfig；与 T3.4 敏感信息复验共用）
 type ReverifyConfig struct {
 	Id               string `json:"id,omitempty"`
-	WorkspaceId      string `json:"workspaceId"`
 	WeakPassEnabled  bool   `json:"weakPassEnabled"`
 	ExposureEnabled  bool   `json:"exposureEnabled"`
 	CronSpec         string `json:"cronSpec"`
@@ -3759,7 +3725,6 @@ type ReverifyConfig struct {
 
 // ReverifyConfigGetReq 获取复验配置请求
 type ReverifyConfigGetReq struct {
-	WorkspaceId string `json:"workspaceId"`
 }
 
 // ReverifyConfigGetResp 获取复验配置响应（无配置时返回默认值，weakPassEnabled=false）
@@ -3771,7 +3736,6 @@ type ReverifyConfigGetResp struct {
 
 // ReverifyConfigSaveReq 保存复验配置请求
 type ReverifyConfigSaveReq struct {
-	WorkspaceId      string `json:"workspaceId"`
 	WeakPassEnabled  bool   `json:"weakPassEnabled"`
 	ExposureEnabled  bool   `json:"exposureEnabled"`
 	CronSpec         string `json:"cronSpec"`
@@ -3788,7 +3752,6 @@ type ReverifyConfigSaveResp struct {
 
 // ReverifyRunNowReq 立即触发弱口令复验请求
 type ReverifyRunNowReq struct {
-	WorkspaceId string `json:"workspaceId"`
 }
 
 // ReverifyRunNowResp 立即触发弱口令复验响应
@@ -3801,7 +3764,6 @@ type ReverifyRunNowResp struct {
 
 // VulReverifyReq 单条/批量漏洞复验请求（前端点击"复验"按钮触发）
 type VulReverifyReq struct {
-	WorkspaceId string   `json:"workspaceId,optional"` // 缺省时由服务端从上下文推断
 	Ids         []string `json:"ids"`                  // 漏洞 ID 列表
 }
 
@@ -3815,7 +3777,6 @@ type VulReverifyResp struct {
 
 // WorkerVulReverifyReq Worker 复测完成后回传的复验结果（worker 专用端点）
 type WorkerVulReverifyReq struct {
-	WorkspaceId string `json:"workspaceId"`
 	VulnId      string `json:"vulnId"`
 	Conclusion  string `json:"conclusion"` // fixed / still_vuln / unreachable / reachable_untested
 	Reviewer    string `json:"reviewer"`
@@ -3832,7 +3793,6 @@ type WorkerVulReverifyResp struct {
 
 // WorkerReverifyBatchReq Worker 持续复验批量结果回传（T3.3 弱口令 / T3.4 敏感信息，worker 专用端点）
 type WorkerReverifyBatchReq struct {
-	WorkspaceId string                    `json:"workspaceId"`
 	Kind        string                    `json:"kind"` // weakpass / exposure
 	Results     []WorkerReverifyBatchItem `json:"results"`
 }

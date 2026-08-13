@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -35,8 +34,7 @@ func NewAssetTargetDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 // AssetTargetDetail 获取顶层资产详情（meta + 暴露面统计 + 风险统计）。
-// 跨 workspace 解析 owning ws；meta 命中失败时回退到 {wsId}_asset 重建 meta（不写回 DB）。
-func (l *AssetTargetDetailLogic) AssetTargetDetail(req *types.AssetTargetDetailReq, workspaceId string) (*types.AssetTargetDetailResp, error) {
+func (l *AssetTargetDetailLogic) AssetTargetDetail(req *types.AssetTargetDetailReq) (*types.AssetTargetDetailResp, error) {
 	targetId := strings.TrimSpace(req.TargetId)
 	if targetId == "" {
 		return nil, xerr.NewParamError("targetId is empty")
@@ -46,43 +44,25 @@ func (l *AssetTargetDetailLogic) AssetTargetDetail(req *types.AssetTargetDetailR
 		return nil, err
 	}
 
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	var meta *model.AssetTargetMeta
-	var owningWs string
-	for _, wsId := range wsIds {
-		m, err := l.svcCtx.GetAssetTargetMetaModel(wsId).FindByID(l.ctx, targetId)
-		if err != nil {
-			l.Logger.Errorf("[AssetTargetDetail] FindByID ws=%s fail: %v", wsId, err)
-			continue
-		}
-		if m != nil {
-			meta = m
-			owningWs = wsId
-			break
-		}
+	metaModel := l.svcCtx.GetAssetTargetMetaModel()
+	meta, err := metaModel.FindByID(l.ctx, targetId)
+	if err != nil {
+		l.Logger.Errorf("[AssetTargetDetail] FindByID fail: %v", err)
 	}
 
 	metaPersisted := meta != nil
 	if meta == nil {
-		// 回退：在第一个 ws 上重建 meta，仅本次请求用，不落库
-		if len(wsIds) == 0 {
-			return nil, fmt.Errorf("workspace not found")
-		}
-		owningWs = wsIds[0]
-		meta = rebuildMetaFromAssets(l, owningWs, targetId, tType, tValue)
+		meta = rebuildMetaFromAssets(l, targetId, tType, tValue)
 		if meta == nil {
 			return nil, xerr.NewNotFoundError(fmt.Sprintf("target %s not found", targetId))
 		}
 	}
 
-	exposure := l.computeExposure(owningWs, tType, tValue)
-	risk := l.computeRisk(owningWs, tType, tValue)
+	exposure := l.computeExposure(tType, tValue)
+	risk := l.computeRisk(tType, tValue)
 
-	// 顺手回填：只有 meta 是从 DB 命中时才写回，避免把临时重建结果落库。
-	// 写回失败仅日志告警，不影响本次响应。
 	if metaPersisted && model.NeedsRefresh(meta, assetTargetDetailDenormMaxAge) {
-		l.writebackDenormalized(owningWs, meta, exposure, risk)
+		l.writebackDenormalized(meta, exposure, risk)
 	}
 
 	return &types.AssetTargetDetailResp{
@@ -98,7 +78,7 @@ func (l *AssetTargetDetailLogic) AssetTargetDetail(req *types.AssetTargetDetailR
 
 // writebackDenormalized 把 detail 已算好的 exposure/risk 快照写回 meta 集合，
 // 同时覆盖入参 meta 的内联字段，让本次响应 Meta 与 Exposure/Risk 数据一致。
-func (l *AssetTargetDetailLogic) writebackDenormalized(wsId string, meta *model.AssetTargetMeta, exp types.AssetTargetExposureStats, risk types.AssetTargetRiskStats) {
+func (l *AssetTargetDetailLogic) writebackDenormalized(meta *model.AssetTargetMeta, exp types.AssetTargetExposureStats, risk types.AssetTargetRiskStats) {
 	expSnap := model.ExposureSnapshot{
 		Subdomains:  exp.Subdomains,
 		Ips:         exp.Ips,
@@ -116,8 +96,8 @@ func (l *AssetTargetDetailLogic) writebackDenormalized(wsId string, meta *model.
 		VulnHigh:      risk.VulnHigh,
 		VulnTotal:     risk.VulnTotal,
 	}
-	if err := l.svcCtx.GetAssetTargetMetaModel(wsId).UpdateDenormalized(l.ctx, meta.Id, expSnap, riskSnap); err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] UpdateDenormalized ws=%s id=%s fail: %v", wsId, meta.Id, err)
+	if err := l.svcCtx.GetAssetTargetMetaModel().UpdateDenormalized(l.ctx, meta.Id, expSnap, riskSnap); err != nil {
+		l.Logger.Errorf("[AssetTargetDetail] UpdateDenormalized id=%s fail: %v", meta.Id, err)
 	}
 	meta.ExposureSubdomains = expSnap.Subdomains
 	meta.ExposureIps = expSnap.Ips
@@ -144,12 +124,12 @@ func (l *AssetTargetDetailLogic) writebackDenormalized(wsId string, meta *model.
 //   - 站点(Sites): Web资产数（与站点管理页webFilter一致：is_http/service=http,https/有title/有screenshot）
 //   - 图标(Icons): distinct icon_hash数
 //   - 应用(Apps): distinct app数
-func (l *AssetTargetDetailLogic) computeExposure(wsId string, tType model.AssetTargetType, tValue string) types.AssetTargetExposureStats {
+func (l *AssetTargetDetailLogic) computeExposure(tType model.AssetTargetType, tValue string) types.AssetTargetExposureStats {
 	var stats types.AssetTargetExposureStats
-	assetModel := l.svcCtx.GetAssetModel(wsId)
+	assetModel := l.svcCtx.GetAssetModel()
 	rows, err := assetModel.AggregateGroupByDomain(l.ctx)
 	if err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] AggregateGroupByDomain ws=%s fail: %v", wsId, err)
+		l.Logger.Errorf("[AssetTargetDetail] AggregateGroupByDomain fail: %v", err)
 		return stats
 	}
 
@@ -226,21 +206,39 @@ func (l *AssetTargetDetailLogic) computeExposure(wsId string, tType model.AssetT
 	})
 	stats.Screenshots = int(screenshotCount)
 
+	// 目录扫描(Dirs)：dirscan_result 集合按 host 过滤
+	dirModel := l.svcCtx.GetDirScanResultModel()
+	if dirModel != nil {
+		dirCount, _ := dirModel.CountByFilter(l.ctx, bson.M{
+			"host": hostFilter,
+		})
+		stats.Dirs = int(dirCount)
+	}
+
+	// JS信息(Js)：jsfinder 集合按 host 过滤
+	jsModel := l.svcCtx.GetJSFinderResultModel()
+	if jsModel != nil {
+		jsCount, _ := jsModel.Count(l.ctx, bson.M{
+			"host": hostFilter,
+		})
+		stats.Js = int(jsCount)
+	}
+
 	return stats
 }
 
-// computeRisk 统计 {wsId}_vul 中命中该目标的漏洞计数。
+// computeRisk 统计 vul 中命中该目标的漏洞计数。
 // 高危=severity in {critical,high} 或 cvss>=7；is_risk=true 计入风险层。
 // SensitiveInfo/SensitiveDir 来自 risk_source="auto:info-leak" 分桶 + DirScanResult 旁路补 SensitiveDir。
 // SensitiveInfoItems/SensitiveDirItems/SensitivePathItems 各返回 top-N 命中条目供前端展开。
-func (l *AssetTargetDetailLogic) computeRisk(wsId string, tType model.AssetTargetType, tValue string) types.AssetTargetRiskStats {
+func (l *AssetTargetDetailLogic) computeRisk(tType model.AssetTargetType, tValue string) types.AssetTargetRiskStats {
 	var stats types.AssetTargetRiskStats
-	vulModel := l.svcCtx.GetVulModel(wsId)
+	vulModel := l.svcCtx.GetVulModel()
 
 	hostFilter := hostFilterForTarget(tType, tValue)
 	total, err := vulModel.Count(l.ctx, bson.M{"host": hostFilter})
 	if err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] vul Count ws=%s fail: %v", wsId, err)
+		l.Logger.Errorf("[AssetTargetDetail] vul Count fail: %v", err)
 		return stats
 	}
 	stats.VulnTotal = int(total)
@@ -249,12 +247,12 @@ func (l *AssetTargetDetailLogic) computeRisk(wsId string, tType model.AssetTarge
 	stats.SensitiveInfo = l.countRiskByKeyword(vulModel, hostFilter, sensitiveInfoKeywords)
 	stats.SensitiveDir = l.countRiskByKeyword(vulModel, hostFilter, sensitiveDirKeywords)
 	// 旁路补充：dirscan_result 集合中按 host 后缀命中且 path 含敏感特征的条目
-	stats.SensitiveDir += l.countSensitiveDirFromScanResult(wsId, hostFilter)
+	stats.SensitiveDir += l.countSensitiveDirFromScanResult(hostFilter)
 
 	// top-N 命中条目（默认 10），前端可点击展开
 	stats.SensitiveInfoItems = l.listRiskByKeyword(vulModel, hostFilter, sensitiveInfoKeywords, sensitiveTopN)
 	stats.SensitiveDirItems = l.listRiskByKeyword(vulModel, hostFilter, sensitiveDirKeywords, sensitiveTopN)
-	stats.SensitivePathItems = l.listSensitivePathFromScanResult(wsId, hostFilter, sensitiveTopN)
+	stats.SensitivePathItems = l.listSensitivePathFromScanResult(hostFilter, sensitiveTopN)
 
 	highCount, err := vulModel.Count(l.ctx, bson.M{
 		"host": hostFilter,
@@ -269,7 +267,7 @@ func (l *AssetTargetDetailLogic) computeRisk(wsId string, tType model.AssetTarge
 	return stats
 }
 
-// countRiskByKeyword 在 {wsId}_vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶计数。
+// countRiskByKeyword 在 vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶计数。
 func (l *AssetTargetDetailLogic) countRiskByKeyword(vulModel *model.VulModel, hostFilter interface{}, keywords []string) int {
 	if len(keywords) == 0 {
 		return 0
@@ -288,27 +286,25 @@ func (l *AssetTargetDetailLogic) countRiskByKeyword(vulModel *model.VulModel, ho
 	return int(n)
 }
 
-// countSensitiveDirFromScanResult 在全局 dirscan_result 集合按 workspace_id + host 后缀 + AI研判为风险计数。
-// 与敏感目录页面口径一致：只统计 AI 判定为 risk 的目录扫描结果，不再用 path 关键字正则匹配。
-func (l *AssetTargetDetailLogic) countSensitiveDirFromScanResult(wsId string, hostFilter interface{}) int {
+// countSensitiveDirFromScanResult 在全局 dirscan_result 集合按 host 后缀 + AI研判为风险计数。
+func (l *AssetTargetDetailLogic) countSensitiveDirFromScanResult(hostFilter interface{}) int {
 	dirModel := l.svcCtx.GetDirScanResultModel()
 	if dirModel == nil {
 		return 0
 	}
 	filter := bson.M{
-		"workspace_id": wsId,
-		"host":         hostFilter,
-		"ai_result":    "risk",
+		"host":      hostFilter,
+		"ai_result": "risk",
 	}
 	n, err := dirModel.CountByFilter(l.ctx, filter)
 	if err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] countSensitiveDirFromScanResult ws=%s fail: %v", wsId, err)
+		l.Logger.Errorf("[AssetTargetDetail] countSensitiveDirFromScanResult fail: %v", err)
 		return 0
 	}
 	return int(n)
 }
 
-// listRiskByKeyword 在 {wsId}_vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶取 top-N 条目。
+// listRiskByKeyword 在 vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶取 top-N 条目。
 // 复用 VulModel.Find（已投影排除 request/response/curl_command，自动按 create_time desc 排序）。
 func (l *AssetTargetDetailLogic) listRiskByKeyword(vulModel *model.VulModel, hostFilter interface{}, keywords []string, limit int) []types.AssetTargetSensitiveVulItem {
 	if len(keywords) == 0 || limit <= 0 {
@@ -346,21 +342,19 @@ func (l *AssetTargetDetailLogic) listRiskByKeyword(vulModel *model.VulModel, hos
 	return items
 }
 
-// listSensitivePathFromScanResult 在全局 dirscan_result 集合按 workspace_id + host 后缀 + AI研判为风险取 top-N 条目。
-// 与敏感目录页面口径一致：只取 AI 判定为 risk 的目录扫描结果。
-func (l *AssetTargetDetailLogic) listSensitivePathFromScanResult(wsId string, hostFilter interface{}, limit int) []types.AssetTargetSensitiveDirItem {
+// listSensitivePathFromScanResult 在全局 dirscan_result 集合按 host 后缀 + AI研判为风险取 top-N 条目。
+func (l *AssetTargetDetailLogic) listSensitivePathFromScanResult(hostFilter interface{}, limit int) []types.AssetTargetSensitiveDirItem {
 	dirModel := l.svcCtx.GetDirScanResultModel()
 	if dirModel == nil || limit <= 0 {
 		return nil
 	}
 	filter := bson.M{
-		"workspace_id": wsId,
-		"host":         hostFilter,
-		"ai_result":    "risk",
+		"host":      hostFilter,
+		"ai_result": "risk",
 	}
 	docs, err := dirModel.FindByFilterWithSort(l.ctx, filter, 1, limit, "", "")
 	if err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] listSensitivePathFromScanResult ws=%s fail: %v", wsId, err)
+		l.Logger.Errorf("[AssetTargetDetail] listSensitivePathFromScanResult fail: %v", err)
 		return nil
 	}
 	items := make([]types.AssetTargetSensitiveDirItem, 0, len(docs))
@@ -429,9 +423,9 @@ func regexpEscape(s string) string {
 	return b.String()
 }
 
-// rebuildMetaFromAssets 当 meta 未命中时，从 {wsId}_asset 重建临时 meta（不写库）。
-func rebuildMetaFromAssets(l *AssetTargetDetailLogic, wsId, targetId string, tType model.AssetTargetType, tValue string) *model.AssetTargetMeta {
-	rows, err := l.svcCtx.GetAssetModel(wsId).AggregateGroupByDomain(l.ctx)
+// rebuildMetaFromAssets 当 meta 未命中时，从 asset 重建临时 meta（不写库）。
+func rebuildMetaFromAssets(l *AssetTargetDetailLogic, targetId string, tType model.AssetTargetType, tValue string) *model.AssetTargetMeta {
+	rows, err := l.svcCtx.GetAssetModel().AggregateGroupByDomain(l.ctx)
 	if err != nil {
 		return nil
 	}
@@ -439,7 +433,6 @@ func rebuildMetaFromAssets(l *AssetTargetDetailLogic, wsId, targetId string, tTy
 		if rowMatchesTarget(row.Host, row.Domain, tType, tValue) {
 			return &model.AssetTargetMeta{
 				Id:            targetId,
-				WorkspaceId:   wsId,
 				TargetType:    string(tType),
 				TargetValue:   tValue,
 				CreateTime:    row.CreateTime,

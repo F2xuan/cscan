@@ -23,14 +23,13 @@ type WorkerTaskCheckReq struct {
 
 // WorkerTaskCheckResp 任务拉取响应
 type WorkerTaskCheckResp struct {
-	Code        int    `json:"code"`
-	Msg         string `json:"msg"`
-	IsExist     bool   `json:"isExist"`
-	IsFinished  bool   `json:"isFinished"`
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
-	Config      string `json:"config"`
+	Code       int    `json:"code"`
+	Msg        string `json:"msg"`
+	IsExist    bool   `json:"isExist"`
+	IsFinished bool   `json:"isFinished"`
+	TaskId     string `json:"taskId"`
+	MainTaskId string `json:"mainTaskId"`
+	Config     string `json:"config"`
 }
 
 // WorkerTaskUpdateReq 任务状态更新请求
@@ -77,14 +76,13 @@ func WorkerTaskCheckHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 
 		httpx.OkJson(w, &WorkerTaskCheckResp{
-			Code:        0,
-			Msg:         "success",
-			IsExist:     result.IsExist,
-			IsFinished:  result.IsFinished,
-			TaskId:      result.TaskId,
-			MainTaskId:  result.MainTaskId,
-			WorkspaceId: result.WorkspaceId,
-			Config:      result.Config,
+			Code:       0,
+			Msg:        "success",
+			IsExist:    result.IsExist,
+			IsFinished: result.IsFinished,
+			TaskId:     result.TaskId,
+			MainTaskId: result.MainTaskId,
+			Config:     result.Config,
 		})
 	}
 }
@@ -199,11 +197,10 @@ type WorkerTaskRecoveryReq struct {
 
 // RecoveredTaskInfo 恢复的任务信息
 type RecoveredTaskInfo struct {
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	WorkspaceId string `json:"workspaceId"`
-	Status      string `json:"status"`
-	StartTime   string `json:"startTime"`
+	TaskId    string `json:"taskId"`
+	MainTaskId string `json:"mainTaskId"`
+	Status    string `json:"status"`
+	StartTime string `json:"startTime"`
 }
 
 // WorkerTaskRecoveryResp 任务恢复响应
@@ -243,7 +240,7 @@ func WorkerTaskRecoveryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		if err != nil {
 			httpx.OkJson(w, &WorkerTaskRecoveryResp{
 				Code:    500,
-				Msg:     "获取工作空间失败",
+				Msg:     "恢复任务失败",
 				Success: false,
 			})
 			return
@@ -253,11 +250,10 @@ func WorkerTaskRecoveryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		var recoveredTasks []RecoveredTaskInfo
 		for _, v := range recoveredTasksInfo {
 			recoveredTasks = append(recoveredTasks, RecoveredTaskInfo{
-				TaskId:      v.TaskId,
-				MainTaskId:  v.MainTaskId,
-				WorkspaceId: v.WorkspaceId,
-				Status:      v.Status,
-				StartTime:   v.StartTime,
+				TaskId:     v.TaskId,
+				MainTaskId: v.MainTaskId,
+				Status:     v.Status,
+				StartTime:  v.StartTime,
 			})
 		}
 

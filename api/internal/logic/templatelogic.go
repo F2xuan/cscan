@@ -244,9 +244,9 @@ func NewScanTemplateFromTaskLogic(ctx context.Context, svcCtx *svc.ServiceContex
 	}
 }
 
-func (l *ScanTemplateFromTaskLogic) ScanTemplateFromTask(req *types.ScanTemplateFromTaskReq, userId, workspaceId string) (*types.BaseRespWithId, error) {
+func (l *ScanTemplateFromTaskLogic) ScanTemplateFromTask(req *types.ScanTemplateFromTaskReq, userId string) (*types.BaseRespWithId, error) {
 	// 获取任务
-	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+	taskModel := l.svcCtx.GetMainTaskModel()
 	task, err := taskModel.FindById(l.ctx, req.TaskId)
 	if err != nil {
 		l.Logger.Errorf("ScanTemplateFromTask: find task failed, taskId=%s, error=%v", req.TaskId, err)

@@ -479,9 +479,8 @@ func FingerprintMatchAssetsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc 
 			return
 		}
 
-		workspaceId := r.Header.Get("X-Workspace-Id")
 		l := logic.NewFingerprintMatchAssetsLogic(r.Context(), svcCtx)
-		resp, err := l.FingerprintMatchAssets(&req, workspaceId)
+		resp, err := l.FingerprintMatchAssets(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

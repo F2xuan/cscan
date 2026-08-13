@@ -18,11 +18,10 @@ import (
 type ContextKey string
 
 const (
-	UserIdKey      ContextKey = "userId"
-	UsernameKey    ContextKey = "username"
-	RoleKey        ContextKey = "role"
-	WorkspaceIdKey ContextKey = "workspaceId"
-	TokenIdKey     ContextKey = "tokenId"
+	UserIdKey   ContextKey = "userId"
+	UsernameKey ContextKey = "username"
+	RoleKey     ContextKey = "role"
+	TokenIdKey  ContextKey = "tokenId"
 )
 
 // PATLookup 由调用方注入的 PAT 认证回调。
@@ -99,6 +98,17 @@ func (m *AuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 			return []byte(m.AccessSecret), nil
 		})
 		if err != nil || !token.Valid {
+			// 区分过期 / 签名错误 / 其他无效，便于前端精准引导用户重新登录
+			if ve, ok := err.(*jwt.ValidationError); ok {
+				if ve.Errors&jwt.ValidationErrorExpired != 0 {
+					unauthorized(w, "Token已过期，请重新登录")
+					return
+				}
+				if ve.Errors&jwt.ValidationErrorSignatureInvalid != 0 {
+					unauthorized(w, "Token签名校验失败")
+					return
+				}
+			}
 			unauthorized(w, "Token无效或已过期")
 			return
 		}
@@ -119,7 +129,6 @@ func (m *AuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 		if role, ok := claims["role"].(string); ok {
 			ctx = context.WithValue(ctx, RoleKey, role)
 		}
-		ctx = context.WithValue(ctx, WorkspaceIdKey, r.Header.Get("X-Workspace-Id"))
 
 		next(w, r.WithContext(ctx))
 	}
@@ -168,7 +177,6 @@ func (m *AuthMiddleware) handlePAT(w http.ResponseWriter, r *http.Request, token
 	newCtx := context.WithValue(ctx, UserIdKey, uid.Hex())
 	newCtx = context.WithValue(newCtx, UsernameKey, "")
 	newCtx = context.WithValue(newCtx, RoleKey, role)
-	newCtx = context.WithValue(newCtx, WorkspaceIdKey, r.Header.Get("X-Workspace-Id"))
 	newCtx = context.WithValue(newCtx, TokenIdKey, tokenId.Hex())
 
 	// 异步记录使用信息，避免阻塞请求
@@ -239,14 +247,6 @@ func GetUsername(ctx context.Context) string {
 // GetRole 从Context获取角色
 func GetRole(ctx context.Context) string {
 	if v := ctx.Value(RoleKey); v != nil {
-		return v.(string)
-	}
-	return ""
-}
-
-// GetWorkspaceId 从Context获取工作空间ID
-func GetWorkspaceId(ctx context.Context) string {
-	if v := ctx.Value(WorkspaceIdKey); v != nil {
 		return v.(string)
 	}
 	return ""

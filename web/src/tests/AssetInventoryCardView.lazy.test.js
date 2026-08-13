@@ -96,12 +96,12 @@ describe('AssetInventoryCardView 懒加载与按需详情', () => {
     const wrapper = mounted()
     await flushPromises()
 
-    await wrapper.vm.handleCardClick({ id: 'a1', workspaceId: 'ws1' })
+    await wrapper.vm.handleCardClick({ id: 'a1' })
     await flushPromises()
 
     expect(h.calls.detail).toBe(1)
     const arg = (await import('@/api/asset')).getAssetDetail.mock.calls[0][0]
-    expect(arg).toEqual({ id: 'a1', workspaceId: 'ws1' })
+    expect(arg).toEqual({ id: 'a1' })
     wrapper.unmount()
   })
 })

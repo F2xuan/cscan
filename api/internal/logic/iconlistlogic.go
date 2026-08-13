@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -41,8 +39,7 @@ func (l *IconListLogic) IconList(req *types.IconListReq) (*types.IconListResp, e
 		req.PageSize = 10
 	}
 
-	workspaceId := middleware.GetWorkspaceId(l.ctx)
-	stats, err := l.aggregateIconStats(workspaceId)
+	stats, err := l.aggregateIconStats()
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +76,7 @@ func (l *IconListLogic) IconList(req *types.IconListReq) (*types.IconListResp, e
 	for _, s := range pageStats {
 		pageHashes = append(pageHashes, s.IconHash)
 	}
-	assetsByHash, err := l.findIconAssetsBatch(workspaceId, pageHashes)
+	assetsByHash, err := l.findIconAssetsBatch(pageHashes)
 	if err != nil {
 		return nil, err
 	}
@@ -155,13 +152,12 @@ func (l *IconListLogic) pickIconPresentation(iconHash, iconDataFromStat string, 
 }
 
 func (l *IconListLogic) IconStat() (*types.IconStatResp, error) {
-	workspaceId := middleware.GetWorkspaceId(l.ctx)
-	stats, err := l.aggregateIconStats(workspaceId)
+	stats, err := l.aggregateIconStats()
 	if err != nil {
 		return nil, err
 	}
 
-	newCount, err := l.countNewIconAssets(workspaceId)
+	newCount, err := l.countNewIconAssets()
 	if err != nil {
 		return nil, err
 	}
@@ -169,39 +165,20 @@ func (l *IconListLogic) IconStat() (*types.IconStatResp, error) {
 	return &types.IconStatResp{Code: 0, Msg: "success", Total: len(stats), NewCount: int(newCount)}, nil
 }
 
-func (l *IconListLogic) aggregateIconStats(workspaceId string) ([]model.IconHashStatResult, error) {
-	// 聚合结果走 60s 缓存（带 singleflight 防击穿），扫描完成可主动失效
-	cacheKey := "icon_stats:" + workspaceId
+func (l *IconListLogic) aggregateIconStats() ([]model.IconHashStatResult, error) {
+	cacheKey := "icon_stats"
 	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-		merged := make(map[string]model.IconHashStatResult)
-		for _, wsId := range wsIds {
-			stats, err := l.svcCtx.GetAssetModel(wsId).AggregateIconHash(l.ctx, 1000)
-			if err != nil {
-				return nil, err
-			}
-			for _, stat := range stats {
-				existing := merged[stat.IconHash]
-				existing.IconHash = stat.IconHash
-				existing.Count += stat.Count
-				if len(existing.IconData) == 0 && len(stat.IconData) > 0 {
-					existing.IconData = stat.IconData
-				}
-				merged[stat.IconHash] = existing
-			}
+		stats, err := l.svcCtx.GetAssetModel().AggregateIconHash(l.ctx, 1000)
+		if err != nil {
+			return nil, err
 		}
-
-		results := make([]model.IconHashStatResult, 0, len(merged))
-		for _, stat := range merged {
-			results = append(results, stat)
-		}
-		sort.Slice(results, func(i, j int) bool {
-			if results[i].Count == results[j].Count {
-				return results[i].IconHash < results[j].IconHash
+		sort.Slice(stats, func(i, j int) bool {
+			if stats[i].Count == stats[j].Count {
+				return stats[i].IconHash < stats[j].IconHash
 			}
-			return results[i].Count > results[j].Count
+			return stats[i].Count > stats[j].Count
 		})
-		return results, nil
+		return stats, nil
 	})
 	if err != nil {
 		return nil, err
@@ -216,31 +193,28 @@ func (l *IconListLogic) aggregateIconStats(workspaceId string) ([]model.IconHash
 // 一次 $in 查询所有 hash，再按 hash 分组，每个 hash 最多保留 20 条最新资产
 // 优化点：用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner 等大字段
 // （只需要 host/iconHashFile/screenshot/createTime/updateTime/iconHashBytes）
-func (l *IconListLogic) findIconAssetsBatch(workspaceId string, iconHashes []string) (map[string][]model.Asset, error) {
+func (l *IconListLogic) findIconAssetsBatch(iconHashes []string) (map[string][]model.Asset, error) {
 	if len(iconHashes) == 0 {
 		return make(map[string][]model.Asset), nil
 	}
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	result := make(map[string][]model.Asset, len(iconHashes))
 
-	// 每个 ws 一次 $in 查询；用 sort + 限制总量避免拉过多
+	// 一次 $in 查询所有 hash；用 sort + 限制总量避免拉过多
 	// 单个 hash 最多需要 20 条，N 个 hash 最多 N*20 条
 	limit := int64(len(iconHashes) * 20)
 	filter := bson.M{"icon_hash": bson.M{"$in": iconHashes}}
 
-	for _, wsId := range wsIds {
-		// 用 FindWithOffset 走 AssetScreenshotProjection（保留 screenshot/icon_hash_bytes，排除 cert/banner）
-		// 不用 FindWithSort（AssetListProjection 排除 screenshot/icon_hash_bytes，pickIconPresentation 需要这两个字段）
-		assets, err := l.svcCtx.GetAssetModel(wsId).FindWithOffset(l.ctx, filter, 0, limit, "-update_time")
-		if err != nil {
-			return nil, err
+	// 用 FindWithOffset 走 AssetScreenshotProjection（保留 screenshot/icon_hash_bytes，排除 cert/banner）
+	// 不用 FindWithSort（AssetListProjection 排除 screenshot/icon_hash_bytes，pickIconPresentation 需要这两个字段）
+	assets, err := l.svcCtx.GetAssetModel().FindWithOffset(l.ctx, filter, 0, limit, "-update_time")
+	if err != nil {
+		return nil, err
+	}
+	for _, asset := range assets {
+		if asset.IconHash == "" {
+			continue
 		}
-		for _, asset := range assets {
-			if asset.IconHash == "" {
-				continue
-			}
-			result[asset.IconHash] = append(result[asset.IconHash], asset)
-		}
+		result[asset.IconHash] = append(result[asset.IconHash], asset)
 	}
 
 	// 每个 hash 最多保留 20 条，并按 updateTime 降序
@@ -256,17 +230,8 @@ func (l *IconListLogic) findIconAssetsBatch(workspaceId string, iconHashes []str
 	return result, nil
 }
 
-func (l *IconListLogic) countNewIconAssets(workspaceId string) (int64, error) {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	var total int64
-	for _, wsId := range wsIds {
-		count, err := l.svcCtx.GetAssetModel(wsId).Count(l.ctx, bson.M{"icon_hash": bson.M{"$exists": true, "$ne": ""}, "new": true})
-		if err != nil {
-			return 0, err
-		}
-		total += count
-	}
-	return total, nil
+func (l *IconListLogic) countNewIconAssets() (int64, error) {
+	return l.svcCtx.GetAssetModel().Count(l.ctx, bson.M{"icon_hash": bson.M{"$exists": true, "$ne": ""}, "new": true})
 }
 
 func (l *IconListLogic) IconBatchDelete(req *types.IconBatchDeleteReq) (*types.BaseResp, error) {
@@ -274,7 +239,7 @@ func (l *IconListLogic) IconBatchDelete(req *types.IconBatchDeleteReq) (*types.B
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的Icon"}, nil
 	}
 
-	deleted, err := l.deleteIconAssets(middleware.GetWorkspaceId(l.ctx), bson.M{"icon_hash": bson.M{"$in": req.Ids}})
+	deleted, err := l.deleteIconAssets(bson.M{"icon_hash": bson.M{"$in": req.Ids}})
 	if err != nil {
 		return nil, err
 	}
@@ -285,22 +250,13 @@ func (l *IconListLogic) IconBatchDelete(req *types.IconBatchDeleteReq) (*types.B
 }
 
 func (l *IconListLogic) IconClear() (*types.BaseResp, error) {
-	deleted, err := l.deleteIconAssets(middleware.GetWorkspaceId(l.ctx), bson.M{"icon_hash": bson.M{"$exists": true, "$ne": ""}})
+	deleted, err := l.deleteIconAssets(bson.M{"icon_hash": bson.M{"$exists": true, "$ne": ""}})
 	if err != nil {
 		return nil, err
 	}
 	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 条资产"}, nil
 }
 
-func (l *IconListLogic) deleteIconAssets(workspaceId string, filter bson.M) (int64, error) {
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	var total int64
-	for _, wsId := range wsIds {
-		deleted, err := l.svcCtx.GetAssetModel(wsId).DeleteByFilter(l.ctx, filter)
-		if err != nil {
-			return 0, err
-		}
-		total += deleted
-	}
-	return total, nil
+func (l *IconListLogic) deleteIconAssets(filter bson.M) (int64, error) {
+	return l.svcCtx.GetAssetModel().DeleteByFilter(l.ctx, filter)
 }

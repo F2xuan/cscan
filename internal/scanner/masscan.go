@@ -164,7 +164,6 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 	assets := s.runMasscan(ctx, targets, opts)
 
 	return &ScanResult{
-		WorkspaceId:  config.WorkspaceId,
 		MainTaskId:   config.MainTaskId,
 		Assets:       assets,
 		SkippedHosts: s.collectSkippedHosts(),

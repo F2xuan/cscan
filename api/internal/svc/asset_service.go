@@ -28,7 +28,6 @@ func NewAssetService(db *mongo.Database) *AssetService {
 
 // GetAssetListReq represents a request to get asset list
 type GetAssetListReq struct {
-	WorkspaceId string
 	Filter      bson.M
 	Page        int
 	PageSize    int
@@ -56,7 +55,7 @@ type AssetWithScanSummary struct {
 // This method integrates with ScanResultService to provide enriched asset data
 // including directory scan counts, vulnerability scan counts, and high-risk vulnerability counts
 func (s *AssetService) GetAssetList(ctx context.Context, req *GetAssetListReq) (*GetAssetListResp, error) {
-	assetModel := model.NewAssetModel(s.db, req.WorkspaceId)
+	assetModel := model.NewAssetModel(s.db)
 
 	// Set default values
 	if req.Page <= 0 {
@@ -100,8 +99,7 @@ func (s *AssetService) GetAssetList(ctx context.Context, req *GetAssetListReq) (
 
 	// Fetch scan result summaries for all assets in one batch call
 	summaryReq := &GetScanResultSummaryReq{
-		WorkspaceId: req.WorkspaceId,
-		AssetIds:    assetIds,
+		AssetIds: assetIds,
 	}
 	summaryResp, err := s.scanResultService.GetScanResultSummary(ctx, summaryReq)
 	if err != nil {

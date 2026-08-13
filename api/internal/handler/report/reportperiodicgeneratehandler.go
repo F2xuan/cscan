@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 )
@@ -19,9 +18,8 @@ func ReportPeriodicGenerateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc 
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewReportPeriodicGenerateLogic(r.Context(), svcCtx)
-		resp, _ := l.PeriodicGenerate(&req, workspaceId)
+		resp, _ := l.PeriodicGenerate(&req)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}

@@ -138,8 +138,7 @@ var takeoverFingerprints = map[string][]string{
 // Scan 执行子域名暴力破解扫描
 func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets:      make([]*Asset, 0),
 	}
 

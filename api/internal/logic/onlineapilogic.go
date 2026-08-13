@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -71,9 +70,9 @@ func NewOnlineAPILogic(ctx context.Context, svc *svc.ServiceContext) *OnlineAPIL
 	return &OnlineAPILogic{ctx: ctx, svc: svc}
 }
 
-func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq, workspaceId string) (*types.OnlineSearchResp, error) {
+func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq) (*types.OnlineSearchResp, error) {
 	// 获取API配置
-	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
+	configModel := model.NewAPIConfigModel(l.svc.MongoDB)
 	config, err := configModel.FindByPlatform(l.ctx, req.Platform)
 	if err != nil {
 		logx.Errorf("OnlineAPI Search: find config failed, platform=%s, error=%v", req.Platform, err)
@@ -154,12 +153,10 @@ func (l *OnlineAPILogic) Search(req *types.OnlineSearchReq, workspaceId string) 
 }
 
 // Import 导入当前页资产（同步执行，由handler异步调用并上报进度）
-func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string, state *onlineImportTaskState) (*types.BaseResp, error) {
-	// 将 "all" 解析为真实的默认工作空间，避免写入 all_asset 集合
-	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svc, workspaceId)
-	assetModel := l.svc.GetAssetModel(workspaceId)
-	targetMetaModel := l.svc.GetAssetTargetMetaModel(workspaceId)
-	historyModel := l.svc.GetAssetHistoryModel(workspaceId)
+func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, state *onlineImportTaskState) (*types.BaseResp, error) {
+	assetModel := l.svc.GetAssetModel()
+	targetMetaModel := l.svc.GetAssetTargetMetaModel()
+	historyModel := l.svc.GetAssetHistoryModel()
 
 	imported := 0 // 新增数
 	skipped := 0  // 跳过（空主机 + 已存在）
@@ -199,7 +196,7 @@ func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string, 
 			skipped++
 		}
 		// 同步创建/更新顶层资产（AssetTargetMeta），确保资产出现在资产概览中
-		if err := targetMetaModel.EnsureForAsset(l.ctx, workspaceId, asset.Host, asset.Domain, nil); err != nil {
+		if err := targetMetaModel.EnsureForAsset(l.ctx, asset.Host, asset.Domain, nil); err != nil {
 			logx.Errorf("Import: failed to ensure target meta for host=%s: %v", asset.Host, err)
 		}
 
@@ -215,9 +212,8 @@ func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, workspaceId string, 
 }
 
 // ImportAll 导入全部资产（自动遍历所有页面，同步执行，由handler异步调用并上报进度）
-func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId string, state *onlineImportTaskState) (*types.OnlineImportAllResp, error) {
-	// 先用原始 workspaceId 获取API配置（配置存储在原始集合中）
-	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
+func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, state *onlineImportTaskState) (*types.OnlineImportAllResp, error) {
+	configModel := model.NewAPIConfigModel(l.svc.MongoDB)
 	config, err := configModel.FindByPlatform(l.ctx, req.Platform)
 	if err != nil {
 		logx.Errorf("OnlineAPI ImportAll: find config failed, platform=%s, error=%v", req.Platform, err)
@@ -228,10 +224,9 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 	}
 
 	// 将 "all" 解析为真实的默认工作空间，避免资产写入 all_asset 集合
-	workspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svc, workspaceId)
-	assetModel := l.svc.GetAssetModel(workspaceId)
-	targetMetaModel := l.svc.GetAssetTargetMetaModel(workspaceId)
-	historyModel := l.svc.GetAssetHistoryModel(workspaceId)
+	assetModel := l.svc.GetAssetModel()
+	targetMetaModel := l.svc.GetAssetTargetMetaModel()
+	historyModel := l.svc.GetAssetHistoryModel()
 	pageSize := req.PageSize
 	if pageSize <= 0 {
 		pageSize = 500
@@ -432,7 +427,7 @@ PageLoop:
 				totalSkipped++
 			}
 			// 同步创建/更新顶层资产（AssetTargetMeta），确保资产出现在资产概览中
-			if err := targetMetaModel.EnsureForAsset(l.ctx, workspaceId, asset.Host, asset.Domain, nil); err != nil {
+			if err := targetMetaModel.EnsureForAsset(l.ctx, asset.Host, asset.Domain, nil); err != nil {
 				logx.Errorf("ImportAll: failed to ensure target meta for host=%s: %v", asset.Host, err)
 			}
 
@@ -559,8 +554,8 @@ func (l *OnlineAPILogic) GetImportTaskResult(req *types.OnlineImportTaskResultRe
 	return &types.OnlineImportTaskResultResp{Code: 404, Msg: "任务不存在或已过期"}, nil
 }
 
-func (l *OnlineAPILogic) ConfigList(workspaceId string) (*types.APIConfigListResp, error) {
-	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
+func (l *OnlineAPILogic) ConfigList() (*types.APIConfigListResp, error) {
+	configModel := model.NewAPIConfigModel(l.svc.MongoDB)
 	docs, err := configModel.FindAll(l.ctx)
 	if err != nil {
 		return &types.APIConfigListResp{Code: 500, Msg: "查询失败"}, nil
@@ -582,8 +577,8 @@ func (l *OnlineAPILogic) ConfigList(workspaceId string) (*types.APIConfigListRes
 	return &types.APIConfigListResp{Code: 0, Msg: "success", List: list}, nil
 }
 
-func (l *OnlineAPILogic) ConfigSave(req *types.APIConfigSaveReq, workspaceId string) (*types.BaseResp, error) {
-	configModel := model.NewAPIConfigModel(l.svc.MongoDB, workspaceId)
+func (l *OnlineAPILogic) ConfigSave(req *types.APIConfigSaveReq) (*types.BaseResp, error) {
+	configModel := model.NewAPIConfigModel(l.svc.MongoDB)
 
 	if req.Id != "" {
 		update := bson.M{"update_time": time.Now()}

@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -21,9 +20,8 @@ func IPListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewIPLogic(r.Context(), svcCtx)
-		resp, err := l.IPList(&req, workspaceId)
+		resp, err := l.IPList(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -35,9 +33,8 @@ func IPListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // IPStatHandler IP统计
 func IPStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewIPLogic(r.Context(), svcCtx)
-		resp, err := l.IPStat(workspaceId)
+		resp, err := l.IPStat()
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -55,9 +52,8 @@ func IPDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewIPLogic(r.Context(), svcCtx)
-		resp, err := l.IPDelete(&req, workspaceId)
+		resp, err := l.IPDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -75,9 +71,8 @@ func IPBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewIPLogic(r.Context(), svcCtx)
-		resp, err := l.IPBatchDelete(&req, workspaceId)
+		resp, err := l.IPBatchDelete(&req)
 		if err != nil {
 			response.Error(w, err)
 			return
@@ -89,9 +84,8 @@ func IPBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // IPClearHandler 清空 IP
 func IPClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		workspaceId := middleware.GetWorkspaceId(r.Context())
 		l := logic.NewIPClearLogic(r.Context(), svcCtx)
-		resp, err := l.IPClear(workspaceId)
+		resp, err := l.IPClear()
 		if err != nil {
 			response.Error(w, err)
 			return

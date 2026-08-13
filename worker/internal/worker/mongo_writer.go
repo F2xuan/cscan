@@ -10,19 +10,17 @@ import (
 )
 
 // saveAssetResultDirect 将扫描资产直接写入 MongoDB
-func (w *Worker) saveAssetResultDirect(ctx context.Context, workspaceID, mainTaskID, orgID string, assets []*scanner.Asset) error {
+func (w *Worker) saveAssetResultDirect(ctx context.Context, mainTaskID, orgID string, assets []*scanner.Asset) error {
 	if w.mongoDB == nil || len(assets) == 0 {
 		return nil
 	}
 
-	// 转换为 ScannerAsset DTO
 	scannerAssets := make([]*model.ScannerAsset, len(assets))
 	for i, asset := range assets {
 		scannerAssets[i] = scannerAssetToDTO(asset)
 	}
 
-	// 调用 AssetWriteService
-	svc := model.NewAssetWriteService(w.mongoDB, workspaceID)
+	svc := model.NewAssetWriteService(w.mongoDB)
 	result, err := svc.SaveAssets(ctx, mainTaskID, orgID, scannerAssets)
 	if err != nil {
 		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveAssets failed: %v", err)
@@ -35,19 +33,17 @@ func (w *Worker) saveAssetResultDirect(ctx context.Context, workspaceID, mainTas
 }
 
 // saveVulResultDirect 将漏洞结果直接写入 MongoDB
-func (w *Worker) saveVulResultDirect(ctx context.Context, workspaceID, mainTaskID string, vuls []*scanner.Vulnerability) error {
+func (w *Worker) saveVulResultDirect(ctx context.Context, mainTaskID string, vuls []*scanner.Vulnerability) error {
 	if w.mongoDB == nil || len(vuls) == 0 {
 		return nil
 	}
 
-	// 转换为 ScannerVulnerability DTO
 	scannerVuls := make([]*model.ScannerVulnerability, len(vuls))
 	for i, vul := range vuls {
 		scannerVuls[i] = scannerVulToDTO(vul)
 	}
 
-	// 调用 VulWriteService
-	svc := model.NewVulWriteService(w.mongoDB, workspaceID)
+	svc := model.NewVulWriteService(w.mongoDB)
 	result, err := svc.SaveVuls(ctx, mainTaskID, scannerVuls)
 	if err != nil {
 		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveVuls failed: %v", err)
@@ -60,12 +56,11 @@ func (w *Worker) saveVulResultDirect(ctx context.Context, workspaceID, mainTaskI
 }
 
 // saveCertResultsDirect 将证书结果直接写入 MongoDB
-func (w *Worker) saveCertResultsDirect(ctx context.Context, workspaceID, mainTaskID string, certs []*scanner.CertResult) error {
+func (w *Worker) saveCertResultsDirect(ctx context.Context, mainTaskID string, certs []*scanner.CertResult) error {
 	if w.mongoDB == nil || len(certs) == 0 {
 		return nil
 	}
 
-	// 转换为 ScannerCert DTO
 	scannerCerts := make([]*model.ScannerCert, len(certs))
 	for i, c := range certs {
 		scannerCerts[i] = &model.ScannerCert{
@@ -87,8 +82,7 @@ func (w *Worker) saveCertResultsDirect(ctx context.Context, workspaceID, mainTas
 		}
 	}
 
-	// 调用 CertWriteService
-	svc := model.NewCertWriteService(w.mongoDB, workspaceID)
+	svc := model.NewCertWriteService(w.mongoDB)
 	if err := svc.SaveCerts(ctx, mainTaskID, scannerCerts); err != nil {
 		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveCerts failed: %v", err)
 		return err
@@ -99,12 +93,11 @@ func (w *Worker) saveCertResultsDirect(ctx context.Context, workspaceID, mainTas
 }
 
 // saveJSFinderResultDirect 将 JSFinder 结果直接写入 MongoDB
-func (w *Worker) saveJSFinderResultDirect(ctx context.Context, workspaceID, mainTaskID string, results []*JSFinderResultItem) error {
+func (w *Worker) saveJSFinderResultDirect(ctx context.Context, mainTaskID string, results []*JSFinderResultItem) error {
 	if w.mongoDB == nil || len(results) == 0 {
 		return nil
 	}
 
-	// 转换为 ScannerJSFinderResult DTO
 	scannerResults := make([]*model.ScannerJSFinderResult, len(results))
 	for i, r := range results {
 		scannerResults[i] = &model.ScannerJSFinderResult{
@@ -124,8 +117,7 @@ func (w *Worker) saveJSFinderResultDirect(ctx context.Context, workspaceID, main
 		}
 	}
 
-	// 调用 JSFinderWriteService
-	svc := model.NewJSFinderWriteService(w.mongoDB, workspaceID)
+	svc := model.NewJSFinderWriteService(w.mongoDB)
 	if err := svc.SaveResults(ctx, mainTaskID, scannerResults); err != nil {
 		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveJSFinderResult failed: %v", err)
 		return err
@@ -136,12 +128,11 @@ func (w *Worker) saveJSFinderResultDirect(ctx context.Context, workspaceID, main
 }
 
 // saveDirScanResultsDirect 将目录扫描结果直接写入 MongoDB
-func (w *Worker) saveDirScanResultsDirect(ctx context.Context, workspaceID, mainTaskID string, results []DirScanResultDocument) error {
+func (w *Worker) saveDirScanResultsDirect(ctx context.Context, mainTaskID string, results []DirScanResultDocument) error {
 	if w.mongoDB == nil || len(results) == 0 {
 		return nil
 	}
 
-	// 转换为 ScannerDirScanResult DTO
 	scannerResults := make([]*model.ScannerDirScanResult, len(results))
 	for i, r := range results {
 		scannerResults[i] = &model.ScannerDirScanResult{
@@ -163,8 +154,7 @@ func (w *Worker) saveDirScanResultsDirect(ctx context.Context, workspaceID, main
 		}
 	}
 
-	// 调用 DirScanWriteService
-	svc := model.NewDirScanWriteService(w.mongoDB, workspaceID)
+	svc := model.NewDirScanWriteService(w.mongoDB)
 	if err := svc.SaveResults(ctx, mainTaskID, scannerResults); err != nil {
 		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveDirScanResults failed: %v", err)
 		return err
@@ -175,12 +165,12 @@ func (w *Worker) saveDirScanResultsDirect(ctx context.Context, workspaceID, main
 }
 
 // updateExecutorTaskDirect 直接更新 MongoDB 中的 executor_task 状态/结果
-func (w *Worker) updateExecutorTaskDirect(ctx context.Context, workspaceID, taskID, state, result string) {
+func (w *Worker) updateExecutorTaskDirect(ctx context.Context, taskID, state, result string) {
 	if w.mongoDB == nil {
 		return
 	}
 
-	executorTaskModel := model.NewExecutorTaskModel(w.mongoDB, workspaceID)
+	executorTaskModel := model.NewExecutorTaskModel(w.mongoDB)
 	update := map[string]interface{}{
 		"status": state,
 		"result": result,
@@ -215,7 +205,6 @@ func scannerAssetToDTO(asset *scanner.Asset) *model.ScannerAsset {
 		Source:     asset.Source,
 	}
 
-	// 转换 IP 信息
 	for _, ip := range asset.IPV4 {
 		dto.IPV4 = append(dto.IPV4, model.ScannerIPInfo{
 			IP:       ip.IP,

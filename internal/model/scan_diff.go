@@ -13,11 +13,10 @@ import (
 
 // ScanDiff 记录某次扫描相对上一次任务的变化（新增/更新/已修复）。
 // 它是"变化基线"的持久实体，替代原先只能靠 new=true 反查的近似做法（G1）。
-// 集合: {workspaceId}_scan_diff
+// 集合: scan_diff
 type ScanDiff struct {
 	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	TaskId      string             `bson:"task_id" json:"taskId"`
-	WorkspaceId string             `bson:"workspace_id" json:"workspaceId"`
 	DiffType    string             `bson:"diff_type" json:"diffType"`   // asset / vul
 	ChangeType  string             `bson:"change_type" json:"changeType"` // added / updated / resolved
 	Severity    string             `bson:"severity,omitempty" json:"severity,omitempty"` // 风险严重级别（漏洞变化记录携带，供 T1.4 排序/展示）
@@ -51,16 +50,13 @@ type ScanDiffModel struct {
 	coll *mongo.Collection
 }
 
-// NewScanDiffModel 创建变化快照模型，集合 {workspaceId}_scan_diff。
+// NewScanDiffModel 创建变化快照模型。
 // 索引通过 ensureIndexes 创建（与 §1.3 约定一致，不登记到 model/indexes.go 死代码）。
-func NewScanDiffModel(db *mongo.Database, workspaceId string) *ScanDiffModel {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func NewScanDiffModel(db *mongo.Database) *ScanDiffModel {
 	coll := db.Collection("scan_diff")
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "task_id", Value: 1}}},
-		{Keys: bson.D{{Key: "workspace_id", Value: 1}, {Key: "create_time", Value: -1}}},
+		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 		{Keys: bson.D{{Key: "change_type", Value: 1}, {Key: "create_time", Value: -1}}},
 	}
 	if err := ensureIndexes(coll, indexes); err != nil {
@@ -102,9 +98,9 @@ func (m *ScanDiffModel) BatchInsert(ctx context.Context, docs []ScanDiff) error 
 }
 
 // FindByTaskId 按任务查询变化明细，支持按 diff_type / change_type 过滤与分页
-func (m *ScanDiffModel) FindByTaskId(ctx context.Context, workspaceId, taskId, diffType, changeType string, page, pageSize int64) ([]ScanDiff, int64, error) {
+func (m *ScanDiffModel) FindByTaskId(ctx context.Context, taskId, diffType, changeType string, page, pageSize int64) ([]ScanDiff, int64, error) {
 	page, pageSize = NormalizePage(page, pageSize)
-	filter := bson.M{"workspace_id": workspaceId, "task_id": taskId}
+	filter := bson.M{"task_id": taskId}
 	if diffType != "" {
 		filter["diff_type"] = diffType
 	}
@@ -132,8 +128,8 @@ func (m *ScanDiffModel) FindByTaskId(ctx context.Context, workspaceId, taskId, d
 }
 
 // CountByTaskIdAndType 统计某任务下指定类型的变化条数（用于通知口径对齐）
-func (m *ScanDiffModel) CountByTaskIdAndType(ctx context.Context, workspaceId, taskId, diffType, changeType string) (int64, error) {
-	filter := bson.M{"workspace_id": workspaceId, "task_id": taskId}
+func (m *ScanDiffModel) CountByTaskIdAndType(ctx context.Context, taskId, diffType, changeType string) (int64, error) {
+	filter := bson.M{"task_id": taskId}
 	if diffType != "" {
 		filter["diff_type"] = diffType
 	}
@@ -144,8 +140,8 @@ func (m *ScanDiffModel) CountByTaskIdAndType(ctx context.Context, workspaceId, t
 }
 
 // FindByTimeRange 按时间范围查询变化记录
-func (m *ScanDiffModel) FindByTimeRange(ctx context.Context, workspaceId string, start, end time.Time, diffType, changeType string) ([]ScanDiff, error) {
-	filter := bson.M{"workspace_id": workspaceId}
+func (m *ScanDiffModel) FindByTimeRange(ctx context.Context, start, end time.Time, diffType, changeType string) ([]ScanDiff, error) {
+	filter := bson.M{}
 	if !start.IsZero() || !end.IsZero() {
 		tr := bson.M{}
 		if !start.IsZero() {
@@ -176,8 +172,8 @@ func (m *ScanDiffModel) FindByTimeRange(ctx context.Context, workspaceId string,
 }
 
 // Stat 按 diff_type + change_type 聚合计数（用于工作台/通知统计）
-func (m *ScanDiffModel) Stat(ctx context.Context, workspaceId string, start, end time.Time) ([]ScanDiffStatItem, error) {
-	match := bson.M{"workspace_id": workspaceId}
+func (m *ScanDiffModel) Stat(ctx context.Context, start, end time.Time) ([]ScanDiffStatItem, error) {
+	match := bson.M{}
 	if !start.IsZero() || !end.IsZero() {
 		tr := bson.M{}
 		if !start.IsZero() {
@@ -227,10 +223,9 @@ func (m *ScanDiffModel) Stat(ctx context.Context, workspaceId string, start, end
 }
 
 // DeleteOlderThan 清理超过保留期的变化记录，返回删除条数
-func (m *ScanDiffModel) DeleteOlderThan(ctx context.Context, workspaceId string, olderThan time.Time) (int64, error) {
+func (m *ScanDiffModel) DeleteOlderThan(ctx context.Context, olderThan time.Time) (int64, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
-		"create_time":  bson.M{"$lt": olderThan},
+		"create_time": bson.M{"$lt": olderThan},
 	}
 	res, err := m.coll.DeleteMany(ctx, filter)
 	if err != nil {

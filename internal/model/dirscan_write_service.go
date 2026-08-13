@@ -29,20 +29,15 @@ type ScannerDirScanResult struct {
 
 // DirScanWriteService 目录扫描结果写入服务，封装完整的保存业务逻辑
 type DirScanWriteService struct {
-	db          *mongo.Database
-	workspaceId string
-	dirModel    *DirScanResultModel
+	db       *mongo.Database
+	dirModel *DirScanResultModel
 }
 
 // NewDirScanWriteService 创建目录扫描结果写入服务
-func NewDirScanWriteService(db *mongo.Database, workspaceId string) *DirScanWriteService {
-	if workspaceId == "" {
-		workspaceId = "default"
-	}
+func NewDirScanWriteService(db *mongo.Database) *DirScanWriteService {
 	return &DirScanWriteService{
-		db:          db,
-		workspaceId: workspaceId,
-		dirModel:    NewDirScanResultModel(db, workspaceId),
+		db:       db,
+		dirModel: NewDirScanResultModel(db),
 	}
 }
 
@@ -60,7 +55,6 @@ func (s *DirScanWriteService) SaveResults(ctx context.Context, mainTaskID string
 
 	for _, r := range results {
 		docs = append(docs, &DirScanResult{
-			WorkspaceId:   s.workspaceId,
 			MainTaskId:    mainTaskID,
 			Authority:     r.Authority,
 			Host:          r.Host,

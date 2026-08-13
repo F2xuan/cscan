@@ -20,7 +20,6 @@ const (
 // DirScanResult 目录扫描结果
 type DirScanResult struct {
 	Id            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	WorkspaceId   string             `bson:"workspace_id" json:"workspaceId"`
 	MainTaskId    string             `bson:"main_task_id" json:"mainTaskId"`
 	Authority     string             `bson:"authority" json:"authority"`
 	Host          string             `bson:"host" json:"host"`
@@ -59,14 +58,14 @@ type DirScanResultModel struct {
 	coll *mongo.Collection
 }
 
-// NewDirScanResultModel 兼容旧调用方的全局集合模型
-func NewDirScanResultModel(db *mongo.Database, workspaceId ...string) *DirScanResultModel {
+// NewDirScanResultModel 全局集合模型
+func NewDirScanResultModel(db *mongo.Database) *DirScanResultModel {
 	return &DirScanResultModel{
 		coll: db.Collection("dirscan_result"),
 	}
 }
 
-// Collection 返回底层集合（便于跨workspace查询）
+// Collection 返回底层集合
 func (m *DirScanResultModel) Collection() *mongo.Collection {
 	return m.coll
 }
@@ -74,7 +73,6 @@ func (m *DirScanResultModel) Collection() *mongo.Collection {
 // EnsureIndexes 创建索引
 func (m *DirScanResultModel) EnsureIndexes(ctx context.Context) error {
 	indexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "workspace_id", Value: 1}}},
 		{Keys: bson.D{{Key: "main_task_id", Value: 1}}},
 		{Keys: bson.D{{Key: "authority", Value: 1}}},
 		{Keys: bson.D{{Key: "url", Value: 1}}, Options: options.Index().SetUnique(true)},
@@ -82,7 +80,6 @@ func (m *DirScanResultModel) EnsureIndexes(ctx context.Context) error {
 		{Keys: bson.D{{Key: "update_time", Value: -1}}},
 		// 复合索引
 		{Keys: bson.D{
-			{Key: "workspace_id", Value: 1},
 			{Key: "authority", Value: 1},
 			{Key: "host", Value: 1},
 			{Key: "port", Value: 1},
@@ -171,7 +168,6 @@ func (m *DirScanResultModel) Upsert(ctx context.Context, doc *DirScanResult) err
 	filter := bson.M{"url": doc.URL}
 	update := bson.M{
 		"$set": bson.M{
-			"workspace_id":   doc.WorkspaceId,
 			"main_task_id":   doc.MainTaskId,
 			"authority":      doc.Authority,
 			"host":           doc.Host,
@@ -231,7 +227,6 @@ func (m *DirScanResultModel) UpsertMany(ctx context.Context, docs []*DirScanResu
 			filter := bson.M{"url": doc.URL}
 			setOnInsert := bson.M{
 				"_id":          primitive.NewObjectID(),
-				"workspace_id": doc.WorkspaceId,
 				"main_task_id": doc.MainTaskId,
 				"create_time":  doc.CreateTime,
 				"authority":    doc.Authority,
@@ -348,25 +343,6 @@ func (m *DirScanResultModel) EstimatedCount(ctx context.Context) (int64, error) 
 	return m.coll.EstimatedDocumentCount(ctx)
 }
 
-// FindByWorkspace 根据工作空间查询
-func (m *DirScanResultModel) FindByWorkspace(ctx context.Context, workspaceId string, page, pageSize int) ([]DirScanResult, error) {
-	page, pageSize = NormalizePage(page, pageSize)
-	filter := bson.M{}
-	if workspaceId != "" && workspaceId != "all" {
-		filter["workspace_id"] = workspaceId
-	}
-	return m.FindByFilter(ctx, filter, page, pageSize)
-}
-
-// CountByWorkspace 根据工作空间统计
-func (m *DirScanResultModel) CountByWorkspace(ctx context.Context, workspaceId string) (int64, error) {
-	filter := bson.M{}
-	if workspaceId != "" && workspaceId != "all" {
-		filter["workspace_id"] = workspaceId
-	}
-	return m.CountByFilter(ctx, filter)
-}
-
 // FindByTaskId 根据任务ID查询
 func (m *DirScanResultModel) FindByTaskId(ctx context.Context, taskId string) ([]DirScanResult, error) {
 	return m.FindByFilter(ctx, bson.M{"main_task_id": taskId}, 0, 0)
@@ -402,19 +378,6 @@ func (m *DirScanResultModel) DeleteByIds(ctx context.Context, ids []string) (int
 	return result.DeletedCount, nil
 }
 
-// DeleteByWorkspace 根据工作空间删除
-func (m *DirScanResultModel) DeleteByWorkspace(ctx context.Context, workspaceId string) (int64, error) {
-	filter := bson.M{}
-	if workspaceId != "" && workspaceId != "all" {
-		filter["workspace_id"] = workspaceId
-	}
-	result, err := m.coll.DeleteMany(ctx, filter)
-	if err != nil {
-		return 0, err
-	}
-	return result.DeletedCount, nil
-}
-
 // DeleteByFilter 根据条件删除
 func (m *DirScanResultModel) DeleteByFilter(ctx context.Context, filter bson.M) (int64, error) {
 	result, err := m.coll.DeleteMany(ctx, filter)
@@ -434,11 +397,8 @@ func (m *DirScanResultModel) DeleteMany(ctx context.Context, filter bson.M) (int
 }
 
 // Stat 统计信息
-func (m *DirScanResultModel) Stat(ctx context.Context, workspaceId string) (map[string]int64, error) {
+func (m *DirScanResultModel) Stat(ctx context.Context) (map[string]int64, error) {
 	filter := bson.M{}
-	if workspaceId != "" && workspaceId != "all" {
-		filter["workspace_id"] = workspaceId
-	}
 
 	total, err := m.coll.CountDocuments(ctx, filter)
 	if err != nil {
@@ -484,9 +444,8 @@ func (m *DirScanResultModel) Stat(ctx context.Context, workspaceId string) (map[
 
 // FindFoundForReverify 取待复验的已发现目录/文件（状态码 2xx/3xx，视为暴露）。
 // 修复 M-11：排除已 resolved 的记录，并按 last_reverified_time 升序排序以轮转目标，避免饥饿。
-func (m *DirScanResultModel) FindFoundForReverify(ctx context.Context, workspaceId string, limit int) ([]DirScanResult, error) {
+func (m *DirScanResultModel) FindFoundForReverify(ctx context.Context, limit int) ([]DirScanResult, error) {
 	filter := bson.M{
-		"workspace_id": workspaceId,
 		"status_code":  bson.M{"$gte": 200, "$lt": 400},
 		// 排除已复验为 resolved 的记录（原实现不过滤，已修复的目标会被反复选取）
 		"reverify_status": bson.M{"$ne": DirReverifyStatusResolved},

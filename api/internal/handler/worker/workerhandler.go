@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
@@ -108,18 +108,13 @@ func WorkerSetConcurrencyHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // WorkerLogsClearHandler 清空历史日志
 func WorkerLogsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 清空 Worker 日志文件（保留目录结构）
-		// 注意：文件日志不可像 Redis Stream 那样精确 Del，这里清空当前日期的日志文件
-		if svcCtx.WorkerLogReader != nil {
-			dates, _ := svcCtx.WorkerLogReader.ListDates()
-			for _, date := range dates {
-				workers, _ := svcCtx.WorkerLogReader.ListWorkers(date)
-				for _, workerName := range workers {
-					// 清空文件内容（不删除文件，避免竞态）
-					fpath := fmt.Sprintf("%s/%s/%s.log", svcCtx.WorkerLogReader.GetLogDir(), date, workerName)
-					os.Truncate(fpath, 0)
-				}
-			}
+		if svcCtx.WorkerLogReader == nil {
+			response.Error(w, xerr.NewServerError("worker log reader not initialized"))
+			return
+		}
+		if err := svcCtx.WorkerLogReader.Clear(); err != nil {
+			response.Error(w, err)
+			return
 		}
 		httpx.OkJson(w, &types.BaseResp{Code: 0, Msg: "日志已清空"})
 	}
@@ -129,12 +124,11 @@ func WorkerLogsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Limit   int    `json:"limit"`   // 返回条数，默认500
-			Worker  string `json:"worker"`  // 指定 Worker 名称
-			Level   string `json:"level"`   // 过滤日志级别
-			Search  string `json:"search"`  // 模糊搜索关键词
-			Date    string `json:"date"`    // 指定日期 YYYY-MM-DD，空则取最新
-			Refresh bool   `json:"refresh"` // 是否触发同步（用户点击刷新按钮）
+			Limit  int    `json:"limit"`  // 返回条数，默认500
+			Worker string `json:"worker"` // 指定 Worker 名称
+			Level  string `json:"level"`  // 过滤日志级别
+			Search string `json:"search"` // 模糊搜索关键词
+			Date   string `json:"date"`   // 指定日期 YYYY-MM-DD，空则取最新
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Limit <= 0 {
@@ -144,18 +138,11 @@ func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			req.Limit = 10000
 		}
 
-		// 用户点击刷新按钮时，触发一次日志同步
-		if req.Refresh && req.Worker != "" {
-			if svcCtx.TriggerWorkerLogSync != nil {
-				svcCtx.TriggerWorkerLogSync(req.Worker)
-			}
-		}
-
-		// 从文件读取日志
+		// 从 MongoDB 读取日志
 		var entries []svc.WorkerLogEntry
 		var err error
 		if req.Worker != "" {
-			entries, err = svcCtx.WorkerLogReader.ReadTail(req.Worker, req.Date, req.Limit*5)
+			entries, err = svcCtx.WorkerLogReader.ReadTail(req.Worker, req.Date, req.Limit)
 		} else {
 			// 未指定 Worker，读取所有 Worker 的日志合并
 			if req.Date == "" {

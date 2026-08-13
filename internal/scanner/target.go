@@ -1,14 +1,19 @@
 package scanner
 
 import (
+	"bytes"
 	"fmt"
 	"net"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// MaxExpandIPs CIDR/Range 展开上限，防止 OOM
+const MaxExpandIPs = 2048
 
 // TargetType 目标类型
 type TargetType string
@@ -24,12 +29,13 @@ const (
 
 // Target 解析后的目标
 type Target struct {
-	Raw      string     // 原始输入
-	Type     TargetType // 目标类型
-	Host     string     // 主机（IP或域名）
-	Port     int        // 端口（如果有）
-	IPs      []string   // 展开后的IP列表（用于CIDR和Range）
-	Protocol string     // 协议（http/https）
+	Raw             string     // 原始输入
+	Type            TargetType // 目标类型
+	Host            string     // 主机（IP或域名）
+	Port            int        // 端口（如果有）
+	IPs             []string   // 展开后的IP列表（用于CIDR和Range）
+	Protocol        string     // 协议（http/https）
+	TruncatedCount  int        // 展开超限被截断的 IP 数量（>0 表示有目标被丢弃，上层应告警）
 }
 
 // TargetParser 目标解析器
@@ -132,9 +138,24 @@ func (t *Target) Expand() []string {
 }
 
 // parseURL 解析URL
+// 使用 net/url.Parse 正确处理 query string、userinfo、IPv6 等边界情况
 func (p *TargetParser) parseURL(raw string) *Target {
 	target := &Target{Raw: raw, Type: TargetTypeURL}
 
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		target.Protocol = u.Scheme
+		target.Host = u.Hostname()
+		if port, err := strconv.Atoi(u.Port()); err == nil && port > 0 && port <= 65535 {
+			target.Port = port
+		} else if target.Protocol == "https" {
+			target.Port = 443
+		} else {
+			target.Port = 80
+		}
+		return target
+	}
+
+	// url.Parse 失败，退回手动解析
 	if strings.HasPrefix(raw, "https://") {
 		target.Protocol = "https"
 		raw = strings.TrimPrefix(raw, "https://")
@@ -142,13 +163,9 @@ func (p *TargetParser) parseURL(raw string) *Target {
 		target.Protocol = "http"
 		raw = strings.TrimPrefix(raw, "http://")
 	}
-
-	// 分离路径
 	if idx := strings.Index(raw, "/"); idx > 0 {
 		raw = raw[:idx]
 	}
-
-	// 分离端口
 	if host, port, ok := p.parseHostPort(raw); ok {
 		target.Host = host
 		target.Port = port
@@ -160,7 +177,6 @@ func (p *TargetParser) parseURL(raw string) *Target {
 			target.Port = 80
 		}
 	}
-
 	return target
 }
 
@@ -181,8 +197,9 @@ func (p *TargetParser) parseCIDR(raw string) *Target {
 	count := 0
 	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIPLocal(ip) {
 		count++
-		if count > 2048 {
-			logx.Errorf("TargetParser: CIDR range %s exceeded 2048 IPs, silently truncated to prevent exhaustion", raw)
+		if count > MaxExpandIPs {
+			target.TruncatedCount = count - MaxExpandIPs
+			logx.Errorf("TargetParser: CIDR range %s exceeded %d IPs, truncated %d IPs", raw, MaxExpandIPs, target.TruncatedCount)
 			break
 		}
 		ips = append(ips, ip.String())
@@ -234,6 +251,14 @@ func (p *TargetParser) parseIPRange(raw string) *Target {
 		return target
 	}
 
+	// 逆序检查：startIP > endIP 时拒绝展开，避免溢出回绕产生错误 IP
+	if bytes.Compare(startIP.To4(), endIP.To4()) > 0 {
+		logx.Errorf("TargetParser: IP range %s has start > end, skipping expansion", raw)
+		target.Host = raw
+		target.Type = p.detectHostType(raw)
+		return target
+	}
+
 	// 展开IP范围
 	var ips []string
 	ip := make(net.IP, len(startIP))
@@ -241,13 +266,14 @@ func (p *TargetParser) parseIPRange(raw string) *Target {
 	count := 0
 	for ; !ip.Equal(endIP); incIPLocal(ip) {
 		count++
-		if count > 2048 {
-			logx.Errorf("TargetParser: IP range %s exceeded 2048 IPs, silently truncated to prevent exhaustion", raw)
+		if count > MaxExpandIPs {
+			target.TruncatedCount = count - MaxExpandIPs
+			logx.Errorf("TargetParser: IP range %s exceeded %d IPs, truncated %d IPs", raw, MaxExpandIPs, target.TruncatedCount)
 			break
 		}
 		ips = append(ips, ip.String())
 	}
-	if count <= 2048 {
+	if count <= MaxExpandIPs {
 		ips = append(ips, endIP.String())
 	}
 
@@ -257,12 +283,17 @@ func (p *TargetParser) parseIPRange(raw string) *Target {
 
 // parseHostPort 解析 host:port 格式
 func (p *TargetParser) parseHostPort(raw string) (host string, port int, ok bool) {
+	// 纯 IP（含 IPv6）不解析为 host:port，避免 2001:db8::1 被误拆
+	if net.ParseIP(raw) != nil {
+		return "", 0, false
+	}
+
 	// IPv6 格式: [::1]:8080
 	if strings.HasPrefix(raw, "[") {
 		if idx := strings.LastIndex(raw, "]:"); idx > 0 {
 			host = raw[1:idx]
 			portStr := raw[idx+2:]
-			if p, err := strconv.Atoi(portStr); err == nil {
+			if p, err := strconv.Atoi(portStr); err == nil && p > 0 && p <= 65535 {
 				return host, p, true
 			}
 		}
@@ -273,7 +304,7 @@ func (p *TargetParser) parseHostPort(raw string) (host string, port int, ok bool
 	if idx := strings.LastIndex(raw, ":"); idx > 0 {
 		host = raw[:idx]
 		portStr := raw[idx+1:]
-		if p, err := strconv.Atoi(portStr); err == nil {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 && p <= 65535 {
 			return host, p, true
 		}
 	}

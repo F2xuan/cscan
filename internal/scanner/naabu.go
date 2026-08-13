@@ -225,7 +225,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	}
 
 	if len(cleanTargets) == 0 {
-		return &ScanResult{WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
+		return &ScanResult{MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
 	// 确保 Worker Pool 大小继承 worker 自适应值
@@ -255,12 +255,12 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	assets, thresholdExceeded := s.runNaabuCLI(ctx, config, opts)
 	if thresholdExceeded {
 		return &ScanResult{
-			WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+			MainTaskId: config.MainTaskId,
 			Assets: assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
 		}, ErrPortThresholdExceeded
 	}
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId, MainTaskId: config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 		Assets: assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
 	}, nil
 }

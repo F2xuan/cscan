@@ -39,7 +39,6 @@ type TaskCompleteInfo struct {
 	VulCount    int       `json:"vulCount"`
 	StartTime   time.Time `json:"startTime"`
 	EndTime     time.Time `json:"endTime"`
-	WorkspaceId string    `json:"workspaceId"`
 }
 
 // BuildNotifyResult 从任务完成信息构建通知结果
@@ -65,7 +64,6 @@ func BuildNotifyResult(info *TaskCompleteInfo) *NotifyResult {
 		Duration:    duration,
 		StartTime:   info.StartTime,
 		EndTime:     info.EndTime,
-		WorkspaceId: info.WorkspaceId,
 	}
 }
 

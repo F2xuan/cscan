@@ -53,21 +53,15 @@ func resolveAssetIP(ip model.IP, host string) (string, string) {
 
 // SiteList 站点列表 - 只返回Web资产（HTTP/HTTPS服务）
 // 判断条件：is_http=true 或 service=http/https 或 有title 或 有screenshot
-func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types.SiteListResp, error) {
+func (l *SiteLogic) SiteList(req *types.SiteListReq) (*types.SiteListResp, error) {
 	resp := &types.SiteListResp{Code: 0, List: []types.Site{}}
-
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	if len(workspaceIds) == 0 {
-		return resp, nil
-	}
 
 	orgMap := common.LoadOrgMap(l.ctx, l.svcCtx)
 
 	var allSites []types.Site
 	totalCount := 0
 
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
 
 		// 构建Web资产查询条件
 		// Web资产判断：确保是有效的站点资产，有实际的Web特征(is_http, title, status, screenshot 等)
@@ -141,7 +135,7 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 		req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 		assets, err := assetModel.FindForSite(l.ctx, filter, req.Page, req.PageSize)
 		if err != nil {
-			continue
+			l.Logger.Errorf("SiteList 查询资产失败: %v", err)
 		}
 
 		for _, asset := range assets {
@@ -188,7 +182,6 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 			site.UpdateTime = asset.UpdateTime.Local().Format("2006-01-02 15:04:05")
 			site.CreateTime = asset.CreateTime.Local().Format("2006-01-02 15:04:05")
 			allSites = append(allSites, site)
-		}
 	}
 
 	resp.Total = totalCount
@@ -197,21 +190,12 @@ func (l *SiteLogic) SiteList(req *types.SiteListReq, workspaceId string) (*types
 }
 
 // SiteDelete 删除站点（实际删除对应的资产）
-func (l *SiteLogic) SiteDelete(req *types.SiteDeleteReq, workspaceId string) (*types.BaseResp, error) {
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		// 先检查资产是否存在
-		asset, err := assetModel.FindById(l.ctx, req.Id)
-		if err != nil {
-			continue
-		}
-		if asset != nil {
-			err = assetModel.Delete(l.ctx, req.Id)
-			if err == nil {
-				return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
-			}
+func (l *SiteLogic) SiteDelete(req *types.SiteDeleteReq) (*types.BaseResp, error) {
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
+	asset, err := assetModel.FindById(l.ctx, req.Id)
+	if err == nil && asset != nil {
+		if err = assetModel.Delete(l.ctx, req.Id); err == nil {
+			return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 		}
 	}
 
@@ -219,19 +203,13 @@ func (l *SiteLogic) SiteDelete(req *types.SiteDeleteReq, workspaceId string) (*t
 }
 
 // SiteBatchDelete 批量删除站点
-func (l *SiteLogic) SiteBatchDelete(req *types.SiteBatchDeleteReq, workspaceId string) (*types.BaseResp, error) {
+func (l *SiteLogic) SiteBatchDelete(req *types.SiteBatchDeleteReq) (*types.BaseResp, error) {
 	if len(req.Ids) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的站点"}, nil
 	}
 
-	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	var totalDeleted int64
-
-	for _, wsId := range workspaceIds {
-		assetModel := model.NewAssetModel(l.svcCtx.MongoDB, wsId)
-		deleted, _ := assetModel.BatchDelete(l.ctx, req.Ids)
-		totalDeleted += deleted
-	}
+	assetModel := model.NewAssetModel(l.svcCtx.MongoDB)
+	totalDeleted, _ := assetModel.BatchDelete(l.ctx, req.Ids)
 
 	if totalDeleted == 0 {
 		return &types.BaseResp{Code: 500, Msg: "删除失败，未找到匹配的站点"}, nil
@@ -244,15 +222,10 @@ func (l *SiteLogic) SiteBatchDelete(req *types.SiteBatchDeleteReq, workspaceId s
 // 优化点：
 //  1. 原实现每个 ws 跑 4 次 Count（4×N 次 collection scan），现改用 $facet 一次聚合（N 次）
 //  2. 整体结果走 60s 缓存
-func (l *SiteLogic) SiteStat(workspaceId string) (*types.SiteStatResp, error) {
-	cacheKey := "site_stat:" + workspaceId
+func (l *SiteLogic) SiteStat() (*types.SiteStatResp, error) {
+	cacheKey := "site_stat"
 	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
 		resp := &types.SiteStatResp{Code: 0}
-
-		workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-		if len(workspaceIds) == 0 {
-			return resp, nil
-		}
 
 		// Web资产过滤条件
 		webFilter := bson.M{
@@ -282,17 +255,15 @@ func (l *SiteLogic) SiteStat(workspaceId string) (*types.SiteStatResp, error) {
 			}},
 		}
 
-		for _, wsId := range workspaceIds {
-			assetModel := l.svcCtx.GetAssetModel(wsId)
-			stats, statErr := assetModel.AggregateSiteStats(l.ctx, webFilter, httpFilter, httpsFilter, newFilter)
-			if statErr != nil {
-				l.Logger.Errorf("SiteStat 聚合工作空间 %s 失败: %v", wsId, statErr)
-				continue
-			}
-			resp.Total += int(stats.Total)
-			resp.HttpCount += int(stats.Http)
-			resp.HttpsCount += int(stats.Https)
-			resp.NewCount += int(stats.NewCount)
+		assetModel := l.svcCtx.GetAssetModel()
+		stats, statErr := assetModel.AggregateSiteStats(l.ctx, webFilter, httpFilter, httpsFilter, newFilter)
+		if statErr != nil {
+			l.Logger.Errorf("SiteStat 聚合失败: %v", statErr)
+		} else {
+			resp.Total = int(stats.Total)
+			resp.HttpCount = int(stats.Http)
+			resp.HttpsCount = int(stats.Https)
+			resp.NewCount = int(stats.NewCount)
 		}
 
 		return resp, nil

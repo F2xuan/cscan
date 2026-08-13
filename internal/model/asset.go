@@ -80,7 +80,7 @@ type AssetModel struct {
 	coll *mongo.Collection
 }
 
-func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
+func NewAssetModel(db *mongo.Database) *AssetModel {
 	coll := db.Collection("asset")
 
 	// 创建索引
@@ -186,7 +186,7 @@ func (m *AssetModel) FindByAuthority(ctx context.Context, authority, taskId stri
 	return &doc, nil
 }
 
-// FindByAuthorityOnly 只按authority查找资产（不限制taskId）
+// FindByAuthorityOnly 按authority查找资产
 func (m *AssetModel) FindByAuthorityOnly(ctx context.Context, authority string) (*Asset, error) {
 	var doc Asset
 	filter := bson.M{"authority": authority}
@@ -529,11 +529,7 @@ func (m *AssetModel) Count(ctx context.Context, filter bson.M) (int64, error) {
 //     仅将当前页所需文档拉回，避免整表排序后切片。
 //
 // sortField 以 "-" 前缀表示降序（如 "-update_time"），无前缀表示升序。
-func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, wsIds []string, filter bson.M, skip, limit int64, sortField string) (int64, []AssetWithWs, error) {
-	if len(wsIds) == 0 {
-		return 0, nil, nil
-	}
-
+func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, filter bson.M, skip, limit int64, sortField string) (int64, []Asset, error) {
 	sortKey := sortField
 	sortOrder := 1
 	if strings.HasPrefix(sortKey, "-") {
@@ -553,7 +549,7 @@ func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, wsIds []string
 		return 0, nil, err
 	}
 	if total == 0 {
-		return 0, []AssetWithWs{}, nil
+		return 0, []Asset{}, nil
 	}
 
 	opts := options.Find().
@@ -573,17 +569,7 @@ func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, wsIds []string
 		return 0, nil, err
 	}
 
-	result := make([]AssetWithWs, 0, len(assets))
-	for i := range assets {
-		result = append(result, AssetWithWs{Asset: assets[i], WsId: wsIds[0]})
-	}
-	return total, result, nil
-}
-
-// AssetWithWs 在 Asset 基础上额外携带来源工作空间 ID（ws_id），用于跨 ws 聚合场景
-type AssetWithWs struct {
-	Asset `bson:",inline"`
-	WsId  string `bson:"ws_id" json:"wsId"`
+	return total, assets, nil
 }
 
 // EstimatedCount 使用集合元数据快速估算文档总数（O(1)），仅适用于空 filter 场景
@@ -1143,7 +1129,7 @@ type AssetHistoryModel struct {
 	coll *mongo.Collection
 }
 
-func NewAssetHistoryModel(db *mongo.Database, workspaceId string) *AssetHistoryModel {
+func NewAssetHistoryModel(db *mongo.Database) *AssetHistoryModel {
 	return &AssetHistoryModel{
 		coll: db.Collection("asset_history"),
 	}

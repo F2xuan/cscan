@@ -82,8 +82,7 @@ type HttpxCLIResult struct {
 // Scan 执行 httpx 扫描
 func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
+		MainTaskId: config.MainTaskId,
 	}
 
 	opts := &HttpxOptions{
@@ -419,7 +418,6 @@ func RunHttpxLib(ctx context.Context, assets []*Asset, opts *FingerprintOptions,
 	scanConfig := &ScanConfig{
 		Assets:      assets,
 		Options:     httpxOpts,
-		WorkspaceId: "",
 		MainTaskId:  "",
 		TaskLogger:  taskLog,
 	}

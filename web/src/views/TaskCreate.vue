@@ -12,6 +12,11 @@
         </el-form-item>
         <el-form-item :label="$t('task.scanTarget')" prop="target">
           <el-input v-model="form.target" type="textarea" :rows="6" :placeholder="$t('task.targetPlaceholder')" />
+          <div v-if="targetStats.total > 0" style="margin-top: 6px; font-size: 12px; color: var(--el-text-color-secondary);">
+            <span :style="{ color: targetStats.invalid > 0 ? 'var(--el-color-danger)' : '' }">{{
+              $t('task.targetCount', { total: targetStats.total, unique: targetStats.unique, invalid: targetStats.invalid })
+            }}</span>
+          </div>
         </el-form-item>
         <el-row :gutter="20">
           <el-col :span="12">
@@ -1786,6 +1791,25 @@ function buildConfig() {
   return config
 }
 
+// 目标实时计数：总数 / 去重后 / 非法
+const targetStats = computed(() => {
+  const raw = (form.target || '').trim()
+  if (!raw) return { total: 0, unique: 0, dedup: 0, invalid: 0 }
+  const lines = raw.split(/[\n\r]+/).map(s => s.trim()).filter(s => s && !s.startsWith('#'))
+  const items = []
+  for (const line of lines) {
+    for (const w of line.split(/[;,]+/)) {
+      const t = w.trim()
+      if (t) items.push(t)
+    }
+  }
+  const total = items.length
+  const unique = new Set(items.map(s => s.toLowerCase())).size
+  const dedup = total - unique
+  const invalid = items.filter(s => validateSingleTarget(s) !== null).length
+  return { total, unique, dedup, invalid }
+})
+
 async function handleSubmit() {
   try {
     await formRef.value.validate()
@@ -1814,7 +1838,7 @@ async function handleSubmit() {
         const config = buildConfig()
         await saveScanConfig({ config: JSON.stringify(config) })
       } catch (e) {
-        console.warn('保存用户配置失败:', e)
+        ElMessage.warning(t('task.defaultConfigSaveFailed'))
         // 不阻断任务创建流程
       }
     }
@@ -1839,8 +1863,31 @@ async function handleSubmit() {
     if (res.code === 0) {
       ElMessage.success(isEdit.value ? t('task.taskUpdateSuccess') : t('task.taskCreateSuccess'))
       if (!isEdit.value && res.id) {
-        await startTask({ id: res.id })
-        ElMessage.success(t('task.taskStarted'))
+        // 任务已创建为草稿，启动扫描前显式确认，避免误触立即执行昂贵扫描
+        let startConfirmed = false
+        try {
+          await ElMessageBox.confirm(
+            t('task.confirmStartAfterCreate'),
+            t('task.confirmStartTitle'),
+            { type: 'warning', confirmButtonText: t('task.startNow'), cancelButtonText: t('task.saveAsDraft') }
+          )
+          startConfirmed = true
+        } catch (e) {
+          startConfirmed = false
+        }
+        if (startConfirmed) {
+          try {
+            const startRes = await startTask({ id: res.id })
+            if (startRes && startRes.code === 0) {
+              ElMessage.success(t('task.taskStarted'))
+            } else {
+              // 启动失败不回滚已创建任务，提示用户手动启动
+              ElMessage.warning(t('task.taskCreatedButStartFailed'))
+            }
+          } catch (e) {
+            ElMessage.warning(t('task.taskCreatedButStartFailed'))
+          }
+        }
       }
       // 跳转回任务列表并带上新建任务 id，触发列表延迟刷新以更新任务状态
       router.push({ path: '/task', query: isEdit.value ? {} : { created: res.id || '1' } })

@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cscan/api/internal/logic"
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/pkg/response"
@@ -19,10 +18,6 @@ func JSFinderDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		if err := httpx.Parse(r, &req); err != nil {
 			response.ParamError(w, err.Error())
 			return
-		}
-
-		if req.WorkspaceId == "" {
-			req.WorkspaceId = middleware.GetWorkspaceId(r.Context())
 		}
 
 		l := logic.NewJSFinderLogic(r.Context(), svcCtx)

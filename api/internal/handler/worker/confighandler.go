@@ -76,7 +76,6 @@ type WorkerFingerprintsResp struct {
 
 // WorkerSubfinderReq Subfinder配置获取请求
 type WorkerSubfinderReq struct {
-	WorkspaceId string `json:"workspaceId"`
 }
 
 // WorkerSubfinderProvider Subfinder数据源

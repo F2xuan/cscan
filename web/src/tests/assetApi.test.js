@@ -15,14 +15,14 @@ beforeEach(() => {
 })
 
 describe('asset API 层', () => {
-  test('getAssetDetail 向 /asset/detail 发送 POST，并携带 id 与 workspaceId', async () => {
-    const res = await getAssetDetail({ id: 'a1', workspaceId: 'ws1' })
+  test('getAssetDetail 向 /asset/detail 发送 POST，并携带 id', async () => {
+    const res = await getAssetDetail({ id: 'a1' })
 
     expect(request).toHaveBeenCalledTimes(1)
     const arg = request.mock.calls[0][0]
     expect(arg.url).toBe('/asset/detail')
     expect(arg.method).toBe('post')
-    expect(arg.data).toEqual({ id: 'a1', workspaceId: 'ws1' })
+    expect(arg.data).toEqual({ id: 'a1' })
     expect(res.data.id).toBe('a1')
   })
 

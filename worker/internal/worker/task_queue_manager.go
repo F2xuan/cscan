@@ -281,11 +281,10 @@ func (m *TaskQueueManager) DequeueWait(ctx context.Context) (*scheduler.TaskInfo
 }
 
 // dropLowPriorityTaskLocked 丢弃低优先级任务（需要持有锁）
-// 修复 M2：当所有低优先级队列均空但 Urgent 队列有任务时，丢弃最新的 Urgent 任务
-// （丢新不丢旧：旧任务可能已积累部分上下文，重新入队代价更高）
+// 修复 #26：Urgent 任务永不丢弃，避免低优先级任务挤占 Urgent 槽位
 func (m *TaskQueueManager) dropLowPriorityTaskLocked() bool {
-	// 按优先级从低到高尝试丢弃任务
-	priorities := []TaskPriority{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent}
+	// 按优先级从低到高尝试丢弃，Urgent 除外
+	priorities := []TaskPriority{PriorityLow, PriorityNormal, PriorityHigh}
 
 	for _, priority := range priorities {
 		queue := m.queues[priority]

@@ -56,13 +56,9 @@ func sortedJoinLabels(labels []string) string {
 }
 
 // AssetUpdateLabels 更新资产标签
-func (l *AssetUpdateLabelsLogic) AssetUpdateLabels(req *types.AssetUpdateLabelsReq, workspaceId string) (resp *types.BaseResp, err error) {
-	targetWorkspace := workspaceId
-	if req.WorkspaceId != "" {
-		targetWorkspace = req.WorkspaceId
-	}
-	assetModel := l.svcCtx.GetAssetModel(targetWorkspace)
-	historyModel := l.svcCtx.GetAssetHistoryModel(targetWorkspace)
+func (l *AssetUpdateLabelsLogic) AssetUpdateLabels(req *types.AssetUpdateLabelsReq) (resp *types.BaseResp, err error) {
+	assetModel := l.svcCtx.GetAssetModel()
+	historyModel := l.svcCtx.GetAssetHistoryModel()
 
 	// 先获取旧标签用于历史记录
 	existing, _ := assetModel.FindById(l.ctx, req.Id)
@@ -101,13 +97,9 @@ func NewAssetAddLabelLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ass
 }
 
 // AssetAddLabel 添加资产标签
-func (l *AssetAddLabelLogic) AssetAddLabel(req *types.AssetAddLabelReq, workspaceId string) (resp *types.BaseResp, err error) {
-	targetWorkspace := workspaceId
-	if req.WorkspaceId != "" {
-		targetWorkspace = req.WorkspaceId
-	}
-	assetModel := l.svcCtx.GetAssetModel(targetWorkspace)
-	historyModel := l.svcCtx.GetAssetHistoryModel(targetWorkspace)
+func (l *AssetAddLabelLogic) AssetAddLabel(req *types.AssetAddLabelReq) (resp *types.BaseResp, err error) {
+	assetModel := l.svcCtx.GetAssetModel()
+	historyModel := l.svcCtx.GetAssetHistoryModel()
 
 	existing, _ := assetModel.FindById(l.ctx, req.Id)
 
@@ -146,13 +138,9 @@ func NewAssetRemoveLabelLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 }
 
 // AssetRemoveLabel 删除资产标签
-func (l *AssetRemoveLabelLogic) AssetRemoveLabel(req *types.AssetRemoveLabelReq, workspaceId string) (resp *types.BaseResp, err error) {
-	targetWorkspace := workspaceId
-	if req.WorkspaceId != "" {
-		targetWorkspace = req.WorkspaceId
-	}
-	assetModel := l.svcCtx.GetAssetModel(targetWorkspace)
-	historyModel := l.svcCtx.GetAssetHistoryModel(targetWorkspace)
+func (l *AssetRemoveLabelLogic) AssetRemoveLabel(req *types.AssetRemoveLabelReq) (resp *types.BaseResp, err error) {
+	assetModel := l.svcCtx.GetAssetModel()
+	historyModel := l.svcCtx.GetAssetHistoryModel()
 
 	existing, _ := assetModel.FindById(l.ctx, req.Id)
 

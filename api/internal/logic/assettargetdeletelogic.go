@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -33,7 +32,7 @@ func NewAssetTargetDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 // delete_assets=true 时连带删除匹配该目标的所有资产（含 host 和 domain/ip 维度）、
 // 关联漏洞、目录扫描结果、JSFinder 结果及资产历史记录。
 // delete_assets=false 仅删 meta 记录，业务数据保持原样。
-func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteReq, workspaceId string) (*types.AssetTargetDeleteResp, error) {
+func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteReq) (*types.AssetTargetDeleteResp, error) {
 	targetId := strings.TrimSpace(req.TargetId)
 	if targetId == "" {
 		return nil, fmt.Errorf("targetId is empty")
@@ -43,9 +42,7 @@ func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteR
 		return nil, err
 	}
 
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	owningWs := locateOwningWsMeta(l.ctx, l.svcCtx, wsIds, targetId)
-	if owningWs == "" {
+	if !targetMetaExists(l.ctx, l.svcCtx, targetId) {
 		return nil, xerr.NewNotFoundError(fmt.Sprintf("target %s not found", targetId))
 	}
 
@@ -67,41 +64,41 @@ func (l *AssetTargetDeleteLogic) AssetTargetDelete(req *types.AssetTargetDeleteR
 			}}
 		}
 
-		assetModel := l.svcCtx.GetAssetModel(owningWs)
+		assetModel := l.svcCtx.GetAssetModel()
 		n, err := assetModel.DeleteByFilter(l.ctx, cascadeFilter)
 		if err != nil {
-			l.Logger.Errorf("[AssetTargetDelete] delete assets ws=%s fail: %v", owningWs, err)
+			l.Logger.Errorf("[AssetTargetDelete] delete assets fail: %v", err)
 		} else {
 			deletedAssets = n
 		}
-		vulModel := l.svcCtx.GetVulModel(owningWs)
+		vulModel := l.svcCtx.GetVulModel()
 		if _, err := vulModel.DeleteByFilter(l.ctx, cascadeFilter); err != nil {
-			l.Logger.Errorf("[AssetTargetDelete] delete vul ws=%s fail: %v", owningWs, err)
+			l.Logger.Errorf("[AssetTargetDelete] delete vul fail: %v", err)
 		}
 
-		// 级联清理目录扫描结果（全局 dirscan_result 集合，按 workspace_id + host/domain 限定）
+		// 级联清理目录扫描结果（按 host/domain 限定）
 		dirModel := l.svcCtx.GetDirScanResultModel()
 		if dirModel != nil {
-			dirFilter := bson.M{"workspace_id": owningWs, "host": hostFilter}
+			dirFilter := bson.M{"host": hostFilter}
 			if _, err := dirModel.DeleteByFilter(l.ctx, dirFilter); err != nil {
-				l.Logger.Errorf("[AssetTargetDelete] delete dirscan ws=%s fail: %v", owningWs, err)
+				l.Logger.Errorf("[AssetTargetDelete] delete dirscan fail: %v", err)
 			}
 		}
 
-		// 级联清理 JSFinder 结果（per-ws 集合 {wsId}_jsfinder，按 host 限定）
-		jsModel := l.svcCtx.GetJSFinderResultModel(owningWs)
+		// 级联清理 JSFinder 结果（按 host 限定）
+		jsModel := l.svcCtx.GetJSFinderResultModel()
 		if _, err := jsModel.DeleteMany(l.ctx, bson.M{"host": hostFilter}); err != nil {
-			l.Logger.Errorf("[AssetTargetDelete] delete jsfinder ws=%s fail: %v", owningWs, err)
+			l.Logger.Errorf("[AssetTargetDelete] delete jsfinder fail: %v", err)
 		}
 
-		// 级联清理资产历史记录（per-ws 集合 {wsId}_asset_history）
-		histModel := l.svcCtx.GetAssetHistoryModel(owningWs)
+		// 级联清理资产历史记录
+		histModel := l.svcCtx.GetAssetHistoryModel()
 		if _, err := histModel.DeleteByFilter(l.ctx, cascadeFilter); err != nil {
-			l.Logger.Errorf("[AssetTargetDelete] delete asset history ws=%s fail: %v", owningWs, err)
+			l.Logger.Errorf("[AssetTargetDelete] delete asset history fail: %v", err)
 		}
 	}
 
-	if err := l.svcCtx.GetAssetTargetMetaModel(owningWs).Delete(l.ctx, targetId); err != nil {
+	if err := l.svcCtx.GetAssetTargetMetaModel().Delete(l.ctx, targetId); err != nil {
 		return nil, fmt.Errorf("delete meta fail: %w", err)
 	}
 	invalidateAssetTargetCaches(l.svcCtx, targetId)

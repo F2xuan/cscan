@@ -102,7 +102,7 @@ func TestAggregateInventoryPaged_PaginationSortProjection(t *testing.T) {
 	}
 
 	// 第 2、3 页
-	total2, list2, err := m.AggregateInventoryPaged(ctx, []string{wsId}, bson.M{}, 10, 10, "-update_time")
+	total2, list2, err := m.AggregateInventoryPaged(ctx, bson.M{}, 10, 10, "-update_time")
 	if err != nil {
 		t.Fatalf("第 2 页失败: %v", err)
 	}
@@ -138,9 +138,9 @@ func TestAggregateInventoryPaged_FilteredCount(t *testing.T) {
 		t.Fatalf("插入失败: %v", err)
 	}
 
-	m := NewAssetModel(db, wsId)
+	m := NewAssetModel(db)
 	filter := bson.M{"status": "200"}
-	total, list, err := m.AggregateInventoryPaged(ctx, []string{wsId}, filter, 0, 10, "-update_time")
+	total, list, err := m.AggregateInventoryPaged(ctx, filter, 0, 10, "-update_time")
 	if err != nil {
 		t.Fatalf("AggregateInventoryPaged 失败: %v", err)
 	}
@@ -157,8 +157,8 @@ func TestAggregateInventoryPaged_EmptyWsIds(t *testing.T) {
 	db, cleanup := mongoTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	m := NewAssetModel(db, "noop")
-	total, list, err := m.AggregateInventoryPaged(ctx, nil, bson.M{}, 0, 10, "-update_time")
+	m := NewAssetModel(db)
+	total, list, err := m.AggregateInventoryPaged(ctx, bson.M{}, 0, 10, "-update_time")
 	if err != nil {
 		t.Fatalf("空 wsIds 不应返回错误，实际 %v", err)
 	}

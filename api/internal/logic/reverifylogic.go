@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/internal/model"
@@ -40,9 +39,7 @@ func NewReverifyConfigGetLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 
 // ReverifyConfigGet 返回当前工作空间的复验配置；无配置时返回默认值（weakPassEnabled=false）。
 func (l *ReverifyConfigGetLogic) ReverifyConfigGet(req *types.ReverifyConfigGetReq) (*types.ReverifyConfigGetResp, error) {
-	// 单租户化：workspaceId 为空时回退到默认工作空间
-	req.WorkspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, req.WorkspaceId)
-	cfg, err := l.svcCtx.GetReverifyConfigModel().GetByWorkspace(l.ctx, req.WorkspaceId)
+	cfg, err := l.svcCtx.GetReverifyConfigModel().GetByWorkspace(l.ctx, "")
 	if err != nil {
 		return &types.ReverifyConfigGetResp{Code: 500, Msg: "查询失败: " + err.Error()}, nil
 	}
@@ -51,7 +48,6 @@ func (l *ReverifyConfigGetLogic) ReverifyConfigGet(req *types.ReverifyConfigGetR
 			Code: 0,
 			Msg:  "success",
 			Config: &types.ReverifyConfig{
-				WorkspaceId:      req.WorkspaceId,
 				WeakPassEnabled:  defaultReverifyWeakPassEnabled,
 				ExposureEnabled:  defaultReverifyExposureEnabled,
 				CronSpec:         defaultReverifyCronSpec,
@@ -80,8 +76,6 @@ func NewReverifyConfigSaveLogic(ctx context.Context, svcCtx *svc.ServiceContext)
 
 // ReverifyConfigSave 保存复验配置（空值回退默认值；不触碰运行状态字段）。
 func (l *ReverifyConfigSaveLogic) ReverifyConfigSave(req *types.ReverifyConfigSaveReq) (*types.ReverifyConfigSaveResp, error) {
-	// 单租户化：workspaceId 为空时回退到默认工作空间
-	req.WorkspaceId = common.GetDefaultWorkspaceId(l.ctx, l.svcCtx, req.WorkspaceId)
 	cronSpec := req.CronSpec
 	if cronSpec == "" {
 		cronSpec = defaultReverifyCronSpec
@@ -130,12 +124,12 @@ func (l *ReverifyRunNowLogic) ReverifyRunNow(req *types.ReverifyRunNowReq) (*typ
 	}
 	var errMsg []string
 	if l.svcCtx.RunWeakPassReverify != nil {
-		if err := l.svcCtx.RunWeakPassReverify(l.ctx, req.WorkspaceId); err != nil {
+		if err := l.svcCtx.RunWeakPassReverify(l.ctx); err != nil {
 			errMsg = append(errMsg, "弱口令:"+err.Error())
 		}
 	}
 	if l.svcCtx.RunExposureReverify != nil {
-		if err := l.svcCtx.RunExposureReverify(l.ctx, req.WorkspaceId); err != nil {
+		if err := l.svcCtx.RunExposureReverify(l.ctx); err != nil {
 			errMsg = append(errMsg, "敏感信息:"+err.Error())
 		}
 	}
@@ -152,7 +146,6 @@ func toReverifyConfigType(c *model.ReverifyConfig) *types.ReverifyConfig {
 	}
 	return &types.ReverifyConfig{
 		Id:               objectIDHex(c.Id),
-		WorkspaceId:      "default",
 		WeakPassEnabled:  c.WeakPassEnabled,
 		ExposureEnabled:  c.ExposureEnabled,
 		CronSpec:         c.CronSpec,

@@ -1695,6 +1695,22 @@ async function validateCron() {
   }
 }
 
+// Cron 表达式实时校验（输入防抖 400ms，避免频繁请求后端）
+let cronDebounceTimer = null
+watch(() => form.cronSpec, (val) => {
+  if (form.scheduleType !== 'cron') return
+  if (cronDebounceTimer) clearTimeout(cronDebounceTimer)
+  if (!val) {
+    cronValidation.valid = false
+    cronValidation.error = ''
+    cronValidation.nextTimes = []
+    return
+  }
+  cronDebounceTimer = setTimeout(() => {
+    validateCron()
+  }, 400)
+})
+
 // 构建自定义HTTP头部
 function buildCustomHeaders() {
   const headers = []
@@ -1991,8 +2007,7 @@ async function handleSubmit() {
           orgId: form.targetMode === 'asset' ? form.orgId : '',
           enableSubdomainPull: form.targetMode === 'asset' ? form.enableSubdomainPull : false,
           configSource: form.configSource,
-          templateId: form.configSource === 'template' ? form.templateId : '',
-          workspaceId: ''
+          templateId: form.configSource === 'template' ? form.templateId : ''
         }
         // 自定义配置模式下序列化扫描配置
         if (form.configSource === 'custom') {

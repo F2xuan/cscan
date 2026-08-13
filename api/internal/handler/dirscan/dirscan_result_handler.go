@@ -3,16 +3,16 @@ package dirscan
 import (
 	"net/http"
 
-	"cscan/api/internal/middleware"
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // ==================== 目录扫描结果 API ====================
 
-// DirScanResultStatReq 统计请求（不需要参数，从 context 获取 workspaceId）
+// DirScanResultStatReq 统计请求
 type DirScanResultStatReq struct{}
 
 // DirScanResultStatResp 统计响应
@@ -26,10 +26,9 @@ type DirScanResultStatResp struct {
 func DirScanResultStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		workspaceId := middleware.GetWorkspaceId(ctx)
 		resultModel := model.NewDirScanResultModel(svcCtx.MongoDB)
 
-		stat, err := resultModel.Stat(ctx, workspaceId)
+		stat, err := resultModel.Stat(ctx)
 		if err != nil {
 			httpx.OkJson(w, &DirScanResultStatResp{Code: 500, Msg: "统计失败: " + err.Error()})
 			return
@@ -123,7 +122,7 @@ func DirScanResultBatchDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFun
 	}
 }
 
-// DirScanResultClearReq 清空请求（不需要参数，从 context 获取 workspaceId）
+// DirScanResultClearReq 清空请求
 type DirScanResultClearReq struct{}
 
 // DirScanResultClearResp 清空响应
@@ -137,10 +136,9 @@ type DirScanResultClearResp struct {
 func DirScanResultClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		workspaceId := middleware.GetWorkspaceId(ctx)
 		resultModel := model.NewDirScanResultModel(svcCtx.MongoDB)
 
-		deleted, err := resultModel.DeleteByWorkspace(ctx, workspaceId)
+		deleted, err := resultModel.DeleteByFilter(ctx, bson.M{})
 		if err != nil {
 			httpx.OkJson(w, &DirScanResultClearResp{Code: 500, Msg: "清空失败: " + err.Error()})
 			return

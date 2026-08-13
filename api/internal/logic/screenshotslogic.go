@@ -1,16 +1,14 @@
 package logic
 
-import "cscan/internal/model"
-
 import (
 	"context"
 	"fmt"
 	"strings"
 	"time"
 
-	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -31,148 +29,139 @@ func NewScreenshotsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Scree
 }
 
 // Screenshots 获取截图清单
-func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq, workspaceId string) (resp *types.ScreenshotsResp, err error) {
+func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq) (resp *types.ScreenshotsResp, err error) {
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	l.Logger.Infof("Screenshots查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
-
-	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	l.Logger.Infof("Screenshots查询工作空间列表: %v", wsIds)
+	l.Logger.Infof("Screenshots查询: page=%d, pageSize=%d", req.Page, req.PageSize)
 
 	// 用于存储所有截图
 	allScreenshots := make([]types.ScreenshotItem, 0)
 
-	// 遍历所有工作空间
-	for _, wsId := range wsIds {
-		assetModel := l.svcCtx.GetAssetModel(wsId)
+	assetModel := l.svcCtx.GetAssetModel()
 
-		// 构建查询条件
-		filter := bson.M{}
+	// 构建查询条件
+	filter := bson.M{}
 
-		// 只查询有截图的资产（如果指定）
-		if req.HasScreenshot {
-			filter["screenshot"] = bson.M{"$ne": "", "$exists": true}
+	// 只查询有截图的资产（如果指定）
+	if req.HasScreenshot {
+		filter["screenshot"] = bson.M{"$ne": "", "$exists": true}
+	}
+
+	// 搜索关键词
+	if req.Query != "" {
+		filter["$or"] = []bson.M{
+			{"host": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"title": bson.M{"$regex": req.Query, "$options": "i"}},
 		}
+	}
 
-		// 搜索关键词
-		if req.Query != "" {
-			filter["$or"] = []bson.M{
-				{"host": bson.M{"$regex": req.Query, "$options": "i"}},
-				{"title": bson.M{"$regex": req.Query, "$options": "i"}},
-			}
+	// 域名过滤
+	if req.Domain != "" {
+		filter["host"] = bson.M{"$regex": req.Domain, "$options": "i"}
+	}
+
+	// 端口过滤
+	if len(req.Ports) > 0 {
+		filter["port"] = bson.M{"$in": req.Ports}
+	}
+
+	// 状态码过滤
+	if len(req.StatusCodes) > 0 {
+		filter["status"] = bson.M{"$in": req.StatusCodes}
+	}
+
+	// 技术栈过滤
+	if len(req.Technologies) > 0 {
+		techFilters := make([]bson.M, 0, len(req.Technologies))
+		for _, tech := range req.Technologies {
+			techFilters = append(techFilters, bson.M{
+				"app": bson.M{"$regex": tech, "$options": "i"},
+			})
 		}
-
-		// 域名过滤
-		if req.Domain != "" {
-			filter["host"] = bson.M{"$regex": req.Domain, "$options": "i"}
-		}
-
-		// 端口过滤
-		if len(req.Ports) > 0 {
-			filter["port"] = bson.M{"$in": req.Ports}
-		}
-
-		// 状态码过滤
-		if len(req.StatusCodes) > 0 {
-			filter["status"] = bson.M{"$in": req.StatusCodes}
-		}
-
-		// 技术栈过滤
-		if len(req.Technologies) > 0 {
-			techFilters := make([]bson.M, 0, len(req.Technologies))
-			for _, tech := range req.Technologies {
-				techFilters = append(techFilters, bson.M{
-					"app": bson.M{"$regex": tech, "$options": "i"},
-				})
-			}
-			if len(techFilters) > 0 {
-				if existingOr, ok := filter["$or"]; ok {
-					filter["$and"] = []bson.M{
-						{"$or": existingOr},
-						{"$or": techFilters},
-					}
-					delete(filter, "$or")
-				} else {
-					filter["$or"] = techFilters
+		if len(techFilters) > 0 {
+			if existingOr, ok := filter["$or"]; ok {
+				filter["$and"] = []bson.M{
+					{"$or": existingOr},
+					{"$or": techFilters},
 				}
+				delete(filter, "$or")
+			} else {
+				filter["$or"] = techFilters
+			}
+		}
+	}
+
+	// 时间范围过滤
+	if req.TimeRange != "" && req.TimeRange != "all" {
+		now := time.Now()
+		var startTime time.Time
+		switch req.TimeRange {
+		case "24h":
+			startTime = now.Add(-24 * time.Hour)
+		case "7d":
+			startTime = now.Add(-7 * 24 * time.Hour)
+		case "30d":
+			startTime = now.Add(-30 * 24 * time.Hour)
+		}
+		if !startTime.IsZero() {
+			filter["update_time"] = bson.M{"$gte": startTime}
+		}
+	}
+
+	// 查询资产
+	assets, err := assetModel.FindWithScreenshot(l.ctx, filter, 0, 0)
+	if err != nil {
+		l.Logger.Errorf("查询资产失败: %v", err)
+	}
+
+	// 转换为截图格式
+	for _, asset := range assets {
+		// 获取首个IP及所有IP列表
+		ip := ""
+		var ips []string
+		if true {
+			if len(asset.Ip.IpV4) > 0 {
+				ip = asset.Ip.IpV4[0].IPName
+			} else if len(asset.Ip.IpV6) > 0 {
+				ip = asset.Ip.IpV6[0].IPName
+			}
+
+			for _, v4 := range asset.Ip.IpV4 {
+				ips = append(ips, v4.IPName)
+			}
+			for _, v6 := range asset.Ip.IpV6 {
+				ips = append(ips, v6.IPName)
 			}
 		}
 
-		// 时间范围过滤
-		if req.TimeRange != "" && req.TimeRange != "all" {
-			now := time.Now()
-			var startTime time.Time
-			switch req.TimeRange {
-			case "24h":
-				startTime = now.Add(-24 * time.Hour)
-			case "7d":
-				startTime = now.Add(-7 * 24 * time.Hour)
-			case "30d":
-				startTime = now.Add(-30 * 24 * time.Hour)
-			}
-			if !startTime.IsZero() {
-				filter["update_time"] = bson.M{"$gte": startTime}
-			}
+		// 转换技术栈
+		technologies := make([]types.Technology, 0, len(asset.App))
+		for _, app := range asset.App {
+			technologies = append(technologies, types.Technology{Name: app})
 		}
 
-		// 查询资产
-		assets, err := assetModel.FindWithScreenshot(l.ctx, filter, 0, 0)
-		if err != nil {
-			l.Logger.Errorf("查询工作空间 %s 资产失败: %v", wsId, err)
-			continue
+		// 获取状态文本
+		statusText := getStatusText(asset.HttpStatus)
+
+		item := types.ScreenshotItem{
+			Id:           asset.Id.Hex(),
+			Name:         asset.Host,
+			Port:         asset.Port,
+			IP:           ip,
+			Ips:          ips,
+			Status:       asset.HttpStatus,
+			StatusText:   statusText,
+			Title:        asset.Title,
+			Screenshot:   asset.Screenshot,
+			CreateTime:   formatScreenshotTime(asset.CreateTime),
+			UpdateTime:   formatScreenshotTime(asset.UpdateTime),
+			LastUpdated:  formatScreenshotTime(asset.UpdateTime),
+			Technologies: technologies,
+			HttpHeader:   asset.HttpHeader,
+			HttpBody:     asset.HttpBody,
+			Service:      asset.Service,
+			Authority:    asset.Authority,
 		}
-
-		// 转换为截图格式
-		for _, asset := range assets {
-			// 获取首个IP及所有IP列表
-			ip := ""
-			var ips []string
-			if true {
-				if len(asset.Ip.IpV4) > 0 {
-					ip = asset.Ip.IpV4[0].IPName
-				} else if len(asset.Ip.IpV6) > 0 {
-					ip = asset.Ip.IpV6[0].IPName
-				}
-
-				for _, v4 := range asset.Ip.IpV4 {
-					ips = append(ips, v4.IPName)
-				}
-				for _, v6 := range asset.Ip.IpV6 {
-					ips = append(ips, v6.IPName)
-				}
-			}
-
-			// 转换技术栈
-			technologies := make([]types.Technology, 0, len(asset.App))
-			for _, app := range asset.App {
-				technologies = append(technologies, types.Technology{Name: app})
-			}
-
-			// 获取状态文本
-			statusText := getStatusText(asset.HttpStatus)
-
-			item := types.ScreenshotItem{
-				Id:           asset.Id.Hex(),
-				WorkspaceId:  wsId, // 添加工作空间ID
-				Name:         asset.Host,
-				Port:         asset.Port,
-				IP:           ip,
-				Ips:          ips,
-				Status:       asset.HttpStatus,
-				StatusText:   statusText,
-				Title:        asset.Title,
-				Screenshot:   asset.Screenshot,
-				CreateTime:   formatScreenshotTime(asset.CreateTime),
-				UpdateTime:   formatScreenshotTime(asset.UpdateTime),
-				LastUpdated:  formatScreenshotTime(asset.UpdateTime),
-				Technologies: technologies,
-				HttpHeader:   asset.HttpHeader,
-				HttpBody:     asset.HttpBody,
-				Service:      asset.Service,
-				Authority:    asset.Authority,
-			}
-			allScreenshots = append(allScreenshots, item)
-		}
+		allScreenshots = append(allScreenshots, item)
 	}
 
 	// 排序

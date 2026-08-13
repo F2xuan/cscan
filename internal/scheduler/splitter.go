@@ -178,21 +178,19 @@ func (s *TaskSplitter) createChunks(taskId string, allTargets []string, basePrio
 }
 
 // calculateChunkPriority 计算分片优先级
-// 在 basePriority（原任务优先级）基础上叠加调整项，并 clamp 到 [PriorityBackground, PriorityUrgent]
-// 修复 C-04：原实现固定 base=1（Low），忽略原任务优先级；现以原优先级为基准
+// 以 basePriority 为上限：小分片/前序分片保持原优先级，大分片/后序分片降级
+// 修复：原实现向上叠加可超原任务优先级（Low→Urgent），与用户意图相悖
 func (s *TaskSplitter) calculateChunkPriority(index, targetCount, basePriority int) int {
 	priority := basePriority
 
-	// 目标数量少的分片优先级更高（更快完成）
-	if targetCount <= s.config.MinChunkSize {
-		priority += 2
-	} else if targetCount <= s.config.MaxTargetsPerChunk {
-		priority += 1
+	// 大分片优先级稍低（让小分片先完成）
+	if targetCount > s.config.MaxTargetsPerChunk {
+		priority -= 1
 	}
 
-	// 前面的分片优先级稍高
-	if index < 3 {
-		priority += 1
+	// 后面的分片优先级稍低
+	if index >= 3 {
+		priority -= 1
 	}
 
 	// clamp 到 [PriorityBackground, PriorityUrgent]

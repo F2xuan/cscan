@@ -2789,11 +2789,6 @@ html.dark .layout-container {
   background: #0a0a0a !important;
 }
 
-/* 暗黑模式下工作台页面背景 */
-html.dark .workspace {
-  background: #0a0a0a !important;
-}
-
 #app {
   height: 100%;
 }

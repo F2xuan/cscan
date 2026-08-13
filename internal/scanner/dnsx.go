@@ -64,6 +64,21 @@ func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		MainTaskId: config.MainTaskId,
 	}
 
+	logFn := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
 	opts := &DnsxOptions{
 		Timeout: 5,
 		Retries: 1,
@@ -104,7 +119,7 @@ func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	if concurrency > len(domains) {
 		concurrency = len(domains)
 	}
-	logx.Infof("Dnsx(CLI): scanning %d domains with %d workers", len(domains), concurrency)
+	logFn("INFO", "Dnsx(CLI): scanning %d domains with %d workers", len(domains), concurrency)
 
 	type queryResult struct {
 		assets []*Asset
@@ -126,7 +141,7 @@ func (s *DnsxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 					return
 				default:
 				}
-				assets, err := s.querySingleDomain(ctx, domain, opts)
+				assets, err := s.querySingleDomain(ctx, domain, opts, logFn)
 				resultChan <- queryResult{assets: assets, domain: domain, err: err}
 			}
 		}()
@@ -150,7 +165,7 @@ dispatch:
 	var allAssets []*Asset
 	for res := range resultChan {
 		if res.err != nil {
-			logx.Errorf("Dnsx: query error for %s: %v", res.domain, res.err)
+			logFn("ERROR", "Dnsx: query error for %s: %v", res.domain, res.err)
 			continue
 		}
 		allAssets = append(allAssets, res.assets...)
@@ -160,7 +175,7 @@ dispatch:
 	return result, nil
 }
 
-func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts *DnsxOptions) ([]*Asset, error) {
+func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts *DnsxOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, error) {
 	args := []string{
 		"-json",
 		"-silent",
@@ -175,13 +190,14 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
 	}
 
-	logx.Infof("[Dnsx] CLI: domain=%s args=%s", domain, strings.Join(args, " "))
+	logFn("INFO", "[Dnsx] CLI: domain=%s args=%s", domain, strings.Join(args, " "))
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
+		LogFn:   logFn,
 	})
 	if err != nil {
-		logx.Debugf("[Dnsx] execution error domain=%s err=%v", domain, err)
+		logFn("DEBUG", "[Dnsx] execution error domain=%s err=%v", domain, err)
 		s.executor.LogResult("Dnsx: "+domain, res, err)
 		return nil, fmt.Errorf("dnsx execution for %s: %w", domain, err)
 	}
@@ -201,7 +217,7 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 		var dr DnsxResult
 		if err := json.Unmarshal([]byte(line), &dr); err != nil {
 			parseFailCount++
-			logx.Debugf("[Dnsx] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
+			logFn("DEBUG", "[Dnsx] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 		if dr.Host == "" {
@@ -228,7 +244,7 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 		assets = append(assets, asset)
 	}
 
-	logx.Debugf("[Dnsx] domain=%s: lines=%d parseFail=%d assets=%d", domain, lineCount, parseFailCount, len(assets))
+	logFn("DEBUG", "[Dnsx] domain=%s: lines=%d parseFail=%d assets=%d", domain, lineCount, parseFailCount, len(assets))
 	return assets, nil
 }
 

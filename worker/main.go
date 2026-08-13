@@ -65,7 +65,7 @@ func deriveConcurrencyFromMemory() int {
 		perTabMB   = 384 // headless Chrome 单标签 + 扫描器常驻开销经验值
 		utilFactor = 0.6 // 内存利用率上限，预留余量应对突发
 		minConc    = 1
-		maxConc    = 16
+		maxConc    = 5
 	)
 	limit := readCgroupMemoryLimitBytes()
 	if limit == 0 {

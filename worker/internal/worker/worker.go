@@ -2164,9 +2164,14 @@ domainScanDone:
 				}
 
 				// 按单目标超时计算总超时：单目标超时 × 目标数 / 并发数
+				// 注意：指纹扫描器和 httpx 扫描器内部均将并发上限为 5，
+				// 超时计算必须使用实际上限，否则会导致超时时间估算过短
 				fpConcurrency := config.Fingerprint.Concurrency
 				if fpConcurrency <= 0 {
 					fpConcurrency = 1
+				}
+				if fpConcurrency > 5 {
+					fpConcurrency = 5
 				}
 				fingerprintTimeout := targetTimeout * len(assetsToScan) / fpConcurrency
 				// runner.New() 初始化（LevelDB 清理等）可能需要较长时间，

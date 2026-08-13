@@ -210,8 +210,24 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	if len(targets) == 0 && len(config.Targets) > 0 {
 		targets = config.Targets
 	}
+
+	logFn := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
 	if len(targets) == 0 {
-		logx.Info("No targets for nuclei scan")
+		logFn("INFO", "No targets for nuclei scan")
 		if config.TaskLogger != nil {
 			config.TaskLogger("WARN", "No targets for nuclei scan (all assets were skipped as non-HTTP)")
 		}
@@ -230,9 +246,9 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	}
 	opts.Tags = utils.UniqueStrings(opts.Tags)
 
-	logx.Infof("Nuclei: Starting scan for %d targets (CLI mode)", len(targets))
+	logFn("INFO", "Nuclei: Starting scan for %d targets (CLI mode)", len(targets))
 
-	customTemplatePaths, err := s.prepareTemplates(opts)
+	customTemplatePaths, err := s.prepareTemplates(opts, logFn)
 	if err != nil {
 		return nil, fmt.Errorf("prepare templates: %w", err)
 	}
@@ -251,7 +267,7 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	if concurrency > len(targets) {
 		concurrency = len(targets)
 	}
-	logx.Infof("Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
+	logFn("INFO", "Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
 
 	type targetResult struct {
 		vuls []*Vulnerability
@@ -296,7 +312,7 @@ dispatch:
 	seen := make(map[string]bool)
 	for res := range resultChan {
 		if res.err != nil {
-			logx.Errorf("Nuclei: scan error: %v", res.err)
+			logFn("ERROR", "Nuclei: scan error: %v", res.err)
 			continue
 		}
 		for _, vul := range res.vuls {
@@ -311,7 +327,7 @@ dispatch:
 		}
 	}
 
-	logx.Infof("Nuclei: Completed, found %d vulnerabilities", len(result.Vulnerabilities))
+	logFn("INFO", "Nuclei: Completed, found %d vulnerabilities", len(result.Vulnerabilities))
 	return result, nil
 }
 
@@ -322,6 +338,15 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	taskLog := func(level, format string, args ...interface{}) {
 		if taskLogger != nil {
 			taskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
 		}
 	}
 
@@ -350,7 +375,7 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 
 	taskLog("INFO", "Batch scan: %d targets (CLI mode)", len(targets))
 
-	customTemplatePaths, err := s.prepareTemplates(opts)
+	customTemplatePaths, err := s.prepareTemplates(opts, taskLog)
 	if err != nil {
 		return nil, fmt.Errorf("prepare templates: %w", err)
 	}
@@ -440,9 +465,20 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 	if len(templatePaths) == 0 {
 		return nil, fmt.Errorf("no templates available")
 	}
+
 	if taskLogger == nil {
-		taskLogger = func(string, string, ...interface{}) {}
+		taskLogger = func(level, format string, args ...interface{}) {
+			switch level {
+			case "ERROR", "WARN":
+				logx.Errorf(format, args...)
+			case "DEBUG":
+				logx.Debugf(format, args...)
+			default:
+				logx.Infof(format, args...)
+			}
+		}
 	}
+	logFn := taskLogger
 
 	templateDir := ""
 	if len(templatePaths) > 0 {
@@ -483,6 +519,7 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: processTimeout,
+		LogFn:   logFn,
 	})
 	taskLogger("INFO", "Nuclei CLI: target=%s exitCode=%d stdout_len=%d stderr=%q err=%v",
 		target, res.ExitCode, len(res.Stdout), strings.TrimSpace(res.Stderr), err)
@@ -602,7 +639,20 @@ func (s *NucleiScanner) convertCLIResult(event *NucleiResultEvent, target string
 	return vul
 }
 
-func (s *NucleiScanner) prepareTemplates(opts *NucleiOptions) ([]string, error) {
+func (s *NucleiScanner) prepareTemplates(opts *NucleiOptions, logFn func(level, format string, args ...interface{})) ([]string, error) {
+	if logFn == nil {
+		logFn = func(level, format string, args ...interface{}) {
+			switch level {
+			case "ERROR", "WARN":
+				logx.Errorf(format, args...)
+			case "DEBUG":
+				logx.Debugf(format, args...)
+			default:
+				logx.Infof(format, args...)
+			}
+		}
+	}
+
 	allTemplateContents := make([]string, 0, len(opts.CustomTemplates)+len(opts.NucleiTemplates))
 	allTemplateContents = append(allTemplateContents, opts.CustomTemplates...)
 	allTemplateContents = append(allTemplateContents, opts.NucleiTemplates...)
@@ -618,12 +668,12 @@ func (s *NucleiScanner) prepareTemplates(opts *NucleiOptions) ([]string, error) 
 	for i, content := range allTemplateContents {
 		templateID, err := preValidateTemplate(content)
 		if err != nil {
-			logx.Infof("[WARN] Skip bad template index=%d: %v", i, err)
+			logFn("WARN", "Skip bad template index=%d: %v", i, err)
 			continue
 		}
 		path, err := cache.GetOrWrite(content, templateID)
 		if err != nil {
-			logx.Errorf("Failed to write template %d (%s): %v", i, templateID, err)
+			logFn("ERROR", "Failed to write template %d (%s): %v", i, templateID, err)
 			continue
 		}
 		paths = append(paths, path)
@@ -838,6 +888,21 @@ func parseAppName(app string) string {
 }
 
 func prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, format string, args ...interface{})) []string {
+	logFn := func(level, format string, args ...interface{}) {
+		if taskLogger != nil {
+			taskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
 	targets := make([]string, 0, len(assets))
 	seen := make(map[string]bool)
 	skipped := 0
@@ -849,7 +914,7 @@ func prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, form
 			skipped++
 			detail := fmt.Sprintf("%s:%d (service=%s)", asset.Host, asset.Port, asset.Service)
 			skippedDetails = append(skippedDetails, detail)
-			logx.Debugf("Skipping non-HTTP asset: %s", detail)
+			logFn("DEBUG", "Skipping non-HTTP asset: %s", detail)
 			continue
 		}
 
@@ -876,21 +941,18 @@ func prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, form
 	}
 
 	if skipped > 0 {
-		logx.Infof("Nuclei: skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
-		if taskLogger != nil {
-			if forceScan {
-				taskLogger("INFO", "Force scan enabled: processing %d assets", len(targets))
+		if forceScan {
+			logFn("INFO", "Force scan enabled: processing %d assets", len(targets))
+		} else {
+			logFn("INFO", "Nuclei: skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
+			if len(skippedDetails) <= 10 {
+				logFn("INFO", "Skipped non-HTTP assets: %s", strings.Join(skippedDetails, ", "))
 			} else {
-				taskLogger("INFO", "Skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
-				if len(skippedDetails) <= 10 {
-					taskLogger("INFO", "Skipped non-HTTP assets: %s", strings.Join(skippedDetails, ", "))
-				} else {
-					taskLogger("INFO", "Skipped non-HTTP assets (first 10): %s", strings.Join(skippedDetails[:10], ", "))
-				}
+				logFn("INFO", "Skipped non-HTTP assets (first 10): %s", strings.Join(skippedDetails[:10], ", "))
 			}
 		}
-	} else if forceScan && len(assets) > 0 && taskLogger != nil {
-		taskLogger("INFO", "Force scan enabled: all %d assets will be scanned", len(assets))
+	} else if forceScan && len(assets) > 0 {
+		logFn("INFO", "Force scan enabled: all %d assets will be scanned", len(assets))
 	}
 
 	return targets
@@ -1007,15 +1069,23 @@ func (e *nucleiScanError) Error() string {
 }
 
 func logScanError(err *nucleiScanError, taskLogger func(level, format string, args ...interface{})) {
+	logFn := func(level, format string, args ...interface{}) {
+		if taskLogger != nil {
+			taskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
 	if err.timeout {
-		logx.Infof("Nuclei: %s timeout for %s", err.phase, err.target)
-		if taskLogger != nil {
-			taskLogger("WARN", "POC %s timeout", err.phase)
-		}
+		logFn("WARN", "Nuclei: %s timeout for %s", err.phase, err.target)
 	} else {
-		logx.Errorf("Nuclei %s error for %s: %v", err.phase, err.target, err.err)
-		if taskLogger != nil {
-			taskLogger("ERROR", "POC %s error: %v", err.phase, err.err)
-		}
+		logFn("ERROR", "Nuclei %s error for %s: %v", err.phase, err.target, err.err)
 	}
 }

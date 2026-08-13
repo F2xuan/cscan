@@ -88,7 +88,22 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		}
 	}
 
-	logx.Infof("PortScanner(CLI): Scan start target=%s opts={tool:%s ports:%s timeout:%d concurrent:%d}",
+	logFn := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
+	logFn("INFO", "PortScanner(CLI): Scan start target=%s opts={tool:%s ports:%s timeout:%d concurrent:%d}",
 		config.Target, opts.Tool, opts.Ports, opts.Timeout, opts.Concurrent)
 
 	// 解析目标
@@ -99,7 +114,7 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		targetParseResult.WithoutPort = append(targetParseResult.WithoutPort, res.WithoutPort...)
 	}
 
-	logx.Infof("PortScanner(CLI): parsed targets: withoutPort=%d withPort=%d", len(targetParseResult.WithoutPort), len(targetParseResult.WithPort))
+	logFn("INFO", "PortScanner(CLI): parsed targets: withoutPort=%d withPort=%d", len(targetParseResult.WithoutPort), len(targetParseResult.WithPort))
 
 	var cleanTargets []string
 	seenHost := make(map[string]bool)
@@ -133,12 +148,12 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	targets := cleanTargets
 	opts.Ports = portsToString(ports)
 
-	logx.Infof("PortScanner(CLI): final targets=%d ports=%d", len(targets), len(ports))
+	logFn("INFO", "PortScanner(CLI): final targets=%d ports=%d", len(targets), len(ports))
 
 	// 执行扫描
 	assets := s.scanPorts(ctx, targets, ports, opts)
 
-	logx.Infof("PortScanner(CLI): scan completed, found %d open ports", len(assets))
+	logFn("INFO", "PortScanner(CLI): scan completed, found %d open ports", len(assets))
 
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,

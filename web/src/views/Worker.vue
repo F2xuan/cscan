@@ -428,6 +428,7 @@
               size="small"
               style="width: 110px"
               :placeholder="$t('container.allLevels')"
+              @change="fetchWorkerLogs"
             >
               <el-option :label="$t('container.allLevels')" value="all" />
               <el-option label="ERROR" value="ERROR" />
@@ -435,6 +436,7 @@
               <el-option label="INFO" value="INFO" />
               <el-option label="DEBUG" value="DEBUG" />
             </el-select>
+            <el-checkbox v-model="logIncludeDebug" size="small" @change="fetchWorkerLogs">{{ $t('common.includeDebug') }}</el-checkbox>
             <el-button type="primary" size="small" :loading="logLoading" @click="fetchWorkerLogs">
               <el-icon style="margin-right: 4px"><Refresh /></el-icon>{{ $t('common.refresh') }}
             </el-button>
@@ -903,6 +905,7 @@ const logLines = ref([])
 const workerLogBox = ref(null)
 const logSearch = ref('')
 const logLevelFilter = ref('all')
+const logIncludeDebug = ref(false)
 const logLoading = ref(false)
 
 const filteredLogLines = computed(() => {
@@ -922,7 +925,8 @@ async function fetchWorkerLogs() {
   try {
     const res = await request.post('/worker/logs/history', {
       worker: workerName,
-      limit: 500
+      limit: 500,
+      includeDebug: logIncludeDebug.value || logLevelFilter.value === 'DEBUG'
     })
     if (res.code === 0) {
       const list = res.list || []
@@ -970,6 +974,7 @@ function toggleLogPanel(workerName) {
   logLines.value = []
   logSearch.value = ''
   logLevelFilter.value = 'all'
+  logIncludeDebug.value = false
   fetchWorkerLogs()
 }
 

@@ -167,6 +167,7 @@
     "disable": "Disable",
     "enabled": "Enabled",
     "disabled": "Disabled",
+    "includeDebug": "Include DEBUG",
     "tip": "Tip",
     "createSuccess": "Created successfully",
     "updateSuccess": "Updated successfully",

@@ -124,11 +124,12 @@ func WorkerLogsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Limit  int    `json:"limit"`  // 返回条数，默认500
-			Worker string `json:"worker"` // 指定 Worker 名称
-			Level  string `json:"level"`  // 过滤日志级别
-			Search string `json:"search"` // 模糊搜索关键词
-			Date   string `json:"date"`   // 指定日期 YYYY-MM-DD，空则取最新
+			Limit        int    `json:"limit"`        // 返回条数，默认500
+			Worker       string `json:"worker"`       // 指定 Worker 名称
+			Level        string `json:"level"`        // 过滤日志级别
+			Search       string `json:"search"`       // 模糊搜索关键词
+			Date         string `json:"date"`         // 指定日期 YYYY-MM-DD，空则取最新
+			IncludeDebug bool   `json:"includeDebug"` // 是否包含 DEBUG 级别日志，默认 false
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Limit <= 0 {
@@ -165,6 +166,10 @@ func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		levelUpper := strings.ToUpper(req.Level)
 		result := make([]svc.WorkerLogEntry, 0, req.Limit)
 		for _, e := range entries {
+			// DEBUG 级别默认过滤（可通过 IncludeDebug 开启，或显式指定 Level=DEBUG）
+			if !req.IncludeDebug && levelUpper != "DEBUG" && strings.EqualFold(e.Level, "DEBUG") {
+				continue
+			}
 			if req.Level != "" && strings.ToUpper(e.Level) != levelUpper {
 				continue
 			}
@@ -195,11 +200,12 @@ func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 func WorkerLogsExportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Format string `json:"format"` // json, txt, csv
-			Search string `json:"search"` // 模糊搜索关键词
-			Worker string `json:"worker"` // 过滤指定 Worker
-			Level  string `json:"level"`  // 过滤日志级别
-			Date   string `json:"date"`   // 指定日期
+			Format       string `json:"format"`       // json, txt, csv
+			Search       string `json:"search"`       // 模糊搜索关键词
+			Worker       string `json:"worker"`       // 过滤指定 Worker
+			Level        string `json:"level"`        // 过滤日志级别
+			Date         string `json:"date"`         // 指定日期
+			IncludeDebug bool   `json:"includeDebug"` // 是否包含 DEBUG 级别日志，默认 false
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Format == "" {
@@ -225,6 +231,10 @@ func WorkerLogsExportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		levelUpper := strings.ToUpper(req.Level)
 		result := make([]svc.WorkerLogEntry, 0)
 		for _, e := range entries {
+			// DEBUG 级别默认过滤（可通过 IncludeDebug 开启，或显式指定 Level=DEBUG）
+			if !req.IncludeDebug && levelUpper != "DEBUG" && strings.EqualFold(e.Level, "DEBUG") {
+				continue
+			}
 			if req.Level != "" && strings.ToUpper(e.Level) != levelUpper {
 				continue
 			}

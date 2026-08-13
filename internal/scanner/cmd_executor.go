@@ -70,7 +70,7 @@ func (e *CmdExecutor) withPresetArgs(args []string) []string {
 }
 
 func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOpts) (*ExecuteResult, error) {
-	result := &ExecuteResult{}
+	result := &ExecuteResult{LogFn: opts.LogFn}
 
 	args = e.withPresetArgs(args)
 
@@ -128,7 +128,11 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 		}
 		result.Duration = time.Since(startTime)
 		if stdoutBuf.truncated {
-			logx.Infof("[%s] stdout truncated at %d bytes", e.binaryPath, maxOutputBytes)
+			if result.LogFn != nil {
+				result.LogFn("WARN", "[%s] stdout truncated at %d bytes", e.binaryPath, maxOutputBytes)
+			} else {
+				logx.Infof("[%s] stdout truncated at %d bytes", e.binaryPath, maxOutputBytes)
+			}
 		}
 		return result, err
 	}
@@ -269,14 +273,29 @@ type ExecuteOpts struct {
 	MemoryLimitMB int64
 	WorkingDir    string
 	Env           []string
+	// LogFn 可选的任务日志回调，设置后 Execute 内部日志和 LogResult 将通过此回调输出
+	LogFn func(level, format string, args ...interface{}) `json:"-"`
 }
 
 // LogResult 记录命令执行结果（Debug 级别，用于排障）
 func (e *CmdExecutor) LogResult(prefix string, result *ExecuteResult, err error) {
-	logx.Debugf("[%s] %s: exit=%d duration=%s err=%v",
+	logFn := result.LogFn
+	if logFn == nil {
+		logFn = func(level, format string, args ...interface{}) {
+			switch level {
+			case "WARN", "ERROR":
+				logx.Errorf(format, args...)
+			case "INFO":
+				logx.Infof(format, args...)
+			default:
+				logx.Debugf(format, args...)
+			}
+		}
+	}
+	logFn("DEBUG", "[%s] %s: exit=%d duration=%s err=%v",
 		e.binaryPath, prefix, result.ExitCode, result.Duration, err)
 	if result.Stderr != "" {
-		logx.Debugf("[%s] stderr: %s", e.binaryPath, result.Stderr)
+		logFn("DEBUG", "[%s] stderr: %s", e.binaryPath, result.Stderr)
 	}
 	if result.Stdout != "" {
 		// 超长输出只截取前后片段，避免刷屏
@@ -285,7 +304,7 @@ func (e *CmdExecutor) LogResult(prefix string, result *ExecuteResult, err error)
 		if len(stdout) > maxLen {
 			stdout = stdout[:maxLen] + "\n...[truncated]"
 		}
-		logx.Debugf("[%s] stdout: %s", e.binaryPath, stdout)
+		logFn("DEBUG", "[%s] stdout: %s", e.binaryPath, stdout)
 	}
 }
 
@@ -295,6 +314,8 @@ type ExecuteResult struct {
 	Stderr   string
 	ExitCode int
 	Duration time.Duration
+	// LogFn 从 ExecuteOpts 透传的任务日志回调
+	LogFn func(level, format string, args ...interface{}) `json:"-"`
 }
 
 // ToolHealth 工具健康检查结果

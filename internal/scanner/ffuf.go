@@ -97,29 +97,29 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		}
 	}
 
-	logInfo := func(format string, args ...interface{}) {
+	logFn := func(level, format string, args ...interface{}) {
 		if config.TaskLogger != nil {
-			config.TaskLogger("INFO", format, args...)
+			config.TaskLogger(level, format, args...)
 			return
 		}
-		logx.Infof(format, args...)
-	}
-	logWarn := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("WARN", format, args...)
-			return
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
 		}
-		logx.Errorf(format, args...)
 	}
 
 	if len(opts.Paths) == 0 {
-		logWarn("[FFuf] 未提供扫描路径")
+		logFn("WARN", "[FFuf] 未提供扫描路径")
 		return result, nil
 	}
 
-	targets := s.collectTargets(config, logInfo, func(string, ...interface{}) {})
+	targets := s.collectTargets(config, logFn)
 	if len(targets) == 0 {
-		logWarn("[FFuf] 无有效目标")
+		logFn("WARN", "[FFuf] 无有效目标")
 		return result, nil
 	}
 
@@ -129,7 +129,7 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	}
 	defer os.Remove(wordlistFile)
 
-	logInfo("[FFuf] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
+	logFn("INFO", "[FFuf] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
 
 	var allAssets []*Asset
 
@@ -147,7 +147,7 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	if concurrency > len(targets) {
 		concurrency = len(targets)
 	}
-	logInfo("[FFuf] 开始目录扫描，目标数: %d，并发: %d", len(targets), concurrency)
+	logFn("INFO", "[FFuf] 开始目录扫描，目标数: %d，并发: %d", len(targets), concurrency)
 
 	type scanResult struct {
 		assets []*Asset
@@ -169,8 +169,8 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 					return
 				default:
 				}
-				logInfo("[FFuf] 扫描目标: %s", target)
-				assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logInfo, func(string, ...interface{}) {})
+				logFn("INFO", "[FFuf] 扫描目标: %s", target)
+				assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logFn)
 				resultChan <- scanResult{assets: assets, target: target, err: err}
 			}
 		}()
@@ -195,10 +195,10 @@ dispatch:
 	for res := range resultChan {
 		completed++
 		if res.err != nil {
-			logWarn("[FFuf] 扫描目标 %s 失败: %v", res.target, res.err)
+			logFn("WARN", "[FFuf] 扫描目标 %s 失败: %v", res.target, res.err)
 		} else {
 			allAssets = append(allAssets, res.assets...)
-			logInfo("[FFuf] 目标 %s 发现 %d 个有效路径", res.target, len(res.assets))
+			logFn("INFO", "[FFuf] 目标 %s 发现 %d 个有效路径", res.target, len(res.assets))
 			// 流式入库：每完成一个目标立即回调
 			if config.OnTargetDone != nil && len(res.assets) > 0 {
 				config.OnTargetDone(res.target, res.assets)
@@ -210,12 +210,12 @@ dispatch:
 		}
 	}
 
-	logInfo("[FFuf] 目录扫描完成，共发现 %d 个有效路径", len(allAssets))
+	logFn("INFO", "[FFuf] 目录扫描完成，共发现 %d 个有效路径", len(allAssets))
 	result.Assets = allAssets
 	return result, nil
 }
 
-func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logInfo, logDebug func(string, ...interface{})) ([]*Asset, error) {
+func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, error) {
 	scanCtx, scanCancel := context.WithCancel(ctx)
 	defer scanCancel()
 
@@ -254,15 +254,16 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 
 	args = append(args, "-o", tmpPath)
 
-	logx.Infof("[FFuf] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
+	logFn("INFO", "[FFuf] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
 
-	logInfo("[FFuf] executing ffuf for %s", target)
+	logFn("INFO", "[FFuf] executing ffuf for %s", target)
 
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout*2) * time.Second,
+		LogFn:   logFn,
 	})
 	if err != nil {
-		logx.Debugf("[FFuf] execution error target=%s err=%v", target, err)
+		logFn("DEBUG", "[FFuf] execution error target=%s err=%v", target, err)
 		s.executor.LogResult("FFuf: "+target, res, err)
 		return nil, fmt.Errorf("ffuf execution: %w", err)
 	}
@@ -277,24 +278,24 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 	if len(content) > 0 {
 		parseData = content
 	} else if len(res.Stdout) > 0 {
-		logx.Debugf("[FFuf] output file empty, falling back to stdout (%d bytes)", len(res.Stdout))
+		logFn("DEBUG", "[FFuf] output file empty, falling back to stdout (%d bytes)", len(res.Stdout))
 		parseData = []byte(res.Stdout)
 	} else {
-		logx.Debugf("[FFuf] no output from file or stdout")
+		logFn("DEBUG", "[FFuf] no output from file or stdout")
 		return nil, nil
 	}
 
 	var wrapper ffufCLIOutput
 	if err := json.Unmarshal(parseData, &wrapper); err != nil {
-		logx.Debugf("[FFuf] JSON parse error target=%s err=%v raw=%s", target, err, string(parseData))
+		logFn("DEBUG", "[FFuf] JSON parse error target=%s err=%v raw=%s", target, err, string(parseData))
 		return nil, fmt.Errorf("parse ffuf results: %w", err)
 	}
 	ffufResults := wrapper.Results
 
-	logx.Debugf("[FFuf] %s: parsed %d results", target, len(ffufResults))
+	logFn("DEBUG", "[FFuf] %s: parsed %d results", target, len(ffufResults))
 
 	results := s.convertResults(target, ffufResults)
-	s.enrichWithHTTPRequests(ctx, results, opts, logInfo)
+	s.enrichWithHTTPRequests(ctx, results, opts, logFn)
 	return results, nil
 }
 
@@ -362,7 +363,7 @@ func (s *FFufScanner) convertResults(target string, results []FFufCLIResult) []*
 }
 
 // enrichWithHTTPRequests 对扫描结果补充HTTP请求和响应原文（供AI研判使用）
-func (s *FFufScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asset, opts *FFufOptions, logInfo func(string, ...interface{})) {
+func (s *FFufScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asset, opts *FFufOptions, logFn func(level, format string, args ...interface{})) {
 	if len(assets) == 0 {
 		return
 	}
@@ -395,7 +396,7 @@ func (s *FFufScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asse
 			defer func() {
 				<-sem
 				if r := recover(); r != nil {
-					logx.Errorf("[FFuf] enrichWithHTTPRequests panic: %v", r)
+					logFn("ERROR", "[FFuf] enrichWithHTTPRequests panic: %v", r)
 				}
 			}()
 
@@ -423,7 +424,7 @@ func (s *FFufScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asse
 	}
 
 	wg.Wait()
-	logInfo("[FFuf] HTTP请求响应补充完成，共 %d 条", len(assets))
+	logFn("INFO", "[FFuf] HTTP请求响应补充完成，共 %d 条", len(assets))
 }
 
 // fetchHTTPRequestResponse 获取URL的HTTP请求和响应原文（跟随重定向，最多10次）
@@ -503,7 +504,7 @@ func isMostlyPrintable(data []byte) bool {
 }
 
 // collectTargets 从 ScanConfig 中提取目标列表
-func (s *FFufScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(string, ...interface{})) []string {
+func (s *FFufScanner) collectTargets(config *ScanConfig, logFn func(level, format string, args ...interface{})) []string {
 	var targets []string
 
 	if len(config.Assets) > 0 {
@@ -522,11 +523,11 @@ func (s *FFufScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(
 				if asset.Path != "" && asset.Path != "/" {
 					path := strings.TrimSuffix(asset.Path, "/")
 					baseURL = baseURL + path
-					logInfo("[FFuf] 使用带路径的目标: %s (基础路径: %s)", baseURL, asset.Path)
+					logFn("INFO", "[FFuf] 使用带路径的目标: %s (基础路径: %s)", baseURL, asset.Path)
 				}
 				targets = append(targets, baseURL)
 			} else {
-				logDebug("[FFuf] 跳过非HTTP资产: %s:%d", asset.Host, asset.Port)
+				logFn("DEBUG", "[FFuf] 跳过非HTTP资产: %s:%d", asset.Host, asset.Port)
 			}
 		}
 	} else if len(config.Targets) > 0 {

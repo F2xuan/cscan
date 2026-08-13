@@ -126,8 +126,10 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			return
 		}
 		switch level {
-		case "ERROR":
+		case "ERROR", "WARN":
 			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
 		default:
 			logx.Infof(format, args...)
 		}
@@ -256,9 +258,9 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 	if opts.Title {
 		args = append(args, "-title")
 	}
-	if opts.Screenshot {
-		args = append(args, "-screenshot", "-system-chrome")
-	}
+	// 不使用 httpx 内置截图（-screenshot -system-chrome），因为每个目标会启动
+	// 独立 Chrome 进程，76 个目标会耗尽 180s 超时。截图由指纹扫描器的 chromedp
+	// 回退路径统一处理（单进程 + 信号量并发，效率更高）。
 	if opts.OutputIP {
 		args = append(args, "-ip")
 	}
@@ -270,6 +272,7 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
+		LogFn:   taskLog,
 	})
 	if err != nil {
 		taskLog("ERROR", "Httpx(CLI): %s execution error: %v", target, err)
@@ -290,7 +293,7 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		var hr HttpxCLIResult
 		if err := json.Unmarshal([]byte(line), &hr); err != nil {
 			parseFailCount++
-			logx.Debugf("[Httpx] JSON parse failed for line %d: %v, line=%s", lineCount, err, line)
+			taskLog("DEBUG", "[Httpx] JSON parse failed for line %d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 
@@ -307,7 +310,7 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 		processed[asset] = true
 		resultMu.Unlock()
 
-		logx.Debugf("[Httpx] matched asset %s:%d from %s (technologies=%v, status=%d, title=%s)",
+		taskLog("DEBUG", "[Httpx] matched asset %s:%d from %s (technologies=%v, status=%d, title=%s)",
 			asset.Host, asset.Port, hr.URL, hr.Technologies, hr.StatusCode, hr.Title)
 
 		if hr.Scheme != "" {
@@ -354,11 +357,11 @@ func (s *HttpxScanner) scanSingleTargetCLI(
 				appendIPInfo(asset, ipStr, ipLocator)
 			}
 		}
-		logx.Debugf("[Httpx] asset updated: %s:%d apps=%v server=%s status=%s",
+		taskLog("DEBUG", "[Httpx] asset updated: %s:%d apps=%v server=%s status=%s",
 			asset.Host, asset.Port, asset.App, asset.Server, asset.HttpStatus)
 		return asset
 	}
-	logx.Debugf("[Httpx] scanSingleTarget target=%s: lines=%d parseFail=%d matched=0", target, lineCount, parseFailCount)
+	taskLog("DEBUG", "[Httpx] scanSingleTarget target=%s: lines=%d parseFail=%d matched=0", target, lineCount, parseFailCount)
 	return nil
 }
 

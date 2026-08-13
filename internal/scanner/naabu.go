@@ -92,6 +92,23 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	s.dnsFailedHosts = s.dnsFailedHosts[:0]
 	s.mu.Unlock()
 
+	logFn := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR":
+			logx.Errorf(format, args...)
+		case "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
 	opts := &NaabuOptions{
 		Ports:             "80,443,8080",
 		Rate:              3000,
@@ -248,11 +265,11 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		if perTarget > opts.Timeout {
 			opts.Timeout = perTarget
 		}
-		logx.Infof("Naabu(CLI): aggregatedTimeout=%ds targets=%d => perTargetTimeout=%ds",
+		logFn("INFO", "Naabu(CLI): aggregatedTimeout=%ds targets=%d => perTargetTimeout=%ds",
 			aggregatedTimeout, len(cleanTargets), opts.Timeout)
 	}
 
-	assets, thresholdExceeded := s.runNaabuCLI(ctx, config, opts)
+	assets, thresholdExceeded := s.runNaabuCLI(ctx, config, opts, logFn)
 	if thresholdExceeded {
 		return &ScanResult{
 			MainTaskId: config.MainTaskId,
@@ -265,7 +282,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	}, nil
 }
 
-func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts *NaabuOptions) ([]*Asset, bool) {
+func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
 	var allAssets []*Asset
 	anyThresholdExceeded := false
 
@@ -335,7 +352,7 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 					return
 				default:
 				}
-				assets, thresholdExceeded := s.scanTargetCLI(ctx, target, portsStr, opts)
+				assets, thresholdExceeded := s.scanTargetCLI(ctx, target, portsStr, opts, logFn)
 				resultChan <- targetResult{
 					target:            target,
 					assets:            assets,
@@ -365,7 +382,7 @@ dispatch:
 	// 收集结果
 	for res := range resultChan {
 		if res.err != nil {
-			logx.Infof("Naabu(CLI): worker error: %v", res.err)
+			logFn("WARN", "Naabu(CLI): worker error: %v", res.err)
 			continue
 		}
 		if res.thresholdExceeded {
@@ -377,11 +394,11 @@ dispatch:
 		}
 	}
 
-	logx.Infof("Naabu(CLI): completed, found %d open ports across %d targets", len(allAssets), totalTargets)
+	logFn("INFO", "Naabu(CLI): completed, found %d open ports across %d targets", len(allAssets), totalTargets)
 	return allAssets, anyThresholdExceeded
 }
 
-func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions) ([]*Asset, bool) {
+func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
 	args := []string{
 		"-host", target,
 		"-json",
@@ -435,19 +452,20 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 
 	// 计算聚合超时
 	aggregatedTimeout := time.Duration(opts.Timeout+opts.Retries*opts.Timeout) * time.Second
-	logx.Infof("Naabu CLI: AggregatedTimeout=%v for target %s", aggregatedTimeout, target)
+	logFn("INFO", "Naabu CLI: AggregatedTimeout=%v for target %s", aggregatedTimeout, target)
 
 	// 进程超时必须大于聚合超时，否则会提前杀进程
 	processTimeout := aggregatedTimeout + 30*time.Second
-	logx.Infof("Naabu CLI: ProcessTimeout=%v (aggregated + 30s buffer)", processTimeout)
+	logFn("INFO", "Naabu CLI: ProcessTimeout=%v (aggregated + 30s buffer)", processTimeout)
 
-	logx.Infof("[Naabu] CLI: target=%s args=%s", target, strings.Join(args, " "))
+	logFn("INFO", "[Naabu] CLI: target=%s args=%s", target, strings.Join(args, " "))
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: processTimeout,
+		LogFn:   logFn,
 	})
 	if err != nil {
-		logx.Errorf("Naabu(CLI): %s execution failed: %v, stderr=%q", target, err, strings.TrimSpace(res.Stderr))
+		logFn("ERROR", "Naabu(CLI): %s execution failed: %v, stderr=%q", target, err, strings.TrimSpace(res.Stderr))
 		return nil, false
 	}
 	s.executor.LogResult("Naabu(CLI): "+target, res, err)
@@ -455,11 +473,11 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	// 读取 JSON 输出文件（进程异常退出时仍尝试读取部分结果）
 	content, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
-		logx.Infof("[WARN] Naabu(CLI): failed to read output file: %v", readErr)
+		logFn("WARN", "[WARN] Naabu(CLI): failed to read output file: %v", readErr)
 		if res.ExitCode == 0 {
 			return nil, false
 		}
-		logx.Infof("[WARN] Naabu(CLI): %s exit code %d and failed to read output, returning empty result", target, res.ExitCode)
+		logFn("WARN", "[WARN] Naabu(CLI): %s exit code %d and failed to read output, returning empty result", target, res.ExitCode)
 		return nil, false
 	}
 
@@ -468,16 +486,16 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	if len(content) > 0 {
 		parseSource = strings.NewReader(string(content))
 	} else if len(res.Stdout) > 0 {
-		logx.Infof("Naabu(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
+		logFn("INFO", "Naabu(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
 		parseSource = bytes.NewReader([]byte(res.Stdout))
 	} else {
-		logx.Infof("Naabu(CLI): no output from file or stdout, returning empty result")
+		logFn("INFO", "Naabu(CLI): no output from file or stdout, returning empty result")
 		return nil, false
 	}
 
 	// 进程异常退出但输出了部分结果，继续解析
 	if res.ExitCode != 0 {
-		logx.Infof("[WARN] Naabu(CLI): %s exit code %d, parsing partial output (%d bytes)", target, res.ExitCode, len(content))
+		logFn("WARN", "[WARN] Naabu(CLI): %s exit code %d, parsing partial output (%d bytes)", target, res.ExitCode, len(content))
 	}
 
 	var assets []*Asset
@@ -496,11 +514,11 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		var hostResult NaabuHostResult
 		if err := json.Unmarshal([]byte(line), &hostResult); err != nil {
 			parseFailCount++
-			logx.Debugf("[Naabu] JSON parse failed line=%q err=%v", line, err)
+			logFn("DEBUG", "[Naabu] JSON parse failed line=%q err=%v", line, err)
 			continue
 		}
 		if hostResult.Port <= 0 {
-			logx.Debugf("[Naabu] ignoring non-positive port: ip=%s port=%d", hostResult.IP, hostResult.Port)
+			logFn("DEBUG", "[Naabu] ignoring non-positive port: ip=%s port=%d", hostResult.IP, hostResult.Port)
 			continue
 		}
 
@@ -542,13 +560,13 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	}
 
 	if len(foundPorts) > 0 {
-		logx.Infof("Naabu(CLI): %s -> %s", target, strings.Join(foundPorts, ","))
+		logFn("INFO", "Naabu(CLI): %s -> %s", target, strings.Join(foundPorts, ","))
 	} else {
-		logx.Infof("Naabu(CLI): %s -> no open ports found", target)
+		logFn("INFO", "Naabu(CLI): %s -> no open ports found", target)
 	}
 
 	if parseFailCount > 0 {
-		logx.Debugf("[Naabu] scanTargetCLI target=%s: assets=%d parseFail=%d", target, len(assets), parseFailCount)
+		logFn("DEBUG", "[Naabu] scanTargetCLI target=%s: assets=%d parseFail=%d", target, len(assets), parseFailCount)
 	}
 
 	return assets, false

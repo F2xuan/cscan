@@ -136,19 +136,34 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 		}
 	}
 
-	logx.Infof("Masscan Scan config - Ports: %s, Rate: %d, Timeout: %d, PortThreshold: %d, ExcludeHosts: %s", opts.Ports, opts.Rate, opts.Timeout, opts.PortThreshold, opts.ExcludeHosts)
+	logFn := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
+	logFn("INFO", "Masscan Scan config - Ports: %s, Rate: %d, Timeout: %d, PortThreshold: %d, ExcludeHosts: %s", opts.Ports, opts.Rate, opts.Timeout, opts.PortThreshold, opts.ExcludeHosts)
 
 	// P0-5: 校验 ExcludeHosts，防止参数注入（拒绝 -- 、空格、分号等特殊字符）
 	if opts.ExcludeHosts != "" {
 		if err := ValidateIPList(opts.ExcludeHosts); err != nil {
-			logx.Errorf("Invalid ExcludeHosts %q: %v", opts.ExcludeHosts, err)
+			logFn("ERROR", "Invalid ExcludeHosts %q: %v", opts.ExcludeHosts, err)
 			return nil, fmt.Errorf("invalid excludeHosts: %w", err)
 		}
 	}
 
 	// 检查masscan是否安装
 	if !checkMasscanInstalled() {
-		logx.Error("masscan not installed, falling back to tcp scan")
+		logFn("ERROR", "masscan not installed, falling back to tcp scan")
 		// 回退到TCP扫描
 		tcpScanner := NewPortScanner()
 		return tcpScanner.Scan(ctx, config)
@@ -161,7 +176,7 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 	}
 
 	// 执行masscan扫描（传入阈值参数）
-	assets := s.runMasscan(ctx, targets, opts)
+	assets := s.runMasscan(ctx, targets, opts, logFn)
 
 	return &ScanResult{
 		MainTaskId:   config.MainTaskId,
@@ -171,7 +186,7 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 }
 
 // runMasscan 运行masscan
-func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts *MasscanOptions) []*Asset {
+func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts *MasscanOptions, logFn func(level, format string, args ...interface{})) []*Asset {
 	var assets []*Asset
 
 	// 实时端口阈值检测：记录每个主机的开放端口数量和是否已超过阈值
@@ -208,17 +223,17 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 	args = append(args, targets...)
 
 	// 输出执行命令到日志
-	logx.Infof("[Masscan] CLI: args=%s", strings.Join(args, " "))
+	logFn("INFO", "[Masscan] CLI: args=%s", strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, "masscan", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		logx.Errorf("masscan stdout pipe error: %v", err)
+		logFn("ERROR", "masscan stdout pipe error: %v", err)
 		return assets
 	}
 
 	if err := cmd.Start(); err != nil {
-		logx.Errorf("masscan start error: %v", err)
+		logFn("ERROR", "masscan start error: %v", err)
 		return assets
 	}
 
@@ -242,7 +257,7 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 		var result MasscanResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			parseFailCount++
-			logx.Debugf("[Masscan] JSON parse failed line=%d: %v, line=%s", lineCount+1, err, line)
+			logFn("DEBUG", "[Masscan] JSON parse failed line=%d: %v, line=%s", lineCount+1, err, line)
 			continue
 		}
 
@@ -268,7 +283,7 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 						s.mu.Lock()
 						s.skippedHosts = append(s.skippedHosts, hostKey)
 						s.mu.Unlock()
-						logx.Infof("Host %s exceeded port threshold (%d > %d), discarding all results for this host",
+						logFn("INFO", "Host %s exceeded port threshold (%d > %d), discarding all results for this host",
 							hostKey, hostPortCount[hostKey], opts.PortThreshold)
 						// 移除该主机已有的资产
 						var filtered []*Asset
@@ -306,13 +321,13 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 
 	if err := <-done; err != nil {
 		if ctx.Err() != nil {
-			logx.Infof("Masscan canceled for targets")
+			logFn("INFO", "Masscan canceled for targets")
 		} else {
-			logx.Errorf("Masscan command failed: %v", err)
+			logFn("ERROR", "Masscan command failed: %v", err)
 		}
 	}
 
-	logx.Debugf("[Masscan] completed: assets=%d parseFail=%d", len(assets), parseFailCount)
+	logFn("DEBUG", "[Masscan] completed: assets=%d parseFail=%d", len(assets), parseFailCount)
 	return assets
 }
 

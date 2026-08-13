@@ -161,6 +161,15 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 	taskLog := func(level, format string, args ...interface{}) {
 		if config.TaskLogger != nil {
 			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
 		}
 	}
 
@@ -957,7 +966,7 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 	// 写入临时目标文件
 	tmpFile, err := os.CreateTemp("", "dnsx-resolve-*.txt")
 	if err != nil {
-		logx.Errorf("Failed to create resolve targets file: %v", err)
+		taskLog("ERROR", "Failed to create resolve targets file: %v", err)
 		return nil
 	}
 	for _, d := range domains {
@@ -1184,13 +1193,13 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 			return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 		}
 		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s, falling back to dnsx", err, stderr.String())
-		logx.Debugf("[Bruteforce] ksubdomain stderr: %s", stderr.String())
+		taskLog("DEBUG", "[Bruteforce] ksubdomain stderr: %s", stderr.String())
 		// 如果ksubdomain执行失败，回退到dnsx
 		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 	}
 
 	if stdout.Len() > 0 {
-		logx.Debugf("[Bruteforce] ksubdomain stdout (%d bytes): %s", stdout.Len(), stdout.String())
+		taskLog("DEBUG", "[Bruteforce] ksubdomain stdout (%d bytes): %s", stdout.Len(), stdout.String())
 	}
 	taskLog("INFO", "Bruteforce: ksubdomain execution completed, reading results from: %s", outputFile)
 
@@ -1322,12 +1331,12 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 			return assets, fmt.Errorf("ksubdomain not found")
 		}
 		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s", err, stderr.String())
-		logx.Debugf("[Bruteforce] ksubdomain stderr: %s", stderr.String())
+		taskLog("DEBUG", "[Bruteforce] ksubdomain stderr: %s", stderr.String())
 		return assets, fmt.Errorf("ksubdomain execution error: %v", err)
 	}
 
 	if stdout.Len() > 0 {
-		logx.Debugf("[Bruteforce] ksubdomain stdout (%d bytes): %s", stdout.Len(), stdout.String())
+		taskLog("DEBUG", "[Bruteforce] ksubdomain stdout (%d bytes): %s", stdout.Len(), stdout.String())
 	}
 	taskLog("INFO", "Bruteforce: ksubdomain execution completed, parsing results with IP from: %s", outputFile)
 

@@ -64,29 +64,29 @@ func (s *FeroxbusterScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		}
 	}
 
-	logInfo := func(format string, args ...interface{}) {
+	logFn := func(level, format string, args ...interface{}) {
 		if config.TaskLogger != nil {
-			config.TaskLogger("INFO", format, args...)
+			config.TaskLogger(level, format, args...)
 			return
 		}
-		logx.Infof(format, args...)
-	}
-	logWarn := func(format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger("WARN", format, args...)
-			return
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
 		}
-		logx.Errorf(format, args...)
 	}
 
 	if len(opts.Paths) == 0 {
-		logWarn("[Feroxbuster] 未提供扫描路径")
+		logFn("WARN", "[Feroxbuster] 未提供扫描路径")
 		return result, nil
 	}
 
-	targets := s.collectTargets(config, logInfo, func(string, ...interface{}) {})
+	targets := s.collectTargets(config, logFn)
 	if len(targets) == 0 {
-		logWarn("[Feroxbuster] 无有效目标")
+		logFn("WARN", "[Feroxbuster] 无有效目标")
 		return result, nil
 	}
 
@@ -96,7 +96,7 @@ func (s *FeroxbusterScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	}
 	defer os.Remove(wordlistFile)
 
-	logInfo("[Feroxbuster] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
+	logFn("INFO", "[Feroxbuster] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
 
 	var allAssets []*Asset
 
@@ -113,7 +113,7 @@ func (s *FeroxbusterScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	if concurrency > len(targets) {
 		concurrency = len(targets)
 	}
-	logInfo("[Feroxbuster] 开始目录扫描，目标数: %d，并发: %d", len(targets), concurrency)
+	logFn("INFO", "[Feroxbuster] 开始目录扫描，目标数: %d，并发: %d", len(targets), concurrency)
 
 	type scanResult struct {
 		assets []*Asset
@@ -135,8 +135,8 @@ func (s *FeroxbusterScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 					return
 				default:
 				}
-				logInfo("[Feroxbuster] 扫描目标: %s", target)
-				assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logInfo)
+				logFn("INFO", "[Feroxbuster] 扫描目标: %s", target)
+				assets, err := s.scanTarget(ctx, target, wordlistFile, opts, logFn)
 				resultChan <- scanResult{assets: assets, target: target, err: err}
 			}
 		}()
@@ -161,10 +161,10 @@ dispatch:
 	for res := range resultChan {
 		completed++
 		if res.err != nil {
-			logWarn("[Feroxbuster] 扫描目标 %s 失败: %v", res.target, res.err)
+			logFn("WARN", "[Feroxbuster] 扫描目标 %s 失败: %v", res.target, res.err)
 		} else {
 			allAssets = append(allAssets, res.assets...)
-			logInfo("[Feroxbuster] 目标 %s 发现 %d 个有效路径", res.target, len(res.assets))
+			logFn("INFO", "[Feroxbuster] 目标 %s 发现 %d 个有效路径", res.target, len(res.assets))
 			if config.OnTargetDone != nil && len(res.assets) > 0 {
 				config.OnTargetDone(res.target, res.assets)
 			}
@@ -175,12 +175,12 @@ dispatch:
 		}
 	}
 
-	logInfo("[Feroxbuster] 目录扫描完成，共发现 %d 个有效路径", len(allAssets))
+	logFn("INFO", "[Feroxbuster] 目录扫描完成，共发现 %d 个有效路径", len(allAssets))
 	result.Assets = allAssets
 	return result, nil
 }
 
-func (s *FeroxbusterScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logInfo func(string, ...interface{})) ([]*Asset, error) {
+func (s *FeroxbusterScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, error) {
 	scanCtx, scanCancel := context.WithCancel(ctx)
 	defer scanCancel()
 
@@ -254,13 +254,14 @@ func (s *FeroxbusterScanner) scanTarget(ctx context.Context, target, wordlistFil
 
 	args = append(args, "-o", tmpPath, "--silent")
 
-	logx.Infof("[Feroxbuster] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
+	logFn("INFO", "[Feroxbuster] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
 
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout*2) * time.Second,
+		LogFn:   logFn,
 	})
 	if err != nil {
-		logx.Debugf("[Feroxbuster] execution error target=%s err=%v", target, err)
+		logFn("DEBUG", "[Feroxbuster] execution error target=%s err=%v", target, err)
 		s.executor.LogResult("Feroxbuster: "+target, res, err)
 		return nil, fmt.Errorf("feroxbuster execution: %w", err)
 	}
@@ -281,10 +282,10 @@ func (s *FeroxbusterScanner) scanTarget(ctx context.Context, target, wordlistFil
 	}
 
 	feroxResults := parseFeroxbusterNDJSON(parseData)
-	logx.Debugf("[Feroxbuster] %s: parsed %d results", target, len(feroxResults))
+	logFn("DEBUG", "[Feroxbuster] %s: parsed %d results", target, len(feroxResults))
 
 	results := s.convertResults(target, feroxResults)
-	s.enrichWithHTTPRequests(ctx, results, opts, logInfo)
+	s.enrichWithHTTPRequests(ctx, results, opts, logFn)
 	return results, nil
 }
 
@@ -379,7 +380,7 @@ func (s *FeroxbusterScanner) convertResults(target string, results []Feroxbuster
 }
 
 // collectTargets 从 ScanConfig 中提取目标列表（与 FFufScanner 相同逻辑）
-func (s *FeroxbusterScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(string, ...interface{})) []string {
+func (s *FeroxbusterScanner) collectTargets(config *ScanConfig, logFn func(level, format string, args ...interface{})) []string {
 	var targets []string
 
 	if len(config.Assets) > 0 {
@@ -398,11 +399,11 @@ func (s *FeroxbusterScanner) collectTargets(config *ScanConfig, logInfo, logDebu
 				if asset.Path != "" && asset.Path != "/" {
 					path := strings.TrimSuffix(asset.Path, "/")
 					baseURL = baseURL + path
-					logInfo("[Feroxbuster] 使用带路径的目标: %s (基础路径: %s)", baseURL, asset.Path)
+					logFn("INFO", "[Feroxbuster] 使用带路径的目标: %s (基础路径: %s)", baseURL, asset.Path)
 				}
 				targets = append(targets, baseURL)
 			} else {
-				logDebug("[Feroxbuster] 跳过非HTTP资产: %s:%d", asset.Host, asset.Port)
+				logFn("DEBUG", "[Feroxbuster] 跳过非HTTP资产: %s:%d", asset.Host, asset.Port)
 			}
 		}
 	} else if len(config.Targets) > 0 {
@@ -442,7 +443,7 @@ func (s *FeroxbusterScanner) writeWordlistFile(paths []string) (string, error) {
 }
 
 // enrichWithHTTPRequests 对扫描结果补充HTTP请求和响应原文（复用 ffuf.go 中的实现）
-func (s *FeroxbusterScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asset, opts *FFufOptions, logInfo func(string, ...interface{})) {
+func (s *FeroxbusterScanner) enrichWithHTTPRequests(ctx context.Context, assets []*Asset, opts *FFufOptions, logFn func(level, format string, args ...interface{})) {
 	if len(assets) == 0 {
 		return
 	}
@@ -475,7 +476,7 @@ func (s *FeroxbusterScanner) enrichWithHTTPRequests(ctx context.Context, assets 
 			defer func() {
 				<-sem
 				if r := recover(); r != nil {
-					logx.Errorf("[Feroxbuster] enrichWithHTTPRequests panic: %v", r)
+					logFn("ERROR", "[Feroxbuster] enrichWithHTTPRequests panic: %v", r)
 				}
 			}()
 
@@ -503,5 +504,5 @@ func (s *FeroxbusterScanner) enrichWithHTTPRequests(ctx context.Context, assets 
 	}
 
 	wg.Wait()
-	logInfo("[Feroxbuster] HTTP请求响应补充完成，共 %d 条", len(assets))
+	logFn("INFO", "[Feroxbuster] HTTP请求响应补充完成，共 %d 条", len(assets))
 }

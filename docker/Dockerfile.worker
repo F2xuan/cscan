@@ -97,10 +97,6 @@ COPY --from=builder /tmp/feroxbuster /usr/local/bin/feroxbuster
 COPY --from=builder /go/bin/fingerprintx /usr/local/bin/fingerprintx
 COPY --from=builder /go/bin/dnsx /usr/local/bin/dnsx
 
-# 预初始化 httpx 截图（-system-chrome 复用系统 Chromium）
-# 首次启动 Chrome 需创建 profile 目录、加载扩展等，构建期预热后运行时零延迟
-RUN httpx -u http://127.0.0.1:1 -screenshot -system-chrome -silent 2>/dev/null || true
-
 # 启动脚本（prlimit 提升 fd 上限）
 RUN printf '#!/bin/sh\nexec prlimit --nofile=65535:65535 /cscan-worker "$@"\n' > /start.sh \
     && chmod +x /start.sh

@@ -57,6 +57,21 @@ type FxResult struct {
 
 // Scan 执行 fingerprintx 扫描
 func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
+	logFn := func(level, format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger(level, format, args...)
+			return
+		}
+		switch level {
+		case "ERROR", "WARN":
+			logx.Errorf(format, args...)
+		case "DEBUG":
+			logx.Debugf(format, args...)
+		default:
+			logx.Infof(format, args...)
+		}
+	}
+
 	opts := &FingerprintxOptions{
 		Timeout:     10,
 		Concurrency: 1,
@@ -78,7 +93,7 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 		return nil, fmt.Errorf("invalid options: %w", err)
 	}
 	if opts.Concurrency > 5 {
-		logx.Infof("Fingerprintx concurrency %d exceeds maximum 5, limiting to 5", opts.Concurrency)
+		logFn("WARN", "Fingerprintx concurrency %d exceeds maximum 5, limiting to 5", opts.Concurrency)
 		opts.Concurrency = 5
 	}
 
@@ -86,13 +101,13 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 		return &ScanResult{MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
-	logx.Infof("Fingerprintx(CLI): scanning %d assets", len(config.Assets))
+	logFn("INFO", "Fingerprintx(CLI): scanning %d assets", len(config.Assets))
 
 	// 确保并发数继承 worker 自适应值
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = config.WorkerConcurrency
 	}
-	identifiedAssets := s.runFingerprintxCLI(ctx, config.Assets, opts, config.TaskLogger, config.OnProgress)
+	identifiedAssets := s.runFingerprintxCLI(ctx, config.Assets, opts, logFn, config.OnProgress)
 
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
@@ -116,7 +131,7 @@ func (s *FingerprintxScanner) runFingerprintxCLI(ctx context.Context, assets []*
 		concurrency = len(assets)
 	}
 	total := len(assets)
-	logx.Infof("Fingerprintx(CLI): scanning %d assets with %d workers", total, concurrency)
+	taskLog("INFO", "Fingerprintx(CLI): scanning %d assets with %d workers", total, concurrency)
 
 	targetChan := make(chan *Asset, total)
 	resultChan := make(chan *Asset, total)
@@ -167,7 +182,7 @@ dispatch:
 		}
 	}
 
-	logx.Infof("Fingerprintx(CLI): completed scanning %d assets", len(identifiedAssets))
+	taskLog("INFO", "Fingerprintx(CLI): completed scanning %d assets", len(identifiedAssets))
 	return identifiedAssets
 }
 
@@ -188,9 +203,10 @@ func (s *FingerprintxScanner) scanSingleTarget(
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,
+		LogFn:   taskLog,
 	})
 	if err != nil {
-		logx.Debugf("Fingerprintx(CLI): scan error for %s: %v", target, err)
+		taskLog("DEBUG", "Fingerprintx(CLI): scan error for %s: %v", target, err)
 		s.executor.LogResult("Fingerprintx: "+target, res, err)
 		asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
 		return
@@ -209,13 +225,13 @@ func (s *FingerprintxScanner) scanSingleTarget(
 		var fxr FxResult
 		if err := json.Unmarshal([]byte(line), &fxr); err != nil {
 			parseFailCount++
-			logx.Debugf("[Fingerprintx] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
+			taskLog("DEBUG", "[Fingerprintx] JSON parse failed line=%d: %v, line=%s", lineCount, err, line)
 			continue
 		}
 		key := fmt.Sprintf("%s:%d", fxr.Host, fxr.Port)
 		resultMap[key] = &fxr
 	}
-	logx.Debugf("[Fingerprintx] %s: lines=%d parseFail=%d results=%d", target, lineCount, parseFailCount, len(resultMap))
+	taskLog("DEBUG", "[Fingerprintx] %s: lines=%d parseFail=%d results=%d", target, lineCount, parseFailCount, len(resultMap))
 
 	key := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
 	if fxr, ok := resultMap[key]; ok {
@@ -258,7 +274,7 @@ func (s *FingerprintxScanner) scanSingleTarget(
 		}
 	}
 	asset.IsHTTP = IsHTTPService(asset.Service, asset.Port)
-	logx.Debugf("[Fingerprintx] %s result: service=%s app=%v bannerLen=%d isHTTP=%v",
+	taskLog("DEBUG", "[Fingerprintx] %s result: service=%s app=%v bannerLen=%d isHTTP=%v",
 		target, asset.Service, asset.App, len(asset.Banner), asset.IsHTTP)
 }
 

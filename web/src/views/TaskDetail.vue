@@ -157,7 +157,7 @@
               <el-option label="INFO" value="INFO" />
             </el-select>
             <el-checkbox v-model="includeDebug" size="small" @change="loadTaskLogs">
-              {{ $t('task.includeDebug') }}
+              {{ $t('common.includeDebug') }}
             </el-checkbox>
             <el-button size="small" type="primary" @click="loadTaskLogs" :loading="logLoading">
               <el-icon style="margin-right: 4px"><Refresh /></el-icon>

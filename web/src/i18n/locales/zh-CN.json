@@ -167,6 +167,7 @@
     "disable": "禁用",
     "enabled": "启用",
     "disabled": "禁用",
+    "includeDebug": "包含DEBUG",
     "tip": "提示",
     "createSuccess": "创建成功",
     "updateSuccess": "更新成功",

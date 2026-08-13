@@ -44,6 +44,7 @@
                 <el-option label="INFO" value="INFO" />
                 <el-option label="DEBUG" value="DEBUG" />
               </el-select>
+              <el-checkbox v-model="includeDebug" size="small">{{ $t('common.includeDebug') }}</el-checkbox>
               <el-dropdown size="small" @command="exportLogs">
                 <el-button size="small">{{ $t('container.export') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
@@ -122,6 +123,7 @@ const { t } = useI18n()
 // ==================== 通用状态 ====================
 const searchKeyword = ref('')
 const levelFilter = ref('all')
+const includeDebug = ref(false)
 const logBox = ref(null)
 const showScrollBtn = ref(false)
 
@@ -208,6 +210,7 @@ const filteredLines = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
   const lf = levelFilter.value
   return historyLines.value.filter(l => {
+    if (!includeDebug.value && lf === 'all' && l.level === 'DEBUG') return false
     if (lf !== 'all' && l.level !== lf) return false
     if (kw && !(l.raw || l.body || '').toLowerCase().includes(kw)) return false
     return true

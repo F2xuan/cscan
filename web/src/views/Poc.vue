@@ -1002,6 +1002,7 @@
       <div v-if="pocValidateLoading || pocValidateLogs.length > 0" class="validate-logs">
         <div class="logs-header">
           <span>{{ $t('poc.executionLog') }}</span>
+          <el-checkbox v-model="pocValidateIncludeDebug" size="small" @change="restartValidationLogs">{{ $t('common.includeDebug') }}</el-checkbox>
           <el-tag v-if="pocValidateLoading" type="warning" size="small">{{ $t('poc.executing') }}</el-tag>
           <el-tag v-else-if="pocValidateResult && pocValidateResult.matched" type="success" size="small">{{ $t('poc.vulnFound') }}</el-tag>
           <el-tag v-else-if="pocValidateResult" type="info" size="small">{{ $t('poc.completed') }}</el-tag>
@@ -1202,6 +1203,9 @@
         </div>
         
         <!-- 执行日志 -->
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+          <el-checkbox v-model="batchValidateIncludeDebug" size="small" @change="restartBatchLogs">{{ $t('common.includeDebug') }}</el-checkbox>
+        </div>
         <div class="logs-content" ref="batchLogsContainerRef" style="max-height: 150px;">
           <div v-for="(log, index) in templateBatchValidateLogs" :key="index" :class="['log-line', 'log-' + log.level.toLowerCase()]">
             <span class="log-time">{{ log.timestamp }}</span>
@@ -1304,6 +1308,7 @@
         <div class="validate-logs" style="margin-top: 15px">
           <div class="logs-header">
             <span>{{ $t('poc.executionLog') }}</span>
+            <el-checkbox v-model="scanAssetsIncludeDebug" size="small" @change="restartScanAssetsLogs">{{ $t('common.includeDebug') }}</el-checkbox>
             <el-tag v-if="scanAssetsLoading" type="warning" size="small">{{ $t('poc.scanning') }}</el-tag>
             <el-tag v-else type="success" size="small">{{ $t('poc.scanCompleted') }}</el-tag>
           </div>
@@ -1617,6 +1622,7 @@ const pocValidateUrl = ref('')
 const pocValidateResult = ref(null)
 const pocValidateLoading = ref(false)
 const pocValidateLogs = ref([])
+const pocValidateIncludeDebug = ref(false)
 const logsContainerRef = ref(null)
 let logPollTimer = null
 let logPollLastCount = 0
@@ -1629,6 +1635,7 @@ const scanAssetsLoading = ref(false)
 const scanAssetsStarted = ref(false)
 const scanAssetsLogs = ref([])
 const scanAssetsLogsRef = ref(null)
+const scanAssetsIncludeDebug = ref(false)
 const scanAssetsProgress = reactive({
   total: 0,
   completed: 0,
@@ -1647,6 +1654,7 @@ const batchUrlUploadRef = ref(null)
 const templateBatchValidateLoading = ref(false)
 const templateBatchValidateLogs = ref([])
 const templateBatchValidateResults = ref([])
+const batchValidateIncludeDebug = ref(false)
 const templateBatchValidateProgress = reactive({ total: 0, completed: 0 })
 const batchLogsContainerRef = ref(null)
 const currentBatchTaskIds = ref([]) // 当前批次的任务ID列表
@@ -2838,11 +2846,17 @@ function startScanAssetsLogStream(taskIds) {
   scanAssetsLogPollTimer = setInterval(fetchScanAssetsLogs, 3000)
 }
 
+function restartScanAssetsLogs() {
+  scanAssetsLogs.value = []
+  scanAssetsLogLastCount = 0
+  fetchScanAssetsLogs()
+}
+
 async function fetchScanAssetsLogs() {
   if (scanAssetsTaskIds.length === 0) return
   try {
     // Fetch logs for the first task (batch task)
-    const res = await getTaskLogs({ taskId: scanAssetsTaskIds[0], limit: 500 })
+    const res = await getTaskLogs({ taskId: scanAssetsTaskIds[0], limit: 500, includeDebug: scanAssetsIncludeDebug.value })
     if (res.code === 0 && res.list) {
       const newLogs = res.list.slice(scanAssetsLogLastCount)
       scanAssetsLogLastCount = res.list.length
@@ -3059,9 +3073,16 @@ function startLogStream(taskId) {
   logPollTimer = setInterval(() => fetchValidationLogs(taskId), 3000)
 }
 
+function restartValidationLogs() {
+  if (!currentTaskId) return
+  pocValidateLogs.value = []
+  logPollLastCount = 0
+  fetchValidationLogs(currentTaskId)
+}
+
 async function fetchValidationLogs(taskId) {
   try {
-    const res = await getTaskLogs({ taskId, limit: 200 })
+    const res = await getTaskLogs({ taskId, limit: 200, includeDebug: pocValidateIncludeDebug.value })
     if (res.code === 0 && res.list) {
       const newLogs = res.list.slice(logPollLastCount)
       logPollLastCount = res.list.length
@@ -3384,12 +3405,18 @@ function startBatchLogStream(batchId) {
   batchLogPollTimer = setInterval(fetchBatchLogs, 3000)
 }
 
+function restartBatchLogs() {
+  templateBatchValidateLogs.value = []
+  batchLogLastCount = 0
+  fetchBatchLogs()
+}
+
 async function fetchBatchLogs() {
   if (currentBatchTaskIds.value.length === 0) return
   try {
     // Fetch logs for each task in the batch
     for (const taskId of currentBatchTaskIds.value) {
-      const res = await getTaskLogs({ taskId, limit: 500 })
+      const res = await getTaskLogs({ taskId, limit: 500, includeDebug: batchValidateIncludeDebug.value })
       if (res.code === 0 && res.list) {
         const newLogs = res.list.slice(batchLogLastCount)
         batchLogLastCount = res.list.length
@@ -4691,6 +4718,7 @@ async function handleResetJSFinderConfig() {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 10px;
       font-weight: 500;
     }
 

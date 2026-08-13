@@ -151,6 +151,13 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		}
 		logx.Errorf(format, args...)
 	}
+	logDebug := func(format string, args ...interface{}) {
+		if config.TaskLogger != nil {
+			config.TaskLogger("DEBUG", format, args...)
+			return
+		}
+		logx.Debugf(format, args...)
+	}
 
 	// 尝试从不同类型的Options中提取配置
 	if config.Options != nil {
@@ -261,10 +268,10 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	targets := cleanTargets
 	opts.Ports = portsToString(ports)
 
-	logx.Infof("Nmap: resolved targets=%v ports=%d concurrent=%d", targets, len(parsePorts(opts.Ports)), opts.Concurrent)
+	logInfo("Nmap: resolved targets=%v ports=%d concurrent=%d", targets, len(parsePorts(opts.Ports)), opts.Concurrent)
 
 	// 执行nmap扫描
-	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError)
+	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError, logDebug)
 
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
@@ -278,7 +285,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 func (s *NmapScanner) runNmapWithLogger(
 	ctx context.Context, targets []string, opts *NmapOptions,
 	onTargetDone func(string, []*Asset), onProgress func(int, string),
-	logInfo, _ logFunc, logError logFunc,
+	logInfo, _ logFunc, logError, logDebug logFunc,
 ) []*Asset {
 	var assets []*Asset
 	var mu sync.Mutex
@@ -318,7 +325,7 @@ func (s *NmapScanner) runNmapWithLogger(
 				default:
 				}
 				// 每个端口使用独立的超时context，互不影响
-				result := s.scanSinglePortWithLogger(ctx, targets, task.port, opts, logInfo, logError)
+				result := s.scanSinglePortWithLogger(ctx, targets, task.port, opts, logInfo, logError, logDebug)
 				if len(result) > 0 {
 					mu.Lock()
 					assets = append(assets, result...)
@@ -357,7 +364,7 @@ dispatch:
 }
 
 // scanSinglePortWithLogger 扫描单个端口（带日志回调）
-func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logError logFunc) []*Asset {
+func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logError, logDebug logFunc) []*Asset {
 	var assets []*Asset
 
 	// 构建nmap命令
@@ -376,7 +383,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	args = append(args, targets...)
 
 	// 输出执行命令到日志
-	logx.Infof("[Nmap] CLI: port=%d args=%s", port, strings.Join(args, " "))
+	logInfo("[Nmap] CLI: port=%d args=%s", port, strings.Join(args, " "))
 
 	// 为单个端口创建独立的超时context，避免一个端口超时导致所有扫描停止
 	// 修复 C-32：原使用 context.Background() 忽略父级 ctx，任务取消时 nmap 不会终止
@@ -412,7 +419,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	case err := <-done:
 		if err != nil {
 			logError("Nmap: error for port %d: %v (stderr: %s)", port, err, stderr.String())
-			logx.Debugf("[Nmap] port %d stderr: %s", port, stderr.String())
+			logDebug("[Nmap] port %d stderr: %s", port, stderr.String())
 			return assets
 		}
 		output = stdout.Bytes()
@@ -422,7 +429,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	var nmapRun NmapRun
 	if err := xml.Unmarshal(output, &nmapRun); err != nil {
 		logError("Nmap: xml parse error for port %d: %v", port, err)
-		logx.Debugf("[Nmap] port %d raw XML stdout: %s", port, string(output))
+		logDebug("[Nmap] port %d raw XML stdout: %s", port, string(output))
 		return assets
 	}
 
@@ -430,7 +437,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 		// 获取IPv4地址（忽略MAC地址）
 		ip := host.GetIPv4Address()
 		if ip == "" {
-			logx.Debugf("[Nmap] host skipped: empty IPv4 (addresses=%v)", host.Addresses)
+			logDebug("[Nmap] host skipped: empty IPv4 (addresses=%v)", host.Addresses)
 			continue
 		}
 

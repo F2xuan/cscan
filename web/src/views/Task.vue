@@ -438,7 +438,7 @@
             <el-option label="WARN" value="WARN" />
             <el-option label="ERROR" value="ERROR" />
           </el-select>
-          <el-checkbox v-model="logIncludeDebug" size="small" @change="refreshLogs">包含 DEBUG</el-checkbox>
+          <el-checkbox v-model="logIncludeDebug" size="small" @change="refreshLogs">{{ $t('common.includeDebug') }}</el-checkbox>
           <el-button type="primary" size="small" :loading="logLoading" @click="refreshLogs">
             <el-icon style="margin-right: 4px">
               <Refresh />

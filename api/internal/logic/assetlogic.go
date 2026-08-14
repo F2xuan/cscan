@@ -464,7 +464,7 @@ func (l *AssetStatLogic) AssetStat() (resp *types.AssetStatResp, err error) {
 }
 
 func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
-	var totalAsset, totalHost, newCount, updatedCount int64
+	var totalAsset, totalHost, newCount, updatedCount, portCount int64
 	var topPorts, topService, topApp, topTitle []types.StatItem
 	var topIconHash []types.IconHashStatItem
 	var riskDistribution map[string]int
@@ -479,6 +479,9 @@ func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
 		newCount = overview.NewCount
 		updatedCount = overview.UpdatedCount
 	}
+
+	// 去重端口数（与端口页面 AggregatePortList 口径一致）
+	portCount, _ = assetModel.DistinctPortCount(l.ctx)
 
 	// Top端口（返回top50，前端默认展示top10）
 	portStats, _ := assetModel.AggregatePort(l.ctx, 50)
@@ -546,6 +549,7 @@ func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
 		Msg:              "success",
 		TotalAsset:       int(totalAsset),
 		TotalHost:        int(totalHost),
+		PortCount:        int(portCount),
 		NewCount:         int(newCount),
 		UpdatedCount:     int(updatedCount),
 		TopPorts:         topPorts,

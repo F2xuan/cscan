@@ -208,6 +208,10 @@ func (l *OnlineAPILogic) Import(req *types.OnlineImportReq, state *onlineImportT
 	}
 
 	_ = total // total used for state initialization
+
+	// 失效统计缓存，确保 Dashboard 与列表页数据一致
+	l.svc.QueryCache.Clear()
+
 	return &types.BaseResp{Code: 0, Msg: fmt.Sprintf("成功新增%d条资产，跳过%d条（空主机/已存在）", imported, skipped)}, nil
 }
 
@@ -458,6 +462,10 @@ PageLoop:
 	if totalSkipped > 0 {
 		msg += fmt.Sprintf("，跳过 %d 条（空主机/已存在）", totalSkipped)
 	}
+
+	// 失效统计缓存，确保 Dashboard 与列表页数据一致
+	l.svc.QueryCache.Clear()
+
 	return &types.OnlineImportAllResp{
 		Code:         0,
 		Msg:          msg,

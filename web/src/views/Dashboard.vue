@@ -181,7 +181,7 @@
             <div class="cat-item" @click="goInventory()">
               <span class="cat-dot" style="background: #f97316"></span>
               <span class="cat-name">{{ t('dashboard.portLabel') }}</span>
-              <span class="cat-count">{{ stats.ports }}</span>
+              <span class="cat-count">{{ stats.portCount }}</span>
             </div>
             <div class="cat-item" @click="goAsset('site')">
               <span class="cat-dot" style="background: #8b5cf6"></span>
@@ -482,7 +482,7 @@ function rightCurvePath(i) {
 
 // === 暴露面总览数据 ===
 const exposureSources = computed(() => [
-  { key: 'ports', label: t('dashboard.exposedPorts'), value: stats.ports, color: '#3b82f6', route: '/asset-management/exposure/port' },
+  { key: 'ports', label: t('dashboard.exposedPorts'), value: stats.portCount, color: '#3b82f6', route: '/asset-management/exposure/port' },
   { key: 'sites', label: t('dashboard.exposedSites'), value: stats.sites, color: '#8b5cf6', route: '/asset-management/exposure/site' },
   { key: 'dirs', label: t('dashboard.sensitiveDirs'), value: stats.dirScans, color: '#ef4444', route: '/asset-management/exposure/dir' },
   { key: 'vulns', label: t('dashboard.knownVulns'), value: stats.vulns, color: '#f97316', route: '/asset-management/risk/vuln' },
@@ -501,7 +501,7 @@ const exposureRings = computed(() => {
 
 // === 数据整合区 ===
 const stats = reactive({
-  ports: 0, assetNew: 0,
+  ports: 0, portCount: 0, assetNew: 0,
   groups: 0,
   ips: 0, ipNew: 0,
   domains: 0, domainNew: 0,
@@ -618,7 +618,7 @@ async function loadAllData() {
     ])
     if (!isComponentAlive) return
     // 暴露面总数动画
-    animateValue('exposureTotal', stats.ports + stats.sites + stats.dirScans)
+    animateValue('exposureTotal', stats.portCount + stats.sites + stats.dirScans)
     await nextTick()
     if (!isComponentAlive) return
     initAllCharts()
@@ -631,11 +631,12 @@ async function fetchAssetStat() {
   const res = await silentFetch('/asset/stat')
   if (res) {
     stats.ports = res.totalAsset || 0
+    stats.portCount = res.portCount || 0
     stats.assetNew = res.newCount || 0
     stats.topPorts = res.topPorts || []
     stats.topService = res.topService || []
     stats.topApp = res.topApp || []
-    animateValue('ports', stats.ports)
+    animateValue('ports', stats.portCount)
   }
 }
 

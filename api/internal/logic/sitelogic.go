@@ -227,12 +227,12 @@ func (l *SiteLogic) SiteStat() (*types.SiteStatResp, error) {
 	cached, err := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
 		resp := &types.SiteStatResp{Code: 0}
 
-		// Web资产过滤条件
+		// Web资产过滤条件（与 SiteList 保持一致）
 		webFilter := bson.M{
 			"$or": []bson.M{
 				{"is_http": true},
-				{"service": bson.M{"$in": []string{"http", "https"}}},
 				{"title": bson.M{"$exists": true, "$ne": ""}},
+				{"status": bson.M{"$exists": true, "$nin": []string{"", "0"}}},
 				{"screenshot": bson.M{"$exists": true, "$ne": ""}},
 			},
 		}

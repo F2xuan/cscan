@@ -766,6 +766,11 @@ PageLoop:
 	logx.Infof("Space-engine cron task finished: cronTaskId=%s, platform=%s, fetched=%d, imported=%d, apiTotal=%d, err=%v",
 		msg.CronTaskId, platform, totalFetched, totalImport, apiTotal, lastErr)
 
+	// 失效统计缓存，确保 Dashboard 与列表页数据一致
+	if totalImport > 0 {
+		svcCtx.QueryCache.Clear()
+	}
+
 	if lastErr != nil {
 		return lastErr
 	}

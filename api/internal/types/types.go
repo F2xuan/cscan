@@ -341,6 +341,7 @@ type AssetStatResp struct {
 	Msg          string             `json:"msg"`
 	TotalAsset   int                `json:"totalAsset"`
 	TotalHost    int                `json:"totalHost"`
+	PortCount    int                `json:"portCount"`
 	NewCount     int                `json:"newCount"`
 	UpdatedCount int                `json:"updatedCount"`
 	TopPorts     []StatItem         `json:"topPorts"`

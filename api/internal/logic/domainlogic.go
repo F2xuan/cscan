@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"net"
 	"regexp"
 	"strconv"
 	"time"
@@ -14,6 +15,28 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
+
+// extractDomainFromAsset 从资产中提取域名，DomainList 与 DomainStat 共用。
+// 回退顺序: Domain → Host → Authority（去端口），跳过 IP 地址。
+func extractDomainFromAsset(asset *model.Asset) string {
+	domain := asset.Domain
+	if domain == "" {
+		domain = asset.Host
+	}
+	if domain == "" {
+		// Authority 格式为 "host:port"，需去除端口后再判断
+		addr := asset.Authority
+		if h, _, err := net.SplitHostPort(addr); err == nil {
+			domain = h
+		} else {
+			domain = addr
+		}
+	}
+	if domain == "" || common.IsIPAddress(domain) {
+		return ""
+	}
+	return domain
+}
 
 type DomainLogic struct {
 	logx.Logger
@@ -103,15 +126,8 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 
 	// 聚合域名信息
 	for _, asset := range assets {
-		// 确定域名值
-		domain := asset.Domain
+		domain := extractDomainFromAsset(&asset)
 		if domain == "" {
-			domain = asset.Host
-		}
-		if domain == "" {
-			domain = asset.Authority
-		}
-		if domain == "" || common.IsIPAddress(domain) {
 			continue
 		}
 
@@ -229,11 +245,8 @@ func (l *DomainLogic) DomainStat() (*types.DomainStatResp, error) {
 		}
 
 		for _, asset := range assets {
-			domain := asset.Domain
+			domain := extractDomainFromAsset(&asset)
 			if domain == "" {
-				domain = asset.Host
-			}
-			if domain == "" || common.IsIPAddress(domain) {
 				continue
 			}
 
@@ -284,16 +297,10 @@ func (l *DomainLogic) DomainDelete(req *types.DomainDeleteReq) (*types.BaseResp,
 	}
 	var domainName string
 	if asset != nil {
-		domainName = asset.Domain
-		if domainName == "" {
-			domainName = asset.Host
-		}
-		if domainName == "" {
-			domainName = asset.Authority
-		}
+		domainName = extractDomainFromAsset(asset)
 	}
 
-	if domainName == "" || common.IsIPAddress(domainName) {
+	if domainName == "" {
 		return &types.BaseResp{Code: 500, Msg: "删除失败，域名不存在"}, nil
 	}
 
@@ -311,6 +318,7 @@ func (l *DomainLogic) DomainDelete(req *types.DomainDeleteReq) (*types.BaseResp,
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}
 
+	l.svcCtx.QueryCache.Delete("domain_stat")
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }
 
@@ -330,14 +338,8 @@ func (l *DomainLogic) DomainBatchDelete(req *types.DomainBatchDeleteReq) (*types
 
 	domainNames := make(map[string]bool)
 	for _, asset := range assets {
-		domainName := asset.Domain
-		if domainName == "" {
-			domainName = asset.Host
-		}
-		if domainName == "" {
-			domainName = asset.Authority
-		}
-		if domainName != "" && !common.IsIPAddress(domainName) {
+		domainName := extractDomainFromAsset(&asset)
+		if domainName != "" {
 			domainNames[domainName] = true
 		}
 	}
@@ -365,5 +367,6 @@ func (l *DomainLogic) DomainBatchDelete(req *types.DomainBatchDeleteReq) (*types
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}
 
+	l.svcCtx.QueryCache.Delete("domain_stat")
 	return &types.BaseResp{Code: 0, Msg: "成功删除 " + strconv.FormatInt(int64(len(domainNames)), 10) + " 个域名"}, nil
 }

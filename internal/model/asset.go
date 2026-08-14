@@ -846,6 +846,29 @@ func (m *AssetModel) AggregateOverviewStats(ctx context.Context) (*AssetOverview
 	return stats, nil
 }
 
+// DistinctPortCount 统计去重端口数（port > 0），与 AggregatePortList 的 total 口径一致
+func (m *AssetModel) DistinctPortCount(ctx context.Context) (int64, error) {
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{{Key: "port", Value: bson.D{{Key: "$gt", Value: 0}}}}}},
+		{{Key: "$group", Value: bson.D{{Key: "_id", Value: "$port"}}}},
+		{{Key: "$count", Value: "total"}},
+	}
+	cursor, err := m.coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		return 0, err
+	}
+	defer cursor.Close(ctx)
+	var result struct {
+		Total int64 `bson:"total"`
+	}
+	if cursor.Next(ctx) {
+		if err := cursor.Decode(&result); err != nil {
+			return 0, err
+		}
+	}
+	return result.Total, nil
+}
+
 // AssetChangeStats 工作台资产变化统计结果
 type AssetChangeStats struct {
 	Total       int64

@@ -1467,7 +1467,16 @@ func (s *Scheduler) SubscribeCancelSignals(ctx context.Context) <-chan *CancelSi
 					}
 					var signal CancelSignal
 					if err := json.Unmarshal([]byte(msg.Payload), &signal); err != nil {
-						continue
+						// 回退：API 发布的是明文字符串（"STOP"/"PAUSE"），非 JSON
+						taskId := strings.TrimPrefix(msg.Channel, "cscan:task:ctrl:")
+						signal = CancelSignal{
+							TaskId: taskId,
+							Action: msg.Payload,
+						}
+						upper := strings.ToUpper(msg.Payload)
+						if upper != "STOP" && upper != "PAUSE" {
+							logx.Errorf("[Scheduler] Unrecognized task control payload: channel=%s, payload=%s", msg.Channel, msg.Payload)
+						}
 					}
 					select {
 					case ch <- &signal:

@@ -225,6 +225,13 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 	// 输出执行命令到日志
 	logFn("INFO", "[Masscan] CLI: args=%s", strings.Join(args, " "))
 
+	// 全局信号量：与 CmdExecutor 共用，限制所有扫描模块并发外部进程数
+	if !acquireProcessSlot(ctx) {
+		logFn("INFO", "Masscan canceled while waiting for process slot")
+		return assets
+	}
+	defer releaseProcessSlot()
+
 	cmd := exec.CommandContext(ctx, "masscan", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

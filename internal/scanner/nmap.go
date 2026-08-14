@@ -275,7 +275,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
-		Assets:      assets,
+		Assets:     assets,
 	}, nil
 }
 
@@ -389,6 +389,13 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	// 修复 C-32：原使用 context.Background() 忽略父级 ctx，任务取消时 nmap 不会终止
 	portCtx, portCancel := context.WithTimeout(ctx, time.Duration(opts.Timeout)*time.Second)
 	defer portCancel()
+
+	// 全局信号量：与 CmdExecutor 共用，限制所有扫描模块并发外部进程数
+	if !acquireProcessSlot(portCtx) {
+		logError("Nmap: canceled while waiting for process slot")
+		return assets
+	}
+	defer releaseProcessSlot()
 
 	cmd := exec.CommandContext(portCtx, "nmap", args...)
 	var stdout, stderr bytes.Buffer

@@ -17,6 +17,24 @@ import (
 // maxOutputBytes 单次 Execute 的 stdout/stderr 缓冲上限，防止大输出 OOM
 const maxOutputBytes = 128 * 1024 * 1024 // 128MB
 
+// maxConcurrentProcesses 全局信号量：限制所有扫描模块合计并发外部进程数。
+// 无论 Worker 子任务并行度多少、各 scanner 内部 worker pool 多大，
+// 实际运行的外部工具进程（naabu/nmap/nuclei/httpx/ffuf 等）总数 ≤ 此值。
+const maxConcurrentProcesses = 5
+
+var processSem = make(chan struct{}, maxConcurrentProcesses)
+
+// acquireProcessSlot 获取全局进程槽位，支持 context 取消
+func acquireProcessSlot(ctx context.Context) bool {
+	select {
+	case processSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+func releaseProcessSlot() { <-processSem }
+
 // cappedBuffer 带容量限制的 Buffer，超限后丢弃写入但返回成功以防管道阻塞
 type cappedBuffer struct {
 	buf       bytes.Buffer
@@ -71,6 +89,13 @@ func (e *CmdExecutor) withPresetArgs(args []string) []string {
 
 func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOpts) (*ExecuteResult, error) {
 	result := &ExecuteResult{LogFn: opts.LogFn}
+
+	// 全局信号量：限制并发外部进程数
+	if !acquireProcessSlot(ctx) {
+		result.Stderr = "canceled while waiting for process slot"
+		return result, ctx.Err()
+	}
+	defer releaseProcessSlot()
 
 	args = e.withPresetArgs(args)
 
@@ -139,6 +164,12 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 }
 
 func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler func(line string) (bool, error), opts ExecuteOpts) error {
+	// 全局信号量：限制并发外部进程数
+	if !acquireProcessSlot(ctx) {
+		return ctx.Err()
+	}
+	defer releaseProcessSlot()
+
 	args = e.withPresetArgs(args)
 
 	timeout := e.defaultTimeout

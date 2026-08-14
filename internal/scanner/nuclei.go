@@ -113,25 +113,26 @@ func NewNucleiScanner() *NucleiScanner {
 
 // NucleiOptions Nuclei扫描选项
 type NucleiOptions struct {
-	Templates            []string                 `json:"templates"`
-	Tags                 []string                 `json:"tags"`
-	Severity             string                   `json:"severity"`
-	ExcludeTags          []string                 `json:"excludeTags"`
-	ExcludeTemplates     []string                 `json:"excludeTemplates"`
-	RateLimit            int                      `json:"rateLimit"`
-	Concurrency          int                      `json:"concurrency"`
-	Timeout              int                      `json:"timeout"`
-	TargetTimeout        int                      `json:"targetTimeout"`
-	Retries              int                      `json:"retries"`
-	AutoScan             bool                     `json:"autoScan"`
-	AutomaticScan        bool                     `json:"automaticScan"`
-	TagMappings          map[string][]string      `json:"tagMappings"`
-	CustomTemplates      []string                 `json:"customTemplates"`
-	CustomPocOnly        bool                     `json:"customPocOnly"`
-	NucleiTemplates      []string                 `json:"nucleiTemplates"`
-	CustomHeaders        []string                 `json:"customHeaders"`
-	ForceScan            bool                     `json:"forceScan"`
-	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`
+	Templates            []string                          `json:"templates"`
+	Tags                 []string                          `json:"tags"`
+	Severity             string                            `json:"severity"`
+	ExcludeTags          []string                          `json:"excludeTags"`
+	ExcludeTemplates     []string                          `json:"excludeTemplates"`
+	RateLimit            int                               `json:"rateLimit"`
+	Concurrency          int                               `json:"concurrency"`
+	Timeout              int                               `json:"timeout"`
+	TargetTimeout        int                               `json:"targetTimeout"`
+	Retries              int                               `json:"retries"`
+	AutoScan             bool                              `json:"autoScan"`
+	AutomaticScan        bool                              `json:"automaticScan"`
+	TagMappings          map[string][]string               `json:"tagMappings"`
+	CustomTemplates      []string                          `json:"customTemplates"`
+	CustomPocOnly        bool                              `json:"customPocOnly"`
+	NucleiTemplates      []string                          `json:"nucleiTemplates"`
+	CustomHeaders        []string                          `json:"customHeaders"`
+	ForceScan            bool                              `json:"forceScan"`
+	OnVulnerabilityFound func(vul *Vulnerability)          `json:"-"`
+	OnProgress           func(percent int, message string) `json:"-"`
 }
 
 // Validate 验证配置

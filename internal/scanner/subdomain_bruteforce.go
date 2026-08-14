@@ -139,7 +139,7 @@ var takeoverFingerprints = map[string][]string{
 func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
 		MainTaskId: config.MainTaskId,
-		Assets:      make([]*Asset, 0),
+		Assets:     make([]*Asset, 0),
 	}
 
 	// 解析选项
@@ -1169,6 +1169,13 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// 全局信号量：与 CmdExecutor 共用，限制所有扫描模块并发外部进程数
+	if !acquireProcessSlot(cmdCtx) {
+		taskLog("WARN", "Bruteforce: ksubdomain canceled while waiting for process slot")
+		return subdomains, cmdCtx.Err()
+	}
+	defer releaseProcessSlot()
+
 	// 执行ksubdomain命令
 	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
 
@@ -1312,6 +1319,13 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// 全局信号量：与 CmdExecutor 共用，限制所有扫描模块并发外部进程数
+	if !acquireProcessSlot(cmdCtx) {
+		taskLog("WARN", "Bruteforce: ksubdomain canceled while waiting for process slot")
+		return assets, cmdCtx.Err()
+	}
+	defer releaseProcessSlot()
 
 	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
 	var stdout, stderr bytes.Buffer

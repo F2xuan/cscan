@@ -25,6 +25,9 @@ var ErrPortThresholdExceeded = fmt.Errorf("port threshold exceeded")
 
 var ipLocator = geolocation.NewIPLocator()
 
+// naabuSem 已移除：全局并发限制统一在 CmdExecutor.Execute/StreamLines 中实现，
+// 覆盖所有扫描模块（naabu/nmap/nuclei/httpx/ffuf/feroxbuster/subfinder/dnsx/fingerprintx）。
+
 // NaabuScanner Naabu端口扫描器 (CLI 模式)
 type NaabuScanner struct {
 	BaseScanner
@@ -273,12 +276,12 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	if thresholdExceeded {
 		return &ScanResult{
 			MainTaskId: config.MainTaskId,
-			Assets: assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
+			Assets:     assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
 		}, ErrPortThresholdExceeded
 	}
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
-		Assets: assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
+		Assets:     assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
 	}, nil
 }
 
@@ -380,6 +383,7 @@ dispatch:
 	}()
 
 	// 收集结果
+	completed := 0
 	for res := range resultChan {
 		if res.err != nil {
 			logFn("WARN", "Naabu(CLI): worker error: %v", res.err)
@@ -392,6 +396,11 @@ dispatch:
 		if config.OnTargetDone != nil {
 			config.OnTargetDone(res.target, res.assets)
 		}
+		completed++
+		if config.OnProgress != nil && totalTargets > 0 {
+			config.OnProgress(completed*100/totalTargets,
+				fmt.Sprintf("端口扫描: %d/%d", completed, totalTargets))
+		}
 	}
 
 	logFn("INFO", "Naabu(CLI): completed, found %d open ports across %d targets", len(allAssets), totalTargets)
@@ -399,6 +408,8 @@ dispatch:
 }
 
 func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
+	// 全局并发限制由 CmdExecutor.Execute 统一控制
+
 	args := []string{
 		"-host", target,
 		"-json",
@@ -450,13 +461,14 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 
 	args = append(args, "-o", tmpPath)
 
-	// 计算聚合超时
-	aggregatedTimeout := time.Duration(opts.Timeout+opts.Retries*opts.Timeout) * time.Second
-	logFn("INFO", "Naabu CLI: AggregatedTimeout=%v for target %s", aggregatedTimeout, target)
+	// 单目标进程超时 = 单目标超时 × (1 + 重试次数)，确保重试不会被提前杀进程
+	perTargetProcessTimeout := time.Duration(opts.Timeout+opts.Retries*opts.Timeout) * time.Second
+	logFn("INFO", "Naabu CLI: perTargetTimeout=%v (single=%ds, retries=%d) for target %s",
+		perTargetProcessTimeout, opts.Timeout, opts.Retries, target)
 
-	// 进程超时必须大于聚合超时，否则会提前杀进程
-	processTimeout := aggregatedTimeout + 30*time.Second
-	logFn("INFO", "Naabu CLI: ProcessTimeout=%v (aggregated + 30s buffer)", processTimeout)
+	// 额外 30s 缓冲用于进程启动/退出/IO，避免正常完成时被误杀
+	processTimeout := perTargetProcessTimeout + 30*time.Second
+	logFn("INFO", "Naabu CLI: ProcessTimeout=%v (perTarget + 30s buffer)", processTimeout)
 
 	logFn("INFO", "[Naabu] CLI: target=%s args=%s", target, strings.Join(args, " "))
 

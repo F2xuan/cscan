@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"cscan/internal/model"
 	"cscan/internal/notification"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
@@ -20,6 +21,7 @@ import (
 	"github.com/projectdiscovery/wappalyzergo"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -94,6 +96,13 @@ type Worker struct {
 
 	// 活跃任务的日志记录器（维持 buffer 生命周期）
 	taskLoggers sync.Map // mainTaskId -> *TaskLoggerWS
+
+	// 主任务实时进度缓存（incrSubTaskDone 时刷新，onProgress 时读取计算）
+	progressMu           sync.Mutex
+	cachedSubTaskDone    int
+	cachedSubTaskCount   int
+	cachedMainTaskId     string
+	lastReportedProgress int // 上次上报的进度百分比，防止回退
 }
 
 // getMainTaskId 从 taskId 中提取主任务ID
@@ -1595,6 +1604,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					MainTaskId: task.MainTaskId,
 					Options:    subfinderOpts,
 					TaskLogger: domainTaskLogger,
+					OnProgress: w.makeOnProgress(task.MainTaskId, "子域名扫描"),
 					OnTargetDone: func(domain string, assets []*scanner.Asset) {
 						// 流式入库：单域名子域名枚举完成立即保存
 						if len(assets) == 0 {
@@ -1708,6 +1718,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 							MainTaskId: task.MainTaskId,
 							Options:    bruteforceOpts,
 							TaskLogger: domainTaskLogger,
+							OnProgress: w.makeOnProgress(task.MainTaskId, "子域名爆破"),
 							OnTargetDone: func(domain string, assets []*scanner.Asset) {
 								// 流式入库：单域名暴力破解完成立即保存增量资产
 								var newAssets []*scanner.Asset
@@ -1827,9 +1838,11 @@ domainScanDone:
 		// 更新当前阶段
 		w.updateTaskProgressWithPhase(ctx, task.TaskId, 20, "端口扫描中", "端口扫描")
 
-		// 使用 Worker 并发数覆盖 Naabu Workers
-		if config.PortScan.Workers <= 0 || config.PortScan.Workers > w.config.Concurrency {
-			config.PortScan.Workers = w.config.Concurrency
+		// Naabu 内部 worker pool 用于并行启动多个 naabu 进程（每目标一个进程）。
+		// 此值不应等于 Worker 子任务并发数，否则 N 个子任务各开 N 个进程 = N² 进程爆炸。
+		// 全局信号量（naabuSem）已兜底限制总进程数 ≤ 5，此处仅控制单子任务内的并行度。
+		if config.PortScan.Workers <= 0 {
+			config.PortScan.Workers = 2
 		}
 
 		// 端口扫描在 naabu/masscan 内部按目标串行执行（见 scanner/naabu.go runNaabuWithLogger）
@@ -1882,10 +1895,8 @@ domainScanDone:
 			w.taskLog(task.TaskId, level, format, args...)
 		}
 
-		// 创建进度回调
-		onProgress := func(progress int, message string) {
-			w.updateTaskProgress(ctx, task.TaskId, progress, message)
-		}
+		// 创建进度回调（统一使用 makeOnProgress，基于分子/分母实时计算主任务进度）
+		onProgress := w.makeOnProgress(task.MainTaskId, "端口扫描")
 
 		// 第一步：端口发现
 		switch portDiscoveryTool {
@@ -2567,6 +2578,7 @@ domainScanDone:
 									w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
 									vulBuffer.Add(vul)
 								},
+								OnProgress: w.makeOnProgress(task.MainTaskId, "POC扫描"),
 							}
 
 							// 创建任务日志回调
@@ -2665,6 +2677,7 @@ domainScanDone:
 							w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
 							vulBuffer.Add(vul)
 						},
+						OnProgress: w.makeOnProgress(task.MainTaskId, "POC扫描"),
 					}
 
 					pocTaskLogger := func(level, format string, args ...interface{}) {
@@ -2828,6 +2841,13 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 			w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done: %v", err)
 			return
 		}
+		// 刷新实时进度缓存
+		w.progressMu.Lock()
+		w.cachedSubTaskDone = resp.SubTaskDone
+		w.cachedSubTaskCount = resp.SubTaskCount
+		w.cachedMainTaskId = task.MainTaskId
+		w.lastReportedProgress = 0
+		w.progressMu.Unlock()
 		if resp.AllDone {
 			w.taskLog(task.TaskId, LevelInfo, "All sub-tasks completed: %d/%d", resp.SubTaskDone, resp.SubTaskCount)
 		} else {
@@ -2857,6 +2877,80 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 		w.taskLog(task.TaskId, LevelInfo, "All sub-tasks completed: %d/%d", resp.SubTaskDone, resp.SubTaskCount)
 	} else {
 		w.taskLog(task.TaskId, LevelDebug, "Sub-task progress: %d/%d (phase: %s)", resp.SubTaskDone, resp.SubTaskCount, phase)
+	}
+}
+
+// updateMainTaskProgress 基于模块内部分进度实时更新主任务 progress 字段。
+// 计算公式: progress = (cachedSubTaskDone + moduleFraction) / cachedSubTaskCount × 100
+// moduleFraction: 当前模块的完成比例 (0.0 ~ 1.0)，由各 scanner 的 OnProgress 回调提供。
+// 进度只升不降，防止多子任务交叉上报导致回退。
+func (w *Worker) updateMainTaskProgress(mainTaskId string, moduleFraction float64, phase, message string) {
+	if mainTaskId == "" {
+		return
+	}
+	w.progressMu.Lock()
+	done := w.cachedSubTaskDone
+	total := w.cachedSubTaskCount
+	cachedId := w.cachedMainTaskId
+	lastProgress := w.lastReportedProgress
+	w.progressMu.Unlock()
+
+	// 缓存的主任务 ID 不匹配时跳过（子任务切换）
+	if cachedId != mainTaskId || total <= 0 {
+		return
+	}
+
+	progress := int((float64(done) + moduleFraction) * 100.0 / float64(total))
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 99 {
+		progress = 99 // 100 由 IncrSubTaskDone 的 allDone 路径设置
+	}
+
+	// 只升不降
+	if progress <= lastProgress {
+		return
+	}
+
+	w.progressMu.Lock()
+	w.lastReportedProgress = progress
+	w.progressMu.Unlock()
+
+	// 直接更新 MongoDB progress 字段
+	if w.mongoDB != nil {
+		taskModel := model.NewMainTaskModel(w.mongoDB)
+		if err := taskModel.Update(context.Background(), mainTaskId, bson.M{
+			"progress":      progress,
+			"current_phase": phase,
+		}); err != nil {
+			w.logger.Error("[Progress] update main task progress failed: %v", err)
+		}
+	}
+
+	// 同时更新 Redis 执行信息（前端轮询）
+	if w.schedClient != nil {
+		_ = w.schedClient.UpdateTask(context.Background(), mainTaskId, "", progress, phase)
+	}
+}
+
+// makeOnProgress 创建模块级 OnProgress 回调。
+// modulePercent 是 scanner 回调传入的当前模块完成百分比 (0-100)，
+// 映射到主任务整体进度的增量: moduleFraction = modulePercent / 100。
+func (w *Worker) makeOnProgress(mainTaskId, phase string) func(int, string) {
+	return func(modulePercent int, message string) {
+		if modulePercent < 0 {
+			modulePercent = 0
+		}
+		if modulePercent > 100 {
+			modulePercent = 100
+		}
+		fraction := float64(modulePercent) / 100.0
+		msg := message
+		if msg == "" {
+			msg = phase
+		}
+		w.updateMainTaskProgress(mainTaskId, fraction, phase, msg)
 	}
 }
 

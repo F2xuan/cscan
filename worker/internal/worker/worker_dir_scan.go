@@ -143,18 +143,12 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 		w.taskLog(task.TaskId, level, format, args...)
 	}
 
-	// 创建进度回调
-	onProgress := func(progress int, message string) {
-		w.updateTaskProgress(ctx, task.TaskId, 70+progress/5, message) // 70-90%
-	}
-
-	// 执行扫描
 	result, err := dirScanner.Scan(dirCtx, &scanner.ScanConfig{
 		Assets:     httpAssets,
 		Options:    opts,
 		MainTaskId: task.MainTaskId,
 		TaskLogger: taskLogger,
-		OnProgress:  onProgress,
+		OnProgress: w.makeOnProgress(task.MainTaskId, "目录扫描"),
 		OnTargetDone: func(target string, assets []*scanner.Asset) {
 			// 流式入库：每完成一个目标立即保存
 			w.saveDirScanResults(ctx, task, assets)

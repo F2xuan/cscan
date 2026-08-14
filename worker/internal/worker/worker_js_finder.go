@@ -114,6 +114,7 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 		Options:    opts,
 		MainTaskId: task.MainTaskId,
 		TaskLogger: jsTaskLogger,
+		OnProgress: w.makeOnProgress(task.MainTaskId, "JSFinder扫描"),
 	})
 
 	if ctx.Err() != nil || jsCtx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {

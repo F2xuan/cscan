@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,15 +49,16 @@ func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq) (resp *types.S
 
 	// 搜索关键词
 	if req.Query != "" {
+		q := regexp.QuoteMeta(req.Query)
 		filter["$or"] = []bson.M{
-			{"host": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"title": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"host": bson.M{"$regex": q, "$options": "i"}},
+			{"title": bson.M{"$regex": q, "$options": "i"}},
 		}
 	}
 
 	// 域名过滤
 	if req.Domain != "" {
-		filter["host"] = bson.M{"$regex": req.Domain, "$options": "i"}
+		filter["host"] = bson.M{"$regex": regexp.QuoteMeta(req.Domain), "$options": "i"}
 	}
 
 	// 端口过滤
@@ -74,7 +76,7 @@ func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq) (resp *types.S
 		techFilters := make([]bson.M, 0, len(req.Technologies))
 		for _, tech := range req.Technologies {
 			techFilters = append(techFilters, bson.M{
-				"app": bson.M{"$regex": tech, "$options": "i"},
+				"app": bson.M{"$regex": regexp.QuoteMeta(tech), "$options": "i"},
 			})
 		}
 		if len(techFilters) > 0 {

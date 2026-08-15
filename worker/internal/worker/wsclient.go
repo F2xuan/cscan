@@ -508,6 +508,11 @@ func (c *WorkerWSClient) initiateReconnect(waitIfBusy bool, source string, waitC
 
 	// 启动异步重连（使用独立 context，避免继承已取消的父 context）
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logx.Errorf("[WSClient] reconnect goroutine panic recovered: %v", r)
+			}
+		}()
 		defer c.reconnecting.Store(false)
 
 		reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
@@ -515,6 +520,11 @@ func (c *WorkerWSClient) initiateReconnect(waitIfBusy bool, source string, waitC
 
 		// 监听关闭信号
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logx.Errorf("[WSClient] close watcher goroutine panic recovered: %v", r)
+				}
+			}()
 			select {
 			case <-c.closeChan:
 				reconnectCancel()

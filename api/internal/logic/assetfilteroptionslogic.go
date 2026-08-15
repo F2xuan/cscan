@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"time"
 
@@ -54,7 +55,7 @@ func (l *AssetFilterOptionsLogic) loadFilterOptions(req *types.AssetFilterOption
 	// 构建查询条件
 	filter := bson.M{}
 	if req.Domain != "" {
-		filter["host"] = bson.M{"$regex": req.Domain, "$options": "i"}
+		filter["host"] = bson.M{"$regex": regexp.QuoteMeta(req.Domain), "$options": "i"}
 	}
 	if req.HasScreenshot {
 		filter["screenshot"] = bson.M{"$ne": ""}

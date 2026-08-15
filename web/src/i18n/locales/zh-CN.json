@@ -2577,7 +2577,8 @@
     "selectTemplate": "选择模板",
     "viewConfig": "查看配置",
     "requestRate": "请求速率(Rate/s)",
-    "templateConcurrency": "模板并发"
+    "templateConcurrency": "模板并发",
+    "assetRequired": "请至少选择一个资产"
   },
   "onlineSearch": {
     "title": "在线搜索",
@@ -3123,7 +3124,8 @@
   },
   "error": {
     "sessionExpired": "登录已过期，请重新登录",
-    "networkError": "网络错误或后端服务未启动，请检查连接"
+    "networkError": "网络错误或后端服务未启动，请检查连接",
+    "serviceUnavailable": "服务暂时不可用，请稍后重试"
   },
   "menu": {
     "Dashboard": "工作台",

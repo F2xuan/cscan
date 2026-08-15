@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"bytes"
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -955,15 +954,6 @@ func mmh3Hash32(data []byte) uint32 {
 	h ^= h >> 16
 
 	return h
-}
-
-// CalculateMD5Hash 计算MD5 hash（备用方案）
-func CalculateMD5Hash(data []byte) string {
-	if len(data) == 0 {
-		return ""
-	}
-	sum := md5.Sum(data)
-	return fmt.Sprintf("%x", sum)
 }
 
 // ARLFingerJSON ARL finger.json格式的指纹规则

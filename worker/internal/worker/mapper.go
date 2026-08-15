@@ -6,16 +6,17 @@ import "cscan/internal/scanner"
 // Used to consolidate mapping logic between result_sink.go and worker.go
 func ToVulDocument(vul *scanner.Vulnerability, taskId string) VulDocument {
 	doc := VulDocument{
-		Authority: vul.Authority,
-		Host:      vul.Host,
-		Port:      int32(vul.Port),
-		Url:       vul.Url,
-		PocFile:   vul.PocFile,
-		Source:    vul.Source,
-		Severity:  vul.Severity,
-		Result:    vul.Result,
-		Extra:     vul.Extra,
-		TaskId:    taskId,
+		Authority:  vul.Authority,
+		Host:       vul.Host,
+		Port:       int32(vul.Port),
+		Url:        vul.Url,
+		PocFile:    vul.PocFile,
+		Source:     vul.Source,
+		RiskSource: vul.RiskSource,
+		Severity:   vul.Severity,
+		Result:     vul.Result,
+		Extra:      vul.Extra,
+		TaskId:     taskId,
 	}
 
 	if vul.VulName != "" {

@@ -21,14 +21,6 @@ type Scanner interface {
 	Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error)
 }
 
-// TypedScanner 类型安全的扫描器接口（泛型版本）
-// 用于需要强类型选项的扫描器实现
-type TypedScanner[T ScannerOptions] interface {
-	Scanner
-	// ScanWithOptions 使用类型安全的选项执行扫描
-	ScanWithOptions(ctx context.Context, config *ScanConfig, opts T) (*ScanResult, error)
-}
-
 // ScanConfig 扫描配置
 type ScanConfig struct {
 	Target            string      `json:"target"`
@@ -47,21 +39,6 @@ type ScanConfig struct {
 	OnTargetDone func(target string, assets []*Asset) `json:"-"`
 	// OnCertFound 证书采集完成后的流式回调，用于即时入库
 	OnCertFound func(cert *CertResult) `json:"-"`
-}
-
-// GetTypedOptions 从 ScanConfig 中提取类型安全的选项
-// 如果 Options 已经是目标类型，直接返回
-// 否则返回 nil 和 false
-func GetTypedOptions[T ScannerOptions](config *ScanConfig) (T, bool) {
-	if config.Options == nil {
-		var zero T
-		return zero, false
-	}
-	if opts, ok := config.Options.(T); ok {
-		return opts, true
-	}
-	var zero T
-	return zero, false
 }
 
 // ScanResult 扫描结果

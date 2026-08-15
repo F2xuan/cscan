@@ -1,5 +1,7 @@
 package logic
 
+import "regexp"
+
 import "cscan/internal/model"
 
 import (
@@ -27,7 +29,7 @@ func (l *ActiveFingerprintListLogic) ActiveFingerprintList(req *types.ActiveFing
 	// 构建查询条件
 	filter := bson.M{}
 	if req.Keyword != "" {
-		filter["name"] = bson.M{"$regex": req.Keyword, "$options": "i"}
+		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(req.Keyword), "$options": "i"}
 	}
 	if req.Enabled != nil {
 		filter["enabled"] = *req.Enabled

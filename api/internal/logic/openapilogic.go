@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"errors"
+	"regexp"
 	"time"
 
 	"cscan/api/internal/svc"
@@ -40,9 +41,10 @@ func keywordFilter(fields []string, kw string) bson.M {
 	if kw == "" {
 		return nil
 	}
+	escaped := regexp.QuoteMeta(kw)
 	or := make([]bson.M, 0, len(fields))
 	for _, f := range fields {
-		or = append(or, bson.M{f: bson.M{"$regex": kw, "$options": "i"}})
+		or = append(or, bson.M{f: bson.M{"$regex": escaped, "$options": "i"}})
 	}
 	return bson.M{"$or": or}
 }

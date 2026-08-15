@@ -90,10 +90,10 @@ type TaskInfo struct {
 	TaskId     string   `json:"taskId"`
 	MainTaskId string   `json:"mainTaskId"`
 	TaskName   string   `json:"taskName"`
-	Config      string   `json:"config"`
-	Priority    int      `json:"priority"`
-	CreateTime  string   `json:"createTime"`
-	Workers     []string `json:"workers,omitempty"` // 指定执行任务的 Worker 列表，为空表示任意 Worker
+	Config     string   `json:"config"`
+	Priority   int      `json:"priority"`
+	CreateTime string   `json:"createTime"`
+	Workers    []string `json:"workers,omitempty"` // 指定执行任务的 Worker 列表，为空表示任意 Worker
 }
 
 // WorkerLoad Worker负载信息
@@ -152,13 +152,13 @@ type TaskHandler func(ctx context.Context, task *TaskInfo) error
 // NewScheduler 创建调度器
 func NewScheduler(rdb *redis.Client) *Scheduler {
 	return &Scheduler{
-		rdb:                  rdb,
-		cron:                 cron.New(cron.WithSeconds()),
-		queueKey:             "cscan:task:queue",
-		processingKey:        "cscan:task:processing",
-		workerLoadKey:        "cscan:worker:load",
-		handlers:             make(map[string]TaskHandler),
-		metrics:              &PriorityQueueMetrics{},
+		rdb:           rdb,
+		cron:          cron.New(cron.WithSeconds()),
+		queueKey:      "cscan:task:queue",
+		processingKey: "cscan:task:processing",
+		workerLoadKey: "cscan:worker:load",
+		handlers:      make(map[string]TaskHandler),
+		metrics:       &PriorityQueueMetrics{},
 		// enablePriorityBucket 默认 false，保持向后兼容；开启后走 5 级分桶路径
 	}
 }
@@ -318,7 +318,8 @@ func BucketPriorityFromWorker(workerPriority int) int {
 //
 // 修复 C-01：原默认路径脚本不持久化 taskInfo/execution，导致恢复链路断裂、任务永久丢失
 // 修复 C6：死信 PUBLISH 移出原子 Lua,避免订阅消费慢或缓冲满时阻塞整个 pop 事务。
-//          Lua 仅做 ZADD 死信并返回 "__DL__" 前缀的哨兵字符串,由调用方在 Lua 返回后再 PUBLISH。
+//
+//	Lua 仅做 ZADD 死信并返回 "__DL__" 前缀的哨兵字符串,由调用方在 Lua 返回后再 PUBLISH。
 var atomicPopTaskScript = redis.NewScript(`
 	local queueKey = KEYS[1]
 	local processingKey = KEYS[2]
@@ -696,7 +697,7 @@ func (s *Scheduler) PopTask(ctx context.Context) (*TaskInfo, error) {
 		s.metrics.RecordPop(time.Since(startTime))
 	}()
 
-	// 分桶路径：跨 5 个分桶按 P0 -> P4 顺序原子弹出
+	// 分桶路径：跨 5 个分桶按 P4 -> P0 顺序原子弹出（urgent 先，background 后）
 	if s.enablePriorityBucket.Load() {
 		return s.popFromPriorityBuckets(ctx)
 	}
@@ -740,7 +741,7 @@ func (s *Scheduler) PopTask(ctx context.Context) (*TaskInfo, error) {
 // PopTaskForWorker 从队列获取任务（考虑Worker负载）
 // 优先从Worker专属队列获取，然后从公共队列获取
 //
-// 分桶路径下，公共队列弹出改为跨 5 个分桶按 P0 -> P4 顺序原子弹出
+// 分桶路径下，公共队列弹出改为跨 5 个分桶按 P4 -> P0 顺序原子弹出（urgent 先）
 // 专属队列保持单 ZSet（任务量小，分桶收益有限）
 func (s *Scheduler) PopTaskForWorker(ctx context.Context, workerName string) (*TaskInfo, error) {
 	startTime := time.Now()
@@ -1027,7 +1028,28 @@ func (s *Scheduler) CompleteTask(ctx context.Context, taskId string) error {
 
 // GetQueueLength 获取队列长度
 func (s *Scheduler) GetQueueLength(ctx context.Context) (int64, error) {
-	return s.rdb.ZCard(ctx, s.queueKey).Result()
+	if !s.enablePriorityBucket.Load() {
+		return s.rdb.ZCard(ctx, s.queueKey).Result()
+	}
+
+	pipe := s.rdb.Pipeline()
+	counts := make([]*redis.IntCmd, PriorityUrgent-PriorityBackground+1)
+	for priority := PriorityBackground; priority <= PriorityUrgent; priority++ {
+		counts[priority-PriorityBackground] = pipe.ZCard(ctx, priorityBucketKey(priority))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+
+	var total int64
+	for i := range counts {
+		value, err := counts[i].Result()
+		if err != nil {
+			return 0, err
+		}
+		total += value
+	}
+	return total, nil
 }
 
 // GetProcessingCount 获取处理中任务数
@@ -1076,7 +1098,7 @@ type BruteScanConfig struct {
 // DirScanConfig 目录扫描配置
 type DirScanConfig struct {
 	Enable         bool     `json:"enable"`
-	Tool           string   `json:"tool"`            // 扫描工具: ffuf(默认), feroxbuster
+	Tool           string   `json:"tool"`           // 扫描工具: ffuf(默认), feroxbuster
 	DictIds        []string `json:"dictIds"`        // 字典ID列表
 	Threads        int      `json:"threads"`        // 并发线程数
 	Timeout        int      `json:"timeout"`        // 单个请求超时(秒)
@@ -1416,6 +1438,7 @@ func (s *Scheduler) PublishCancelSignal(ctx context.Context, taskId, action stri
 // 修复 C-07：原实现存在两个问题
 //  1. msg.Payload 在 pubsub.Channel() 关闭时 msg 为 nil，导致 nil pointer panic
 //  2. 连接断开后无重连逻辑，订阅永久失效，取消信号无法送达
+//
 // 现增加 nil 检查、订阅状态校验和指数退避重连
 func (s *Scheduler) SubscribeCancelSignals(ctx context.Context) <-chan *CancelSignal {
 	ch := make(chan *CancelSignal, 100)

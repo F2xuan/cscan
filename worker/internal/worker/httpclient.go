@@ -111,10 +111,9 @@ type AssetDocument struct {
 
 // TaskResultReq 资产结果上报请求
 type TaskResultReq struct {
-	MainTaskId  string          `json:"mainTaskId"`
-	OrgId       string          `json:"orgId"`
-	Assets      []AssetDocument `json:"assets"`
-	IsFinalSave bool            `json:"isFinalSave"` // 是否是任务完成时的最终保存
+	MainTaskId string          `json:"mainTaskId"`
+	OrgId      string          `json:"orgId"`
+	Assets     []AssetDocument `json:"assets"`
 }
 
 // TaskResultResp 资产结果上报响应
@@ -135,6 +134,7 @@ type VulDocument struct {
 	Url               string   `json:"url"`
 	PocFile           string   `json:"pocFile"`
 	Source            string   `json:"source"`
+	RiskSource        string   `json:"riskSource,omitempty"`
 	Severity          string   `json:"severity"`
 	Extra             string   `json:"extra"`
 	Result            string   `json:"result"`
@@ -184,7 +184,6 @@ type HeartbeatReq struct {
 	MemUsed            float64 `json:"memUsed"`
 	TaskStartedNumber  int32   `json:"taskStartedNumber"`
 	TaskExecutedNumber int32   `json:"taskExecutedNumber"`
-	SubCommandRunning  int     `json:"subCommandRunning,omitempty"`
 	IsDaemon           bool    `json:"isDaemon"`
 	Concurrency        int     `json:"concurrency"`
 }
@@ -293,11 +292,6 @@ type SubfinderResp struct {
 	Count     int32               `json:"count"`
 }
 
-// HttpServiceReq HTTP服务映射获取请求
-type HttpServiceReq struct {
-	EnabledOnly bool `json:"enabledOnly"`
-}
-
 // HttpServiceMapping HTTP服务映射
 type HttpServiceMapping struct {
 	Id          string `json:"id"`
@@ -305,15 +299,6 @@ type HttpServiceMapping struct {
 	IsHttp      bool   `json:"isHttp"`
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
-}
-
-// HttpServiceResp HTTP服务映射获取响应
-type HttpServiceResp struct {
-	Code     int                  `json:"code"`
-	Msg      string               `json:"msg"`
-	Success  bool                 `json:"success"`
-	Mappings []HttpServiceMapping `json:"mappings"`
-	Count    int32                `json:"count"`
 }
 
 // HttpServiceConfig HTTP服务配置
@@ -560,21 +545,6 @@ func (c *WorkerHTTPClient) UpdateTask(ctx context.Context, req *TaskUpdateReq) (
 	return &resp, nil
 }
 
-// SaveTaskResult 保存资产结果
-func (c *WorkerHTTPClient) SaveTaskResult(ctx context.Context, req *TaskResultReq) (*TaskResultResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/result", req)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp TaskResultResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %w", err)
-	}
-
-	return &resp, nil
-}
-
 func (c *WorkerHTTPClient) SaveVulReverify(ctx context.Context, req *VulReverifyReq) (*VulReverifyResp, error) {
 	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/vul/reverify", req)
 	if err != nil {
@@ -675,25 +645,6 @@ func (c *WorkerHTTPClient) GetSubfinderProviders(ctx context.Context) (*Subfinde
 	}
 
 	var resp SubfinderResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %w", err)
-	}
-
-	return &resp, nil
-}
-
-// GetHttpServiceMappings 获取HTTP服务映射
-func (c *WorkerHTTPClient) GetHttpServiceMappings(ctx context.Context, enabledOnly bool) (*HttpServiceResp, error) {
-	req := &HttpServiceReq{
-		EnabledOnly: enabledOnly,
-	}
-
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/config/httpservice", req)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp HttpServiceResp
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
@@ -1049,20 +1000,7 @@ type BaseResp struct {
 	Success bool   `json:"success"`
 }
 
-// SaveJSFinderResult 保存 JSFinder 扫描结果
-func (c *WorkerHTTPClient) SaveJSFinderResult(ctx context.Context, req *SaveJSFinderResultReq) (*BaseResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/jsfinder/save", req)
-	if err != nil {
-		return nil, err
-	}
-	var resp BaseResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// CertResultItem 证书采集结果项（与 scanner.CertResult 对齐）
+// SaveJSFinderResultReq 保存 JSFinder 扫描结果请求
 type CertResultItem struct {
 	Host         string               `json:"host"`
 	Port         int                  `json:"port"`
@@ -1087,17 +1025,10 @@ type SaveCertResultReq struct {
 	Results    []*CertResultItem `json:"results"`
 }
 
-// SaveCertResult 保存证书采集结果（worker → API，镜像 SaveJSFinderResult）
-func (c *WorkerHTTPClient) SaveCertResult(ctx context.Context, req *SaveCertResultReq) (*BaseResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/cert/save", req)
-	if err != nil {
-		return nil, err
-	}
-	var resp BaseResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+// SaveDirScanResultReq 保存目录扫描结果请求
+type SaveDirScanResultReq struct {
+	MainTaskId string                  `json:"mainTaskId,omitempty"`
+	Results    []DirScanResultDocument `json:"results"`
 }
 
 // BlacklistRulesResp 黑名单规则响应

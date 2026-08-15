@@ -120,7 +120,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		PortThreshold:     0,
 		Retries:           2,
 		WarmUpTime:        1,
-		Workers:           1,
+		Workers:           50,
 		Verify:            false,
 		SkipHostDiscovery: true, // 默认跳过 ICMP 主机发现（域名/CDN 目标 ICMP 几乎总被丢弃）
 	}

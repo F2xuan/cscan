@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -139,10 +140,10 @@ func (l *CustomPocListLogic) CustomPocList(req *types.CustomPocListReq) (resp *t
 	// 构建筛选条件
 	filter := bson.M{}
 	if req.Name != "" {
-		filter["name"] = bson.M{"$regex": req.Name, "$options": "i"}
+		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(req.Name), "$options": "i"}
 	}
 	if req.TemplateId != "" {
-		filter["template_id"] = bson.M{"$regex": req.TemplateId, "$options": "i"}
+		filter["template_id"] = bson.M{"$regex": regexp.QuoteMeta(req.TemplateId), "$options": "i"}
 	}
 	if req.Severity != "" {
 		filter["severity"] = req.Severity
@@ -405,14 +406,15 @@ func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateLi
 	}
 	if req.Tag != "" {
 		// 标签模糊匹配
-		filter["tags"] = bson.M{"$regex": req.Tag, "$options": "i"}
+		filter["tags"] = bson.M{"$regex": regexp.QuoteMeta(req.Tag), "$options": "i"}
 	}
 	if req.Keyword != "" {
 		// 使用正则表达式进行模糊搜索
+		kw := regexp.QuoteMeta(req.Keyword)
 		filter["$or"] = []bson.M{
-			{"template_id": bson.M{"$regex": req.Keyword, "$options": "i"}},
-			{"name": bson.M{"$regex": req.Keyword, "$options": "i"}},
-			{"description": bson.M{"$regex": req.Keyword, "$options": "i"}},
+			{"template_id": bson.M{"$regex": kw, "$options": "i"}},
+			{"name": bson.M{"$regex": kw, "$options": "i"}},
+			{"description": bson.M{"$regex": kw, "$options": "i"}},
 		}
 	}
 	// 新增 - CVSS评分筛选
@@ -421,7 +423,7 @@ func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateLi
 	}
 	// 新增 - CVE编号搜索
 	if req.CveId != "" {
-		filter["cve_ids"] = bson.M{"$regex": req.CveId, "$options": "i"}
+		filter["cve_ids"] = bson.M{"$regex": regexp.QuoteMeta(req.CveId), "$options": "i"}
 	}
 
 	// 查询总数
@@ -653,20 +655,20 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq) (resp *types.P
 	// 直接入队
 	taskId := uuid.New().String()
 	taskConfig := map[string]interface{}{
-		"taskType":    "poc_validate",
-		"url":         req.Url,
-		"pocId":       req.Id,
-		"pocType":     pocType,
-		"timeout":     30,
+		"taskType": "poc_validate",
+		"url":      req.Url,
+		"pocId":    req.Id,
+		"pocType":  pocType,
+		"timeout":  30,
 	}
 	configBytes, _ := json.Marshal(taskConfig)
 
 	task := &scheduler.TaskInfo{
-		TaskId:      taskId,
-		MainTaskId:  taskId,
-		TaskName:    "POC验证",
-		Config:      string(configBytes),
-		Priority:    2,
+		TaskId:     taskId,
+		MainTaskId: taskId,
+		TaskName:   "POC验证",
+		Config:     string(configBytes),
+		Priority:   2,
 	}
 
 	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
@@ -744,11 +746,11 @@ func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq)
 	configBytes, _ := json.Marshal(taskConfig)
 
 	task := &scheduler.TaskInfo{
-		TaskId:      taskId,
-		MainTaskId:  taskId,
-		TaskName:    "POC批量扫描",
-		Config:      string(configBytes),
-		Priority:    2,
+		TaskId:     taskId,
+		MainTaskId: taskId,
+		TaskName:   "POC批量扫描",
+		Config:     string(configBytes),
+		Priority:   2,
 	}
 
 	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {
@@ -902,10 +904,10 @@ func (l *CustomPocClearAllLogic) CustomPocClearAll(req *types.CustomPocClearAllR
 	// 构建筛选条件
 	filter := bson.M{}
 	if req.Name != "" {
-		filter["name"] = bson.M{"$regex": req.Name, "$options": "i"}
+		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(req.Name), "$options": "i"}
 	}
 	if req.TemplateId != "" {
-		filter["template_id"] = bson.M{"$regex": req.TemplateId, "$options": "i"}
+		filter["template_id"] = bson.M{"$regex": regexp.QuoteMeta(req.TemplateId), "$options": "i"}
 	}
 	if req.Severity != "" {
 		filter["severity"] = req.Severity
@@ -1060,8 +1062,8 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 		TaskId:     taskId,
 		MainTaskId: taskId,
 		TaskName:   "POC批量扫描",
-		Config:      string(configBytes),
-		Priority:    2,
+		Config:     string(configBytes),
+		Priority:   2,
 	}
 
 	if err := l.svcCtx.Scheduler.PushTask(l.ctx, task); err != nil {

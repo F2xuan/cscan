@@ -2,10 +2,8 @@ package worker
 
 import (
 	"os"
-	"runtime"
 
 	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -16,13 +14,6 @@ func GetCPULoad() float64 {
 		return cpuPercent[0]
 	}
 	return 0
-}
-
-// LoadAvgInfo 负载信息
-type LoadAvgInfo struct {
-	Load1  float64
-	Load5  float64
-	Load15 float64
 }
 
 // MemoryInfo 内存信息快照
@@ -56,16 +47,4 @@ func GetMemoryInfo() MemoryInfo {
 // GetMemoryUsage 获取当前内存使用率
 func GetMemoryUsage() float64 {
 	return GetMemoryInfo().UsedPercent
-}
-
-// GetDiskUsage 获取磁盘使用信息
-func GetDiskUsage() (total, used uint64, percent float64) {
-	diskPath := "/"
-	if runtime.GOOS == "windows" {
-		diskPath = "C:\\"
-	}
-	if diskInfo, err := disk.Usage(diskPath); err == nil {
-		return diskInfo.Total, diskInfo.Used, diskInfo.UsedPercent
-	}
-	return 0, 0, 0
 }

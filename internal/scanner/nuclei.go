@@ -865,18 +865,8 @@ func (c *templateFileCache) EvictStale() {
 	}
 }
 
-func extractTemplateId(content string) string {
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "id:") {
-			id := strings.TrimPrefix(line, "id:")
-			return strings.TrimSpace(id)
-		}
-	}
-	return ""
-}
-
+// parseAppName 解析应用名称，去除来源标识与版本号。
+// 注意：同名实现存在于 worker_auto_tag.go（worker 包），跨包重复，后续可抽到公共 pkg。
 func parseAppName(app string) string {
 	appName := app
 	if idx := strings.Index(appName, "["); idx > 0 {
@@ -1053,40 +1043,4 @@ func extractMatchedReason(event *NucleiResultEvent) string {
 		reason += fmt.Sprintf(" (触点: %s)", event.MatchedAt)
 	}
 	return reason
-}
-
-type nucleiScanError struct {
-	target  string
-	phase   string
-	err     error
-	timeout bool
-}
-
-func (e *nucleiScanError) Error() string {
-	if e.timeout {
-		return fmt.Sprintf("nuclei %s timeout for %s", e.phase, e.target)
-	}
-	return fmt.Sprintf("nuclei %s failed for %s: %v", e.phase, e.target, e.err)
-}
-
-func logScanError(err *nucleiScanError, taskLogger func(level, format string, args ...interface{})) {
-	logFn := func(level, format string, args ...interface{}) {
-		if taskLogger != nil {
-			taskLogger(level, format, args...)
-			return
-		}
-		switch level {
-		case "ERROR", "WARN":
-			logx.Errorf(format, args...)
-		case "DEBUG":
-			logx.Debugf(format, args...)
-		default:
-			logx.Infof(format, args...)
-		}
-	}
-	if err.timeout {
-		logFn("WARN", "Nuclei: %s timeout for %s", err.phase, err.target)
-	} else {
-		logFn("ERROR", "Nuclei %s error for %s: %v", err.phase, err.target, err.err)
-	}
 }

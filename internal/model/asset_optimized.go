@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -32,10 +33,10 @@ var AssetScreenshotProjection = bson.M{
 // 保留卡片展示所需的 screenshot 与 icon_hash_bytes，排除 body/header/banner/cert 等大字段，
 // 降低列表 payload（body/header 仅在资产详情抽屉按需加载）。
 var AssetInventoryProjection = bson.M{
-	"body":      0,
-	"header":    0,
-	"banner":    0,
-	"cert":      0,
+	"body":   0,
+	"header": 0,
+	"banner": 0,
+	"cert":   0,
 }
 
 // AssetSiteProjection 站点列表专用投影，在列表投影基础上保留 icon_hash_bytes 用于展示 favicon
@@ -122,6 +123,11 @@ func (m *AssetModel) FindListOptimized(ctx context.Context, filter bson.M, page,
 	wg.Add(2)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errCh <- fmt.Errorf("FindListOptimized query goroutine panic: %v", r)
+			}
+		}()
 		defer wg.Done()
 		cursor, err := m.coll.Find(ctx, filter, opts)
 		if err != nil {
@@ -143,6 +149,11 @@ func (m *AssetModel) FindListOptimized(ctx context.Context, filter bson.M, page,
 	}()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errCh <- fmt.Errorf("FindListOptimized count goroutine panic: %v", r)
+			}
+		}()
 		defer wg.Done()
 		var err error
 		total, err = m.coll.CountDocuments(ctx, filter)
@@ -183,6 +194,11 @@ func (m *AssetModel) FindListOptimizedWithSort(ctx context.Context, filter bson.
 	wg.Add(2)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errCh <- fmt.Errorf("FindListOptimizedWithSort query goroutine panic: %v", r)
+			}
+		}()
 		defer wg.Done()
 		cursor, err := m.coll.Find(ctx, filter, opts)
 		if err != nil {
@@ -204,6 +220,11 @@ func (m *AssetModel) FindListOptimizedWithSort(ctx context.Context, filter bson.
 	}()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errCh <- fmt.Errorf("FindListOptimizedWithSort count goroutine panic: %v", r)
+			}
+		}()
 		defer wg.Done()
 		var err error
 		total, err = m.coll.CountDocuments(ctx, filter)

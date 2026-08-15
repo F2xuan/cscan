@@ -68,12 +68,6 @@ type Worker struct {
 	isRunning     bool
 	executorCount int // 已启动的任务处理协程数
 
-	// 健康状态监控
-	lastCPUCheck     time.Time // 上次CPU检查时间
-	cpuOverloadCount int       // CPU过载计数
-	isThrottled      bool      // 是否处于限流状态
-	throttleUntil    time.Time // 限流结束时间
-
 	// 任务控制信号
 	taskControlSignals sync.Map // taskId -> action (STOP, PAUSE)
 
@@ -125,6 +119,25 @@ func getMainTaskId(taskId string) string {
 		}
 	}
 	return taskId
+}
+
+// defaultTaskTimeoutSec 默认单个任务整体超时上限（秒）。
+// 为 baseCtx 提供兜底超时，防止任务无限期占用并发槽位；可经环境变量 CSCAN_TASK_TIMEOUT 覆盖。
+const defaultTaskTimeoutSec = 6 * 60 * 60 // 6 小时
+
+// resolveTaskOverallTimeout 推导单个任务的整体超时上限（秒）。
+// 优先级：环境变量 CSCAN_TASK_TIMEOUT > Worker 配置 Timeout > 默认值。
+func resolveTaskOverallTimeout(configTimeout int) time.Duration {
+	timeoutSec := defaultTaskTimeoutSec
+	if configTimeout > 0 {
+		timeoutSec = configTimeout
+	}
+	if env := os.Getenv("CSCAN_TASK_TIMEOUT"); env != "" {
+		if v, err := strconv.Atoi(env); err == nil && v > 0 {
+			timeoutSec = v
+		}
+	}
+	return time.Duration(timeoutSec) * time.Second
 }
 
 // taskLog 发布任务级别日志
@@ -343,14 +356,14 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 
 	// 创建本地结果队列
 	// 修复 P0：队列目录改到挂载卷 log/ 下（cscan_worker_logs 已挂载 /app/log），
-	// 避免容器 OOM 重启后本地队列文件随容器丢失；maxSize 由 200 提升至 2000，
+	// 避免容器 OOM 重启后本地队列文件随容器丢失；maxSize 提升至 2000，
 	// 降低扫描期 API 长时间不可用时队列溢出丢弃最旧结果的风险。
 	resultQueueDir := filepath.Join("log", "result_queue")
 	// 回放函数必须走直写（不带 fallback），避免二次入队导致自循环膨胀。
 	w.resultQueue = NewResultQueue(resultQueueDir, 2000, func(ctx context.Context, req *TaskResultReq) error {
 		return w.replayAssetResult(ctx, req)
 	})
-	// JS 结果与证书结果对称接入本地队列重放（修复 P0：原 JS/Cert 保存无重试、无队列，API 抖动即永久丢失）
+	// 漏洞/JS/证书结果对称接入本地队列重放（修复 P0：原保存无重试、无队列，API 抖动即永久丢失）
 	w.resultQueue.SetVulReplayFn(func(ctx context.Context, req *VulResultReq) error {
 		vuls := make([]*scanner.Vulnerability, 0, len(req.Vuls))
 		for i := range req.Vuls {
@@ -390,6 +403,9 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 			}
 		}
 		return w.saveCertResultsDirect(ctx, req.MainTaskId, certs)
+	})
+	w.resultQueue.SetDirScanReplayFn(func(ctx context.Context, req *SaveDirScanResultReq) error {
+		return w.replayDirScanResult(ctx, req)
 	})
 	w.resultQueue.SetLogger(func(level, format string, args ...interface{}) {
 		w.logger.Info("[ResultQueue] "+format, args...)
@@ -562,7 +578,6 @@ func (w *Worker) registerScanners() {
 	w.scanners["subdomain_bruteforce"] = scanner.NewSubdomainBruteforceScanner()
 	w.scanners["fingerprint"] = scanner.NewFingerprintScanner()
 	w.scanners["nuclei"] = scanner.NewNucleiScanner()
-	w.scanners["urlfinder"] = scanner.NewURLFinderScanner()
 	w.scanners["ffuf"] = scanner.NewFFufScanner()
 	w.scanners["feroxbuster"] = scanner.NewFeroxbusterScanner()
 	w.scanners["brutescan"] = scanner.NewBruteScanScanner()
@@ -690,14 +705,12 @@ func (w *Worker) processTaskLoop() {
 		var task *scheduler.TaskInfo
 		if w.taskQueue != nil {
 			// 启用优先级队列：DequeueWait 用 sync.Cond 挂起等待,替代 50ms 空轮询
-			var priority TaskPriority
-			var ok bool
-			task, priority, ok = w.taskQueue.DequeueWait(ctx)
+			ok := false
+			task, _, ok = w.taskQueue.DequeueWait(ctx)
 			if !ok {
 				// Stop 或 ctx 取消,退出循环
 				return
 			}
-			_ = priority
 		} else {
 			// 原 taskChan 路径
 			select {
@@ -851,6 +864,32 @@ func getStackTrace() []byte {
 	buf := make([]byte, 4096)
 	n := runtime.Stack(buf, false)
 	return buf[:n]
+}
+
+// safeGo 启动一个带 panic 恢复的 goroutine，防止子协程 panic 导致整个 Worker 进程崩溃。
+// label 用于日志定位来源，fn 为实际执行函数。
+func (w *Worker) safeGo(label string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				w.logger.Error("[%s] goroutine panic recovered: %v, stack: %s", label, r, string(getStackTrace()))
+			}
+		}()
+		fn()
+	}()
+}
+
+// safeGoTask 启动带 panic 恢复的 goroutine，panic 时将堆栈附加到任务日志而非仅 Worker 日志。
+// 用于与具体任务绑定的后台协程（流式缓冲刷新等），便于按任务排查。
+func (w *Worker) safeGoTask(taskId, label string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				w.taskLog(taskId, LevelError, "[%s] goroutine panic recovered: %v, stack: %s", label, r, string(getStackTrace()))
+			}
+		}()
+		fn()
+	}()
 }
 
 // pullTask 拉取单个任务，返回是否获取到任务
@@ -1188,11 +1227,13 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		}
 	}()
 
-	baseCtx := context.Background()
+	// baseCtx 注入整体超时上限：修复 H2，防止单个任务因 baseCtx 无超时而无限期占用并发槽位。
+	// 各子阶段仍可用自身更短的超时覆盖；此处仅为兜底，避免卡死。
+	overallTimeout := resolveTaskOverallTimeout(w.config.Timeout)
+	baseCtx, baseCancel := context.WithTimeout(context.Background(), overallTimeout)
+	defer baseCancel()
 	startTime := time.Now()
-
-	// 添加函数入口日志
-	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s", task.TaskId, task.MainTaskId)
+	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s, overallTimeout=%s", task.TaskId, task.MainTaskId, overallTimeout)
 
 	w.mu.Lock()
 	w.taskStarted++
@@ -1590,7 +1631,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			Recursive:          config.DomainScan.Recursive,
 			RemoveWildcard:     config.DomainScan.RemoveWildcard,
 			ResolveDNS:         config.DomainScan.ResolveDNS,
-			Concurrent:         w.config.Concurrency * 1, // DNS解析并发数为Worker并发数的10倍
+			Concurrent:         w.config.Concurrency, // 域名解析并发与 Worker 并发对齐
 			ProviderConfig:     providerConfig,
 		}
 
@@ -2210,7 +2251,7 @@ domainScanDone:
 
 				// 创建流式资产缓冲区，满10个或每3秒触发批量保存
 				assetBuffer := NewAssetBuffer(10)
-				go func() {
+				w.safeGoTask(task.TaskId, "fingerprint-asset-flush", func() {
 					ticker := time.NewTicker(3 * time.Second)
 					defer ticker.Stop()
 					for {
@@ -2227,7 +2268,7 @@ domainScanDone:
 							return
 						}
 					}
-				}()
+				})
 
 				result, err := s.Scan(fpCtx, &scanner.ScanConfig{
 					Assets:     assetsToScan,
@@ -2532,7 +2573,7 @@ domainScanDone:
 
 						// 启动后台刷新协程
 						flushDone := make(chan struct{})
-						go func() {
+						w.safeGoTask(task.TaskId, "poc-group-vul-flush", func() {
 							defer close(flushDone)
 							ticker := time.NewTicker(5 * time.Second)
 							defer ticker.Stop()
@@ -2552,7 +2593,7 @@ domainScanDone:
 									})
 								}
 							}
-						}()
+						})
 
 						// 遍历每个分组进行扫描
 						taskIdForCallback := task.TaskId
@@ -2646,7 +2687,7 @@ domainScanDone:
 
 					// 启动后台刷新协程
 					flushDone := make(chan struct{})
-					go func() {
+					w.safeGoTask(task.TaskId, "poc-vul-flush", func() {
 						defer close(flushDone)
 						ticker := time.NewTicker(5 * time.Second)
 						defer ticker.Stop()
@@ -2666,7 +2707,7 @@ domainScanDone:
 								})
 							}
 						}
-					}()
+					})
 
 					taskIdForCallback := task.TaskId
 					// 并发和速率由自适应调度器决定

@@ -6,8 +6,6 @@ import (
 
 	"cscan/internal/model"
 	"cscan/internal/scanner"
-
-	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // saveAssetResultWithFallback 先直写 MongoDB，失败后将完整请求持久化到本地队列。
@@ -22,10 +20,9 @@ func (w *Worker) saveAssetResultWithFallback(ctx context.Context, mainTaskID, or
 			return fmt.Errorf("save assets to MongoDB failed: %v; result queue is unavailable", err)
 		}
 		queueErr := w.resultQueue.Enqueue(&TaskResultReq{
-			MainTaskId:  mainTaskID,
-			OrgId:       orgID,
-			Assets:      scannerAssetsToDocuments(assets),
-			IsFinalSave: false,
+			MainTaskId: mainTaskID,
+			OrgId:      orgID,
+			Assets:     scannerAssetsToDocuments(assets),
 		})
 		if queueErr != nil {
 			return fmt.Errorf("save assets to MongoDB failed: %v; queue fallback failed: %w", err, queueErr)
@@ -176,11 +173,34 @@ func scannerAssetsToDocuments(assets []*scanner.Asset) []AssetDocument {
 			Authority: asset.Authority, Host: asset.Host, Port: int32(asset.Port), Category: asset.Category,
 			Service: asset.Service, Server: asset.Server, Banner: asset.Banner, Title: asset.Title,
 			App: asset.App, HttpStatus: asset.HttpStatus, HttpHeader: asset.HttpHeader, HttpBody: asset.HttpBody,
-			IconHash: asset.IconHash, IsCdn: asset.IsCDN, Cname: asset.CName, IsCloud: asset.IsCloud,
+			Cert: asset.Cert, IconHash: asset.IconHash, IsCdn: asset.IsCDN, Cname: asset.CName, IsCloud: asset.IsCloud,
+			Ipv4: ipv4ToDocuments(asset.IPV4), Ipv6: ipv6ToDocuments(asset.IPV6),
 			Screenshot: asset.Screenshot, IsHttp: asset.IsHTTP, Source: asset.Source, IconData: asset.IconData,
 		})
 	}
 	return documents
+}
+
+func ipv4ToDocuments(ipv4 []scanner.IPInfo) []IPV4Info {
+	if len(ipv4) == 0 {
+		return nil
+	}
+	out := make([]IPV4Info, len(ipv4))
+	for i, ip := range ipv4 {
+		out[i] = IPV4Info{IP: ip.IP, Location: ip.Location}
+	}
+	return out
+}
+
+func ipv6ToDocuments(ipv6 []scanner.IPInfo) []IPV6Info {
+	if len(ipv6) == 0 {
+		return nil
+	}
+	out := make([]IPV6Info, len(ipv6))
+	for i, ip := range ipv6 {
+		out[i] = IPV6Info{IP: ip.IP, Location: ip.Location}
+	}
+	return out
 }
 
 func vulDocumentToScanner(doc *VulDocument) (*scanner.Vulnerability, error) {
@@ -189,7 +209,7 @@ func vulDocumentToScanner(doc *VulDocument) (*scanner.Vulnerability, error) {
 	}
 	vul := &scanner.Vulnerability{
 		Authority: doc.Authority, Host: doc.Host, Port: int(doc.Port), Url: doc.Url,
-		PocFile: doc.PocFile, Source: doc.Source, Severity: doc.Severity,
+		PocFile: doc.PocFile, Source: doc.Source, RiskSource: doc.RiskSource, Severity: doc.Severity,
 		Extra: doc.Extra, Result: doc.Result, Tags: doc.Tags,
 		ExtractedResults: doc.ExtractedResults, ResponseTruncated: valueOrFalse(doc.ResponseTruncated),
 	}
@@ -348,6 +368,34 @@ func (w *Worker) saveJSFinderResultDirect(ctx context.Context, mainTaskID string
 	return nil
 }
 
+// saveDirScanResultsWithFallback 先直写 MongoDB，失败后将目录扫描结果持久化到本地队列。
+func (w *Worker) saveDirScanResultsWithFallback(ctx context.Context, mainTaskID string, results []DirScanResultDocument) error {
+	if len(results) == 0 {
+		return nil
+	}
+	if err := w.saveDirScanResultsDirect(ctx, mainTaskID, results); err == nil {
+		return nil
+	} else {
+		req := &SaveDirScanResultReq{MainTaskId: mainTaskID, Results: results}
+		if w.resultQueue == nil {
+			return fmt.Errorf("save dirscan results to MongoDB failed: %w", err)
+		}
+		if queueErr := w.resultQueue.EnqueueDirScan(req); queueErr != nil {
+			return fmt.Errorf("save dirscan results to MongoDB failed: %v; queue fallback failed: %w", err, queueErr)
+		}
+		w.taskLog(mainTaskID, LevelWarn, "MongoDB dirscan save failed; queued %d results for replay: %v", len(results), err)
+		return nil
+	}
+}
+
+// replayDirScanResult 从本地队列重放目录扫描结果到 MongoDB
+func (w *Worker) replayDirScanResult(ctx context.Context, req *SaveDirScanResultReq) error {
+	if w.mongoDB == nil {
+		return fmt.Errorf("mongoDB unavailable; dirscan replay requires direct MongoDB connection")
+	}
+	return w.saveDirScanResultsDirect(ctx, req.MainTaskId, req.Results)
+}
+
 // saveDirScanResultsDirect 将目录扫描结果直接写入 MongoDB
 func (w *Worker) saveDirScanResultsDirect(ctx context.Context, mainTaskID string, results []DirScanResultDocument) error {
 	if w.mongoDB == nil || len(results) == 0 {
@@ -385,22 +433,6 @@ func (w *Worker) saveDirScanResultsDirect(ctx context.Context, mainTaskID string
 	return nil
 }
 
-// updateExecutorTaskDirect 直接更新 MongoDB 中的 executor_task 状态/结果
-func (w *Worker) updateExecutorTaskDirect(ctx context.Context, taskID, state, result string) {
-	if w.mongoDB == nil {
-		return
-	}
-
-	executorTaskModel := model.NewExecutorTaskModel(w.mongoDB)
-	update := map[string]interface{}{
-		"status": state,
-		"result": result,
-	}
-	if err := executorTaskModel.UpdateByTaskId(ctx, taskID, update); err != nil {
-		logx.Errorf("[MongoDirect] updateExecutorTaskDirect failed: taskId=%s err=%v", taskID, err)
-	}
-}
-
 // scannerAssetToDTO 将 scanner.Asset 转换为 model.ScannerAsset DTO
 func scannerAssetToDTO(asset *scanner.Asset) *model.ScannerAsset {
 	dto := &model.ScannerAsset{
@@ -411,6 +443,7 @@ func scannerAssetToDTO(asset *scanner.Asset) *model.ScannerAsset {
 		Service:    asset.Service,
 		Title:      asset.Title,
 		App:        asset.App,
+		Cert:       asset.Cert,
 		HttpStatus: asset.HttpStatus,
 		HttpHeader: asset.HttpHeader,
 		HttpBody:   asset.HttpBody,
@@ -452,6 +485,7 @@ func scannerVulToDTO(vul *scanner.Vulnerability) *model.ScannerVulnerability {
 		Url:               vul.Url,
 		PocFile:           vul.PocFile,
 		Source:            vul.Source,
+		RiskSource:        vul.RiskSource,
 		Severity:          vul.Severity,
 		Result:            vul.Result,
 		Extra:             vul.Extra,

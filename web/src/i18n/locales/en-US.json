@@ -1036,6 +1036,7 @@
     "scanTarget": "Scan Target",
     "autoRefresh": "Auto Refresh (30s interval)",
     "batchDelete": "Batch Delete",
+    "confirmBatchDelete": "Are you sure to delete the selected {count} task(s)?",
     "status": "Status",
     "subTask": "Sub Task",
     "cronTask": "Cron Task",
@@ -2615,7 +2616,8 @@
     "selectTemplate": "Select Template",
     "viewConfig": "View Config",
     "requestRate": "Request Rate (Rate/s)",
-    "templateConcurrency": "Template Concurrency"
+    "templateConcurrency": "Template Concurrency",
+    "assetRequired": "Please select at least one asset"
   },
   "onlineSearch": {
     "title": "Online Search",
@@ -3130,7 +3132,8 @@
   },
   "error": {
     "sessionExpired": "Session expired, please log in again",
-    "networkError": "Network error or backend service not started, please check the connection"
+    "networkError": "Network error or backend service not started, please check the connection",
+    "serviceUnavailable": "Service temporarily unavailable, please try again later"
   },
   "menu": {
     "Dashboard": "Workbench",

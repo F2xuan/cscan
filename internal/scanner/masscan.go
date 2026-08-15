@@ -346,11 +346,6 @@ func checkMasscanInstalled() bool {
 	return strings.Contains(string(output), "Masscan version")
 }
 
-// CheckMasscanInstalled 导出的检查函数，供外部调用
-func CheckMasscanInstalled() bool {
-	return checkMasscanInstalled()
-}
-
 // optimizePortsForMasscan 优化端口参数格式，避免命令行参数过长
 // masscan 原生支持范围格式（如 1-65535），直接使用比展开更高效
 func optimizePortsForMasscan(portStr string) string {

@@ -16,6 +16,15 @@ type ScanResultService struct {
 	db *mongo.Database
 }
 
+// cloneBSONFilter returns a shallow copy of a bson.M map.
+func cloneBSONFilter(src bson.M) bson.M {
+	dst := bson.M{}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 // NewScanResultService creates a new ScanResultService
 func NewScanResultService(db *mongo.Database) *ScanResultService {
 	return &ScanResultService{
@@ -27,11 +36,11 @@ func NewScanResultService(db *mongo.Database) *ScanResultService {
 
 // GetDirScanResultsReq represents a request to get directory scan results
 type GetDirScanResultsReq struct {
-	Authority   string
-	Host        string
-	Port        int
-	Limit       int
-	Offset      int
+	Authority string
+	Host      string
+	Port      int
+	Limit     int
+	Offset    int
 }
 
 // GetDirScanResultsResp represents the response with directory scan results
@@ -43,11 +52,11 @@ type GetDirScanResultsResp struct {
 
 // GetVulnScanResultsReq represents a request to get vulnerability scan results
 type GetVulnScanResultsReq struct {
-	Authority   string
-	Host        string
-	Port        int
-	Limit       int
-	Offset      int
+	Authority string
+	Host      string
+	Port      int
+	Limit     int
+	Offset    int
 }
 
 // GetVulnScanResultsResp represents the response with vulnerability scan results
@@ -59,7 +68,7 @@ type GetVulnScanResultsResp struct {
 
 // GetScanResultSummaryReq represents a request to get scan result summaries
 type GetScanResultSummaryReq struct {
-	AssetIds    []string
+	AssetIds []string
 }
 
 // GetScanResultSummaryResp represents the response with scan result summaries
@@ -118,7 +127,7 @@ func (s *ScanResultService) GetDirScanResults(ctx context.Context, req *GetDirSc
 		page = (req.Offset / req.Limit) + 1
 	}
 	if pageSize == 0 {
-		pageSize = 100 // Default page size
+		pageSize = defaultDirPageSize
 	}
 
 	// Fetch results with pagination, sorted by scan_time descending (most recent first)
@@ -185,7 +194,7 @@ func (s *ScanResultService) GetVulnScanResults(ctx context.Context, req *GetVuln
 		page = (req.Offset / req.Limit) + 1
 	}
 	if pageSize == 0 {
-		pageSize = 50 // Default page size
+		pageSize = defaultVulnPageSize
 	}
 
 	// Fetch results with pagination, sorted by scan_time descending (most recent first)
@@ -313,12 +322,21 @@ type SaveScanResultsReq struct {
 	ScanTimestamp time.Time
 }
 
-// SaveScanResultsWithHistory saves new scan results and preserves historical data
-// This method implements the complete rescan flow:
-// 1. Check if target has existing results
-// 2. If exists, archive current results to history
-// 3. Save new scan results with current timestamp
-// 4. Implement merge logic to preserve unchanged asset fields
+// SaveScanResultsWithHistory saves new scan results and preserves historical data.
+// Rescan flow (write-before-delete to avoid data loss on partial failure):
+//   - Validate required parameters.
+//   - Archive existing results for historical comparison.
+//   - Insert new directory and vulnerability results.
+//   - Delete only records older than the new scan timestamp (preserves the just-written batch).
+//   - Update asset metadata with a merge logic that records only actual changes.
+//
+// These steps are NOT wrapped in a MongoDB transaction; the write-before-delete ordering
+// is the safety mechanism so a mid-flow failure leaves the prior results intact.
+const (
+	defaultDirPageSize  = 100
+	defaultVulnPageSize = 50
+)
+
 func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req *SaveScanResultsReq) error {
 	// Validate required parameters
 	if req.Host == "" {
@@ -378,21 +396,14 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 			ArchiveTime: req.ScanTimestamp,
 		}
 
-		// Archive for history comparison, but don't fail if archival fails
 		if err := historyService.ArchiveCurrentResults(ctx, archiveReq); err != nil {
-			// Log the error but continue - we don't want to lose new scan results
-			// just because archival failed
-			// logx.Errorf("Failed to archive results: %v", err)
+			return fmt.Errorf("archive current scan results: %w", err)
 		}
-
-		// 归档后清除当前集合中的旧结果，确保当前视图仅展示最新扫描数据
-		dirScanModel.DeleteByFilter(ctx, dirFilter)
-		scanResultModel.DeleteMany(ctx, vulnFilter)
 	}
 
-	// Step 3: Save new scan results using Insert
-	// Old results are preserved in the history archive
-	// New results are added alongside existing ones (not replacing them)
+	// Step 3: Save new scan results first, then delete old ones
+	// Order matters: write new results BEFORE deleting old ones to avoid data loss
+	// if the write fails mid-way (old results are preserved as fallback).
 	for i := range req.DirResults {
 		req.DirResults[i].ScanTime = req.ScanTimestamp
 		req.DirResults[i].Version = 1
@@ -402,20 +413,28 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 		}
 	}
 
-	// Save vulnerability scan results
-	// Use VulModel instead of ScanResultModel for proper Upsert
-	vulModel := model.NewVulModel(s.db)
 	for i := range req.VulnResults {
 		req.VulnResults[i].ScanTime = req.ScanTimestamp
 		req.VulnResults[i].Version = 1
-		// Insert new scan results (ScanResultModel stores raw scan results)
 		if err := scanResultModel.Insert(ctx, &req.VulnResults[i]); err != nil {
-			// If insert fails due to duplicate, try to continue
-			// This can happen if the same result already exists
-			continue
+			return fmt.Errorf("save vulnerability scan result: %w", err)
 		}
 	}
-	_ = vulModel // Suppress unused warning - can be used for Vul-specific operations
+
+	// Step 4: Remove only records from previous scans after all writes succeed.
+	if hasExistingResults {
+		oldDirFilter := cloneBSONFilter(dirFilter)
+		oldDirFilter["scan_time"] = bson.M{"$lt": req.ScanTimestamp}
+		if _, err := dirScanModel.DeleteByFilter(ctx, oldDirFilter); err != nil {
+			return fmt.Errorf("delete archived directory scan results: %w", err)
+		}
+
+		oldVulnFilter := cloneBSONFilter(vulnFilter)
+		oldVulnFilter["scan_time"] = bson.M{"$lt": req.ScanTimestamp}
+		if _, err := scanResultModel.DeleteMany(ctx, oldVulnFilter); err != nil {
+			return fmt.Errorf("delete archived vulnerability scan results: %w", err)
+		}
+	}
 
 	// Step 4: Update asset with merge logic and record changes
 	assetModel := model.NewAssetModel(s.db)

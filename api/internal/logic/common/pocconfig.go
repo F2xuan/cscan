@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"cscan/api/internal/svc"
@@ -160,10 +161,11 @@ func resolveNucleiSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, poc
 	filter := bson.M{}
 	if f, ok := pocscan["nucleiSelectAllFilter"].(map[string]interface{}); ok {
 		if s, _ := f["keyword"].(string); s != "" {
+			kw := regexp.QuoteMeta(s)
 			filter["$or"] = []bson.M{
-				{"template_id": bson.M{"$regex": s, "$options": "i"}},
-				{"name": bson.M{"$regex": s, "$options": "i"}},
-				{"description": bson.M{"$regex": s, "$options": "i"}},
+				{"template_id": bson.M{"$regex": kw, "$options": "i"}},
+				{"name": bson.M{"$regex": kw, "$options": "i"}},
+				{"description": bson.M{"$regex": kw, "$options": "i"}},
 			}
 		}
 		if s, _ := f["severity"].(string); s != "" {
@@ -173,7 +175,7 @@ func resolveNucleiSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, poc
 			filter["category"] = s
 		}
 		if s, _ := f["tag"].(string); s != "" {
-			filter["tags"] = bson.M{"$regex": s, "$options": "i"}
+			filter["tags"] = bson.M{"$regex": regexp.QuoteMeta(s), "$options": "i"}
 		}
 	}
 	docs, err := svcCtx.NucleiTemplateModel.SelectAll(ctx, filter)
@@ -192,7 +194,7 @@ func resolveCustomPocSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, 
 	filter := bson.M{"enabled": true}
 	if f, ok := pocscan["customPocSelectAllFilter"].(map[string]interface{}); ok {
 		if s, _ := f["name"].(string); s != "" {
-			filter["name"] = bson.M{"$regex": s, "$options": "i"}
+			filter["name"] = bson.M{"$regex": regexp.QuoteMeta(s), "$options": "i"}
 		}
 		if s, _ := f["severity"].(string); s != "" {
 			filter["severity"] = s

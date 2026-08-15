@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"regexp"
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
@@ -27,19 +28,20 @@ func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq) (r
 	// Build filter based on request parameters
 	filter := bson.M{}
 	if req.Query != "" {
+		q := regexp.QuoteMeta(req.Query)
 		filter["$or"] = []bson.M{
-			{"host": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"title": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"host": bson.M{"$regex": q, "$options": "i"}},
+			{"title": bson.M{"$regex": q, "$options": "i"}},
 		}
 	}
 	if req.Host != "" {
-		filter["host"] = bson.M{"$regex": req.Host, "$options": "i"}
+		filter["host"] = bson.M{"$regex": regexp.QuoteMeta(req.Host), "$options": "i"}
 	}
 	if req.Port > 0 {
 		filter["port"] = req.Port
 	}
 	if req.Service != "" {
-		filter["service"] = bson.M{"$regex": req.Service, "$options": "i"}
+		filter["service"] = bson.M{"$regex": regexp.QuoteMeta(req.Service), "$options": "i"}
 	}
 
 	// Create asset service and fetch assets with scan summaries
@@ -49,9 +51,9 @@ func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq) (r
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	assetReq := &svc.GetAssetListReq{
 		Filter:    filter,
-		Page:        req.Page,
-		PageSize:    req.PageSize,
-		SortField:   "update_time",
+		Page:      req.Page,
+		PageSize:  req.PageSize,
+		SortField: "update_time",
 	}
 
 	assetResp, err := assetService.GetAssetList(l.ctx, assetReq)

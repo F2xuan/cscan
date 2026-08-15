@@ -43,11 +43,11 @@ type LogCollector struct {
 
 // dayWriter 单个容器当天的日志文件写入器
 type dayWriter struct {
-	file   *os.File
-	date   string
-	size   int64
-	seq    int    // 当日分片序号（修复 M-12：达上限后切分新文件，而非重开同文件）
-	name   string // 容器名
+	file *os.File
+	date string
+	size int64
+	seq  int    // 当日分片序号（修复 M-12：达上限后切分新文件，而非重开同文件）
+	name string // 容器名
 }
 
 // LogFileInfo 日志文件元信息
@@ -132,7 +132,9 @@ func (lc *LogCollector) Stop() {
 	lc.wg.Wait()
 	lc.mu.Lock()
 	for name, w := range lc.writers {
-		_ = w.file.Close()
+		if err := w.file.Close(); err != nil {
+			logx.Errorf("[LogCollector] failed to close writer %s on stop: %v", name, err)
+		}
 		delete(lc.writers, name)
 	}
 	lc.mu.Unlock()
@@ -401,14 +403,18 @@ func (lc *LogCollector) getWriter(name string) (*os.File, error) {
 			return dw.file, nil
 		}
 		// 达到上限：关闭当前分片，序号递增
-		_ = dw.file.Close()
+		if err := dw.file.Close(); err != nil {
+			logx.Errorf("[LogCollector] failed to close writer %s on rotate: %v", name, err)
+		}
 		dw.file = nil
 		dw.seq++
 	}
 
 	// 关闭旧文件（日期切换场景）
 	if ok && dw.file != nil {
-		_ = dw.file.Close()
+		if err := dw.file.Close(); err != nil {
+			logx.Errorf("[LogCollector] failed to close writer %s on date switch: %v", name, err)
+		}
 	}
 
 	if !ok {

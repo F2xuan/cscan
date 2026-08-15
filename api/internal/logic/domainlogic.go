@@ -75,19 +75,20 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 
 	// 优先使用通用 Query 关键字（当未指定 Domain/RootDomain/IP 时）
 	if req.Query != "" && req.Domain == "" && req.RootDomain == "" && req.IP == "" {
+		q := regexp.QuoteMeta(req.Query)
 		filter["$and"] = []bson.M{
 			{"$or": baseCondition},
 			{"$or": []bson.M{
-				{"domain": bson.M{"$regex": req.Query, "$options": "i"}},
-				{"host": bson.M{"$regex": req.Query, "$options": "i"}},
-				{"ip.ipv4.ip": bson.M{"$regex": req.Query, "$options": "i"}},
+				{"domain": bson.M{"$regex": q, "$options": "i"}},
+				{"host": bson.M{"$regex": q, "$options": "i"}},
+				{"ip.ipv4.ip": bson.M{"$regex": q, "$options": "i"}},
 			}},
 		}
 	} else if req.Domain != "" {
 		// 域名搜索
 		filter["$and"] = []bson.M{
 			{"$or": baseCondition},
-			{"domain": bson.M{"$regex": req.Domain, "$options": "i"}},
+			{"domain": bson.M{"$regex": regexp.QuoteMeta(req.Domain), "$options": "i"}},
 		}
 	} else if req.RootDomain != "" {
 		// 根域名搜索：匹配根域名自身（example.com）及其子域名（www.example.com）。
@@ -104,7 +105,7 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 		// IP搜索 - 搜索解析到该IP的域名
 		filter["$and"] = []bson.M{
 			{"$or": baseCondition},
-			{"ip.ipv4.ip": bson.M{"$regex": req.IP, "$options": "i"}},
+			{"ip.ipv4.ip": bson.M{"$regex": regexp.QuoteMeta(req.IP), "$options": "i"}},
 		}
 	} else {
 		// 无搜索条件，只用基础条件

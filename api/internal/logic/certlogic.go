@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -145,16 +146,17 @@ func (l *CertLogic) GetCertDetail(req *types.CertDetailReq) (*types.CertDetailRe
 func (l *CertLogic) buildCertFilter(req *types.CertListReq) bson.M {
 	filter := bson.M{}
 	if req.Query != "" {
+		q := regexp.QuoteMeta(req.Query)
 		filter["$or"] = []bson.M{
-			{"host": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"authority": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"subject_dn": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"issuer_dn": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"sans": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"host": bson.M{"$regex": q, "$options": "i"}},
+			{"authority": bson.M{"$regex": q, "$options": "i"}},
+			{"subject_dn": bson.M{"$regex": q, "$options": "i"}},
+			{"issuer_dn": bson.M{"$regex": q, "$options": "i"}},
+			{"sans": bson.M{"$regex": q, "$options": "i"}},
 		}
 	}
 	if req.Issuer != "" {
-		filter["issuer_dn"] = bson.M{"$regex": req.Issuer, "$options": "i"}
+		filter["issuer_dn"] = bson.M{"$regex": regexp.QuoteMeta(req.Issuer), "$options": "i"}
 	}
 	if req.ExpiredBefore != "" {
 		if ts, err := strconv.ParseInt(req.ExpiredBefore, 10, 64); err == nil {

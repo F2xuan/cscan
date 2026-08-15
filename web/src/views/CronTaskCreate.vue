@@ -33,7 +33,7 @@
         </el-form-item>
 
         <!-- 选择资产模式 -->
-        <el-form-item v-if="form.targetMode === 'asset'" :label="$t('cronTask.targetSourceAsset')">
+        <el-form-item v-if="form.targetMode === 'asset'" :label="$t('cronTask.targetSourceAsset')" prop="assetIds">
           <div class="asset-selector">
             <!-- 组织筛选 + 全选按钮 -->
             <div class="asset-selector-toolbar">
@@ -1405,13 +1405,22 @@ const rules = {
         } else {
           callback()
         }
-      } else if (form.targetMode === 'asset' && (!form.assetIds || form.assetIds.length === 0)) {
-        callback(new Error('请至少选择一个资产'))
       } else {
         callback()
       }
     },
     trigger: 'blur'
+  }],
+  assetIds: [{
+    required: true,
+    validator: (rule, value, callback) => {
+      if (form.targetMode === 'asset' && (!form.assetIds || form.assetIds.length === 0)) {
+        callback(new Error(t('cronTask.assetRequired')))
+      } else {
+        callback()
+      }
+    },
+    trigger: 'change'
   }],
   cronSpec: [{
     required: true,

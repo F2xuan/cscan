@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"cscan/internal/model"
 	"cscan/internal/notification"
 	"cscan/internal/scheduler"
-	"cscan/pkg/utils"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -459,6 +456,11 @@ func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskIn
 			// 幂等：cscan:task:notified:{id} SETNX 防止 IncrSubTaskDone 路径重复通知
 			if c.notifySvc != nil {
 				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logx.Errorf("[SchedulerClient] notify goroutine panic recovered: %v", r)
+						}
+					}()
 					notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
 					if err := c.notifySvc.NotifyTaskCompleted(notifyCtx, mainTaskId, state); err != nil {
@@ -532,33 +534,4 @@ func (c *SchedulerClient) SetNotifyService(svc *notification.Service) {
 // GetRecoveryMgr 获取恢复管理器（供外部使用）
 func (c *SchedulerClient) GetRecoveryMgr() *scheduler.TaskRecoveryManager {
 	return c.recoveryMgr
-}
-
-// CountEnabledModules 统计启用的模块数（复用 utils 包）
-func CountEnabledModules(cfg map[string]interface{}) int {
-	return utils.CountEnabledModules(cfg)
-}
-
-// parseProgressFromResult 从 result 字符串中解析进度
-func parseProgressFromResult(result string) int {
-	// 尝试解析 "Assets:xx Vuls:xx Duration:xxs" 格式
-	if strings.HasPrefix(result, "Assets:") {
-		return 100
-	}
-	return 0
-}
-
-// parseIntFromInterface 从 interface{} 解析 int
-func parseIntFromInterface(v interface{}) int {
-	switch val := v.(type) {
-	case float64:
-		return int(val)
-	case int:
-		return val
-	case string:
-		n, _ := strconv.Atoi(val)
-		return n
-	default:
-		return 0
-	}
 }

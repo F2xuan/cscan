@@ -20,8 +20,8 @@ import (
 	"cscan/internal/onlineapi"
 	"cscan/pkg"
 
-	"cscan/pkg/utils"
 	"cscan/internal/scheduler"
+	"cscan/pkg/utils"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/conf"
@@ -115,14 +115,14 @@ func main() {
 	reverifier := scheduler.NewWeakPassReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
 	schedulerSvc.SetWeakPassReverifier(reverifier, "")
 	svcCtx.RunWeakPassReverify = func(ctx context.Context) error {
-		return reverifier.RunWorkspace(ctx)
+		return reverifier.RunNow(ctx)
 	}
 
 	// T3.4：注入敏感信息（暴露面）持续复验器
 	exposureReverifier := scheduler.NewExposureReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
 	schedulerSvc.SetExposureReverifier(exposureReverifier, "")
 	svcCtx.RunExposureReverify = func(ctx context.Context) error {
-		return exposureReverifier.RunWorkspace(ctx)
+		return exposureReverifier.RunNow(ctx)
 	}
 
 	// 启动定时任务执行消息订阅
@@ -145,9 +145,9 @@ const (
 // CronExecuteMessage 定时任务执行消息（统一格式，兼容资产扫描与空间引擎拉取）
 type CronExecuteMessage struct {
 	// 通用字段
-	TaskType    string `json:"taskType"`    // 任务类型：scan / space_engine
-	CronTaskId  string `json:"cronTaskId"`  // 定时任务ID
-	TaskName    string `json:"taskName"`    // 任务名称
+	TaskType   string `json:"taskType"`   // 任务类型：scan / space_engine
+	CronTaskId string `json:"cronTaskId"` // 定时任务ID
+	TaskName   string `json:"taskName"`   // 任务名称
 
 	// 资产扫描任务字段（taskType=scan）
 	Target string `json:"target"`
@@ -516,9 +516,9 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 			TaskId:     subTaskId,
 			MainTaskId: newTask.Id.Hex(),
 			TaskName:   newTask.Name,
-			Config:      string(subConfigBytes),
-			Priority:    0,
-			Workers:     workers,
+			Config:     string(subConfigBytes),
+			Priority:   0,
+			Workers:    workers,
 		}
 
 		logx.Infof("Pushing cron sub-task %d/%d: taskId=%s, targets=%d", i+1, len(batches), subTaskId, len(strings.Split(batch, "\n")))
@@ -626,7 +626,7 @@ PageLoop:
 
 		var results []struct {
 			Host, IP, Domain, Protocol, Title, Server, Country, City, Banner, Product string
-			Port                                                                     int
+			Port                                                                      int
 		}
 		rawResultCount := 0
 
@@ -652,7 +652,7 @@ PageLoop:
 			for _, a := range assets {
 				results = append(results, struct {
 					Host, IP, Domain, Protocol, Title, Server, Country, City, Banner, Product string
-					Port                                                                     int
+					Port                                                                      int
 				}{a.Host, a.IP, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.City, a.Banner, a.Product, a.Port})
 			}
 		case "hunter":
@@ -680,7 +680,7 @@ PageLoop:
 				}
 				results = append(results, struct {
 					Host, IP, Domain, Protocol, Title, Server, Country, City, Banner, Product string
-					Port                                                                     int
+					Port                                                                      int
 				}{a.URL, a.IP, a.Domain, a.Protocol, a.WebTitle, component, a.Country, a.City, a.Banner, component, a.Port})
 			}
 		case "quake":
@@ -707,7 +707,7 @@ PageLoop:
 			for _, a := range result.Data.Items {
 				results = append(results, struct {
 					Host, IP, Domain, Protocol, Title, Server, Country, City, Banner, Product string
-					Port                                                                     int
+					Port                                                                      int
 				}{a.Service.HTTP.Host, a.IP, "", a.Service.Name, a.Service.HTTP.Title, a.Service.HTTP.Server, a.Location.CountryCN, a.Location.CityCN, "", "", a.Port})
 			}
 		}
@@ -944,4 +944,3 @@ func (a *cronTaskSourceAdapter) UpdateCronTaskRunInfo(ctx context.Context, cronT
 	}
 	return a.model.UpdateByCronTaskId(ctx, cronTaskId, update)
 }
-

@@ -85,14 +85,14 @@ func (l *FingerprintListLogic) FingerprintList(req *types.FingerprintListReq) (*
 			if err == nil {
 				filter["$or"] = []bson.M{
 					{"_id": oid},
-					{"name": bson.M{"$regex": keyword, "$options": "i"}},
+					{"name": bson.M{"$regex": regexp.QuoteMeta(keyword), "$options": "i"}},
 				}
 			} else {
-				filter["name"] = bson.M{"$regex": keyword, "$options": "i"}
+				filter["name"] = bson.M{"$regex": regexp.QuoteMeta(keyword), "$options": "i"}
 			}
 		} else {
 			// 普通关键字搜索name
-			filter["name"] = bson.M{"$regex": keyword, "$options": "i"}
+			filter["name"] = bson.M{"$regex": regexp.QuoteMeta(keyword), "$options": "i"}
 		}
 	}
 	if req.Source != "" {

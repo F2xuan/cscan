@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +44,19 @@ type TaskExecutionInfo struct {
 // scheduler 参数用于恢复任务时复用 calculatePriorityScore，保留原任务优先级
 // 修复历史问题：原恢复时用 time.Now().Unix() 作 score，高优先级任务恢复后降级为 Normal
 // 允许 scheduler 为 nil（向后兼容），此时退化为时间戳 score
+// 超时自适应：CPU≤4 核 20min，≤8 核 15min，其余 10min
 func NewTaskRecoveryManager(rdb *redis.Client, ctx context.Context, scheduler *Scheduler) *TaskRecoveryManager {
+	cpuCores := runtime.NumCPU()
+	var timeout time.Duration
+	switch {
+	case cpuCores <= 4:
+		timeout = 20 * time.Minute
+	case cpuCores <= 8:
+		timeout = 15 * time.Minute
+	default:
+		timeout = 10 * time.Minute
+	}
+
 	return &TaskRecoveryManager{
 		rdb:                rdb,
 		ctx:                ctx,
@@ -53,12 +66,11 @@ func NewTaskRecoveryManager(rdb *redis.Client, ctx context.Context, scheduler *S
 		taskWorkerKey:      "cscan:task:worker",
 		workerHeartbeatKey: "cscan:worker:",
 		checkInterval:      30 * time.Second, // 每30秒检查一次
-		taskTimeout:        15 * time.Minute, // 固定超时
+		taskTimeout:        timeout,
 		logger:             logx.WithContext(ctx),
 		scheduler:          scheduler,
 	}
 }
-
 
 // retryCountKey 返回任务重试计数的独立 Redis key
 // 修复 M-04：原 RetryCount 存储在 execInfo JSON 中，recoverTask 的 GET→修改→SET
@@ -151,14 +163,14 @@ func (m *TaskRecoveryManager) checkTask(taskId string) {
 				createTime = time.Now().Add(-m.taskTimeout) // 解析失败按已超时处理
 			}
 			execInfo = &TaskExecutionInfo{
-				TaskId:      taskId,
-				WorkerName:  "", // 未知 worker
-				StartTime:   createTime,
-				LastUpdate:  time.Now(), // H-11 修复：原 LastUpdate=createTime 导致旧任务立即被判定超时，30s 后又触发，busy-loop 直到重试预算耗尽
-				Phase:       "started",
-				Progress:    0,
-				RetryCount:  0,
-				MaxRetries:  3,
+				TaskId:     taskId,
+				WorkerName: "", // 未知 worker
+				StartTime:  createTime,
+				LastUpdate: time.Now(), // H-11 修复：原 LastUpdate=createTime 导致旧任务立即被判定超时，30s 后又触发，busy-loop 直到重试预算耗尽
+				Phase:      "started",
+				Progress:   0,
+				RetryCount: 0,
+				MaxRetries: 3,
 			}
 			// 持久化补建的 execution info
 			if err := m.saveTaskExecutionInfo(taskId, execInfo); err != nil {

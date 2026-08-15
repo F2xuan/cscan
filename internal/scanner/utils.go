@@ -96,61 +96,6 @@ func ParseTargetsForPortScan(target string) *TargetParseResult {
 	return result
 }
 
-// ParseTargetsForFingerprint 解析目标用于指纹识别
-// 支持带路径的URL格式，如 http://example.com/admin/
-func ParseTargetsForFingerprint(target string) []*ParsedTarget {
-	var targets []*ParsedTarget
-
-	lines := strings.Split(target, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		info := utils.ParseTarget(line)
-		if info.Host == "" {
-			continue
-		}
-
-		port := info.Port
-		protocol := info.Protocol
-
-		// 如果没有端口，根据协议推断
-		if port == 0 {
-			switch protocol {
-			case "https":
-				port = 443
-			case "http":
-				port = 80
-			default:
-				// 默认使用 80 端口
-				port = 80
-				protocol = "http"
-			}
-		}
-
-		// 如果没有协议，根据端口推断
-		if protocol == "" {
-			if port == 443 || port == 8443 || port == 9443 {
-				protocol = "https"
-			} else {
-				protocol = "http"
-			}
-		}
-
-		targets = append(targets, &ParsedTarget{
-			Host:     info.Host,
-			Port:     port,
-			Protocol: protocol,
-			Path:     info.Path,
-			Raw:      line,
-		})
-	}
-
-	return targets
-}
-
 // GenerateAssetsFromTargets 从用户输入的目标生成资产列表
 // 用于当用户只勾选部分扫描模块时，直接使用输入目标进行扫描
 // 域名无法解析到有效IPv4/IPv6地址时，该目标会被跳过
@@ -414,6 +359,15 @@ func parsePorts(portStr string) []int {
 		}
 	}
 	return ports
+}
+
+// normalizeURL 规范化扫描目标 URL：补全 http:// 前缀并去除尾部斜杠
+func normalizeURL(target string) string {
+	target = strings.TrimSpace(target)
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "http://" + target
+	}
+	return strings.TrimSuffix(target, "/")
 }
 
 // getCategory 获取目标类型

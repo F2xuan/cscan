@@ -43,7 +43,7 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 
 	// 搜索关键词
 	if req.Query != "" {
-		q := req.Query
+		q := regexp.QuoteMeta(req.Query)
 		filter["$or"] = []bson.M{
 			{"host": bson.M{"$regex": q, "$options": "i"}},
 			{"title": bson.M{"$regex": q, "$options": "i"}},
@@ -55,7 +55,7 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 
 	// 域名过滤
 	if req.Domain != "" {
-		filter["host"] = bson.M{"$regex": req.Domain, "$options": "i"}
+		filter["host"] = bson.M{"$regex": regexp.QuoteMeta(req.Domain), "$options": "i"}
 	}
 
 	// 端口过滤
@@ -75,7 +75,7 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 
 	// 服务类型过滤
 	if req.Service != "" {
-		filter["service"] = bson.M{"$regex": req.Service, "$options": "i"}
+		filter["service"] = bson.M{"$regex": regexp.QuoteMeta(req.Service), "$options": "i"}
 	}
 
 	// IconHash 过滤

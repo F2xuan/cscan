@@ -76,7 +76,7 @@ func (r *WeakPassReverifier) RunDue(ctx context.Context) {
 }
 
 // RunWorkspace 立即下发复验（供 runNow 端点调用）
-func (r *WeakPassReverifier) RunWorkspace(ctx context.Context) error {
+func (r *WeakPassReverifier) RunNow(ctx context.Context) error {
 	return r.Run(ctx)
 }
 

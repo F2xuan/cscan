@@ -82,13 +82,13 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 	defer identifyCancel()
 
 	// 监听父上下文取消或主动停止信号
-	go func() {
+	w.safeGoTask(task.TaskId, "nmap-cancel-watch", func() {
 		select {
 		case <-identifyCtx.Done():
 		case <-ctx.Done(): // 接收任务全局退出（异常停滞等）
 			identifyCancel()
 		}
-	}()
+	})
 
 	var identifiedAssets []*scanner.Asset
 	nmapScanner := w.scanners["nmap"]
@@ -212,13 +212,13 @@ func (w *Worker) executePortIdentifyWithFingerprintx(ctx context.Context, task *
 	fingerCtx, fingerCancel := context.WithTimeout(context.Background(), time.Duration(totalTimeout)*time.Second)
 	defer fingerCancel()
 
-	go func() {
+	w.safeGoTask(task.TaskId, "fingerprintx-cancel-watch", func() {
 		select {
 		case <-fingerCtx.Done():
 		case <-ctx.Done():
 			fingerCancel()
 		}
-	}()
+	})
 
 	// 构建 fingerprintx 选项
 	fpxOpts := &scanner.FingerprintxOptions{

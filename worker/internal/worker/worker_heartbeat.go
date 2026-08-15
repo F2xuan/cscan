@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"runtime"
 	"time"
-
-	"github.com/shirou/gopsutil/v3/cpu"
 )
 
 func (w *Worker) keepAliveLoop() {
@@ -101,16 +98,14 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 
 		if resp.ManualStopFlag {
 			w.logger.Info("received stop signal, stopping worker...")
-			go func() {
-				w.Stop()
-				os.Exit(0)
-			}()
+			w.safeGo("heartbeat-stop", func() {
+				w.drainAndExit(60*time.Second, func() { os.Exit(0) })
+			})
 		} else if resp.ManualReloadFlag {
 			w.logger.Info("received reload/restart signal, restarting worker...")
-			go func() {
-				w.Stop()
-				os.Exit(0)
-			}()
+			w.safeGo("heartbeat-restart", func() {
+				w.drainAndExit(60*time.Second, w.restartSelf)
+			})
 		}
 
 		if resp.DesiredConcurrency > 0 {
@@ -136,16 +131,14 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 
 	if resp.ManualStopFlag {
 		w.logger.Info("received stop signal, stopping worker...")
-		go func() {
-			w.Stop()
-			os.Exit(0)
-		}()
+		w.safeGo("heartbeat-stop-http", func() {
+			w.drainAndExit(60*time.Second, func() { os.Exit(0) })
+		})
 	} else if resp.ManualReloadFlag {
 		w.logger.Info("received reload/restart signal, restarting worker...")
-		go func() {
-			w.Stop()
-			os.Exit(0)
-		}()
+		w.safeGo("heartbeat-restart-http", func() {
+			w.drainAndExit(60*time.Second, w.restartSelf)
+		})
 	}
 
 	if resp.DesiredConcurrency > 0 {
@@ -157,7 +150,9 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 
 // sendHeartbeat 发送心跳（简单包装，用于外部调用）
 func (w *Worker) sendHeartbeat() {
-	_ = w.sendHeartbeatWithRetry()
+	if err := w.sendHeartbeatWithRetry(); err != nil {
+		w.logger.Warn("sendHeartbeat failed: %v", err)
+	}
 }
 
 // controlPollingLoop 控制信号循环（内部方法，作为WebSocket的备份方案）
@@ -169,13 +164,13 @@ func (w *Worker) controlPollingLoop() {
 		defer cancel()
 
 		// 监听 stopChan 以取消订阅
-		go func() {
+		w.safeGo("control-unsub", func() {
 			select {
 			case <-w.stopChan:
 				cancel()
 			case <-ctx.Done():
 			}
-		}()
+		})
 
 		signalCh := w.schedClient.SubscribeCancel(ctx)
 		for signal := range signalCh {
@@ -227,71 +222,6 @@ func (w *Worker) getRunningTaskIds() []string {
 	return taskIds
 }
 
-// CPU负载阈值常量
-const (
-	CPULoadThreshold     = 80.0 // CPU负载阈值，超过此值暂停任务拉取
-	CPULoadRecovery      = 60.0 // CPU负载恢复阈值，低于此值恢复任务拉取
-	CPUCheckInterval     = 5    // CPU检查间隔(秒)
-	CPUOverloadThreshold = 3    // 连续过载次数阈值，超过则进入限流
-	ThrottleDuration     = 30   // 限流持续时间(秒)
-)
-
-// isCPUOverloaded 检查CPU是否过载
-// 当CPU负载超过80%时返回true，暂停任务下发以防止扫描引擎崩溃
-// 实现智能限流：连续多次过载后进入限流状态，等待一段时间后自动恢复
-func (w *Worker) isCPUOverloaded() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// 检查是否处于限流状态
-	if w.isThrottled {
-		if time.Now().Before(w.throttleUntil) {
-			return true // 仍在限流期间
-		}
-		// 限流期结束，重置状态
-		w.isThrottled = false
-		w.cpuOverloadCount = 0
-		w.logger.Info("CPU throttle period ended, resuming task fetch")
-	}
-
-	// 避免频繁检查CPU
-	if time.Since(w.lastCPUCheck) < time.Duration(CPUCheckInterval)*time.Second {
-		return false
-	}
-	w.lastCPUCheck = time.Now()
-
-	// 快速获取CPU使用率（1秒采样）
-	cpuPercent, err := cpu.Percent(time.Second, false)
-	if err != nil || len(cpuPercent) == 0 {
-		return false // 获取失败时不阻止任务
-	}
-
-	cpuLoad := cpuPercent[0]
-
-	if cpuLoad >= CPULoadThreshold {
-		w.cpuOverloadCount++
-		w.logger.Warn("CPU load %.1f%% exceeds threshold %.1f%% (count: %d/%d)",
-			cpuLoad, CPULoadThreshold, w.cpuOverloadCount, CPUOverloadThreshold)
-
-		// 连续多次过载，进入限流状态
-		if w.cpuOverloadCount >= CPUOverloadThreshold {
-			w.isThrottled = true
-			w.throttleUntil = time.Now().Add(time.Duration(ThrottleDuration) * time.Second)
-			w.logger.Warn("Entering throttle mode for %d seconds to prevent engine crash", ThrottleDuration)
-		}
-		return true
-	} else if cpuLoad < CPULoadRecovery {
-		// CPU负载恢复正常，重置计数
-		if w.cpuOverloadCount > 0 {
-			w.cpuOverloadCount = 0
-			w.logger.Info("CPU load %.1f%% recovered below %.1f%%, resetting overload count",
-				cpuLoad, CPULoadRecovery)
-		}
-	}
-
-	return false
-}
-
 // GetWorkerName 获取Worker名称
 func GetWorkerName() string {
 	hostname, _ := os.Hostname()
@@ -341,16 +271,3 @@ func GetLocalIP() string {
 	}
 	return ""
 }
-
-// GetSystemInfo 获取系统信息
-func GetSystemInfo() map[string]interface{} {
-	return map[string]interface{}{
-		"os":       runtime.GOOS,
-		"arch":     runtime.GOARCH,
-		"cpus":     runtime.NumCPU(),
-		"hostname": func() string { h, _ := os.Hostname(); return h }(),
-		"ip":       GetLocalIP(),
-	}
-}
-
-// TagMatchInfo 标签匹配信息

@@ -69,7 +69,7 @@ func (r *ExposureReverifier) RunDue(ctx context.Context) {
 }
 
 // RunWorkspace 立即下发复验（供 runNow 端点调用）
-func (r *ExposureReverifier) RunWorkspace(ctx context.Context) error {
+func (r *ExposureReverifier) RunNow(ctx context.Context) error {
 	return r.Run(ctx)
 }
 
@@ -77,20 +77,18 @@ func (r *ExposureReverifier) RunWorkspace(ctx context.Context) error {
 func (r *ExposureReverifier) dispatchWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
 	now := time.Now()
 
-	targets := r.collectTargets(ctx)
+	maxTargets := cfg.MaxTargetsPerRun
+	if maxTargets <= 0 {
+		maxTargets = defaultReverifyMaxTargets
+	}
+	targets := r.collectTargets(ctx, maxTargets)
 	if len(targets) == 0 {
 		logx.Infof("[ExposureReverifier] 无待复验敏感信息，skip")
 		_ = model.NewReverifyConfigModel(r.db).UpdateRunState(ctx, "default", now, "success", 0, "", NextReverifyRunTime(cfg.CronSpec, now))
 		return
 	}
 
-	maxTargets := cfg.MaxTargetsPerRun
-	if maxTargets <= 0 {
-		maxTargets = defaultReverifyMaxTargets
-	}
 	if len(targets) > maxTargets {
-		logx.Infof("[ExposureReverifier] 本次覆盖 %d/%d 个目标，剩余 %d 个将于下个周期继续（不静默截断）",
-			maxTargets, len(targets), len(targets)-maxTargets)
 		targets = targets[:maxTargets]
 	}
 
@@ -119,11 +117,14 @@ func (r *ExposureReverifier) dispatchWorkspace(ctx context.Context, cfg model.Re
 }
 
 // collectTargets 收集待复验的敏感信息泄露目标（jsfinder 泄露发现 + dirscan 已发现路径）
-func (r *ExposureReverifier) collectTargets(ctx context.Context) []ReverifyExposureTarget {
+func (r *ExposureReverifier) collectTargets(ctx context.Context, limit int) []ReverifyExposureTarget {
+	if limit <= 0 {
+		return nil
+	}
 	var targets []ReverifyExposureTarget
 
 	jsModel := model.NewJSFinderResultModel(r.db)
-	jsResults, err := jsModel.FindSensitiveForReverify(ctx, 0)
+	jsResults, err := jsModel.FindSensitiveForReverify(ctx, limit)
 	if err != nil {
 		logx.Errorf("[ExposureReverifier] load jsfinder sensitive failed: %v", err)
 	} else {
@@ -140,8 +141,13 @@ func (r *ExposureReverifier) collectTargets(ctx context.Context) []ReverifyExpos
 		}
 	}
 
+	remaining := limit - len(targets)
+	if remaining <= 0 {
+		return targets
+	}
+
 	dirModel := model.NewDirScanResultModel(r.db)
-	dirResults, err := dirModel.FindFoundForReverify(ctx, 0)
+	dirResults, err := dirModel.FindFoundForReverify(ctx, remaining)
 	if err != nil {
 		logx.Errorf("[ExposureReverifier] load dirscan found failed: %v", err)
 	} else {

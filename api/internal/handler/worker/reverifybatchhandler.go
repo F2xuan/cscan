@@ -62,24 +62,24 @@ func applyWeakpassReverify(ctx context.Context, svcCtx *svc.ServiceContext, wsId
 		case "unreachable":
 			pendingIDs = append(pendingIDs, it.Id)
 		default:
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s 未知 weakpass 结论 %q, 忽略", wsId, it.Outcome)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s 未知 weakpass 结论 %q, 忽略", wsId, it.Outcome)
 		}
 	}
 
 	vulModel := svcCtx.GetVulModel()
 	if len(verifiedIDs) > 0 {
 		if _, e := vulModel.MarkReverified(ctx, verifiedIDs); e != nil {
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s MarkReverified failed: %v", wsId, e)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s MarkReverified failed: %v", wsId, e)
 		}
 	}
 	if len(pendingIDs) > 0 {
 		if _, e := vulModel.MarkVerifyUnreachable(ctx, pendingIDs); e != nil {
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s MarkVerifyUnreachable failed: %v", wsId, e)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s MarkVerifyUnreachable failed: %v", wsId, e)
 		}
 	}
 	if len(fixedIDs) > 0 {
 		if _, e := vulModel.MarkFixed(ctx, fixedIDs, model.VulFixSourceRescan); e != nil {
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s MarkFixed failed: %v", wsId, e)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s MarkFixed failed: %v", wsId, e)
 		}
 		// 失效漏洞统计缓存，使工作台安全评分即时反映复验修复
 		svcCtx.QueryCache.Delete("vul_stat")
@@ -100,7 +100,7 @@ func applyExposureReverify(ctx context.Context, svcCtx *svc.ServiceContext, wsId
 		case "pending":
 			pending = append(pending, it)
 		default:
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s 未知 exposure 结论 %q, 忽略", wsId, it.Outcome)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s 未知 exposure 结论 %q, 忽略", wsId, it.Outcome)
 		}
 	}
 
@@ -130,13 +130,13 @@ func applyExposureOutcome(ctx context.Context, svcCtx *svc.ServiceContext, wsId 
 	if len(jsIds) > 0 {
 		jsModel := model.NewJSFinderResultModel(svcCtx.MongoDB)
 		if err := jsModel.MarkReverify(ctx, jsIds, status, now, pending); err != nil {
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s mark jsfinder reverify failed: %v", wsId, err)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s mark jsfinder reverify failed: %v", wsId, err)
 		}
 	}
 	if len(dirIds) > 0 {
 		dirModel := model.NewDirScanResultModel(svcCtx.MongoDB)
 		if err := dirModel.MarkReverify(ctx, dirIds, status, now, pending); err != nil {
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s mark dirscan reverify failed: %v", wsId, err)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s mark dirscan reverify failed: %v", wsId, err)
 		}
 	}
 }
@@ -148,21 +148,21 @@ func finishReverifyRun(ctx context.Context, svcCtx *svc.ServiceContext, wsId, ta
 	if cfg, err := configModel.GetByWorkspace(ctx, wsId); err == nil && cfg != nil {
 		_ = configModel.UpdateRunState(ctx, wsId, now, "success", total, "", scheduler.NextReverifyRunTime(cfg.CronSpec, now))
 	} else if err != nil {
-		logx.Errorf("[WorkerReverifyBatch] workspace=%s 读取复验配置失败: %v", wsId, err)
+		logx.Errorf("[WorkerReverifyBatch] wsId=%s 读取复验配置失败: %v", wsId, err)
 	}
 
 	if fixedCount > 0 {
 		if err := svcCtx.SendReverifyNotify(ctx, &notify.NotifyResult{
-			TaskId:      taskId,
-			TaskName:    taskName,
-			Status:      "SUCCESS",
+			TaskId:   taskId,
+			TaskName: taskName,
+			Status:   "SUCCESS",
 			HighRiskInfo: &notify.HighRiskInfo{
 				FixedVulCount: fixedCount,
 			},
 		}); err != nil {
-			logx.Errorf("[WorkerReverifyBatch] workspace=%s 发送修复通知失败: %v", wsId, err)
+			logx.Errorf("[WorkerReverifyBatch] wsId=%s 发送修复通知失败: %v", wsId, err)
 		}
 	}
 
-	logx.Infof("[WorkerReverifyBatch] workspace=%s %s 复验完成: 共%d 已修复%d", wsId, taskName, total, fixedCount)
+	logx.Infof("[WorkerReverifyBatch] wsId=%s %s 复验完成: 共%d 已修复%d", wsId, taskName, total, fixedCount)
 }

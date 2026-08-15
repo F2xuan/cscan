@@ -250,11 +250,11 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		default:
 			if data, err := json.Marshal(config.Options); err == nil {
 				if err := json.Unmarshal(data, opts); err != nil {
-				taskLog("ERROR", "Fingerprint: failed to unmarshal options: %v", err)
+					taskLog("ERROR", "Fingerprint: failed to unmarshal options: %v", err)
+				}
+			} else {
+				taskLog("ERROR", "Fingerprint: failed to marshal options: %v", err)
 			}
-		} else {
-			taskLog("ERROR", "Fingerprint: failed to marshal options: %v", err)
-		}
 		}
 		// 反射回退：确保 Cert 字段从 scheduler.FingerprintConfig 正确传播
 		if !opts.Cert {
@@ -292,8 +292,8 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	}
 
 	result := &ScanResult{
-		MainTaskId:  config.MainTaskId,
-		Assets:      make([]*Asset, 0),
+		MainTaskId: config.MainTaskId,
+		Assets:     make([]*Asset, 0),
 	}
 
 	// 使用传入的资产（worker层已过滤HTTP资产）
@@ -1041,12 +1041,12 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 				Cookies:      resp.Header.Get("Set-Cookie"),
 			}
 			customApps := s.customFingerprintEngine.MatchWithId(fpData)
-		taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) detected apps for %s:%d: %v", fpCount, asset.Host, asset.Port, customApps)
+			taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) detected apps for %s:%d: %v", fpCount, asset.Host, asset.Port, customApps)
 
-		for _, customApp := range customApps {
-			mergeFingerprintDetection(appResults, customApp)
-			taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: %s)", asset.Host, asset.Port, customApp.Name, customApp.Source)
-		}
+			for _, customApp := range customApps {
+				mergeFingerprintDetection(appResults, customApp)
+				taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: %s)", asset.Host, asset.Port, customApp.Name, customApp.Source)
+			}
 		}
 
 		// 构建最终的应用列表
@@ -1059,7 +1059,7 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		// 修复 D6：port 未知(==0)时跳过截图
 		if opts.Screenshot && asset.Port > 0 {
 			screenshot := s.takeScreenshot(ctx, targetUrl, taskLog)
-		taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)
+			taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)
 			if screenshot != "" {
 				asset.Screenshot = screenshot
 			}
@@ -1334,15 +1334,6 @@ func formatHeadersWithStatus(headers http.Header, statusCode int, proto string) 
 	return sb.String()
 }
 
-// formatHttpxHeaders 格式化httpx返回的响应头
-func formatHttpxHeaders(headers map[string]string) string {
-	var sb strings.Builder
-	for key, value := range headers {
-		sb.WriteString(fmt.Sprintf("%s: %s\n", key, value))
-	}
-	return sb.String()
-}
-
 // parseHttpHeaders 解析HTTP headers字符串为http.Header
 func parseHttpHeaders(headerStr string) http.Header {
 	headers := make(http.Header)
@@ -1397,31 +1388,6 @@ func containsAppName(apps []string, appName string) bool {
 		}
 	}
 	return false
-}
-
-// findAppIndex 查找应用在列表中的索引，匹配应用名和指定来源标识
-// 支持匹配带版本号的应用名，如 "Nginx:1.24.0" 匹配 "nginx"
-func findAppIndex(apps []string, appName string, source string) int {
-	appNameLower := strings.ToLower(appName)
-	for i, app := range apps {
-		// 检查是否包含指定来源标识
-		if !strings.Contains(app, source) {
-			continue
-		}
-		// 移除来源标识后获取应用名
-		name := app
-		if idx := strings.Index(app, "["); idx > 0 {
-			name = app[:idx]
-		}
-		// 移除版本号（格式如 Nginx:1.24.0）
-		if colonIdx := strings.Index(name, ":"); colonIdx > 0 {
-			name = name[:colonIdx]
-		}
-		if strings.ToLower(name) == appNameLower {
-			return i
-		}
-	}
-	return -1
 }
 
 // extractAppName 从应用字符串中提取应用名称（移除来源标识）
@@ -1819,18 +1785,18 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 					}
 
 					// 调试：记录请求结果
-				taskLog("DEBUG", "Active fingerprint request: %s, status=%d, bodyLen=%d, title=%s", fullURL, resp.StatusCode, len(body), fpData.Title)
+					taskLog("DEBUG", "Active fingerprint request: %s, status=%d, bodyLen=%d, title=%s", fullURL, resp.StatusCode, len(body), fpData.Title)
 
 					// 匹配指纹
 					if s.customFingerprintEngine.MatchActiveFingerprint(fp, fpData) {
 						// 404页面通常不算匹配成功（除非是特定指纹如ThinkPHP）
 						if resp.StatusCode == 404 && !strings.Contains(strings.ToLower(fp.Name), "thinkphp") {
-						taskLog("DEBUG", "Active fingerprint '%s' matched but status is 404, skipping", fp.Name)
-						return
-					}
+							taskLog("DEBUG", "Active fingerprint '%s' matched but status is 404, skipping", fp.Name)
+							return
+						}
 
-					taskLog("DEBUG", "Active fingerprint matched: %s -> %s (path: %s)", baseURL, fp.Name, path)
-					taskLog("INFO", "Active fingerprint: %s -> %s", fullURL, fp.Name)
+						taskLog("DEBUG", "Active fingerprint matched: %s -> %s (path: %s)", baseURL, fp.Name, path)
+						taskLog("INFO", "Active fingerprint: %s -> %s", fullURL, fp.Name)
 						mergeActiveFingerprintApp(asset, fp)
 					}
 				}(asset, fp, fullURL, path, baseURL)

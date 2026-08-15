@@ -1,5 +1,7 @@
 package logic
 
+import "regexp"
+
 import "cscan/internal/model"
 
 import (
@@ -49,7 +51,7 @@ func (l *PortListLogic) PortList(req *types.PortListReq) (*types.PortListResp, e
 		matchObj["port"] = req.Port
 	}
 	if req.Host != "" {
-		matchObj["host"] = bson.M{"$regex": req.Host, "$options": "i"}
+		matchObj["host"] = bson.M{"$regex": regexp.QuoteMeta(req.Host), "$options": "i"}
 	}
 	if req.OrgId != "" {
 		matchObj["org_id"] = req.OrgId

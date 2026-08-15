@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -356,21 +355,4 @@ type ToolHealth struct {
 	Path      string
 	Version   string
 	Error     string
-}
-
-// ScanLineResult 单行扫描结果
-type ScanLineResult struct {
-	Line     string
-	Parsed   interface{}
-	Error    error
-	Continue bool
-}
-
-// JSONLineParser JSON 行解析辅助函数
-func JSONLineParser(line string) (map[string]interface{}, error) {
-	var result map[string]interface{}
-	if err := json.Unmarshal([]byte(line), &result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }

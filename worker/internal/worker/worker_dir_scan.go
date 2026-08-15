@@ -234,7 +234,7 @@ func (w *Worker) saveDirScanResults(ctx context.Context, task *scheduler.TaskInf
 	}
 
 	// 直连 MongoDB 保存结果（与 JSFinder 保持一致，避免 HTTP 接口不存在导致 404）
-	if err := w.saveDirScanResultsDirect(ctx, task.MainTaskId, results); err != nil {
+	if err := w.saveDirScanResultsWithFallback(ctx, task.MainTaskId, results); err != nil {
 		w.taskLog(task.TaskId, LevelError, "Dir scan result persistence failed: %v", err)
 	}
 }

@@ -25,33 +25,6 @@ export function getDirScanDictEnabledList() {
   return request.post('/dirscan/dict/enabled')
 }
 
-// ==================== 目录扫描结果 API ====================
-
-// 目录扫描结果列表
-export function getDirScanResultList(data) {
-  return request.post('/dirscan/result/list', data)
-}
-
-// 目录扫描结果统计
-export function getDirScanResultStat(data) {
-  return request.post('/dirscan/result/stat', data)
-}
-
-// 删除目录扫描结果
-export function deleteDirScanResult(data) {
-  return request.post('/dirscan/result/delete', data)
-}
-
-// 批量删除目录扫描结果
-export function batchDeleteDirScanResult(data) {
-  return request.post('/dirscan/result/batchDelete', data)
-}
-
-// 清空目录扫描结果
-export function clearDirScanResult(data) {
-  return request.post('/dirscan/result/clear', data)
-}
-
 // 目录扫描详情（含request/response大字段）
 export function getDirScanDetail(data) {
   return request.post('/dirscan/result/detail', data)

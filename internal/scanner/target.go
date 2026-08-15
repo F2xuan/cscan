@@ -29,13 +29,13 @@ const (
 
 // Target 解析后的目标
 type Target struct {
-	Raw             string     // 原始输入
-	Type            TargetType // 目标类型
-	Host            string     // 主机（IP或域名）
-	Port            int        // 端口（如果有）
-	IPs             []string   // 展开后的IP列表（用于CIDR和Range）
-	Protocol        string     // 协议（http/https）
-	TruncatedCount  int        // 展开超限被截断的 IP 数量（>0 表示有目标被丢弃，上层应告警）
+	Raw            string     // 原始输入
+	Type           TargetType // 目标类型
+	Host           string     // 主机（IP或域名）
+	Port           int        // 端口（如果有）
+	IPs            []string   // 展开后的IP列表（用于CIDR和Range）
+	Protocol       string     // 协议（http/https）
+	TruncatedCount int        // 展开超限被截断的 IP 数量（>0 表示有目标被丢弃，上层应告警）
 }
 
 // TargetParser 目标解析器
@@ -401,21 +401,3 @@ func (p *PortParser) Parse(portStr string) []int {
 }
 
 // ==================== 辅助函数 ====================
-
-// ParseTargetsNew 解析目标（新版本，使用 TargetParser）
-func ParseTargetsNew(target string) []string {
-	parser := NewTargetParser()
-	return parser.ExpandAll(target)
-}
-
-// ParsePortsNew 解析端口（新版本，使用 PortParser）
-func ParsePortsNew(portStr string) []int {
-	parser := NewPortParser()
-	return parser.Parse(portStr)
-}
-
-// GetCategoryNew 获取目标分类（新版本）
-func GetCategoryNew(host string) string {
-	parser := NewTargetParser()
-	return string(parser.detectHostType(host))
-}

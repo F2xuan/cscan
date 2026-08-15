@@ -345,9 +345,8 @@ func (cm *ChunkManager) saveChunkInfo(ctx context.Context, taskId string, splitR
 }
 
 // saveChunkTaskInfo 保存分片任务信息
-// 修复历史问题：原仅保存 7 个字段，getSchedulerTasks 重建 TaskInfo 时丢失 Config
-// 导致 PushChunkedTasks 推送不完整的任务到队列，Worker 拉取后无法执行扫描
-// 现完整序列化 TaskInfo（含 Config/TaskName/Workers），供 getSchedulerTasks 直接还原
+// 完整序列化 TaskInfo（含 Config/TaskName/Workers），
+// 供 getSchedulerTasks 直接还原，避免重建时丢失关键字段
 func (cm *ChunkManager) saveChunkTaskInfo(ctx context.Context, chunkId string, req *ChunkTaskRequest, chunk TaskChunk, chunkConfigBytes []byte) error {
 	key := cm.getChunkTaskInfoKey(chunkId)
 
@@ -452,9 +451,9 @@ func (cm *ChunkManager) getSchedulerTasks(ctx context.Context, taskId string) ([
 			TaskId:     chunk.ChunkId,
 			MainTaskId: mainTaskId,
 			TaskName:   taskName,
-			Config:      config,
-			Priority:    priority,
-			Workers:     workers,
+			Config:     config,
+			Priority:   priority,
+			Workers:    workers,
 		}
 		tasks = append(tasks, task)
 	}

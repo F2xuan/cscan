@@ -1,28 +1,27 @@
-[中文](README.zh.md) | English
-
 <div align="center">
   <img src="images/logo.png" width="80" alt="CSCAN" />
 </div>
 
 <div align="center">
 
-**CSCAN - Enterprise Distributed Network Asset Scanning Platform**
+**CSCAN-企业级分布式网络资产扫描平台**
 
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-5.2-green)](VERSION)
 
+
 </div>
 
 <table width="100%">
   <tr>
-    <td align="center"><b>Dashboard</b></td>
-    <td align="center"><b>Asset Space Search</b></td>
-    <td align="center"><b>Fingerprint Management</b></td>
-    <td align="center"><b>Vulnerability Database</b></td>
-    <td align="center"><b>Node Monitoring</b></td>
-    <td align="center"><b>Notification Subscription</b></td>
+    <td align="center"><b>控制台</b></td>
+    <td align="center"><b>资产空间搜索</b></td>
+    <td align="center"><b>指纹管理</b></td>
+    <td align="center"><b>漏洞库</b></td>
+    <td align="center"><b>节点监控</b></td>
+    <td align="center"><b>通知订阅</b></td>
   </tr>
   <tr>
     <td align="center"><img src="images/dashboard.png"></td>
@@ -34,24 +33,24 @@
   </tr>
 </table>
 
-## Quick Start
+## 快速开始
 
 ```bash
-# Clone the project
+# 克隆项目
 git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
 
-# Start (zero config, uses built-in default keys)
+# 启动（零配置，使用内置默认密钥）
 docker compose up -d
 ```
 
-- Access `https://ip:7777`
-- For production deployment, override the built-in default keys: `cp .env.example .env`, fill in strong random values, then `docker compose up -d`
+- 访问 `https://ip:7777`
+- 生产部署请覆盖内置默认密钥：`cp .env.example .env`，填入强随机值后再 `docker compose up -d`
 ---
 
-## Local Development
+## 本地开发
 
-### One-Click Start (Recommended)
+### 一键启动（推荐）
 ```bash
 # Windows PowerShell:
 ./dev.ps1

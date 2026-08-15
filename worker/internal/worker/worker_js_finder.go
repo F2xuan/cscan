@@ -145,9 +145,3 @@ func parseStatusCode(status string) int {
 	fmt.Sscanf(status, "%d", &code)
 	return code
 }
-
-// generateHTTPAssetsFromTarget 从目标生成 HTTP 资产（用于只启用目录扫描的场景）
-// 支持的目标格式：
-// - 域名: example.com (默认生成 80 和 443 端口)
-// - 带端口: example.com:8080
-// - URL: http://example.com:8080 或 https://example.com

@@ -17,16 +17,17 @@ import (
 // ResultQueue 本地结果队列
 // API 不可用时将任务结果持久化到本地文件，API 恢复后自动重放
 type ResultQueue struct {
-	mu           sync.Mutex
-	dir          string                                                      // 队列文件目录
-	maxSize      int                                                         // 最大文件数量
-	replayFn     func(ctx context.Context, req *TaskResultReq) error         // 重放函数
-	replayVulFn  func(ctx context.Context, req *VulResultReq) error          // 漏洞重放函数
-	replayJSFn   func(ctx context.Context, req *SaveJSFinderResultReq) error // JS结果重放函数
-	replayCertFn func(ctx context.Context, req *SaveCertResultReq) error     // 证书结果重放函数
-	stopChan     chan struct{}
-	stopOnce     sync.Once
-	logger       func(level, format string, args ...interface{})
+	mu              sync.Mutex
+	dir             string                                                      // 队列文件目录
+	maxSize         int                                                         // 最大文件数量
+	replayFn        func(ctx context.Context, req *TaskResultReq) error         // 重放函数
+	replayVulFn     func(ctx context.Context, req *VulResultReq) error          // 漏洞重放函数
+	replayJSFn      func(ctx context.Context, req *SaveJSFinderResultReq) error // JS结果重放函数
+	replayCertFn    func(ctx context.Context, req *SaveCertResultReq) error     // 证书结果重放函数
+	replayDirScanFn func(ctx context.Context, req *SaveDirScanResultReq) error  // 目录扫描结果重放函数
+	stopChan        chan struct{}
+	stopOnce        sync.Once
+	logger          func(level, format string, args ...interface{})
 
 	// perQueueSeq 在同一进程内单调递增,消除同毫秒内多次入队导致的文件名碰撞
 	// 修复 H1:原文件名 {millisecond}_{mainTaskId[:8]}_vul_{rand4}.json 在同毫秒+同任务+crypto_rand 失败返回 0 时会覆盖,静默丢漏洞结果
@@ -60,6 +61,12 @@ type queuedCertResult struct {
 	Request     *SaveCertResultReq `json:"request"`
 }
 
+// queuedDirScanResult 目录扫描结果队列条目
+type queuedDirScanResult struct {
+	EnqueueTime time.Time             `json:"enqueueTime"`
+	Request     *SaveDirScanResultReq `json:"request"`
+}
+
 // NewResultQueue 创建结果队列
 func NewResultQueue(dir string, maxSize int, replayFn func(ctx context.Context, req *TaskResultReq) error) *ResultQueue {
 	if maxSize <= 0 {
@@ -88,6 +95,11 @@ func (q *ResultQueue) SetCertReplayFn(fn func(ctx context.Context, req *SaveCert
 	q.replayCertFn = fn
 }
 
+// SetDirScanReplayFn 设置目录扫描结果的重放函数
+func (q *ResultQueue) SetDirScanReplayFn(fn func(ctx context.Context, req *SaveDirScanResultReq) error) {
+	q.replayDirScanFn = fn
+}
+
 // SetLogger 设置日志回调
 func (q *ResultQueue) SetLogger(logger func(level, format string, args ...interface{})) {
 	q.logger = logger
@@ -96,6 +108,14 @@ func (q *ResultQueue) SetLogger(logger func(level, format string, args ...interf
 func (q *ResultQueue) log(level, format string, args ...interface{}) {
 	if q.logger != nil {
 		q.logger(level, format, args...)
+	}
+}
+
+// removeQueueFile 删除队列文件，删除失败时记录日志（修复 H5：避免 os.Remove 错误被静默忽略）。
+// 文件不存在视为已删除成功，不记录噪音日志。
+func (q *ResultQueue) removeQueueFile(path string) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		q.log("WARN", "Failed to remove queue file %s: %v", filepath.Base(path), err)
 	}
 }
 
@@ -162,8 +182,8 @@ func truncateTaskReqForQueue(req *TaskResultReq) *TaskResultReq {
 		for i := range req.Assets {
 			c := req.Assets[i]
 			c.HttpBody = truncateStr(c.HttpBody)
-		c.Screenshot = truncateBinaryStr(c.Screenshot)
-		c.IconData = truncateBinaryBytes(c.IconData)
+			c.Screenshot = truncateBinaryStr(c.Screenshot)
+			c.IconData = truncateBinaryBytes(c.IconData)
 			clone.Assets[i] = c
 		}
 	}
@@ -203,7 +223,7 @@ func (q *ResultQueue) Enqueue(req *TaskResultReq) error {
 	files := q.listFilesLocked()
 	if len(files) >= q.maxSize {
 		if len(files) > 0 {
-			os.Remove(filepath.Join(q.dir, files[0]))
+			q.removeQueueFile(filepath.Join(q.dir, files[0]))
 			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
 		}
 	}
@@ -232,7 +252,7 @@ func (q *ResultQueue) Enqueue(req *TaskResultReq) error {
 		return fmt.Errorf("write queued result: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		q.removeQueueFile(tmpPath)
 		return fmt.Errorf("rename queued result: %w", err)
 	}
 
@@ -250,7 +270,7 @@ func (q *ResultQueue) EnqueueVul(req *TaskResultReq, vuls []VulDocument) error {
 	files := q.listFilesLocked()
 	if len(files) >= q.maxSize {
 		if len(files) > 0 {
-			os.Remove(filepath.Join(q.dir, files[0]))
+			q.removeQueueFile(filepath.Join(q.dir, files[0]))
 			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
 		}
 	}
@@ -285,7 +305,7 @@ func (q *ResultQueue) EnqueueVul(req *TaskResultReq, vuls []VulDocument) error {
 		return fmt.Errorf("write queued vul result: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		q.removeQueueFile(tmpPath)
 		return fmt.Errorf("rename queued vul result: %w", err)
 	}
 
@@ -302,7 +322,7 @@ func (q *ResultQueue) EnqueueJS(req *SaveJSFinderResultReq) error {
 	files := q.listFilesLocked()
 	if len(files) >= q.maxSize {
 		if len(files) > 0 {
-			os.Remove(filepath.Join(q.dir, files[0]))
+			q.removeQueueFile(filepath.Join(q.dir, files[0]))
 			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
 		}
 	}
@@ -329,7 +349,7 @@ func (q *ResultQueue) EnqueueJS(req *SaveJSFinderResultReq) error {
 		return fmt.Errorf("write queued js result: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		q.removeQueueFile(tmpPath)
 		return fmt.Errorf("rename queued js result: %w", err)
 	}
 
@@ -346,7 +366,7 @@ func (q *ResultQueue) EnqueueCert(req *SaveCertResultReq) error {
 	files := q.listFilesLocked()
 	if len(files) >= q.maxSize {
 		if len(files) > 0 {
-			os.Remove(filepath.Join(q.dir, files[0]))
+			q.removeQueueFile(filepath.Join(q.dir, files[0]))
 			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
 		}
 	}
@@ -373,11 +393,53 @@ func (q *ResultQueue) EnqueueCert(req *SaveCertResultReq) error {
 		return fmt.Errorf("write queued cert result: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		q.removeQueueFile(tmpPath)
 		return fmt.Errorf("rename queued cert result: %w", err)
 	}
 
 	q.log("INFO", "Queued cert result for task %s (%d certs) to %s", req.MainTaskId, len(req.Results), filename)
+	return nil
+}
+
+// EnqueueDirScan 将失败的目录扫描结果入队到本地文件
+func (q *ResultQueue) EnqueueDirScan(req *SaveDirScanResultReq) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	files := q.listFilesLocked()
+	if len(files) >= q.maxSize {
+		if len(files) > 0 {
+			q.removeQueueFile(filepath.Join(q.dir, files[0]))
+			q.log("WARN", "Result queue full, dropped oldest entry: %s", files[0])
+		}
+	}
+
+	entry := queuedDirScanResult{
+		EnqueueTime: time.Now(),
+		Request:     req,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal queued dirscan result: %w", err)
+	}
+
+	suffix := req.MainTaskId
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	filename := fmt.Sprintf("%d_%d_%s_dirscan.json", time.Now().UnixMilli(), q.nextSeq(), suffix)
+	path := filepath.Join(q.dir, filename)
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write queued dirscan result: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		q.removeQueueFile(tmpPath)
+		return fmt.Errorf("rename queued dirscan result: %w", err)
+	}
+
+	q.log("INFO", "Queued dirscan result for task %s (%d results) to %s", req.MainTaskId, len(req.Results), filename)
 	return nil
 }
 
@@ -457,7 +519,9 @@ func (q *ResultQueue) replayAll(ctx context.Context) {
 			continue
 		}
 		// 成功后删除文件（过期丢弃分支已在 replayOne 内 os.Remove）
-		os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			q.log("WARN", "Failed to remove replayed file %s: %v", filename, err)
+		}
 		q.log("INFO", "Replayed and removed %s", filename)
 	}
 }
@@ -485,7 +549,7 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 		}
 		if q.isExpired(vulEntry.EnqueueTime) {
 			q.log("WARN", "Dropping expired vul queue file %s (enqueued %v)", filename, vulEntry.EnqueueTime)
-			os.Remove(path)
+			q.removeQueueFile(path)
 			return nil
 		}
 		if q.replayVulFn == nil {
@@ -505,7 +569,7 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 		}
 		if q.isExpired(jsEntry.EnqueueTime) {
 			q.log("WARN", "Dropping expired js queue file %s (enqueued %v)", filename, jsEntry.EnqueueTime)
-			os.Remove(path)
+			q.removeQueueFile(path)
 			return nil
 		}
 		if q.replayJSFn == nil {
@@ -525,7 +589,7 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 		}
 		if q.isExpired(certEntry.EnqueueTime) {
 			q.log("WARN", "Dropping expired cert queue file %s (enqueued %v)", filename, certEntry.EnqueueTime)
-			os.Remove(path)
+			q.removeQueueFile(path)
 			return nil
 		}
 		if q.replayCertFn == nil {
@@ -536,6 +600,26 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 		return q.replayCertFn(replayCtx, certEntry.Request)
 	}
 
+	// 目录扫描结果文件后缀 _dirscan.json
+	if strings.HasSuffix(filename, "_dirscan.json") {
+		var dirscanEntry queuedDirScanResult
+		if err := json.Unmarshal(data, &dirscanEntry); err != nil {
+			q.log("WARN", "Corrupted dirscan queue file %s, keeping for investigation", filename)
+			return fmt.Errorf("unmarshal dirscan queue file: %w", err)
+		}
+		if q.isExpired(dirscanEntry.EnqueueTime) {
+			q.log("WARN", "Dropping expired dirscan queue file %s (enqueued %v)", filename, dirscanEntry.EnqueueTime)
+			q.removeQueueFile(path)
+			return nil
+		}
+		if q.replayDirScanFn == nil {
+			return fmt.Errorf("dirscan replay function not set")
+		}
+		replayCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		defer cancel()
+		return q.replayDirScanFn(replayCtx, dirscanEntry.Request)
+	}
+
 	var entry queuedResult
 	if err := json.Unmarshal(data, &entry); err != nil {
 		// 修复 RQ1：解析失败不返回 nil（会导致文件被删除），返回错误保留文件供排查
@@ -544,7 +628,7 @@ func (q *ResultQueue) replayOne(ctx context.Context, path string) error {
 	}
 	if q.isExpired(entry.EnqueueTime) {
 		q.log("WARN", "Dropping expired queue file %s (enqueued %v)", filename, entry.EnqueueTime)
-		os.Remove(path)
+		q.removeQueueFile(path)
 		return nil
 	}
 

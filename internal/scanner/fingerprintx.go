@@ -111,7 +111,7 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
-		Assets: identifiedAssets,
+		Assets:     identifiedAssets,
 	}, nil
 }
 
@@ -291,9 +291,4 @@ func formatMetadataMap(metadata map[string]interface{}) string {
 		return ""
 	}
 	return string(data)
-}
-
-// CheckFingerprintxAvailable 检查 fingerprintx 是否可用
-func CheckFingerprintxAvailable() bool {
-	return true
 }

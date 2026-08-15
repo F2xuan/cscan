@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -131,21 +132,22 @@ func (l *DirScanLogic) BatchAnalyzeAsync(req *types.DirScanAIBatchAnalyzeReq) (*
 	// 构造过滤条件（使用 $and 组合，避免 $or 冲突）
 	var andConditions []bson.M
 	if req.Query != "" {
+		q := regexp.QuoteMeta(req.Query)
 		andConditions = append(andConditions, bson.M{"$or": []bson.M{
-			{"url": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"path": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"title": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"authority": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"url": bson.M{"$regex": q, "$options": "i"}},
+			{"path": bson.M{"$regex": q, "$options": "i"}},
+			{"title": bson.M{"$regex": q, "$options": "i"}},
+			{"authority": bson.M{"$regex": q, "$options": "i"}},
 		}})
 	}
 	if req.StatusCode > 0 {
 		andConditions = append(andConditions, bson.M{"status_code": req.StatusCode})
 	}
 	if req.Path != "" {
-		andConditions = append(andConditions, bson.M{"path": bson.M{"$regex": req.Path, "$options": "i"}})
+		andConditions = append(andConditions, bson.M{"path": bson.M{"$regex": regexp.QuoteMeta(req.Path), "$options": "i"}})
 	}
 	if req.Authority != "" {
-		andConditions = append(andConditions, bson.M{"authority": bson.M{"$regex": req.Authority, "$options": "i"}})
+		andConditions = append(andConditions, bson.M{"authority": bson.M{"$regex": regexp.QuoteMeta(req.Authority), "$options": "i"}})
 	}
 	// 当指定了 aiResult 筛选时，按筛选条件匹配；未指定时默认只处理未研判数据
 	if req.AIResult != "" {
@@ -409,13 +411,13 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 		andConditions = append(andConditions, bson.M{"main_task_id": req.TaskId})
 	}
 	if req.Authority != "" {
-		andConditions = append(andConditions, bson.M{"authority": bson.M{"$regex": req.Authority, "$options": "i"}})
+		andConditions = append(andConditions, bson.M{"authority": bson.M{"$regex": regexp.QuoteMeta(req.Authority), "$options": "i"}})
 	}
 	if req.Url != "" {
-		andConditions = append(andConditions, bson.M{"url": bson.M{"$regex": req.Url, "$options": "i"}})
+		andConditions = append(andConditions, bson.M{"url": bson.M{"$regex": regexp.QuoteMeta(req.Url), "$options": "i"}})
 	}
 	if req.Path != "" {
-		andConditions = append(andConditions, bson.M{"path": bson.M{"$regex": req.Path, "$options": "i"}})
+		andConditions = append(andConditions, bson.M{"path": bson.M{"$regex": regexp.QuoteMeta(req.Path), "$options": "i"}})
 	}
 	if req.StatusCode > 0 {
 		andConditions = append(andConditions, bson.M{"status_code": req.StatusCode})
@@ -431,10 +433,11 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 		andConditions = append(andConditions, bson.M{"content_length": sizeFilter})
 	}
 	if req.Query != "" && req.Url == "" && req.Path == "" && req.Authority == "" {
+		q := regexp.QuoteMeta(req.Query)
 		andConditions = append(andConditions, bson.M{"$or": []bson.M{
-			{"url": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"path": bson.M{"$regex": req.Query, "$options": "i"}},
-			{"title": bson.M{"$regex": req.Query, "$options": "i"}},
+			{"url": bson.M{"$regex": q, "$options": "i"}},
+			{"path": bson.M{"$regex": q, "$options": "i"}},
+			{"title": bson.M{"$regex": q, "$options": "i"}},
 		}})
 	}
 	if req.AIStatus != "" {

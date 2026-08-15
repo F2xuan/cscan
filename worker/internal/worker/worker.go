@@ -346,19 +346,28 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	// 避免容器 OOM 重启后本地队列文件随容器丢失；maxSize 由 200 提升至 2000，
 	// 降低扫描期 API 长时间不可用时队列溢出丢弃最旧结果的风险。
 	resultQueueDir := filepath.Join("log", "result_queue")
+	// 回放函数必须走直写（不带 fallback），避免二次入队导致自循环膨胀。
 	w.resultQueue = NewResultQueue(resultQueueDir, 2000, func(ctx context.Context, req *TaskResultReq) error {
-		_, err := w.httpClient.SaveTaskResult(ctx, req)
-		return err
+		return w.replayAssetResult(ctx, req)
 	})
 	// JS 结果与证书结果对称接入本地队列重放（修复 P0：原 JS/Cert 保存无重试、无队列，API 抖动即永久丢失）
+	w.resultQueue.SetVulReplayFn(func(ctx context.Context, req *VulResultReq) error {
+		vuls := make([]*scanner.Vulnerability, 0, len(req.Vuls))
+		for i := range req.Vuls {
+			vul, err := vulDocumentToScanner(&req.Vuls[i])
+			if err != nil {
+				return err
+			}
+			vuls = append(vuls, vul)
+		}
+		return w.saveVulResultDirect(ctx, req.MainTaskId, vuls)
+	})
 	w.resultQueue.SetJSReplayFn(func(ctx context.Context, req *SaveJSFinderResultReq) error {
-		_, err := w.httpClient.SaveJSFinderResult(ctx, req)
-		return err
+		return w.saveJSFinderResultDirect(ctx, req.MainTaskId, req.Results)
 	})
 	w.resultQueue.SetCertReplayFn(func(ctx context.Context, req *SaveCertResultReq) error {
 		if w.mongoDB == nil {
-			_, err := w.httpClient.SaveCertResult(ctx, req)
-			return err
+			return fmt.Errorf("mongoDB unavailable; cert replay requires direct MongoDB connection")
 		}
 		certs := make([]*scanner.CertResult, len(req.Results))
 		for i, r := range req.Results {
@@ -1613,7 +1622,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 						for _, asset := range assets {
 							asset.Source = "subfinder"
 						}
-						w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
+						w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, assets)
 					},
 				})
 				if err != nil {
@@ -1729,7 +1738,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 									}
 								}
 								if len(newAssets) > 0 {
-									w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, newAssets)
+									w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, newAssets)
 								}
 							},
 						})
@@ -1949,7 +1958,7 @@ domainScanDone:
 					for _, asset := range assets {
 						asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
 					}
-					w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
+					w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, assets)
 				},
 			})
 			// 检查是否有目标超过端口阈值（不终止任务，只记录警告）
@@ -2208,11 +2217,11 @@ domainScanDone:
 						select {
 						case <-assetBuffer.GetFlushChan():
 							assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-								w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
+								w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, assets)
 							})
 						case <-ticker.C:
 							assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-								w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
+								w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, assets)
 							})
 						case <-fpCtx.Done():
 							return
@@ -2230,7 +2239,7 @@ domainScanDone:
 					},
 					OnCertFound: func(cert *scanner.CertResult) {
 						// 流式入库：单证书采集完成立即保存
-						w.saveCertResultsDirect(ctx, task.MainTaskId, []*scanner.CertResult{cert})
+						w.saveCertResultsWithFallback(ctx, task.MainTaskId, []*scanner.CertResult{cert})
 					},
 				})
 				fpCancel()
@@ -2276,7 +2285,7 @@ domainScanDone:
 
 					// 刷新流式缓冲区剩余资产
 					assetBuffer.Flush(ctx, func(assets []*scanner.Asset) {
-						w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, assets)
+						w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, assets)
 					})
 
 					// 证书采集结果已通过 OnCertFound 流式入库
@@ -2535,11 +2544,11 @@ domainScanDone:
 									return
 								case <-vulBuffer.flushChan:
 									vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-										w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
+										w.saveVulResultWithFallback(ctx, task.MainTaskId, vuls)
 									})
 								case <-ticker.C:
 									vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-										w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
+										w.saveVulResultWithFallback(ctx, task.MainTaskId, vuls)
 									})
 								}
 							}
@@ -2605,7 +2614,7 @@ domainScanDone:
 
 						// 扫描完成后，刷新剩余的漏洞
 						vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-							w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
+							w.saveVulResultWithFallback(ctx, task.MainTaskId, vuls)
 						})
 
 						if vulCount > 0 {
@@ -2649,11 +2658,11 @@ domainScanDone:
 								return
 							case <-vulBuffer.flushChan:
 								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-									w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
+									w.saveVulResultWithFallback(ctx, task.MainTaskId, vuls)
 								})
 							case <-ticker.C:
 								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-									w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
+									w.saveVulResultWithFallback(ctx, task.MainTaskId, vuls)
 								})
 							}
 						}
@@ -2701,7 +2710,7 @@ domainScanDone:
 
 					// 扫描完成后，刷新剩余的漏洞
 					vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-						w.saveVulResultDirect(ctx, task.MainTaskId, vuls)
+						w.saveVulResultWithFallback(ctx, task.MainTaskId, vuls)
 					})
 
 					if vulCount > 0 {

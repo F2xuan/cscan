@@ -90,7 +90,7 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 					Response:         r.Response,
 				})
 			}
-			w.saveJSFinderResultDirect(ctx, task.MainTaskId, schedResults)
+			w.saveJSFinderResultWithFallback(ctx, task.MainTaskId, schedResults)
 		},
 	}
 

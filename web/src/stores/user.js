@@ -23,9 +23,17 @@ export const useUserStore = defineStore('user', () => {
   const isAdmin = computed(() => role.value === 'admin' || role.value === 'superadmin')
   const avatarSrc = computed(() => avatar.value || DEFAULT_AVATAR)
 
+  let profileRequestVersion = 0
+
   async function login(loginForm) {
     const res = await loginApi(loginForm)
     if (res.code === 0) {
+      if (typeof res.token !== 'string' || !res.token.trim() ||
+        typeof res.userId !== 'string' || !res.userId.trim() ||
+        typeof res.username !== 'string' || !res.username.trim() ||
+        typeof res.role !== 'string' || !res.role.trim()) {
+        throw new Error('登录响应缺少有效认证信息')
+      }
       token.value = res.token
       userId.value = res.userId
       username.value = res.username
@@ -43,9 +51,12 @@ export const useUserStore = defineStore('user', () => {
 
   // refreshProfile 拉取当前用户个人信息（含头像、邮箱、电话、登录时间）
   async function refreshProfile() {
-    if (!token.value) return
+    const requestVersion = ++profileRequestVersion
+    const requestToken = token.value
+    if (!requestToken) return
     try {
       const res = await getUserProfile()
+      if (requestVersion !== profileRequestVersion || token.value !== requestToken || !token.value) return
       if (res.code === 0) {
         setAvatar(res.avatar || '')
         setUsername(res.username || username.value)
@@ -91,6 +102,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    profileRequestVersion++
     token.value = ''
     userId.value = ''
     username.value = ''

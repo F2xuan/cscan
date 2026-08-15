@@ -175,7 +175,7 @@ func (w *Worker) executeBruteScan(ctx context.Context, task *scheduler.TaskInfo,
 		ServiceDicts:   serviceDicts,
 		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 			// 流式入库：发现弱口令立即保存
-			w.saveVulResultDirect(ctx, task.MainTaskId, []*scanner.Vulnerability{vul})
+			w.saveVulResultWithFallback(ctx, task.MainTaskId, []*scanner.Vulnerability{vul})
 		},
 	}
 

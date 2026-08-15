@@ -1661,9 +1661,9 @@ function previewTemplateConfig() {
       ? JSON.parse(selectedTemplateConfig.value.config)
       : selectedTemplateConfig.value.config
     ElMessageBox.alert(
-      `<pre style="max-height:400px;overflow:auto;font-size:12px;white-space:pre-wrap;">${JSON.stringify(cfg, null, 2)}</pre>`,
+      JSON.stringify(cfg, null, 2),
       '模板配置预览',
-      { dangerouslyUseHTMLString: true, confirmButtonText: '关闭' }
+      { dangerouslyUseHTMLString: false, confirmButtonText: '关闭' }
     )
   } catch (e) {
     ElMessage.warning('配置解析失败')

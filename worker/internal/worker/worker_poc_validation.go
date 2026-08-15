@@ -158,7 +158,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 			logx.Infof("[%s] Vulnerability found! Matched URL: %s", task.TaskId, vul.Url)
 			w.taskLog(task.TaskId, LevelInfo, "[%s] Vulnerability found! Matched URL: %s", task.TaskId, vul.Url)
 		}
-		w.saveVulResultDirect(ctx, task.TaskId, result.Vulnerabilities)
+		w.saveVulResultWithFallback(ctx, task.MainTaskId, result.Vulnerabilities)
 	} else {
 		resultPocName := pocName
 		if resultPocName == "" {
@@ -407,7 +407,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		CustomPocOnly:   true,
 		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 			w.taskLog(task.TaskId, LevelInfo, "[%s] Vulnerability found! %s → %s", task.TaskId, vul.PocFile, vul.Url)
-			w.saveVulResultDirect(ctx, task.TaskId, []*scanner.Vulnerability{vul})
+			w.saveVulResultWithFallback(ctx, task.MainTaskId, []*scanner.Vulnerability{vul})
 		},
 	}
 

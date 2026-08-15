@@ -173,7 +173,7 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 			}
 			identifiedAssets = append(identifiedAssets, nmapResult.Assets...)
 			// 流式入库：单主机端口识别完成立即保存
-			w.saveAssetResultDirect(ctx, task.MainTaskId, orgId, nmapResult.Assets)
+			w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, nmapResult.Assets)
 		} else {
 			// Nmap没有结果时，使用原始资产
 			for _, asset := range hostAssets[host] {

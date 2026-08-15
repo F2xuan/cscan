@@ -4,15 +4,25 @@ import { useUserStore } from '@/stores/user'
 // 动态导入重试包装器，解决 chunk 加载失败问题
 // 返回纯异步函数（非 defineAsyncComponent），避免 Vue Router 警告
 function lazyLoad(importFn) {
-  return () => importFn().catch((err) => {
-    if (err.message.includes('Failed to fetch dynamically imported module') ||
-      err.message.includes('Loading chunk') ||
-      err.message.includes('Loading CSS chunk')) {
-      console.warn('[Router] Chunk load failed, reloading page...', err)
+  return () => importFn().then((module) => {
+    sessionStorage.removeItem('cscan:chunk-reload')
+    return module
+  }).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err)
+    const isChunkError = message.includes('Failed to fetch dynamically imported module') ||
+      message.includes('Loading chunk') ||
+      message.includes('Loading CSS chunk')
+    if (!isChunkError) throw err
+
+    const hasRetried = sessionStorage.getItem('cscan:chunk-reload') === '1'
+    if (!hasRetried) {
+      sessionStorage.setItem('cscan:chunk-reload', '1')
       window.location.reload()
-      return new Promise(() => { })
+      return new Promise(() => {})
     }
-    throw err
+
+    sessionStorage.removeItem('cscan:chunk-reload')
+    throw new Error('页面资源加载失败，请刷新后重试')
   })
 }
 

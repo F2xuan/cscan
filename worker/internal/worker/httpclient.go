@@ -156,17 +156,17 @@ type VulDocument struct {
 
 // VulResultReq 漏洞结果上报请求
 type VulResultReq struct {
-	MainTaskId  string        `json:"mainTaskId"`
-	Vuls        []VulDocument `json:"vuls"`
+	MainTaskId string        `json:"mainTaskId"`
+	Vuls       []VulDocument `json:"vuls"`
 }
 
 // VulReverifyReq 漏洞复验结果上报请求
 type VulReverifyReq struct {
 	VulnId     string `json:"vulnId"`
-	Conclusion  string `json:"conclusion"`
-	Reviewer    string `json:"reviewer"`
-	Message     string `json:"message"`
-	ReverifyAt  string `json:"reverifyAt"`
+	Conclusion string `json:"conclusion"`
+	Reviewer   string `json:"reviewer"`
+	Message    string `json:"message"`
+	ReverifyAt string `json:"reverifyAt"`
 }
 
 // VulReverifyResp 漏洞复验结果上报响应
@@ -575,7 +575,6 @@ func (c *WorkerHTTPClient) SaveTaskResult(ctx context.Context, req *TaskResultRe
 	return &resp, nil
 }
 
-// SaveVulReverify 上报漏洞复验结果
 func (c *WorkerHTTPClient) SaveVulReverify(ctx context.Context, req *VulReverifyReq) (*VulReverifyResp, error) {
 	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/vul/reverify", req)
 	if err != nil {
@@ -1039,8 +1038,8 @@ type JSFinderResultItem struct {
 
 // SaveJSFinderResultReq 保存 JSFinder 扫描结果请求
 type SaveJSFinderResultReq struct {
-	MainTaskId  string                `json:"mainTaskId,omitempty"`
-	Results     []*JSFinderResultItem `json:"results"`
+	MainTaskId string                `json:"mainTaskId,omitempty"`
+	Results    []*JSFinderResultItem `json:"results"`
 }
 
 // BaseResp 通用响应
@@ -1084,8 +1083,8 @@ type CertResultItem struct {
 
 // SaveCertResultReq 保存证书采集结果请求
 type SaveCertResultReq struct {
-	MainTaskId  string            `json:"mainTaskId,omitempty"`
-	Results     []*CertResultItem `json:"results"`
+	MainTaskId string            `json:"mainTaskId,omitempty"`
+	Results    []*CertResultItem `json:"results"`
 }
 
 // SaveCertResult 保存证书采集结果（worker → API，镜像 SaveJSFinderResult）
@@ -1157,10 +1156,10 @@ type TaskRecoveryReq struct {
 
 // RecoveredTaskInfo 恢复的任务信息
 type RecoveredTaskInfo struct {
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	Status      string `json:"status"`
-	StartTime   string `json:"startTime"`
+	TaskId     string `json:"taskId"`
+	MainTaskId string `json:"mainTaskId"`
+	Status     string `json:"status"`
+	StartTime  string `json:"startTime"`
 }
 
 // TaskRecoveryResp 任务恢复响应

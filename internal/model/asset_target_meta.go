@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"cscan/pkg/utils"
+
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -26,34 +28,38 @@ const (
 // _id 编码为 "{type}:{value}"，例如 "domain:example.com" / "ip:1.2.3.4"，
 // 保证 (type, value) 全局唯一且 IP/主域名严格分开。
 type AssetTargetMeta struct {
-	Id           string    `bson:"_id" json:"id"`
-	TargetType   string    `bson:"target_type" json:"targetType"`
-	TargetValue  string    `bson:"target_value" json:"targetValue"`
-	Labels       []string  `bson:"labels,omitempty" json:"labels"`
-	Memo         string    `bson:"memo,omitempty" json:"memo"`
-	ColorTag     string    `bson:"color_tag,omitempty" json:"colorTag"`
-	LastScanTime time.Time `bson:"last_scan_time,omitempty" json:"lastScanTime"`
-	FirstSeenTime time.Time `bson:"first_seen_time,omitempty" json:"firstSeenTime"`
-	TaskCount    int       `bson:"task_count,omitempty" json:"taskCount"`
-	CreateTime   time.Time `bson:"create_time" json:"createTime"`
-	UpdateTime   time.Time `bson:"update_time" json:"updateTime"`
+	Id                    string    `bson:"_id" json:"id"`
+	TargetType            string    `bson:"target_type" json:"targetType"`
+	TargetValue           string    `bson:"target_value" json:"targetValue"`
+	Labels                []string  `bson:"labels,omitempty" json:"labels"`
+	Memo                  string    `bson:"memo,omitempty" json:"memo"`
+	ColorTag              string    `bson:"color_tag,omitempty" json:"colorTag"`
+	LastScanTime          time.Time `bson:"last_scan_time,omitempty" json:"lastScanTime"`
+	FirstSeenTime         time.Time `bson:"first_seen_time,omitempty" json:"firstSeenTime"`
+	TaskCount             int       `bson:"task_count,omitempty" json:"taskCount"`
+	ScanStatus            string    `bson:"scan_status,omitempty" json:"scanStatus,omitempty"`     // pending/in_progress/completed/failed/cancelled
+	Source                string    `bson:"source,omitempty" json:"source,omitempty"`             // MANUAL/INTERNAL_NETWORK/integration name
+	InternalNetworkId     string    `bson:"internal_network_id,omitempty" json:"internalNetworkId,omitempty"`
+	TotalAssetServices    int       `bson:"total_asset_services,omitempty" json:"totalAssetServices,omitempty"`
+	CreateTime            time.Time `bson:"create_time" json:"createTime"`
+	UpdateTime            time.Time `bson:"update_time" json:"updateTime"`
 
 	// Phase 4 denormalize 字段：list 行内联 exposure/risk 气泡。
 	// risk_updated_at 控制是否需要懒回填（>maxAge 或零值即转 detail 实时算并写回）。
-	ExposureSubdomains int       `bson:"exp_subdomains,omitempty" json:"expSubdomains,omitempty"`
-	ExposureIps        int       `bson:"exp_ips,omitempty"        json:"expIps,omitempty"`
-	ExposurePorts      int       `bson:"exp_ports,omitempty"      json:"expPorts,omitempty"`
-	ExposureSites      int       `bson:"exp_sites,omitempty"      json:"expSites,omitempty"`
-	ExposureIcons      int       `bson:"exp_icons,omitempty"      json:"expIcons,omitempty"`
-	ExposureApps       int       `bson:"exp_apps,omitempty"       json:"expApps,omitempty"`
-	ExposureDirs       int       `bson:"exp_dirs,omitempty"       json:"expDirs,omitempty"`
-	ExposureJs         int       `bson:"exp_js,omitempty"         json:"expJs,omitempty"`
-	ExposureScreenshots int      `bson:"exp_screenshots,omitempty" json:"expScreenshots,omitempty"`
-	RiskSensitiveInfo  int       `bson:"risk_sensitive_info,omitempty" json:"riskSensitiveInfo,omitempty"`
-	RiskSensitiveDir   int       `bson:"risk_sensitive_dir,omitempty"  json:"riskSensitiveDir,omitempty"`
-	RiskVulnHigh       int       `bson:"risk_vuln_high,omitempty"      json:"riskVulnHigh,omitempty"`
-	RiskVulnTotal      int       `bson:"risk_vuln_total,omitempty"     json:"riskVulnTotal,omitempty"`
-	RiskUpdatedAt      time.Time `bson:"risk_updated_at,omitempty"      json:"riskUpdatedAt,omitempty"`
+	ExposureSubdomains    int       `bson:"exp_subdomains,omitempty" json:"expSubdomains,omitempty"`
+	ExposureIps           int       `bson:"exp_ips,omitempty"        json:"expIps,omitempty"`
+	ExposurePorts         int       `bson:"exp_ports,omitempty"      json:"expPorts,omitempty"`
+	ExposureSites         int       `bson:"exp_sites,omitempty"      json:"expSites,omitempty"`
+	ExposureIcons         int       `bson:"exp_icons,omitempty"      json:"expIcons,omitempty"`
+	ExposureApps          int       `bson:"exp_apps,omitempty"       json:"expApps,omitempty"`
+	ExposureDirs          int       `bson:"exp_dirs,omitempty"       json:"expDirs,omitempty"`
+	ExposureJs            int       `bson:"exp_js,omitempty"         json:"expJs,omitempty"`
+	ExposureScreenshots   int       `bson:"exp_screenshots,omitempty" json:"expScreenshots,omitempty"`
+	RiskSensitiveInfo     int       `bson:"risk_sensitive_info,omitempty" json:"riskSensitiveInfo,omitempty"`
+	RiskSensitiveDir      int       `bson:"risk_sensitive_dir,omitempty"  json:"riskSensitiveDir,omitempty"`
+	RiskVulnHigh          int       `bson:"risk_vuln_high,omitempty"      json:"riskVulnHigh,omitempty"`
+	RiskVulnTotal         int       `bson:"risk_vuln_total,omitempty"     json:"riskVulnTotal,omitempty"`
+	RiskUpdatedAt         time.Time `bson:"risk_updated_at,omitempty"      json:"riskUpdatedAt,omitempty"`
 }
 
 // EncodeTargetID 将 (type, value) 编码为 _id。RFC 3986 限定 host 不含 ':'，
@@ -88,6 +94,9 @@ func NewAssetTargetMetaModel(db *mongo.Database) *AssetTargetMetaModel {
 		{Keys: bson.D{{Key: "target_type", Value: 1}, {Key: "target_value", Value: 1}}},
 		{Keys: bson.D{{Key: "labels", Value: 1}}},
 		{Keys: bson.D{{Key: "last_scan_time", Value: -1}}},
+		{Keys: bson.D{{Key: "scan_status", Value: 1}}},
+		{Keys: bson.D{{Key: "source", Value: 1}}},
+		{Keys: bson.D{{Key: "internal_network_id", Value: 1}}},
 	}
 	if err := ensureIndexes(coll, indexes); err != nil {
 		logx.Errorf("[AssetTargetMetaModel] create indexes failed for %s: %v", coll.Name(), err)
@@ -137,6 +146,18 @@ func (m *AssetTargetMetaModel) Upsert(ctx context.Context, doc *AssetTargetMeta)
 		"target_value":   doc.TargetValue,
 		"update_time":   now,
 	}
+	if doc.ScanStatus != "" {
+		setFields["scan_status"] = doc.ScanStatus
+	}
+	if doc.Source != "" {
+		setFields["source"] = doc.Source
+	}
+	if doc.InternalNetworkId != "" {
+		setFields["internal_network_id"] = doc.InternalNetworkId
+	}
+	if doc.TotalAssetServices > 0 {
+		setFields["total_asset_services"] = doc.TotalAssetServices
+	}
 	if doc.Labels != nil {
 		setFields["labels"] = doc.Labels
 	}
@@ -166,9 +187,53 @@ func (m *AssetTargetMetaModel) Upsert(ctx context.Context, doc *AssetTargetMeta)
 	return err
 }
 
+// UpsertScanTarget 扫描任务创建/启动时立即登记顶层目标（含扫描状态），
+// 让资产空间搜索在任务开始即出现目标，而不是等首个资产写入。
+// 已存在的目标仅刷新扫描状态，不覆盖资产推导的时间字段。
+func (m *AssetTargetMetaModel) UpsertScanTarget(ctx context.Context, tType AssetTargetType, value, scanStatus string) error {
+	if tType != AssetTargetTypeDomain && tType != AssetTargetTypeIP {
+		return fmt.Errorf("invalid target type %q", tType)
+	}
+	if value == "" {
+		return errors.New("target value is empty")
+	}
+	now := time.Now()
+	update := bson.M{
+		"$set": bson.M{
+			"scan_status": scanStatus,
+			"update_time": now,
+		},
+		"$setOnInsert": bson.M{
+			"target_type":     string(tType),
+			"target_value":    value,
+			"create_time":     now,
+			"first_seen_time": now,
+			"last_scan_time":  now,
+		},
+	}
+	opts := options.Update().SetUpsert(true)
+	_, err := m.coll.UpdateOne(ctx, bson.M{"_id": EncodeTargetID(tType, value)}, update, opts)
+	return err
+}
+
+// RegisterScanTargets 批量登记任务目标；targets 为原始 token 列表（IP/域名/URL）。
+// 无法解析的类型（CIDR 等）跳过，单个失败不影响其余。
+func (m *AssetTargetMetaModel) RegisterScanTargets(ctx context.Context, targets []string, scanStatus string) int {
+	registered := 0
+	for _, raw := range targets {
+		tType, value, ok := utils.ParseScanTarget(raw)
+		if !ok {
+			continue
+		}
+		if err := m.UpsertScanTarget(ctx, AssetTargetType(tType), value, scanStatus); err == nil {
+			registered++
+		}
+	}
+	return registered
+}
+
 // UpdateLabels 仅更新标签
-func (m *AssetTargetMetaModel) UpdateLabels(ctx context.Context, id string, labels []string) error {
-	_, err := m.coll.UpdateOne(ctx,
+func (m *AssetTargetMetaModel) UpdateLabels(ctx context.Context, id string, labels []string) error {	_, err := m.coll.UpdateOne(ctx,
 		bson.M{"_id": id},
 		bson.M{"$set": bson.M{"labels": labels, "update_time": time.Now()}})
 	return err
@@ -256,8 +321,36 @@ func (m *AssetTargetMetaModel) UpdateDenormalized(ctx context.Context, id string
 	return err
 }
 
+// UpdateDenormalizedWithServices 同 UpdateDenormalized，额外更新 total_asset_services。
+func (m *AssetTargetMetaModel) UpdateDenormalizedWithServices(ctx context.Context, id string, exp ExposureSnapshot, risk RiskSnapshot, totalServices int) error {
+	now := time.Now()
+	setFields := bson.M{
+		"exp_subdomains":       exp.Subdomains,
+		"exp_ips":              exp.Ips,
+		"exp_ports":            exp.Ports,
+		"exp_sites":            exp.Sites,
+		"exp_icons":            exp.Icons,
+		"exp_apps":             exp.Apps,
+		"exp_dirs":             exp.Dirs,
+		"exp_js":               exp.Js,
+		"exp_screenshots":      exp.Screenshots,
+		"risk_sensitive_info":  risk.SensitiveInfo,
+		"risk_sensitive_dir":   risk.SensitiveDir,
+		"risk_vuln_high":       risk.VulnHigh,
+		"risk_vuln_total":      risk.VulnTotal,
+		"total_asset_services": totalServices,
+		"risk_updated_at":      now,
+		"update_time":          now,
+	}
+	_, err := m.coll.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": setFields})
+	return err
+}
+
 // NeedsRefresh 判断 meta 文档是否需要重新算 denormalize 字段。
-// 触发条件：risk_updated_at 零值（从未计算）或超过 maxAge（过期）。
+// 触发条件：risk_updated_at 零值（从未计算）、超过 maxAge（过期），
+// 或 last_scan_time 晚于 risk_updated_at（资产在快照计算后有更新：扫描完成/进行中）。
+// last_scan_time 由 60s 节流的资产反推同步推进，因此该信号自限频；
+// 否则扫描结束后服务数/暴露面要等满 maxAge（最长 30 分钟）才刷新。
 func NeedsRefresh(d *AssetTargetMeta, maxAge time.Duration) bool {
 	if d == nil {
 		return true
@@ -265,7 +358,10 @@ func NeedsRefresh(d *AssetTargetMeta, maxAge time.Duration) bool {
 	if d.RiskUpdatedAt.IsZero() {
 		return true
 	}
-	return time.Since(d.RiskUpdatedAt) > maxAge
+	if time.Since(d.RiskUpdatedAt) > maxAge {
+		return true
+	}
+	return d.LastScanTime.After(d.RiskUpdatedAt)
 }
 
 func (m *AssetTargetMetaModel) Delete(ctx context.Context, id string) error {
@@ -281,15 +377,27 @@ func (m *AssetTargetMetaModel) DeleteByFilter(ctx context.Context, filter bson.M
 	return res.DeletedCount, nil
 }
 
-// FindPage 分页查询，支持按 type/labels/关键字过滤，按指定字段降序排序。
+// FindPage 分页查询，支持按 type/labels/scanStatus/source/internalNetworkId/关键字过滤，按指定字段降序排序。
 // sortField 为空时默认 "last_scan_time"。
-func (m *AssetTargetMetaModel) FindPage(ctx context.Context, targetType, query string, labels []string, page, pageSize int, sortField string) ([]AssetTargetMeta, int64, error) {
+func (m *AssetTargetMetaModel) FindPage(ctx context.Context, targetType, query string, labels []string, page, pageSize int, sortField string, scanStatus, source, internalNetworkId string) ([]AssetTargetMeta, int64, error) {
 	if sortField == "" {
 		sortField = "last_scan_time"
 	}
 	filter := bson.M{}
 	if targetType != "" {
 		filter["target_type"] = targetType
+	}
+	if scanStatus != "" {
+		filter["scan_status"] = scanStatus
+	}
+	if source != "" {
+		filter["source"] = source
+	}
+	switch internalNetworkId {
+	case "__notnull__":
+		filter["internal_network_id"] = bson.M{"$exists": true, "$nin": []interface{}{nil, ""}}
+	case "__null__":
+		filter["internal_network_id"] = bson.M{"$in": []interface{}{nil, ""}}
 	}
 	if len(labels) > 0 {
 		filter["labels"] = bson.M{"$in": labels}

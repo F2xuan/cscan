@@ -90,7 +90,8 @@ func (l *AssetFilterOptionsLogic) loadFilterOptions(req *types.AssetFilterOption
 
 	if values, err := assetModel.Distinct(l.ctx, "status", filter); err == nil {
 		for _, v := range values {
-			if s, ok := v.(string); ok && s != "" {
+			// "0" 是扫描器记录的无效状态码（网关异常页等），不作为过滤选项
+			if s, ok := v.(string); ok && s != "" && s != "0" {
 				statusSet[s] = struct{}{}
 			}
 		}

@@ -363,6 +363,35 @@ func (m *AssetModel) findPagedWithProjection(ctx context.Context, filter bson.M,
 	return docs, cursor.Err()
 }
 
+// AssetTargetGroupResult 目标维度聚合行（host/port/ip/app/status 分组通用）。
+type AssetTargetGroupResult struct {
+	Id       interface{} `bson:"_id"`
+	Count    int         `bson:"count"`
+	Location string      `bson:"location"`
+	Extras   []string    `bson:"extras"`
+}
+
+// AggregateTargetGroups 执行目标维度聚合 pipeline，返回 {key, count, location, extras} 行。
+// pipeline 由调用方构造（元素为完整 stage 文档，如 {"$match": {...}}、{"$group": {...}}）。
+func (m *AssetModel) AggregateTargetGroups(ctx context.Context, pipeline []bson.M) ([]AssetTargetGroupResult, error) {
+	cursor, err := m.coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var rows []AssetTargetGroupResult
+	if err := cursor.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// FindForTargetInventory 目标资产列表查询：保留 screenshot，排除 body/header/banner/cert 大字段，update_time 降序。
+func (m *AssetModel) FindForTargetInventory(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
+	page, pageSize = NormalizePage(page, pageSize)
+	return m.findPagedWithProjection(ctx, filter, page, pageSize, AssetInventoryProjection)
+}
+
 // FindForFingerprint 按指纹匹配所需字段查询（排除 screenshot/cert/banner 三个二进制大字段）
 // 仅用于指纹匹配场景；如需全字段文档，请使用 FindWithSort 或 FindById。
 func (m *AssetModel) FindForFingerprint(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {

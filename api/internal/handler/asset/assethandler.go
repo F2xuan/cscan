@@ -390,6 +390,24 @@ func AssetTargetDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// AssetTargetAssetsHandler 获取目标下的资产列表
+func AssetTargetAssetsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetAssetsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		l := logic.NewAssetTargetAssetsLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetAssets(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
 // AssetTargetUpdateHandler 更新顶层资产用户字段
 func AssetTargetUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +435,42 @@ func AssetTargetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 		l := logic.NewAssetTargetDeleteLogic(r.Context(), svcCtx)
 		resp, err := l.AssetTargetDelete(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetTargetGroupsHandler 目标资产按维度聚合（host/port/ip/app/status）
+func AssetTargetGroupsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetGroupsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		l := logic.NewAssetTargetGroupsLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetGroups(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetTargetCertsHandler 目标关联的 TLS 证书列表
+func AssetTargetCertsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetCertsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		l := logic.NewAssetTargetCertsLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetCerts(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

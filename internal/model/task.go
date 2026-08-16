@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"cscan/pkg/utils"
+
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -240,7 +242,61 @@ func (m *MainTaskModel) Update(ctx context.Context, id string, update bson.M) er
 	}
 	update["update_time"] = time.Now()
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	if err == nil {
+		m.syncScanStatusIfStatusChange(ctx, id, update)
+	}
 	return err
+}
+
+// mapTaskStatusToScanStatus 主任务状态 → 资产空间搜索的目标扫描状态
+// （与 assettargetlistlogic 懒同步的 mapTaskStatusToScan 保持同一口径）
+func mapTaskStatusToScanStatus(status string) string {
+	switch status {
+	case TaskStatusCreated, TaskStatusPending, TaskStatusPaused:
+		return "pending"
+	case TaskStatusStarted:
+		return "in_progress"
+	case TaskStatusSuccess:
+		return "completed"
+	case TaskStatusFailure:
+		return "failed"
+	case TaskStatusRevoked, TaskStatusStopped:
+		return "cancelled"
+	default:
+		return ""
+	}
+}
+
+// syncScanStatusIfStatusChange update 中含状态字段时，把目标扫描状态同步到 asset_target_meta。
+// FindById 失败（如 ctx 超时）静默跳过，退回列表懒同步路径。
+func (m *MainTaskModel) syncScanStatusIfStatusChange(ctx context.Context, id string, update bson.M) {
+	status, ok := update["status"].(string)
+	if !ok {
+		return
+	}
+	scanStatus := mapTaskStatusToScanStatus(status)
+	if scanStatus == "" {
+		return
+	}
+	task, err := m.FindById(ctx, id)
+	if err != nil || task == nil {
+		return
+	}
+	m.syncScanStatusToTargets(ctx, task.Target, scanStatus)
+}
+
+// syncScanStatusToTargets 任务状态流转时第一时间把扫描状态写入 asset_target_meta，
+// 使资产空间搜索的「扫描状态」与任务管理实时同步。
+// API 与 Worker 两条写入路径共用 MainTaskModel，在模型层挂钩即可全覆盖。
+// 同步失败仅记日志，不影响任务状态写入本身。
+func (m *MainTaskModel) syncScanStatusToTargets(ctx context.Context, target, scanStatus string) {
+	if target == "" || scanStatus == "" {
+		return
+	}
+	n := NewAssetTargetMetaModel(m.coll.Database()).RegisterScanTargets(ctx, utils.SplitTargetTokens(target), scanStatus)
+	if n > 0 {
+		logx.WithContext(ctx).Infof("[MainTaskModel] synced scan_status=%s to %d targets", scanStatus, n)
+	}
 }
 
 // UpdateWithResult 更新任务并返回结果
@@ -250,7 +306,11 @@ func (m *MainTaskModel) UpdateWithResult(ctx context.Context, id string, update 
 		return nil, err
 	}
 	update["update_time"] = time.Now()
-	return m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	result, err := m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	if err == nil {
+		m.syncScanStatusIfStatusChange(ctx, id, update)
+	}
+	return result, err
 }
 
 func (m *MainTaskModel) Delete(ctx context.Context, id string) error {
@@ -399,6 +459,12 @@ func (m *MainTaskModel) MarkTaskCompleted(ctx context.Context, id string) (bool,
 	result, err := m.coll.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return false, err
+	}
+
+	if result.ModifiedCount > 0 {
+		if task, ferr := m.FindById(ctx, id); ferr == nil && task != nil {
+			m.syncScanStatusToTargets(ctx, task.Target, "completed")
+		}
 	}
 
 	return result.ModifiedCount > 0, nil

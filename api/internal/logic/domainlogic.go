@@ -306,11 +306,13 @@ func (l *DomainLogic) DomainDelete(req *types.DomainDeleteReq) (*types.BaseResp,
 	}
 
 	// 删除所有包含该域名的资产
+	// authority 正则需转义域名中的点，否则 "a.com" 会误匹配 "axcom"。
+	escapedDomain := regexp.QuoteMeta(domainName)
 	filter := bson.M{
 		"$or": []bson.M{
 			{"domain": domainName},
 			{"host": domainName},
-			{"authority": bson.M{"$regex": "^" + domainName + "(:|$)"}},
+			{"authority": bson.M{"$regex": "^" + escapedDomain + "(:|$)"}},
 		},
 	}
 	totalDeleted, _ := assetModel.DeleteByFilter(l.ctx, filter)

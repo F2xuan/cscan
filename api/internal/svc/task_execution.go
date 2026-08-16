@@ -8,6 +8,7 @@ import (
 
 	"cscan/internal/model"
 	"cscan/internal/scheduler"
+	"cscan/pkg/utils"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -304,6 +305,10 @@ func (s *ServiceContext) updateMainTaskToStarted(ctx context.Context, mainTaskId
 			"status":     "STARTED",
 			"start_time": time.Now(),
 		})
+		// 任务启动即把目标状态置为 in_progress（资产空间搜索实时反映扫描中）
+		model.NewAssetTargetMetaModel(s.MongoDB).RegisterScanTargets(mongoCtx, utils.SplitTargetTokens(task.Target), "in_progress")
+		// 状态流转立即失效列表缓存，前端 3s 轮询无需等 30s TTL 过期
+		s.QueryCache.Clear()
 	}
 }
 
@@ -514,6 +519,8 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 			logx.Errorf("[IncrSubTaskDone] mark completed failed, mainTaskId=%s, error=%v", mainTaskId, err)
 		} else if updated {
 			logx.Infof("[IncrSubTaskDone] task marked as completed, mainTaskId=%s", mainTaskId)
+			// 完成态立即失效列表缓存，扫描状态无需等 30s TTL
+			s.QueryCache.Clear()
 		}
 	}
 

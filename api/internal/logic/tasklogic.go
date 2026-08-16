@@ -15,6 +15,7 @@ import (
 	"cscan/api/internal/types"
 	"cscan/internal/model"
 	"cscan/internal/scheduler"
+	"cscan/pkg/utils"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -445,6 +446,9 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq) (resp
 		l.Logger.Errorf("MainTaskCreate: insert failed, taskId=%s, error=%v", taskId, err)
 		return &types.BaseRespWithId{Code: 500, Msg: "创建任务失败: " + err.Error()}, nil
 	}
+
+	// 任务创建即登记顶层目标（pending），资产空间搜索立即可见
+	l.svcCtx.GetAssetTargetMetaModel().RegisterScanTargets(l.ctx, utils.SplitTargetTokens(req.Target), "pending")
 
 	l.Logger.Infof("Task created: taskId=%s", taskId)
 

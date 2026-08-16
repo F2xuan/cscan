@@ -14,6 +14,7 @@ import (
 	"cscan/internal/model"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
+	"cscan/pkg/utils"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -101,6 +102,9 @@ func (l *TaskQuickCreateLogic) TaskQuickCreate(req *types.TaskQuickCreateReq) (*
 		l.Logger.Errorf("TaskQuickCreate: insert failed, taskId=%s, error=%v", taskId, err)
 		return &types.TaskQuickCreateResp{Code: 500, Msg: "创建任务失败: " + err.Error()}, nil
 	}
+
+	// 任务创建即登记顶层目标（pending），资产空间搜索立即可见
+	l.svcCtx.GetAssetTargetMetaModel().RegisterScanTargets(l.ctx, utils.SplitTargetTokens(req.Targets), "pending")
 
 	// 复用统一任务启动逻辑
 	// 修复 M-16：启动失败时必须明确返回错误状态及任务 ID，避免前端误判任务已成功启动

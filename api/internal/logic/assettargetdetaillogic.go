@@ -96,8 +96,9 @@ func (l *AssetTargetDetailLogic) writebackDenormalized(meta *model.AssetTargetMe
 		VulnHigh:      risk.VulnHigh,
 		VulnTotal:     risk.VulnTotal,
 	}
-	if err := l.svcCtx.GetAssetTargetMetaModel().UpdateDenormalized(l.ctx, meta.Id, expSnap, riskSnap); err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] UpdateDenormalized id=%s fail: %v", meta.Id, err)
+	totalSvc := l.computeTotalAssetServices(model.AssetTargetType(meta.TargetType), meta.TargetValue)
+	if err := l.svcCtx.GetAssetTargetMetaModel().UpdateDenormalizedWithServices(l.ctx, meta.Id, expSnap, riskSnap, totalSvc); err != nil {
+		l.Logger.Errorf("[AssetTargetDetail] UpdateDenormalizedWithServices id=%s fail: %v", meta.Id, err)
 	}
 	meta.ExposureSubdomains = expSnap.Subdomains
 	meta.ExposureIps = expSnap.Ips
@@ -112,6 +113,7 @@ func (l *AssetTargetDetailLogic) writebackDenormalized(meta *model.AssetTargetMe
 	meta.RiskSensitiveDir = riskSnap.SensitiveDir
 	meta.RiskVulnHigh = riskSnap.VulnHigh
 	meta.RiskVulnTotal = riskSnap.VulnTotal
+	meta.TotalAssetServices = totalSvc
 	meta.RiskUpdatedAt = time.Now()
 }
 
@@ -254,6 +256,9 @@ func (l *AssetTargetDetailLogic) computeRisk(tType model.AssetTargetType, tValue
 	stats.SensitiveDirItems = l.listRiskByKeyword(vulModel, hostFilter, sensitiveDirKeywords, sensitiveTopN)
 	stats.SensitivePathItems = l.listSensitivePathFromScanResult(hostFilter, sensitiveTopN)
 
+	// 漏洞 Tab 列表数据：该目标下最新 20 条漏洞（任意类型，非仅敏感信息）
+	stats.VulnItems = l.listLatestVulns(vulModel, hostFilter, 20)
+
 	highCount, err := vulModel.Count(l.ctx, bson.M{
 		"host": hostFilter,
 		"$or": bson.A{
@@ -265,6 +270,21 @@ func (l *AssetTargetDetailLogic) computeRisk(tType model.AssetTargetType, tValue
 		stats.VulnHigh = int(highCount)
 	}
 	return stats
+}
+
+// computeTotalAssetServices 统计归属该目标的 distinct 服务数（基于 asset.service 字段去重）。
+func (l *AssetTargetDetailLogic) computeTotalAssetServices(tType model.AssetTargetType, tValue string) int {
+	assetModel := l.svcCtx.GetAssetModel()
+	hostFilter := hostFilterForTarget(tType, tValue)
+	svcVals, err := assetModel.Distinct(l.ctx, "service", bson.M{
+		"host":    hostFilter,
+		"service": bson.M{"$ne": ""},
+	})
+	if err != nil {
+		l.Logger.Errorf("[AssetTargetDetail] computeTotalAssetServices Distinct fail: %v", err)
+		return 0
+	}
+	return countNonEmpty(svcVals)
 }
 
 // countRiskByKeyword 在 vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶计数。
@@ -302,6 +322,37 @@ func (l *AssetTargetDetailLogic) countSensitiveDirFromScanResult(hostFilter inte
 		return 0
 	}
 	return int(n)
+}
+
+// listLatestVulns 取目标下最新的 N 条漏洞（按 create_time desc），供漏洞 Tab 列表展示。
+func (l *AssetTargetDetailLogic) listLatestVulns(vulModel *model.VulModel, hostFilter interface{}, limit int) []types.AssetTargetSensitiveVulItem {
+	if limit <= 0 {
+		return nil
+	}
+	docs, err := vulModel.Find(l.ctx, bson.M{"host": hostFilter}, 1, limit)
+	if err != nil {
+		l.Logger.Errorf("[AssetTargetDetail] listLatestVulns fail: %v", err)
+		return nil
+	}
+	items := make([]types.AssetTargetSensitiveVulItem, 0, len(docs))
+	for _, v := range docs {
+		tags := v.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+		items = append(items, types.AssetTargetSensitiveVulItem{
+			Id:         v.Id.Hex(),
+			VulName:    v.VulName,
+			Severity:   v.Severity,
+			Host:       v.Host,
+			Port:       v.Port,
+			Url:        v.Url,
+			Source:     v.Source,
+			Tags:       tags,
+			CreateTime: tsMilli(v.CreateTime),
+		})
+	}
+	return items
 }
 
 // listRiskByKeyword 在 vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶取 top-N 条目。

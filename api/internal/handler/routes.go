@@ -23,6 +23,7 @@ import (
 	"cscan/api/internal/handler/subdomain"
 	"cscan/api/internal/handler/subfinder"
 	"cscan/api/internal/handler/task"
+	"cscan/api/internal/handler/techicon"
 	"cscan/api/internal/handler/user"
 	"cscan/api/internal/handler/vul"
 	"cscan/api/internal/handler/weakpass"
@@ -103,6 +104,8 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 			{Method: http.MethodGet, Path: "/static/worker-tune.ps1", Handler: worker.WorkerTunePsHandler(svcCtx)},
 			// 静态文件 - 用户头像 /static/avatars/<filename>
 			{Method: http.MethodGet, Path: "/static/avatars/:filename", Handler: user.AvatarStaticHandler(svcCtx)},
+			// 技术栈图标（公开只读，供 <img> 直接引用；通用公开 Logo，MongoDB 本地缓存）
+			{Method: http.MethodGet, Path: "/api/v1/tech/icon", Handler: techicon.TechIconHandler(svcCtx)},
 		},
 	)
 
@@ -215,6 +218,9 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/exposures", Handler: asset.AssetExposuresHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/list", Handler: asset.AssetTargetListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/detail", Handler: asset.AssetTargetDetailHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/assets", Handler: asset.AssetTargetAssetsHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/groups", Handler: asset.AssetTargetGroupsHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/target/certs", Handler: asset.AssetTargetCertsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/update", Handler: asset.AssetTargetUpdateHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/delete", Handler: asset.AssetTargetDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/updateLabels", Handler: asset.AssetUpdateLabelsHandler(svcCtx)},

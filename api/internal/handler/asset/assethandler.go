@@ -443,6 +443,24 @@ func AssetTargetDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// AssetTargetRediscoverHandler 重新发现目标（重放该目标最近一次扫描任务）
+func AssetTargetRediscoverHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetTargetRediscoverReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		l := logic.NewAssetTargetRediscoverLogic(r.Context(), svcCtx)
+		resp, err := l.AssetTargetRediscover(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
 // AssetTargetGroupsHandler 目标资产按维度聚合（host/port/ip/app/status）
 func AssetTargetGroupsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

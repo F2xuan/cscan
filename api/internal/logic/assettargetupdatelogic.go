@@ -28,7 +28,7 @@ func NewAssetTargetUpdateLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 // AssetTargetUpdate 更新顶层资产的用户字段（labels/memo/color_tag）。
-// labels 为全量覆盖；memo/color_tag 仅在 req 字段非空时更新。
+// labels 为全量覆盖；memo/colorTag 指针语义：不传不更新，传空串即清空。
 func (l *AssetTargetUpdateLogic) AssetTargetUpdate(req *types.AssetTargetUpdateReq) error {
 	targetId := strings.TrimSpace(req.TargetId)
 	if targetId == "" {
@@ -50,14 +50,14 @@ func (l *AssetTargetUpdateLogic) AssetTargetUpdate(req *types.AssetTargetUpdateR
 		}
 	}
 
-	if strings.TrimSpace(req.Memo) != "" {
-		if err := metaModel.UpdateMemo(l.ctx, targetId, req.Memo); err != nil {
+	if req.Memo != nil {
+		if err := metaModel.UpdateMemo(l.ctx, targetId, *req.Memo); err != nil {
 			return fmt.Errorf("update memo fail: %w", err)
 		}
 	}
 
-	if strings.TrimSpace(req.ColorTag) != "" {
-		if err := metaModel.UpdateColorTag(l.ctx, targetId, req.ColorTag); err != nil {
+	if req.ColorTag != nil {
+		if err := metaModel.UpdateColorTag(l.ctx, targetId, *req.ColorTag); err != nil {
 			return fmt.Errorf("update color_tag fail: %w", err)
 		}
 	}

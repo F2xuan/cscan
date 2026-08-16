@@ -3976,11 +3976,26 @@ type AssetTargetDetailResp struct {
 	Data AssetTargetDetailData `json:"data"`
 }
 
+// AssetTargetUpdateReq 更新顶层资产用户字段。memo/colorTag 为指针语义：
+// 不传（nil）不更新，传空串表示清空。
 type AssetTargetUpdateReq struct {
 	TargetId string   `json:"targetId"`
 	Labels   []string `json:"labels,optional"`
-	Memo     string   `json:"memo,optional"`
-	ColorTag string   `json:"colorTag,optional"`
+	Memo     *string  `json:"memo,optional"`
+	ColorTag *string  `json:"colorTag,optional"`
+}
+
+// AssetTargetRediscoverReq 重新发现目标：重放该目标最近一次扫描任务
+type AssetTargetRediscoverReq struct {
+	TargetId string `json:"targetId"`
+}
+
+// AssetTargetRediscoverResp 重新发现目标响应（返回新建的重放任务 ID）
+type AssetTargetRediscoverResp struct {
+	Code    int    `json:"code"`
+	Msg     string `json:"msg"`
+	TaskId  string `json:"taskId,omitempty"`
+	TaskKey string `json:"taskKey,omitempty"` // 新任务文档 _id（跳转任务详情用）
 }
 
 type AssetTargetDeleteReq struct {

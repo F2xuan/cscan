@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -218,6 +219,7 @@ func (m *AssetTargetMetaModel) UpsertScanTarget(ctx context.Context, tType Asset
 
 // RegisterScanTargets 批量登记任务目标；targets 为原始 token 列表（IP/域名/URL）。
 // 无法解析的类型（CIDR 等）跳过，单个失败不影响其余。
+// 域名 token 归一到根域登记（ParseScanTarget），并顺带清扫历史遗留的幽灵子域目标。
 func (m *AssetTargetMetaModel) RegisterScanTargets(ctx context.Context, targets []string, scanStatus string) int {
 	registered := 0
 	for _, raw := range targets {
@@ -227,9 +229,57 @@ func (m *AssetTargetMetaModel) RegisterScanTargets(ctx context.Context, targets 
 		}
 		if err := m.UpsertScanTarget(ctx, AssetTargetType(tType), value, scanStatus); err == nil {
 			registered++
+			if tType == string(AssetTargetTypeDomain) {
+				m.cleanupGhostSubdomainTargets(ctx, value)
+			}
 		}
 	}
 	return registered
+}
+
+// cleanupGhostSubdomainTargets 清扫同根域下的幽灵子域目标。
+// 历史版本 ParseScanTarget 未做根域归一，任务目标 www.example.com 会注册出
+// domain:www.example.com；而资产写入侧 ResolveAssetTarget 永远归并到根域，
+// 这类 meta 永远停留在 pending 且无资产。把用户字段（标签/备注/颜色）合并回
+// 根目标后删除，保证资产空间搜索只出现根域一个目标。
+func (m *AssetTargetMetaModel) cleanupGhostSubdomainTargets(ctx context.Context, root string) {
+	escaped := regexp.QuoteMeta(root)
+	cursor, err := m.coll.Find(ctx, bson.M{
+		"target_type":  "domain",
+		"target_value": bson.M{"$regex": "\\." + escaped + "$", "$options": "i"},
+	})
+	if err != nil {
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var ghosts []AssetTargetMeta
+	if err := cursor.All(ctx, &ghosts); err != nil {
+		return
+	}
+
+	rootId := EncodeTargetID(AssetTargetTypeDomain, root)
+	for _, g := range ghosts {
+		// 仅清理无资产且未在扫描的占位目标；已产生资产/扫描中的保守保留
+		if g.TotalAssetServices > 0 || (g.ScanStatus != "" && g.ScanStatus != "pending") {
+			continue
+		}
+		if len(g.Labels) > 0 {
+			_ = m.AddLabelsToTarget(ctx, rootId, g.Labels)
+		}
+		if g.Memo != "" || g.ColorTag != "" {
+			if root, err := m.FindByID(ctx, rootId); err == nil && root != nil {
+				if root.Memo == "" && g.Memo != "" {
+					_ = m.UpdateMemo(ctx, rootId, g.Memo)
+				}
+				if root.ColorTag == "" && g.ColorTag != "" {
+					_ = m.UpdateColorTag(ctx, rootId, g.ColorTag)
+				}
+			}
+		}
+		_, _ = m.coll.DeleteOne(ctx, bson.M{"_id": g.Id})
+		logx.Infof("[AssetTargetMetaModel] removed ghost subdomain target %s (merged into %s)", g.Id, rootId)
+	}
 }
 
 // UpdateLabels 仅更新标签
@@ -243,6 +293,18 @@ func (m *AssetTargetMetaModel) AddLabel(ctx context.Context, id, label string) e
 	_, err := m.coll.UpdateOne(ctx,
 		bson.M{"_id": id},
 		bson.M{"$addToSet": bson.M{"labels": label}, "$set": bson.M{"update_time": time.Now()}})
+	return err
+}
+
+// AddLabelsToTarget 批量合并标签到顶层目标（$addToSet $each，不覆盖既有标签）。
+// 供扫描写入路径传播任务标签使用。
+func (m *AssetTargetMetaModel) AddLabelsToTarget(ctx context.Context, id string, labels []string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	_, err := m.coll.UpdateOne(ctx,
+		bson.M{"_id": id},
+		bson.M{"$addToSet": bson.M{"labels": bson.M{"$each": labels}}, "$set": bson.M{"update_time": time.Now()}})
 	return err
 }
 

@@ -351,9 +351,6 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	// 初始化 IP 地理位置服务
 	w.initGeolocation()
 
-	// 加载HTTP服务映射配置
-	w.loadHttpServiceMappings()
-
 	// 创建本地结果队列
 	// 修复 P0：队列目录改到挂载卷 log/ 下（cscan_worker_logs 已挂载 /app/log），
 	// 避免容器 OOM 重启后本地队列文件随容器丢失；maxSize 提升至 2000，
@@ -420,6 +417,8 @@ func (w *Worker) SetMongoDB(client *mongo.Client, db *mongo.Database) {
 	w.mongoDB = db
 	// 初始化 MongoDB 直写日志器（在 db 就绪后执行，避免 nil pointer）
 	InitMongoLogger(db, w.config.Name)
+	// HTTP 服务映射直连 MongoDB 读取，必须在 db 就绪后加载（不可提前到 NewWorker）
+	w.loadHttpServiceMappings()
 }
 
 // SetRedis 设置 Redis 客户端并创建 SchedulerClient，用于直连 Redis 调度
@@ -1601,9 +1600,9 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			w.taskLog(task.TaskId, level, format, args...)
 		}
 
-		// 通过 HTTP 接口获取 Subfinder 配置
+		// 直连 MongoDB 获取 Subfinder 配置
 		var providerConfig map[string][]string
-		providerResp, err := w.httpClient.GetSubfinderProviders(ctx)
+		providerResp, err := w.loadSubfinderProviders(ctx)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelWarn, "Failed to get subfinder providers: %v", err)
 		} else if providerResp != nil && len(providerResp.Providers) > 0 {
@@ -1687,7 +1686,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			w.taskLog(task.TaskId, LevelInfo, "Starting subdomain bruteforce with %d dicts", len(config.DomainScan.SubdomainDictIds))
 
 			// 获取字典内容
-			dictResp, err := w.httpClient.GetSubdomainDicts(ctx, config.DomainScan.SubdomainDictIds)
+			dictResp, err := w.loadSubdomainDicts(ctx, config.DomainScan.SubdomainDictIds)
 			if err != nil {
 				w.taskLog(task.TaskId, LevelError, "Bruteforce: get dicts failed: %v", err)
 			} else if dictResp != nil && len(dictResp.Dicts) > 0 {
@@ -1730,7 +1729,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 					// 获取递归爆破字典（如果启用了递归爆破）
 					if config.DomainScan.RecursiveBrute && len(config.DomainScan.RecursiveDictIds) > 0 {
-						recursiveDictResp, err := w.httpClient.GetSubdomainDicts(ctx, config.DomainScan.RecursiveDictIds)
+						recursiveDictResp, err := w.loadSubdomainDicts(ctx, config.DomainScan.RecursiveDictIds)
 						if err != nil {
 							w.taskLog(task.TaskId, LevelWarn, "Bruteforce: get recursive dicts failed: %v", err)
 						} else if recursiveDictResp != nil && len(recursiveDictResp.Dicts) > 0 {

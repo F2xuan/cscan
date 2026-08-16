@@ -45,7 +45,7 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 		return nil
 	}
 
-	dictResp, err := w.httpClient.GetDirScanDicts(ctx, config.DictIds)
+	dictResp, err := w.loadDirScanDicts(ctx, config.DictIds)
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "Dir scan: get dicts failed: %v", err)
 		return nil

@@ -38,7 +38,6 @@ type WorkerStatus struct {
 	MemUsed            float64         `json:"memUsed"`
 	TaskStartedNumber  int             `json:"taskStartedNumber"`
 	TaskExecutedNumber int             `json:"taskExecutedNumber"`
-	SubCommandRunning  int             `json:"subCommandRunning,omitempty"`
 	Concurrency        int             `json:"concurrency"`
 	RunningTasks       int             `json:"runningTasks"`
 	UpdateTime         string          `json:"updateTime"`
@@ -115,11 +114,6 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 			runningCount = 0
 		}
 
-		subCommandRunning := 0
-		if status.SubCommandRunning > 0 {
-			subCommandRunning = status.SubCommandRunning
-		}
-
 		// 计算健康状态
 		healthStatus := "healthy"
 		if status.CPULoad > 85 || status.MemUsed > 90 {
@@ -128,24 +122,18 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 			healthStatus = "warning"
 		}
 
-		displayRunning := runningCount
-		if subCommandRunning > runningCount {
-			displayRunning = subCommandRunning
-		}
-
 		list = append(list, types.Worker{
-			Name:              status.WorkerName,
-			IP:                status.IP,
-			CPULoad:           status.CPULoad,
-			MemUsed:           status.MemUsed,
-			TaskCount:         status.TaskExecutedNumber,
-			RunningCount:      displayRunning,
-			SubCommandRunning: subCommandRunning,
-			Concurrency:       status.Concurrency,
-			Status:            workerStatus,
-			UpdateTime:        status.UpdateTime,
-			Tools:             status.Tools,
-			HealthStatus:      healthStatus,
+			Name:         status.WorkerName,
+			IP:           status.IP,
+			CPULoad:      status.CPULoad,
+			MemUsed:      status.MemUsed,
+			TaskCount:    status.TaskExecutedNumber,
+			RunningCount: runningCount,
+			Concurrency:  status.Concurrency,
+			Status:       workerStatus,
+			UpdateTime:   status.UpdateTime,
+			Tools:        status.Tools,
+			HealthStatus: healthStatus,
 		})
 	}
 

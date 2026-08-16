@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"cscan/internal/model"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
 )
@@ -28,15 +29,17 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 		return nil
 	}
 
-	// 拉取 4 份清单（高危路由 / 鉴权关键词 / 敏感数据关键词 / 域名黑名单）
-	cfgResp, err := w.httpClient.LoadJSFinderConfig(ctx)
-	if err != nil {
-		w.taskLog(task.TaskId, LevelError, "JSFinder: load config failed: %v", err)
-		return nil
-	}
-	if cfgResp.Code != 0 {
-		w.taskLog(task.TaskId, LevelWarn, "JSFinder: load config response: %s", cfgResp.Msg)
-		return nil
+	// 读取 4 份清单（高危路由 / 鉴权关键词 / 敏感数据关键词 / 域名黑名单）。
+	// 直连 MongoDB 读取（与结果直写同架构），不走 HTTP：HTTP 路径受 install key
+	// 认证约束，dev 模式密钥未配置或密钥轮换后未同步都会导致 401 中断任务。
+	// 模型层在配置文档不存在时返回内置默认值；读取失败时同样兜底默认值，不阻断任务。
+	cfg := model.NewDefaultJSFinderConfig()
+	if w.mongoDB == nil {
+		w.taskLog(task.TaskId, LevelWarn, "JSFinder: mongo direct connection unavailable, using built-in config defaults")
+	} else if loaded, err := model.NewJSFinderConfigModel(w.mongoDB).Get(ctx); err != nil {
+		w.taskLog(task.TaskId, LevelWarn, "JSFinder: load config from MongoDB failed: %v, using built-in defaults", err)
+	} else {
+		cfg = loaded
 	}
 
 	threads := config.Threads
@@ -62,10 +65,10 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 	}
 
 	opts := &scanner.JSFinderOptions{
-		HighRiskRoutes:       cfgResp.HighRiskRoutes,
-		AuthRequiredKeywords: cfgResp.AuthRequiredKeywords,
-		SensitiveKeywords:    cfgResp.SensitiveKeywords,
-		DomainBlacklist:      cfgResp.DomainBlacklist,
+		HighRiskRoutes:       cfg.HighRiskRoutes,
+		AuthRequiredKeywords: cfg.AuthRequiredKeywords,
+		SensitiveKeywords:    cfg.SensitiveKeywords,
+		DomainBlacklist:      cfg.DomainBlacklist,
 		Threads:              threads,
 		Timeout:              timeout,
 		EnableSourcemap:      enableSourcemap,

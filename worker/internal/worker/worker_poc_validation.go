@@ -54,7 +54,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 	if pocId != "" {
 		w.taskLog(task.TaskId, LevelInfo, "[%s] Loading POC template...", task.TaskId)
-		resp, err := w.httpClient.GetPocById(ctx, pocId, pocType)
+		resp, err := w.loadPocById(ctx, pocId, pocType)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: failed to get POC - %v", task.TaskId, err)
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "Failed to get POC: "+err.Error())
@@ -251,7 +251,7 @@ func (w *Worker) executeVulnReverifyTask(ctx context.Context, task *scheduler.Ta
 	}
 
 	w.taskLog(task.TaskId, LevelInfo, "[%s] Loading reverify template: %s", task.TaskId, pocFile)
-	resp, err := w.httpClient.GetTemplates(ctx, &TemplatesReq{
+	resp, err := w.loadTemplates(ctx, &TemplatesReq{
 		NucleiTemplateIds: []string{pocFile},
 	})
 	if err != nil {
@@ -377,7 +377,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 
 	if pocId != "" {
 		w.taskLog(task.TaskId, LevelInfo, "[%s] Loading POC template...", task.TaskId)
-		resp, err := w.httpClient.GetPocById(ctx, pocId, pocType)
+		resp, err := w.loadPocById(ctx, pocId, pocType)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 获取POC失败 - %v", task.TaskId, err)
 			w.savePocValidationResult(ctx, task.TaskId, "", nil, "获取POC失败: "+err.Error())

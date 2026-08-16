@@ -76,7 +76,7 @@ func (w *Worker) executeFingerprintValidateTask(ctx context.Context, task *sched
 	}
 
 	// 2. 从服务端获取指纹列表（包含目标指纹）
-	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: false})
+	fpResp, err := w.loadFingerprints(ctx, false)
 	if err != nil || !fpResp.Success {
 		errMsg := "获取指纹列表失败"
 		if err != nil {
@@ -163,7 +163,7 @@ func (w *Worker) executeFingerprintBatchValidateTask(ctx context.Context, task *
 	}
 
 	// 2. 从服务端获取启用的指纹列表
-	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: true})
+	fpResp, err := w.loadFingerprints(ctx, true)
 	if err != nil || !fpResp.Success {
 		errMsg := "获取指纹列表失败"
 		if err != nil {
@@ -274,7 +274,7 @@ func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task 
 	}
 
 	// 1. 获取主动指纹配置
-	afpResp, err := w.httpClient.GetActiveFingerprints(ctx, false)
+	afpResp, err := w.loadActiveFingerprints(ctx, false)
 	if err != nil || !afpResp.Success {
 		errMsg := "获取主动指纹列表失败"
 		if err != nil {
@@ -297,7 +297,7 @@ func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task 
 	}
 
 	// 2. 获取同名被动指纹（用于匹配规则）
-	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: false})
+	fpResp, err := w.loadFingerprints(ctx, false)
 	if err != nil || !fpResp.Success {
 		errMsg := "获取被动指纹列表失败"
 		if err != nil {
@@ -433,7 +433,7 @@ func (w *Worker) executeActiveFingerprintBatchValidateTask(ctx context.Context, 
 	}
 
 	// 1. 获取启用的主动指纹列表
-	afpResp, err := w.httpClient.GetActiveFingerprints(ctx, true)
+	afpResp, err := w.loadActiveFingerprints(ctx, true)
 	if err != nil || !afpResp.Success {
 		errMsg := "获取主动指纹列表失败"
 		if err != nil {
@@ -449,7 +449,7 @@ func (w *Worker) executeActiveFingerprintBatchValidateTask(ctx context.Context, 
 	}
 
 	// 2. 获取被动指纹列表（用于匹配规则）
-	fpResp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{EnabledOnly: false})
+	fpResp, err := w.loadFingerprints(ctx, false)
 	if err != nil || !fpResp.Success {
 		errMsg := "获取被动指纹列表失败"
 		if err != nil {

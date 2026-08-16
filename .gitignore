@@ -5,6 +5,7 @@
 /docs
 /data
 /log
+**/log/
 .DS_Store
 .env
 .claude

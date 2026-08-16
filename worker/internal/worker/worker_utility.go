@@ -74,8 +74,8 @@ func (w *Worker) loadHttpServiceMappings() {
 
 	ctx := context.Background()
 
-	// 通过 HTTP 接口获取 HTTP 服务设置
-	resp, err := w.httpClient.GetHttpServiceSettings(ctx)
+	// 直连 MongoDB 获取 HTTP 服务设置
+	resp, err := w.loadHttpServiceSettings(ctx)
 	if err != nil {
 		w.logger.Error("GetHttpServiceSettings HTTP failed: %v, using default settings", err)
 		return
@@ -117,8 +117,8 @@ func (w *Worker) loadHttpServiceMappings() {
 
 // getBlacklistMatcher 获取黑名单匹配器
 func (w *Worker) getBlacklistMatcher(ctx context.Context, taskId string) *utils.BlacklistMatcher {
-	// 从服务器获取黑名单规则
-	resp, err := w.httpClient.GetBlacklistRules(ctx)
+	// 直连 MongoDB 获取黑名单规则
+	resp, err := w.loadBlacklistRules(ctx)
 	if err != nil {
 		w.taskLog(taskId, LevelWarn, "Failed to get blacklist rules: %v", err)
 		return nil

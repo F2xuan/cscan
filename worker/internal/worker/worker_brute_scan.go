@@ -75,8 +75,8 @@ func (w *Worker) executeBruteScan(ctx context.Context, task *scheduler.TaskInfo,
 	dictIds := config.WeakpassDictIds
 	targetServices := config.Services
 
-	// 获取字典内容（后端会根据服务类型过滤字典）
-	dictResp, err := w.httpClient.GetWeakpassDicts(ctx, dictIds, targetServices)
+	// 获取字典内容（直连 MongoDB，按服务类型过滤字典）
+	dictResp, err := w.loadWeakpassDicts(ctx, dictIds, targetServices)
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "Brute scan: get dicts failed: %v", err)
 		return nil

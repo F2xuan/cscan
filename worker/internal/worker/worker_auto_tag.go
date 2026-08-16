@@ -117,8 +117,8 @@ func (w *Worker) getTemplatesByTags(ctx context.Context, tags []string, severiti
 		return nil
 	}
 
-	// 通过 HTTP 接口获取模板
-	resp, err := w.httpClient.GetTemplates(ctx, &TemplatesReq{
+	// 直连 MongoDB 获取模板
+	resp, err := w.loadTemplates(ctx, &TemplatesReq{
 		Tags:       tags,
 		Severities: severities,
 	})
@@ -142,8 +142,8 @@ func (w *Worker) getTemplatesByIds(ctx context.Context, nucleiTemplateIds, custo
 		return nil
 	}
 
-	// 通过 HTTP 接口获取模板
-	resp, err := w.httpClient.GetTemplates(ctx, &TemplatesReq{
+	// 直连 MongoDB 获取模板
+	resp, err := w.loadTemplates(ctx, &TemplatesReq{
 		NucleiTemplateIds: nucleiTemplateIds,
 		CustomPocIds:      customPocIds,
 	})
@@ -163,8 +163,8 @@ func (w *Worker) getTemplatesByIds(ctx context.Context, nucleiTemplateIds, custo
 
 // getAllCustomPocs 获取所有自定义POC
 func (w *Worker) getAllCustomPocs(ctx context.Context, severities []string) []string {
-	// 通过 HTTP 接口获取所有自定义POC
-	resp, err := w.httpClient.GetTemplates(ctx, &TemplatesReq{
+	// 直连 MongoDB 获取所有自定义POC
+	resp, err := w.loadTemplates(ctx, &TemplatesReq{
 		Severities:    severities,
 		CustomPocOnly: true,
 	})
@@ -206,13 +206,11 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 		}
 	}()
 
-	// 通过 HTTP 接口获取被动指纹配置
+	// 直连 MongoDB 获取被动指纹配置
 	var passiveFingerprints []*model.Fingerprint
 	passiveFpMap := make(map[string]*model.Fingerprint)
 
-	resp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{
-		EnabledOnly: true,
-	})
+	resp, err := w.loadFingerprints(ctx, true)
 	if err != nil {
 		w.logger.Error("GetFingerprints HTTP failed: %v", err)
 		// 不直接返回，继续尝试加载主动指纹
@@ -253,7 +251,7 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 	// 如果启用主动扫描，加载主动指纹
 	var activeFingerprints []*model.Fingerprint
 	if activeScan {
-		activeResp, err := w.httpClient.GetActiveFingerprints(ctx, true)
+		activeResp, err := w.loadActiveFingerprints(ctx, true)
 		if err != nil {
 			w.logger.Warn("GetActiveFingerprints HTTP failed: %v", err)
 		} else if activeResp.Success && len(activeResp.Fingerprints) > 0 {

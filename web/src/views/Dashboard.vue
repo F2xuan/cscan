@@ -193,7 +193,7 @@
               <span class="cat-name">{{ t('dashboard.cardDir') }}</span>
               <span class="cat-count">{{ stats.dirScans }}</span>
             </div>
-            <div class="cat-item" @click="$router.push('/asset-management?tab=groups')">
+            <div class="cat-item" @click="$router.push('/asset-management/space-search')">
               <span class="cat-dot" style="background: #6b7280"></span>
               <span class="cat-name">{{ t('dashboard.cardGroup') }}</span>
               <span class="cat-count">{{ stats.groups }}</span>
@@ -482,8 +482,8 @@ function rightCurvePath(i) {
 
 // === 暴露面总览数据 ===
 const exposureSources = computed(() => [
-  { key: 'ports', label: t('dashboard.exposedPorts'), value: stats.portCount, color: '#3b82f6', route: '/asset-management/exposure/port' },
-  { key: 'sites', label: t('dashboard.exposedSites'), value: stats.sites, color: '#8b5cf6', route: '/asset-management/exposure/site' },
+  { key: 'ports', label: t('dashboard.exposedPorts'), value: stats.portCount, color: '#3b82f6', route: '/asset-management/space-search' },
+  { key: 'sites', label: t('dashboard.exposedSites'), value: stats.sites, color: '#8b5cf6', route: '/asset-management/space-search' },
   { key: 'dirs', label: t('dashboard.sensitiveDirs'), value: stats.dirScans, color: '#ef4444', route: '/asset-management/exposure/dir' },
   { key: 'vulns', label: t('dashboard.knownVulns'), value: stats.vulns, color: '#f97316', route: '/asset-management/risk/vuln' },
   { key: 'critical', label: t('dashboard.criticalRisks'), value: stats.vulnOpenCritical + stats.vulnOpenHigh, color: '#dc2626', route: '/asset-management/risk/vuln' }
@@ -542,11 +542,12 @@ let charts = {}
 let refreshInterval = null
 
 // === 路由跳转 ===
+// 子域名/IP/端口/站点明细页已合并进资产空间搜索的目标详情 Tab，统一跳空间搜索
 const exposureRouteMap = {
-  domain: '/asset-management/exposure/subdomain',
-  ip: '/asset-management/exposure/ip',
-  port: '/asset-management/exposure/port',
-  site: '/asset-management/exposure/site',
+  domain: '/asset-management/space-search',
+  ip: '/asset-management/space-search',
+  port: '/asset-management/space-search',
+  site: '/asset-management/space-search',
   dirscan: '/asset-management/exposure/dir',
 }
 function goAsset(type) {
@@ -554,7 +555,7 @@ function goAsset(type) {
   if (route) router.push(route)
 }
 function goInventory() {
-  router.push('/asset-management/exposure/port')
+  router.push('/asset-management/space-search')
 }
 
 // === 辅助方法 ===

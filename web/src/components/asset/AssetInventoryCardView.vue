@@ -1,2133 +1,443 @@
 <template>
-  <div class="asset-inventory-tab">
-    <!-- 搜索和过滤栏 -->
+  <div class="targets-view">
+    <!-- Toolbar：搜索靠左，过滤器 + 按钮靠右（对齐 open-asm DataTable md:flex-row-reverse） -->
     <div class="toolbar">
-      <el-autocomplete :fetch-suggestions="(qs, cb) => querySearch(qs, cb, 'global')" @select="handleSearch"
-        v-model="searchQuery" :placeholder="t('asset.assetInventoryTab.searchPlaceholder')" clearable
-        class="search-input" @input="handleSearch" />
-        <div class="header-actions">
-          <el-button @click="showFilters = !showFilters">
-            <el-icon>
-              <Filter />
-            </el-icon>
-            {{ t('asset.assetInventoryTab.filters') }}
-          </el-button>
-        </div>
-        <div class="toolbar-right">
-          <el-button type="danger" plain @click="handleClear">{{ t('asset.clearData') }}</el-button>
-        </div>
+      <div class="toolbar-left">
+        <el-input
+          v-model="searchQuery"
+          :placeholder="$t('asset.targetView.searchPlaceholder')"
+          clearable
+          class="search-input"
+          @clear="handleSearch"
+          @keyup.enter="handleSearch"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
+
+      <div class="toolbar-right">
+        <TargetTypeFilter v-model="typeFilter" />
+
+        <ScanStatusFilter v-model="statusFilter" />
+
+        <ScopeFilter v-model="scopeFilter" />
+
+        <el-button plain @click="$emit('create-target')">
+          <el-icon><Plus /></el-icon>
+          {{ $t('asset.manualAddAsset') }}
+        </el-button>
+
+        <el-button type="primary" @click="$emit('start-scan')">
+          <el-icon><Search /></el-icon>
+          {{ $t('asset.startScan') }}
+        </el-button>
+
+        <el-button
+          type="danger"
+          plain
+          :disabled="selectedRows.length === 0"
+          @click="handleBatchDelete"
+        >
+          <el-icon><Delete /></el-icon>
+          {{ $t('common.delete') }}{{ selectedRows.length ? ` (${selectedRows.length})` : '' }}
+        </el-button>
+      </div>
     </div>
 
-    <div v-if="showFilters" class="filters-panel">
-      <el-form :inline="true">
-        <el-form-item :label="t('asset.assetInventoryTab.technologies')">
-          <el-select v-model="filters.technologies" multiple :placeholder="t('asset.assetInventoryTab.selectTech')"
-            clearable filterable>
-            <el-option v-for="tech in filterOptions.technologies" :key="tech" :label="tech" :value="tech" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('asset.assetInventoryTab.labels')">
-          <el-select v-model="filters.labels" multiple :placeholder="t('asset.assetInventoryTab.selectLabel')" clearable
-            filterable>
-            <el-option v-for="label in filterOptions.labels" :key="label" :label="label" :value="label" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('asset.assetInventoryTab.ports')">
-          <el-select v-model="filters.ports" multiple :placeholder="t('asset.assetInventoryTab.selectPort')" clearable
-            filterable>
-            <el-option v-for="port in filterOptions.ports" :key="port" :label="String(port)" :value="port" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('asset.assetInventoryTab.statusCodes')">
-          <el-select v-model="filters.statusCodes" multiple :placeholder="t('asset.assetInventoryTab.selectStatus')"
-            clearable filterable>
-            <el-option v-for="code in filterOptions.statusCodes" :key="code" :label="code" :value="code" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="applyFilters">{{ t('asset.assetInventoryTab.apply') }}</el-button>
-          <el-button @click="resetFilters">{{ t('asset.assetInventoryTab.reset') }}</el-button>
-        </el-form-item>
-      </el-form>
+    <!-- Skeleton：首次加载且无数据时显示骨架行（对齐 open-asm DataTable skeleton） -->
+    <div v-if="loading && list.length === 0" class="table-skeleton">
+      <div v-for="i in pageSize > 10 ? 10 : pageSize" :key="i" class="skeleton-row">
+        <div class="skeleton-bar" :style="{ width: '34%' }" />
+        <div class="skeleton-bar" :style="{ width: '12%' }" />
+        <div class="skeleton-bar" :style="{ width: '16%' }" />
+        <div class="skeleton-bar" :style="{ width: '14%' }" />
+      </div>
     </div>
 
-    <!-- 统计面板 -->
-    <div class="filters-panel">
-      <div class="stat-panel">
-        <div class="stat-column">
-          <div class="stat-title">Port <span v-if="stat.topPorts.length > 10" class="stat-count-total">({{
-            stat.topPorts.length }})</span></div>
-          <div v-for="(item, idx) in displayStatItems(stat.topPorts, statExpanded.port)" :key="'port-' + item.name"
-            class="stat-item" @click="quickFilter('port', item.name)">
-            <span class="stat-count">{{ item.count }}</span>
-            <span class="stat-name">{{ item.name }}</span>
-          </div>
-          <div v-if="stat.topPorts.length > 10" class="stat-toggle" @click="toggleStatExpand('port')">
-            {{ statExpanded.port ? '收起' : '更多' }}
-            <el-icon :class="{ 'rotated': statExpanded.port }">
-              <ArrowDown />
-            </el-icon>
-          </div>
-        </div>
-        <div class="stat-column">
-          <div class="stat-title">Service <span v-if="stat.topService.length > 10" class="stat-count-total">({{
-            stat.topService.length }})</span></div>
-          <div v-for="(item, idx) in displayStatItems(stat.topService, statExpanded.service)" :key="'svc-' + item.name"
-            class="stat-item" @click="quickFilter('service', item.name)">
-            <span class="stat-count">{{ item.count }}</span>
-            <span class="stat-name">{{ item.name }}</span>
-          </div>
-          <div v-if="stat.topService.length > 10" class="stat-toggle" @click="toggleStatExpand('service')">
-            {{ statExpanded.service ? '收起' : '更多' }}
-            <el-icon :class="{ 'rotated': statExpanded.service }">
-              <ArrowDown />
-            </el-icon>
-          </div>
-        </div>
-        <div class="stat-column">
-          <div class="stat-title">App <span v-if="stat.topApp.length > 10" class="stat-count-total">({{
-            stat.topApp.length }})</span></div>
-          <div v-for="(item, idx) in displayStatItems(stat.topApp, statExpanded.app)" :key="'app-' + item.name"
-            class="stat-item" @click="quickFilter('app', item.name)">
-            <span class="stat-count">{{ item.count }}</span>
-            <span class="stat-name">
-              <el-tooltip :content="item.name.match(/\((.*)\)/)?.[1] || ''" placement="top"
-                :disabled="!item.name.includes('(')">
-                <span class="app-main">{{ item.name.replace(/\((.*)\)/, '') }}</span>
-              </el-tooltip>
+    <!-- Table -->
+    <el-table
+      v-else
+      :data="list"
+      v-loading="loading"
+      class="target-table"
+      row-key="id"
+      @selection-change="handleSelectionChange"
+      @row-click="handleRowClick"
+    >
+      <el-table-column type="selection" width="42" reserve-selection />
+
+      <el-table-column
+        :label="$t('asset.targetView.columnTarget')"
+        min-width="320"
+      >
+        <template #default="{ row }">
+          <div class="target-cell">
+            <span class="target-value">{{ row.targetValue }}</span>
+
+            <el-tooltip
+              v-if="row.source"
+              :content="`${$t('asset.targetView.sourceSync')}: ${row.source}`"
+              placement="top"
+              effect="dark"
+              :show-arrow="false"
+              popper-class="source-sync-tip"
+            >
+              <span class="source-icon">
+                <el-icon><Link /></el-icon>
+              </span>
+            </el-tooltip>
+
+            <span v-if="row.internalNetworkId" class="internal-badge">
+              {{ $t('asset.targetView.internalBadge') }}
             </span>
           </div>
-          <div v-if="stat.topApp.length > 10" class="stat-toggle" @click="toggleStatExpand('app')">
-            {{ statExpanded.app ? '收起' : '更多' }}
-            <el-icon :class="{ 'rotated': statExpanded.app }">
-              <ArrowDown />
-            </el-icon>
-          </div>
-        </div>
-        <div class="stat-column">
-          <div class="stat-title">IconHash <span v-if="stat.topIconHash.length > 10" class="stat-count-total">({{
-            stat.topIconHash.length }})</span></div>
-          <div v-for="(item, idx) in displayStatItems(stat.topIconHash, statExpanded.icon)" :key="'icon-' + item.iconHash"
-            class="stat-item stat-item-icon" @click="quickFilter('iconHash', item.iconHash)">
-            <span class="stat-count">{{ item.count }}</span>
-            <img v-if="(item.iconData || item.iconHashBytes) && getIconDataUrl(item.iconData || item.iconHashBytes)"
-              :src="getIconDataUrl(item.iconData || item.iconHashBytes)" class="stat-icon-img" :title="item.iconHash"
-              @error="handleIconError($event)" />
-            <span v-else class="stat-icon-placeholder"></span>
-          </div>
-          <div v-if="stat.topIconHash.length > 10" class="stat-toggle" @click="toggleStatExpand('icon')">
-            {{ statExpanded.icon ? '收起' : '更多' }}
-            <el-icon :class="{ 'rotated': statExpanded.icon }">
-              <ArrowDown />
-            </el-icon>
-          </div>
-        </div>
-      </div>
+        </template>
+      </el-table-column>
+
+      <el-table-column
+        :label="$t('asset.targetView.columnServices')"
+        width="140"
+      >
+        <template #default="{ row }">
+          <span class="services-count">
+            {{ row.totalAssetServices || 0 }} {{ $t('asset.targetView.services') }}
+          </span>
+        </template>
+      </el-table-column>
+
+      <el-table-column
+        :label="$t('asset.targetView.columnLastDiscovery')"
+        width="180"
+      >
+        <template #default="{ row }">
+          <span class="muted-text">{{ formatRelativeTime(row.lastScanTime) }}</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column
+        :label="$t('asset.targetView.columnScanStatus')"
+        width="170"
+      >
+        <template #default="{ row }">
+          <TargetStatusBadge :status="row.scanStatus" />
+        </template>
+      </el-table-column>
+
+      <template #empty>
+        <div class="empty-wrap">{{ $t('asset.targetView.noTargets') }}</div>
+      </template>
+    </el-table>
+
+    <!-- Pagination -->
+    <div v-if="total > 0" class="pagination-wrap">
+      <el-pagination
+        :current-page="page"
+        :page-size="pageSize"
+        :page-sizes="[5, 10, 20, 50, 100]"
+        :total="total"
+        layout="total, sizes, prev, pager, next"
+        @current-change="handlePageChange"
+        @size-change="handleSizeChange"
+      />
     </div>
-
-
-    <!-- 资产卡片列表 -->
-    <div v-loading="loading" class="assets-grid">
-      <div v-for="asset in assets" :key="asset.id" class="asset-card-wrapper">
-        <div class="asset-card" @click="handleCardClick(asset)">
-          <!-- 宸︿晶锛氫富鏈轰俊锟?-->
-          <div class="asset-left">
-            <!-- 主机名和端口 -->
-            <div class="host-info">
-              <span class="host-link" @click.stop>
-                {{ asset.host }}<template v-if="asset.port && asset.port !== 0">:{{ asset.port }}</template>
-              </span>
-              <div v-if="asset.ip" class="host-ip">{{ asset.ip }}</div>
-              <div v-if="asset.iconHash" class="host-icon-info" :title="asset.iconHash">
-                <img v-if="asset.iconHashBytes && getIconDataUrl(asset.iconHashBytes)"
-                  :src="getIconDataUrl(asset.iconHashBytes)" class="favicon" @error="handleIconError($event)" />
-                <el-icon v-else class="favicon-placeholder">
-                  <Picture />
-                </el-icon>
-              </div>
-            </div>
-
-            <div class="tags-row">
-              <el-tag v-if="asset.status && asset.status !== '0'" :type="getStatusType(asset.status)" size="small"
-                class="status-tag">
-                {{ asset.status }}
-              </el-tag>
-
-              <!-- AS缂栧彿 -->
-              <el-tag v-if="asset.asn" size="small" effect="plain" class="info-tag">
-                {{ asset.asn }}
-              </el-tag>
-
-              <el-tag v-for="(label, index) in (asset.labels || [])" :key="index" size="small" closable
-                class="custom-label" @close.stop="handleRemoveLabel(asset, index)">
-                {{ label }}
-              </el-tag>
-
-              <el-button text size="small" class="add-label-btn" @click.stop="handleAddLabel(asset)">
-                <el-icon>
-                  <Plus />
-                </el-icon>
-                {{ t('asset.assetInventoryTab.addLabels') }}
-              </el-button>
-            </div>
-
-            <!-- CNAME 淇℃伅 -->
-            <div v-if="asset.cname" class="cname-info">
-              <span class="label-text">CNAME:</span>
-              <span class="cname-value">{{ asset.cname }}</span>
-            </div>
-          </div>
-
-          <!-- 中间：截图和标签 -->
-          <div class="asset-center">
-            <div v-if="asset.screenshot" class="screenshot-wrapper" @mouseenter="showPreview(asset, $event)"
-              @mouseleave="hidePreview">
-              <img :src="formatScreenshotUrl(asset.screenshot)" :alt="asset.title" class="screenshot-img"
-                @error="handleScreenshotError" />
-            </div>
-            <div v-else class="screenshot-placeholder-text">
-              {{ t('asset.noScreenshot') }}
-            </div>
-            <div class="title-text">{{ asset.title || '-' }}</div>
-          </div>
-
-          <!-- 右侧：技术栈 -->
-          <div class="asset-right">
-            <div v-if="asset.technologies && asset.technologies.length > 0" class="tech-list">
-              <el-tag v-for="(tech, index) in asset.technologies.slice(0, 5)" :key="index" size="small"
-                class="tech-tag">
-                {{ tech }}
-              </el-tag>
-              <el-button v-if="asset.technologies.length > 5" text size="small" class="more-btn"
-                @click.stop="showAllTechnologies(asset)">
-                +{{ asset.technologies.length - 5 }} {{ t('common.more') }}
-              </el-button>
-            </div>
-            <div v-else class="no-tech">
-              {{ t('asset.assetInventoryTab.noTechnologies') }}
-            </div>
-          </div>
-
-          <!-- 右上角：时间和操作 -->
-          <div class="asset-meta">
-            <el-tooltip placement="left" effect="dark">
-              <template #content>
-                <div class="time-tooltip">
-                  <div class="tooltip-row">
-                    <span class="tooltip-label">{{ t('asset.firstSeen') }}</span>
-                    <span class="tooltip-value">{{ asset.firstSeen }}</span>
-                  </div>
-                  <div class="tooltip-row">
-                    <span class="tooltip-label">{{ t('asset.lastUpdated') }}</span>
-                    <span class="tooltip-value">{{ asset.lastUpdatedFull }}</span>
-                  </div>
-                </div>
-              </template>
-              <span class="time-text">{{ asset.lastUpdated }}</span>
-            </el-tooltip>
-            <el-icon class="delete-icon" @click.stop="handleDelete(asset)">
-              <Delete />
-            </el-icon>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 分页 -->
-    <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="total"
-      :page-sizes="[5, 10, 20, 50, 100]" layout="total, sizes, prev, pager, next" class="pagination"
-      @size-change="loadData" @current-change="loadData" />
-
-    <!-- 技术栈详情对话框 -->
-    <el-dialog v-model="techDialogVisible" :title="t('asset.assetInventoryTab.allTechnologies')" width="600px">
-      <div class="tech-dialog-content">
-        <el-input v-model="techSearchQuery" :placeholder="t('asset.assetInventoryTab.searchTech')" clearable
-          class="tech-search">
-          <template #prefix>
-            <el-icon>
-              <Search />
-            </el-icon>
-          </template>
-        </el-input>
-        <div class="tech-tags-wrapper">
-          <el-tag v-for="(tech, index) in filteredTechnologies" :key="index" size="small" class="tech-tag-large">
-            {{ tech }}
-          </el-tag>
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- 添加标签对话框 -->
-    <el-dialog v-model="labelDialogVisible" :title="t('asset.assetInventoryTab.addLabelsTitle')" width="500px">
-      <div class="label-dialog-content">
-        <el-input v-model="newLabelInput" :placeholder="t('asset.assetInventoryTab.enterLabel')"
-          @keyup.enter="handleAddNewLabel">
-          <template #append>
-            <el-button @click="handleAddNewLabel">{{ t('asset.assetInventoryTab.add') }}</el-button>
-          </template>
-        </el-input>
-        <div v-if="currentAsset && currentAsset.labels && currentAsset.labels.length > 0" class="current-labels">
-          <div class="label-section-title">{{ t('asset.assetInventoryTab.currentLabels') }}</div>
-          <el-tag v-for="(label, index) in currentAsset.labels" :key="index" size="small" closable class="label-item"
-            @close="handleRemoveLabel(currentAsset, index)">
-            {{ label }}
-          </el-tag>
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- 璧勪骇璇︽儏鎶藉眽 -->
-    <AssetDetailDrawer v-model:visible="detailDrawerVisible" :asset="detailAsset" @preview-show="showPreview"
-      @preview-hide="hidePreview" />
-
-    <!-- 图片预览浮层 -->
-    <Teleport to="body">
-      <Transition name="preview-fade">
-        <div v-if="previewVisible" class="screenshot-preview-overlay" :style="{
-          left: previewPosition.x + 'px',
-          top: previewPosition.y + 'px',
-          width: previewSize.width + 'px',
-          maxHeight: previewSize.height + 'px'
-        }">
-          <div class="preview-container">
-            <img :src="previewImage" alt="Screenshot Preview" class="preview-image" @error="handleScreenshotError" />
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useI18n } from 'vue-i18n'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { debounce } from 'lodash-es'
-import {
-  Search,
-  Filter,
-  Picture,
-  Plus,
-  Delete,
-  Right,
-  Box,
-  Document,
-  Clock,
-  Warning,
-  Edit,
-  ArrowDown
-} from '@element-plus/icons-vue'
-import { getAssetInventory, getAssetStat, updateAssetLabels, getAssetFilterOptions, getAssetDetail, deleteAsset, getAssetHistory, getAssetExposures, clearAssets } from '@/api/asset'
-import { formatScreenshotUrl, handleScreenshotError } from '@/utils/screenshot'
-import { getIconDataUrl, handleIconError } from '@/utils/icon'
-import AssetDetailDrawer from '@/components/asset/AssetDetailDrawer.vue'
+import { useI18n } from 'vue-i18n'
+import { Search, Plus, Link, Delete } from '@element-plus/icons-vue'
+import TargetTypeFilter from './TargetTypeFilter.vue'
+import ScanStatusFilter from './ScanStatusFilter.vue'
+import ScopeFilter from './ScopeFilter.vue'
+import TargetStatusBadge from './TargetStatusBadge.vue'
+import { getAssetTargetList, deleteAssetTarget } from '@/api/asset'
+import { formatRelativeTime } from './targetViewUtils'
+
+const props = defineProps({
+  workspaceId: { type: String, default: '' },
+})
+
+const emit = defineEmits(['create-target', 'start-scan', 'view-target'])
 
 const { t } = useI18n()
-const route = useRoute()
-const router = useRouter()
-
-// 通过 URL Query 初始化搜索条件
-function initQueryFromUrl() {
-  const q = route.query
-  if (q.page) currentPage.value = Number(q.page)
-  if (q.pageSize) pageSize.value = Number(q.pageSize)
-}
-
-// 同步状态到 URL Query
-function syncQueryToUrl() {
-  const query = { ...route.query }
-
-  if (currentPage.value > 1) query.page = String(currentPage.value); else delete query.page
-  if (pageSize.value !== 10) query.pageSize = String(pageSize.value); else delete query.pageSize
-
-  router.replace({ query }).catch(() => { })
-}
-
-
 const loading = ref(false)
-const searchQuery = ref('')
-const showFilters = ref(false)
-const currentPage = ref(1)
-const pageSize = ref(10)
+const list = ref([])
 const total = ref(0)
-const stat = reactive({ topPorts: [], topService: [], topApp: [], topIconHash: [] })
+const page = ref(1)
+const pageSize = ref(20)
+const selectedRows = ref([])
 
-// 统计面板展开/收起状态（默认false即只显示top10）
-const statExpanded = reactive({ port: false, service: false, app: false, icon: false })
-const STAT_DEFAULT_SHOW = 10
+const searchQuery = ref('')
+const typeFilter = ref('')
+const statusFilter = ref('')
+const scopeFilter = ref('')
 
-function displayStatItems(items, expanded) {
-  if (!items || items.length === 0) return []
-  if (expanded || items.length <= STAT_DEFAULT_SHOW) return items
-  return items.slice(0, STAT_DEFAULT_SHOW)
-}
+let pollTimer = null
+let searchDebounce = null
 
-function toggleStatExpand(type) {
-  statExpanded[type] = !statExpanded[type]
-}
-const assets = ref([])
-const filters = ref({
-  technologies: [],
-  ports: [],
-  statusCodes: [],
-  labels: [],
-  service: '',
-  iconHash: ''
-})
-
-// 过滤器选项（从后端动态加载）
-const filterOptions = ref({
-  technologies: [],
-  ports: [],
-  statusCodes: [],
-  labels: []
-})
-// 过滤选项是否已加载（首次展开筛选面板时才拉取，避免进菜单即触发整表 distinct）
-const filterOptionsLoaded = ref(false)
-
-// 技术栈对话框
-const techDialogVisible = ref(false)
-const techSearchQuery = ref('')
-const currentAsset = ref(null)
-
-// 标签对话框
-const labelDialogVisible = ref(false)
-const newLabelInput = ref('')
-
-// 璇︽儏鎶藉眽
-const detailDrawerVisible = ref(false)
-const detailAsset = ref(null)
-const activeDetailTab = ref('overview')
-
-// 图片预览
-const previewVisible = ref(false)
-const previewImage = ref('')
-const previewPosition = ref({ x: 0, y: 0 })
-const previewSize = ref({ width: 400, height: 300 })
-
-const showPreview = (asset, event) => {
-  if (!asset.screenshot) return
-
-  previewImage.value = formatScreenshotUrl(asset.screenshot)
-  previewVisible.value = true
-
-  // 计算预览位置
-  const rect = event.currentTarget.getBoundingClientRect()
-
-  // 检查是否在抽屉或对话框中（通过检查父元素类名）
-  const isInDrawer = event.currentTarget.closest('.el-drawer__body') !== null
-  const isInDialog = event.currentTarget.closest('.el-dialog__body') !== null
-  const isInDetailView = isInDrawer || isInDialog
-
-  let previewWidth, previewHeight, padding
-
-  if (isInDetailView) {
-    // 在抽屉视图中，使用更大的预览尺寸
-    previewWidth = Math.min(800, window.innerWidth * 0.5) // 最小 800px 或屏幕宽度的 50%
-    previewHeight = Math.min(900, window.innerHeight * 0.8) // 最小 900px 或屏幕高度的 80%
-    padding = 30
-  } else {
-    // 在列表视图中，使用较小的预览尺寸
-    previewWidth = 400
-    previewHeight = 300
-    padding = 20
-  }
-
-  previewSize.value = { width: previewWidth, height: previewHeight }
-
-  // 默认显示在右
-  let x = rect.right + padding
-  let y = rect.top
-
-  // 如果右侧空间不足，显示在左侧
-  if (x + previewWidth > window.innerWidth) {
-    x = rect.left - previewWidth - padding
-  }
-
-  // 如果下方空间不足，向上调
-  if (y + previewHeight > window.innerHeight) {
-    y = window.innerHeight - previewHeight - padding
-  }
-
-  // 确保不超出顶部
-  if (y < padding) {
-    y = padding
-  }
-
-  // 确保不超出左侧
-  if (x < padding) {
-    x = padding
-  }
-
-  previewPosition.value = { x, y }
-}
-
-const hidePreview = () => {
-  previewVisible.value = false
-}
-
-const filteredTechnologies = computed(() => {
-  if (!currentAsset.value || !currentAsset.value.technologies) return []
-
-  const query = techSearchQuery.value.toLowerCase()
-  if (!query) return currentAsset.value.technologies
-
-  return currentAsset.value.technologies.filter(tech =>
-    tech.toLowerCase().includes(query)
-  )
-})
-
-// 妯℃嫙鏁版嵁锛堢敤浜庡紑鍙戞祴璇曪級
-const useMockData = false
-
-const mockAssets = [
-  {
-    id: '1',
-    host: 'business.leapmotor.com',
-    port: 443,
-    status: '200',
-    asn: 'AS4808',
-    ip: '47.246.23.179',
-    url: 'https://business.leapmotor.com',
-    screenshot: '/9j/4AAQSkZJRgABAQAAAQABAAD...',
-    title: 'business.leapmotor.com',
-    cname: 'business.leapmotor.com.w.cdngslb.com',
-    technologies: ['Vue.js 3.6.2', 'Axios', 'Day.js', 'Webpack', 'core-js 3.16.2', 'jQuery UI 1.10.1'],
-    lastUpdated: '9 months ago',
-    firstSeen: 'Apr 28, 2025, 07:41 UTC',
-    lastUpdatedFull: 'May 1, 2025, 12:09 UTC'
-  },
-  {
-    id: '2',
-    host: 'cscan.txf7.cn',
-    port: 80,
-    status: '200',
-    asn: '', // 娌℃湁 ASN 鏁版嵁
-    ip: '124.221.31.220',
-    url: 'http://cscan.txf7.cn',
-    screenshot: null,
-    title: 'CSCAN - 瀹屾暣瀹夊叏涓夊悎涓€',
-    technologies: ['Nginx 1.18.0'],
-    lastUpdated: '1 day ago',
-    firstSeen: 'Jan 15, 2026, 10:30 UTC',
-    lastUpdatedFull: 'Jan 16, 2026, 14:22 UTC'
-  }
-]
-
-
-async function loadStat() {
-  try {
-    const res = await getAssetStat({})
-    if (res.code === 0) {
-      stat.topPorts = res.topPorts || []
-      stat.topService = res.topService || []
-      stat.topApp = res.topApp || []
-      stat.topIconHash = res.topIconHash || []
-    }
-  } catch (e) {
-    console.error(e)
-  }
-}
-
-const loadData = async () => {
-  syncQueryToUrl()
+async function fetchData() {
   loading.value = true
   try {
-    if (useMockData) {
-      // 浣跨敤妯℃嫙鏁版嵁
-      assets.value = mockAssets
-      total.value = mockAssets.length
-    } else {
-      // 璋冪敤鐪熷疄 API
-      const params = {
-        page: currentPage.value,
-        pageSize: pageSize.value,
-        query: searchQuery.value,
-        domain: route.query.domain || '',
-        technologies: filters.value.technologies,
-        ports: filters.value.ports,
-        statusCodes: filters.value.statusCodes,
-        labels: filters.value.labels,
-        service: filters.value.service || '',
-        iconHash: filters.value.iconHash || '',
-        timeRange: 'all',
-        sortBy: 'time',
-        requireRecognitionOrShot: true
-      }
-
-      const res = await getAssetInventory(params)
-
-      if (res.code === 0) {
-        // 转换后端数据格式为前端格式
-        assets.value = (res.list || []).map(item => ({
-          id: item.id,
-          host: item.host,
-          port: item.port,
-          status: String(item.status || ''),
-          asn: item.asn || '', // 空字符串，不显示默认
-          ip: item.ip || '',
-          ips: item.ips || [],
-          url: item.port && item.port !== 0 ? `${item.port === 443 ? 'https' : 'http'}://${item.host}:${item.port}` : `http://${item.host}`,
-          screenshot: item.screenshot || '',
-          title: item.title || item.host,
-          cname: item.cname || '',
-          technologies: item.technologies || [],
-          labels: item.labels || [], // 自定义标签
-          iconHash: item.iconHash || '',
-          iconHashBytes: item.iconHashBytes || '',
-          httpHeader: item.httpHeader || '',
-          httpBody: item.httpBody || '',
-          banner: item.banner || '',
-          lastUpdated: item.lastUpdated || '未知',
-          firstSeen: item.firstSeen || '',
-          lastUpdatedFull: item.lastUpdatedFull || ''
-        }))
-        total.value = res.total || 0
-      } else {
-        ElMessage.error(res.msg || t('asset.assetInventoryTab.loadFailed'))
-      }
+    const params = {
+      workspaceId: props.workspaceId,
+      page: page.value,
+      pageSize: pageSize.value,
+      query: searchQuery.value || undefined,
+      targetType: typeFilter.value || undefined,
+      scanStatus: statusFilter.value || undefined,
+      scope: scopeFilter.value || undefined,
     }
-  } catch (error) {
-    console.error('加载失败:', error)
-    ElMessage.error(t('asset.assetInventoryTab.loadFailed'))
+
+    // 响应拦截器返回 {code,msg,total,list}（顶层无 data 包裹）
+    const res = await getAssetTargetList(params)
+    const payload = res?.data ?? res
+    list.value = payload?.list || []
+    total.value = payload?.total || 0
+  } catch (err) {
+    console.error('[TargetsView] fetchData error:', err)
   } finally {
     loading.value = false
   }
 }
 
-const handleSearch = debounce(() => {
-  currentPage.value = 1
-  loadData()
-}, 300)
-
-function quickFilter(field, value) {
-  if (field === 'app') {
-    value = cleanAppName(value)
-    if (!filters.value.technologies.includes(value)) {
-      filters.value.technologies.push(value)
-    }
-  } else if (field === 'port') {
-    const portNum = Number(value)
-    if (!isNaN(portNum) && !filters.value.ports.includes(portNum)) {
-      filters.value.ports.push(portNum)
-    }
-  } else if (field === 'service') {
-    filters.value.service = value
-  } else if (field === 'iconHash') {
-    filters.value.iconHash = value
-  }
-  applyFilters()
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(fetchData, 3000)
 }
 
-function cleanAppName(app) {
-  if (!app) return ''
-  return app.trim()
-}
-
-function truncateText(text, maxLen = 100) {
-  if (!text) return ''
-  if (text.length > maxLen) return text.substring(0, maxLen) + '...'
-  return text
-}
-
-const applyFilters = () => {
-  currentPage.value = 1
-  loadData()
-}
-
-const resetFilters = async () => {
-  filters.value = {
-    technologies: [],
-    ports: [],
-    statusCodes: [],
-    labels: [],
-    service: '',
-    iconHash: ''
-  }
-  searchQuery.value = ''
-  showFilters.value = false
-  currentPage.value = 1
-
-  const newQuery = { ...route.query }
-  delete newQuery.domain
-  delete newQuery.page
-  delete newQuery.pageSize
-
-  try {
-    await router.replace({ query: newQuery })
-  } catch (error) {
-    // ignore duplicated navigation
-  }
-
-  loadData()
-}
-
-const getStatusType = (status) => {
-  const statusStr = String(status || '')
-  if (statusStr.startsWith('2')) return 'success'
-  if (statusStr.startsWith('3')) return 'warning'
-  if (statusStr.startsWith('4') || statusStr.startsWith('5')) return 'danger'
-  return 'info'
-}
-
-// 鑾峰彇婕忔礊涓ラ噸绋嬪害鐨勬爣绛剧被
-const getVulnSeverityType = (severity) => {
-  const severityLower = severity?.toLowerCase()
-  if (severityLower === 'critical') return 'danger'
-  if (severityLower === 'high') return 'danger'
-  if (severityLower === 'medium') return 'warning'
-  if (severityLower === 'low') return 'info'
-  return 'info'
-}
-
-const handleAddLabel = (asset) => {
-  currentAsset.value = asset
-  newLabelInput.value = ''
-  labelDialogVisible.value = true
-}
-
-const handleAddNewLabel = async () => {
-  if (!newLabelInput.value.trim()) {
-    ElMessage.warning(t('asset.assetInventoryTab.enterLabelName'))
-    return
-  }
-
-  if (!currentAsset.value.labels) {
-    currentAsset.value.labels = []
-  }
-
-  // 妫€鏌ユ槸鍚﹀凡瀛樺湪
-  if (currentAsset.value.labels.includes(newLabelInput.value.trim())) {
-    ElMessage.warning(t('asset.assetInventoryTab.labelExists'))
-    return
-  }
-
-  currentAsset.value.labels.push(newLabelInput.value.trim())
-  const newLabel = newLabelInput.value.trim()
-  newLabelInput.value = ''
-
-  // 调用 API 保存标签
-  try {
-    const res = await updateAssetLabels({
-      id: currentAsset.value.id,
-      labels: currentAsset.value.labels
-    })
-
-    if (res.code === 0) {
-      ElMessage.success(t('asset.assetInventoryTab.labelAddSuccess'))
-    } else {
-      // 澶辫触鏃跺洖
-      const index = currentAsset.value.labels.indexOf(newLabel)
-      if (index > -1) {
-        currentAsset.value.labels.splice(index, 1)
-      }
-      ElMessage.error(res.msg || t('asset.assetInventoryTab.labelAddFailed'))
-    }
-  } catch (error) {
-    // 澶辫触鏃跺洖
-    const index = currentAsset.value.labels.indexOf(newLabel)
-    if (index > -1) {
-      currentAsset.value.labels.splice(index, 1)
-    }
-    ElMessage.error(t('asset.assetInventoryTab.labelAddFailed'))
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
   }
 }
 
-const handleRemoveLabel = async (asset, index) => {
-  if (asset.labels && asset.labels.length > index) {
-    const removedLabel = asset.labels[index]
-    asset.labels.splice(index, 1)
-
-    // 调用 API 保存标签
-    try {
-      const res = await updateAssetLabels({
-        id: asset.id,
-        labels: asset.labels
-      })
-
-      if (res.code === 0) {
-        ElMessage.success(t('asset.assetInventoryTab.labelDeleteSuccess'))
-      } else {
-        // 澶辫触鏃跺洖
-        asset.labels.splice(index, 0, removedLabel)
-        ElMessage.error(res.msg || t('asset.assetInventoryTab.labelDeleteFailed'))
-      }
-    } catch (error) {
-      // 澶辫触鏃跺洖
-      asset.labels.splice(index, 0, removedLabel)
-      ElMessage.error(t('asset.assetInventoryTab.labelDeleteFailed'))
-    }
-  }
+function handleSearch() {
+  page.value = 1
+  fetchData()
 }
 
-const showAllTechnologies = (asset) => {
-  currentAsset.value = asset
-  techSearchQuery.value = ''
-  techDialogVisible.value = true
+function handlePageChange(newPage) {
+  page.value = newPage
+  fetchData()
 }
 
-const handleDelete = async (asset) => {
+function handleSizeChange(newSize) {
+  pageSize.value = newSize
+  page.value = 1
+  fetchData()
+}
+
+function handleRowClick(row) {
+  emit('view-target', row.id)
+}
+
+function handleSelectionChange(rows) {
+  selectedRows.value = rows || []
+}
+
+// 批量删除目标（自旧资产概览页迁入：级联删除底层资产）
+async function handleBatchDelete() {
+  if (selectedRows.value.length === 0) return
   try {
     await ElMessageBox.confirm(
-      t('asset.assetInventoryTab.confirmDelete', { name: `${asset.host}${asset.port && asset.port !== 0 ? ':' + asset.port : ''}` }),
-      t('common.warning'),
-      {
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
+      t('asset.assetGroupsTab.confirmBatchDelete', { count: selectedRows.value.length }),
+      t('common.batchDelete'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
     )
-
-    // 调用删除 API，传递资产 ID
-    const res = await deleteAsset({
-      id: asset.id
-    })
-    if (res.code === 0) {
-      ElMessage.success(t('asset.assetInventoryTab.deleteSuccess'))
-      loadData()
-    } else {
-      ElMessage.error(res.msg || t('asset.assetInventoryTab.deleteFailed'))
-    }
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error(t('asset.assetInventoryTab.deleteFailed'))
-    }
+  } catch {
+    return
   }
-}
-
-const handleClear = async () => {
+  loading.value = true
   try {
-    await ElMessageBox.confirm(
-      t('asset.confirmClearAll'),
-      t('common.warning'),
-      {
-        type: 'error',
-        confirmButtonText: t('asset.confirmClearBtn'),
-        cancelButtonText: t('common.cancel')
-      }
+    await Promise.all(
+      selectedRows.value.map(row => deleteAssetTarget({ targetId: row.id, deleteAssets: true }))
     )
-
-    const res = await clearAssets()
-    if (res.code === 0) {
-      ElMessage.success(res.msg || t('asset.clearSuccess'))
-      resetFilters()
-      loadStat()
-    } else {
-      ElMessage.error(res.msg || t('asset.clearFailed'))
-    }
-  } catch (error) {
-    if (error !== 'cancel') {
-      console.error('清空资产失败:', error)
-      ElMessage.error(t('asset.clearFailed'))
-    }
+    ElMessage.success(t('asset.assetGroupsTab.deleteSuccess'))
+    selectedRows.value = []
+    await fetchData()
+  } catch (err) {
+    console.error('[TargetsView] batch delete error:', err)
+    ElMessage.error(t('asset.assetGroupsTab.deleteFailed'))
+  } finally {
+    loading.value = false
   }
 }
 
-const handleCardClick = async (asset) => {
-  detailAsset.value = {
-    ...asset,
-    httpHeader: asset.httpHeader || '',
-    httpBody: asset.httpBody || '',
-    banner: asset.banner || '',
-    changelogs: [],
-    dirScanResults: [],
-    vulnScanResults: []
-  }
-  activeDetailTab.value = 'overview'
-  detailDrawerVisible.value = true
+// 搜索输入防抖 500ms（对齐 open-asm useDebounce(500)）
+watch(searchQuery, () => {
+  if (searchDebounce) clearTimeout(searchDebounce)
+  searchDebounce = setTimeout(handleSearch, 500)
+})
 
-  // 列表投影已排除 body/header/banner 等大字段，按需拉取详情补全抽屉所需数据
-  if (asset.id) {
-    getAssetDetail({ id: asset.id })
-      .then(res => {
-        if (res.code === 0 && res.data && detailAsset.value) {
-          detailAsset.value.httpHeader = res.data.httpHeader || ''
-          detailAsset.value.httpBody = res.data.httpBody || ''
-          detailAsset.value.banner = res.data.banner || ''
-          detailAsset.value.screenshot = res.data.screenshot || detailAsset.value.screenshot
-          detailAsset.value.iconHashBytes = res.data.iconHashBytes || detailAsset.value.iconHashBytes
-        }
-      })
-      .catch(() => { })
-  }
-
-  // 异步加载额外数据，忽略错误
-  if (asset.id) {
-    // 静默加载，不阻塞UI
-    loadAssetHistory(asset.id).catch(() => { })
-    loadAssetExposures(asset.id).catch(() => { })
-  }
-}
-
-// 鍔犺浇璧勪骇鍙樻洿璁板綍
-const loadAssetHistory = async (assetId) => {
-  try {
-    const res = await getAssetHistory({
-      assetId: assetId,
-      limit: 50
-    })
-
-    if (res.code === 0 && res.list) {
-      // 转换数据格式
-      detailAsset.value.changelogs = res.list.map(item => ({
-        time: formatDateTime(item.createTime),
-        taskId: item.taskId,
-        changes: item.changes || []
-      }))
-    } else {
-      // API返回非0代码，静默处理
-      if (detailAsset.value) {
-        detailAsset.value.changelogs = []
-      }
-    }
-  } catch (error) {
-    console.error('加载变更记录失败:', error.message)
-    if (detailAsset.value) {
-      detailAsset.value.changelogs = []
-    }
-  }
-}
-
-// 鍔犺浇璧勪骇鏆撮湶闈㈡暟
-const loadAssetExposures = async (assetId) => {
-  try {
-    const res = await getAssetExposures({
-      assetId: assetId
-    })
-
-    if (res.code === 0) {
-      // 更新目录扫描结果
-      detailAsset.value.dirScanResults = (res.dirScanResults || []).map(item => ({
-        url: item.url,
-        path: item.path,
-        status: String(item.status || ''),
-        contentLength: item.contentLength,
-        responseTime: 0, // 后端暂未返回响应时间
-        title: item.title || ''
-      }))
-
-      // 更新漏洞扫描结果
-      detailAsset.value.vulnScanResults = (res.vulnResults || []).map(item => ({
-        id: item.id,
-        name: item.name,
-        severity: item.severity,
-        description: item.description || '',
-        cvss: item.cvss || 0,
-        cve: item.cve || '',
-        matchedUrl: item.matchedUrl || item.url,
-        discoveredAt: item.discoveredAt || ''
-      }))
-
-    } else {
-      // API返回非0代码，静默处理
-      if (detailAsset.value) {
-        detailAsset.value.dirScanResults = []
-        detailAsset.value.vulnScanResults = []
-      }
-    }
-  } catch (error) {
-    console.error('加载暴露面数据失败:', error.message)
-    if (detailAsset.value) {
-      detailAsset.value.dirScanResults = []
-      detailAsset.value.vulnScanResults = []
-    }
-  }
-}
-
-// 鏍煎紡鍖栨棩鏈熸椂
-const formatDateTime = (dateStr) => {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
-
-// 翻译字段名称
-const translateFieldName = (field) => {
-  const fieldMap = {
-    'title': t('asset.field.title'),
-    'service': t('asset.field.service'),
-    'httpStatus': t('asset.field.httpStatus'),
-    'app': t('asset.field.app'),
-    'iconHash': t('asset.field.iconHash'),
-    'server': t('asset.field.server'),
-    'banner': t('asset.field.banner')
-  }
-  return fieldMap[field] || field
-}
-
-// 计算暴露面数量（端口服务 + 目录扫描 + 漏洞扫描）
-const getExposuresCount = (asset) => {
-  if (!asset) return 0
-  let count = 1 // 至少有一个端口服务
-  count += (asset.dirScanResults?.length || 0)
-  count += (asset.vulnScanResults?.length || 0)
-  return count
-}
-
-// 鍔犺浇杩囨护鍣ㄩ€夐」
-const loadFilterOptions = async () => {
-  try {
-    const res = await getAssetFilterOptions({
-      domain: route.query.domain || ''
-    })
-
-    if (res.code === 0) {
-      filterOptions.value = {
-        technologies: res.technologies || [],
-        ports: res.ports || [],
-        statusCodes: res.statusCodes || [],
-        labels: res.labels || []
-      }
-    }
-  } catch (error) {
-    console.error('加载过滤器选项失败:', error)
-  }
-}
-
-// 监听路由参数变化
-watch(() => route.query.domain, (newDomain) => {
-  if (newDomain) {
-    searchQuery.value = newDomain
-    handleSearch()
-  }
-}, { immediate: true })
+watch([typeFilter, statusFilter, scopeFilter], () => {
+  page.value = 1
+  fetchData()
+})
 
 onMounted(() => {
-  initQueryFromUrl()
-
-  // 检查初始 URL 参数
-  if (route.query.domain) {
-    searchQuery.value = route.query.domain
-    handleSearch()
-  } else {
-    loadData()
-  }
-
-  // 统计数据延迟加载：避免在菜单打开的关键路径上并行触发整表聚合，
-  // 利用浏览器空闲时段拉取，不阻塞列表首屏渲染
-  scheduleStatLoad()
+  fetchData()
+  startPolling()
 })
 
-// 首次展开筛选面板时才加载过滤选项（整表 distinct 较重，不应进菜单即触发）
-watch(() => showFilters.value, (open) => {
-  if (open && !filterOptionsLoaded.value) {
-    filterOptionsLoaded.value = true
-    loadFilterOptions()
-  }
+onUnmounted(() => {
+  stopPolling()
+  if (searchDebounce) clearTimeout(searchDebounce)
 })
-
-// 空闲时段调度统计加载（降级为 setTimeout）
-function scheduleStatLoad() {
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(() => loadStat(), { timeout: 1500 })
-  } else {
-    setTimeout(loadStat, 250)
-  }
-}
-
-function querySearch(queryString, cb, ...fields) {
-  const data = typeof tableData !== 'undefined' ? tableData.value : (typeof assets !== 'undefined' ? assets.value : [])
-  if (!data || data.length === 0) {
-    cb([])
-    return
-  }
-
-  const uniqueValues = new Set()
-  data.forEach(row => {
-    fields.forEach(field => {
-      let val = row[field]
-
-      if (field === 'global') {
-        if (row.authority) uniqueValues.add(String(row.authority))
-        if (row.host) uniqueValues.add(String(row.host))
-        if (row.title) uniqueValues.add(String(row.title))
-        if (row.domain) uniqueValues.add(String(row.domain))
-        if (row.app && Array.isArray(row.app)) row.app.forEach(a => uniqueValues.add(String(a)))
-      }
-
-      if (field === 'host' && row.authority) uniqueValues.add(String(row.authority))
-      if (field === 'authority' && row.host) uniqueValues.add(String(row.host))
-      if (field === 'domain' && row.authority) uniqueValues.add(String(row.authority))
-      if (field === 'app' && row.app && Array.isArray(row.app)) { row.app.forEach(a => uniqueValues.add(String(a))) }
-      if (field === 'ips' && row.ips && Array.isArray(row.ips)) { row.ips.forEach(a => uniqueValues.add(String(a))) }
-      if (field === 'ip' && row.ip) { val = row.ip }
-      if (field === 'port' && row.port) { val = row.port }
-
-      if (val !== undefined && val !== null && val !== '') {
-        if (Array.isArray(val) && field !== 'app') {
-          val.forEach(v => {
-            if (v && typeof v === 'object' && v.ip) uniqueValues.add(String(v.ip))
-            else if (typeof v !== 'object') uniqueValues.add(String(v))
-          })
-        } else if (!Array.isArray(val)) {
-          uniqueValues.add(String(val))
-        }
-      }
-    })
-  })
-
-  const results = Array.from(uniqueValues).map(v => ({ value: String(v) }))
-  if (queryString) {
-    const lowerQuery = String(queryString).toLowerCase()
-    cb(results.filter(item => item.value.toLowerCase().includes(lowerQuery)))
-  } else {
-    cb(results)
-  }
-}
-
 </script>
 
-<style lang="scss" scoped>
-:deep(.el-autocomplete) {
-  width: 100%;
+<style scoped lang="scss">
+// source 图标 tooltip：深浅主题统一深色气泡 + 白字，隐藏箭头避免多余方块
+:global(.source-sync-tip.el-popper) {
+  color: #ffffff !important;
+  background: #1a1a1a !important;
+
+  .el-popper__arrow {
+    display: none !important;
+  }
 }
 
-.asset-inventory-tab {
-  .toolbar {
+.targets-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+
+  .toolbar-left {
     display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
     align-items: center;
-    justify-content: flex-start;
-
-    .search-input {
-      width: 500px;
-      max-width: 100%;
-      flex: 0 0 auto;
-    }
-
-    .header-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-shrink: 0;
-    }
-
-    .toolbar-right {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      flex-shrink: 0;
-    }
+    gap: 12px;
   }
 
-  .filters-panel {
-    width: 100%;
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 16px;
-
-    :deep(.el-form) {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px 16px;
-      align-items: flex-end;
-    }
-
-    :deep(.el-form-item) {
-      margin-bottom: 0;
-      margin-right: 0;
-    }
-
-    :deep(.el-select) {
-      min-width: 200px;
-    }
-  }
-
-  .stat-panel {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 24px;
-
-    .stat-column {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-
-      .stat-title {
-        font-size: 14px;
-        font-weight: 600;
-        color: hsl(var(--foreground));
-        margin-bottom: 8px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid hsl(var(--border));
-      }
-
-      .stat-item {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 6px 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: all 0.2s;
-
-        &:hover {
-          background: hsl(var(--muted) / 0.5);
-          color: hsl(var(--primary));
-        }
-
-        .stat-count {
-          min-width: 32px;
-          padding: 2px 6px;
-          background: hsl(var(--primary) / 0.1);
-          color: hsl(var(--primary));
-          border-radius: 12px;
-          font-size: 12px;
-          font-weight: 600;
-          text-align: center;
-        }
-
-        .stat-name {
-          flex: 1;
-          font-size: 13px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        &.stat-item-icon {
-          .stat-name {
-            font-family: monospace;
-          }
-        }
-
-        .stat-icon-img {
-          width: 16px;
-          height: 16px;
-          object-fit: contain;
-        }
-
-        .stat-icon-placeholder {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 16px;
-          height: 16px;
-          color: hsl(var(--muted-foreground));
-          font-size: 14px;
-        }
-
-        .app-main {
-          cursor: pointer;
-        }
-      }
-
-      .stat-count-total {
-        font-size: 11px;
-        color: hsl(var(--muted-foreground));
-        font-weight: normal;
-        margin-left: 4px;
-      }
-
-      .stat-toggle {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 4px;
-        padding: 6px 8px;
-        margin-top: 4px;
-        font-size: 12px;
-        color: hsl(var(--primary));
-        cursor: pointer;
-        border-radius: 4px;
-        transition: background 0.15s;
-        user-select: none;
-
-        &:hover {
-          background: hsl(var(--primary) / 0.1);
-        }
-
-        .el-icon {
-          font-size: 12px;
-          transition: transform 0.2s;
-
-          &.rotated {
-            transform: rotate(180deg);
-          }
-        }
-      }
-    }
-  }
-
-  .assets-grid {
+  .toolbar-right {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+}
+
+.search-input {
+  width: 260px;
+}
+
+.table-skeleton {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 4px 0;
+
+  .skeleton-row {
+    display: flex;
+    align-items: center;
     gap: 16px;
-    margin-bottom: 16px;
-  }
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--el-border-color-extra-light);
 
-  .asset-card-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
+    &:last-child {
+      border-bottom: none;
+    }
 
-  .asset-card {
-    position: relative;
-    display: grid;
-    grid-template-columns: 2fr 1fr 1.5fr;
-    gap: 24px;
-    padding: 16px;
-    padding-top: 40px;
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
-    border-radius: 8px 8px 0 0;
-    transition: all 0.2s;
-    align-items: start;
-    cursor: pointer;
+    .skeleton-bar {
+      height: 14px;
+      border-radius: 4px;
+      background: var(--el-fill-color);
+      animation: skeleton-pulse 1.5s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.target-table {
+  cursor: pointer;
+
+  :deep(.el-table__row) {
+    transition: background-color 0.15s ease;
 
     &:hover {
-      border-color: hsl(var(--primary) / 0.5);
-      box-shadow: 0 2px 8px hsl(var(--primary) / 0.1);
-    }
-
-    .asset-card-wrapper:not(:has(.dir-scan-details)) & {
-      border-radius: 8px;
-    }
-  }
-
-  .asset-left {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-
-    .host-info {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-
-      .host-link {
-        font-size: 16px;
-        font-weight: 500;
-        color: hsl(var(--foreground));
-        text-decoration: none;
-
-        &:hover {
-          color: hsl(var(--primary));
-        }
-      }
-
-      .host-ip {
-        font-size: 13px;
-        color: hsl(var(--muted-foreground));
-        font-family: monospace;
-      }
-
-      .host-icon-info {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 4px;
-
-        .favicon,
-        .favicon-placeholder {
-          width: 16px;
-          height: 16px;
-          object-fit: contain;
-        }
-
-        .favicon-placeholder {
-          color: hsl(var(--muted-foreground));
-        }
-      }
-    }
-
-    .tags-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-
-      .status-tag {
-        font-weight: 500;
-      }
-
-      .info-tag {
-        font-size: 12px;
-      }
-
-      .add-label-btn {
-        font-size: 12px;
-        padding: 0 8px;
-        height: 24px;
-      }
-
-      .custom-label {
-        font-size: 12px;
-        background: hsl(var(--primary) / 0.1);
-        border-color: hsl(var(--primary) / 0.3);
-        color: hsl(var(--primary));
-      }
-    }
-
-    .cname-info {
-      font-size: 12px;
-      color: hsl(var(--muted-foreground));
-
-      .label-text {
-        font-weight: 500;
-        margin-right: 4px;
-      }
-
-      .cname-value {
-        word-break: break-all;
-      }
-    }
-  }
-
-  .asset-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-
-    .screenshot-wrapper {
-      width: 100%;
-      aspect-ratio: 16 / 10;
-      border-radius: 6px;
-      overflow: hidden;
-      background: hsl(var(--muted) / 0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      .screenshot-img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-      }
-    }
-
-    .screenshot-placeholder-text {
-      width: 100%;
-      text-align: center;
-      font-size: 13px;
-      color: hsl(var(--muted-foreground));
-      font-style: italic;
-      padding: 8px 0;
-    }
-
-    .title-text {
-      font-size: 13px;
-      color: hsl(var(--muted-foreground));
-      text-align: center;
-      width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-
-  .asset-right {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding-right: 80px;
-
-    .tech-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: flex-start;
-
-      .tech-tag {
-        font-size: 12px;
-      }
-
-      .more-btn {
-        font-size: 12px;
-        padding: 0 8px;
-        height: 24px;
-      }
-    }
-
-    .no-tech {
-      font-size: 13px;
-      color: hsl(var(--muted-foreground));
-      font-style: italic;
-    }
-  }
-
-  .asset-meta {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-
-    .time-text {
-      font-size: 12px;
-      color: hsl(var(--muted-foreground));
-      cursor: help;
-
-      &:hover {
-        color: hsl(var(--foreground));
-      }
-    }
-
-    .bookmark-icon {
-      font-size: 16px;
-      color: hsl(var(--muted-foreground));
-      cursor: pointer;
-
-      &:hover {
-        color: hsl(var(--primary));
-      }
-    }
-
-    .delete-icon {
-      font-size: 16px;
-      color: hsl(var(--muted-foreground));
-      cursor: pointer;
-
-      &:hover {
-        color: hsl(var(--danger));
-      }
-    }
-  }
-
-  .time-tooltip {
-    .tooltip-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 4px 0;
-
-      &:not(:last-child) {
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      }
-
-      .tooltip-label {
-        font-weight: 500;
-        color: rgba(255, 255, 255, 0.8);
-      }
-
-      .tooltip-value {
-        color: rgba(255, 255, 255, 0.95);
-      }
-    }
-  }
-
-  .pagination {
-    margin-top: 16px;
-  }
-
-  .tech-dialog-content {
-    .tech-search {
-      margin-bottom: 16px;
-    }
-
-    .tech-tags-wrapper {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      max-height: 400px;
-      overflow-y: auto;
-
-      .tech-tag-large {
-        font-size: 13px;
-      }
-    }
-  }
-
-  .label-dialog-content {
-    .current-labels {
-      margin-top: 20px;
-
-      .label-section-title {
-        font-size: 14px;
-        font-weight: 500;
-        color: hsl(var(--foreground));
-        margin-bottom: 12px;
-      }
-
-      .label-item {
-        margin-right: 8px;
-        margin-bottom: 8px;
-        background: hsl(var(--primary) / 0.1);
-        border-color: hsl(var(--primary) / 0.3);
-        color: hsl(var(--primary));
-      }
-    }
-  }
-
-  // 资产详情抽屉样式
-  .asset-detail {
-    .detail-header {
-      display: grid;
-      grid-template-columns: 300px 1fr;
-      gap: 24px;
-      margin-bottom: 24px;
-      padding-bottom: 24px;
-      border-bottom: 1px solid hsl(var(--border));
-
-      .detail-screenshot {
-        width: 100%;
-        aspect-ratio: 16 / 10;
-        border-radius: 8px;
-        overflow: hidden;
-        background: hsl(var(--muted) / 0.3);
-
-        .detail-screenshot-img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        .detail-screenshot-placeholder {
-          width: 100%;
-          height: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: hsl(var(--muted-foreground));
-          font-style: italic;
-        }
-      }
-
-      .detail-basic-info {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-
-        .info-row {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-
-          .info-label {
-            font-weight: 500;
-            color: hsl(var(--muted-foreground));
-            min-width: 60px;
-          }
-
-          .info-value {
-            color: hsl(var(--foreground));
-
-            &.link {
-              color: hsl(var(--primary));
-              text-decoration: none;
-
-              &:hover {
-                text-decoration: underline;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    .detail-tabs {
-      :deep(.el-tabs__item) {
-        .tab-badge {
-          margin-left: 8px;
-        }
-      }
-    }
-
-    .tab-content {
-      padding: 16px 0;
-
-      .section {
-        margin-bottom: 24px;
-
-        .section-title {
-          font-size: 16px;
-          font-weight: 600;
-          color: hsl(var(--foreground));
-          margin: 0 0 16px 0;
-        }
-
-        .info-grid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 16px;
-
-          .info-item {
-            display: flex;
-            gap: 12px;
-
-            .item-label {
-              font-weight: 500;
-              color: hsl(var(--muted-foreground));
-              min-width: 80px;
-            }
-
-            .item-value {
-              color: hsl(var(--foreground));
-              word-break: break-all;
-            }
-          }
-
-          .icon-hash-display {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-
-            .favicon-large {
-              width: 32px;
-              height: 32px;
-              object-fit: contain;
-              border: 1px solid hsl(var(--border));
-              border-radius: 4px;
-              padding: 4px;
-            }
-          }
-        }
-
-        .code-block {
-          background: hsl(var(--muted) / 0.3);
-          border: 1px solid hsl(var(--border));
-          border-radius: 6px;
-          padding: 16px;
-          overflow-x: auto;
-
-          &.small {
-            padding: 12px;
-          }
-
-          pre {
-            margin: 0;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            line-height: 1.6;
-            color: hsl(var(--foreground));
-            white-space: pre-wrap;
-            word-break: break-all;
-          }
-        }
-      }
-
-      .exposure-item {
-        padding: 16px;
-        background: hsl(var(--card));
-        border: 1px solid hsl(var(--border));
-        border-radius: 8px;
-
-        .exposure-header {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 16px;
-
-          .exposure-service {
-            font-weight: 500;
-            color: hsl(var(--foreground));
-          }
-        }
-
-        .exposure-details {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-
-          .detail-item {
-            .detail-label {
-              font-weight: 500;
-              color: hsl(var(--muted-foreground));
-              margin-right: 8px;
-            }
-
-            .detail-value {
-              color: hsl(var(--foreground));
-            }
-          }
-        }
-      }
-
-      .tech-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-
-        .tech-tag-detail {
-          font-size: 14px;
-          padding: 8px 16px;
-        }
-      }
-
-      .tech-list-detail {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-
-        .tech-item-detail {
-          display: flex;
-          align-items: flex-start;
-          gap: 16px;
-          padding: 16px;
-          background: hsl(var(--card));
-          border: 1px solid hsl(var(--border));
-          border-radius: 8px;
-          transition: all 0.2s;
-
-          &:hover {
-            border-color: hsl(var(--primary) / 0.3);
-            background: hsl(var(--muted) / 0.3);
-          }
-
-          .tech-icon {
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: hsl(var(--primary) / 0.1);
-            border-radius: 8px;
-            flex-shrink: 0;
-
-            .el-icon {
-              font-size: 24px;
-              color: hsl(var(--primary));
-            }
-          }
-
-          .tech-info {
-            flex: 1;
-
-            .tech-name {
-              font-size: 15px;
-              font-weight: 500;
-              color: hsl(var(--foreground));
-              margin-bottom: 4px;
-            }
-
-            .tech-category {
-              font-size: 13px;
-              color: hsl(var(--muted-foreground));
-            }
-          }
-        }
-      }
-
-      .changelog-list {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-
-        .changelog-item {
-          padding: 20px;
-          background: hsl(var(--card));
-          border: 1px solid hsl(var(--border));
-          border-radius: 8px;
-          transition: all 0.2s;
-
-          &:hover {
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-          }
-
-          .changelog-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid hsl(var(--border));
-
-            .changelog-time-info {
-              display: flex;
-              align-items: center;
-              gap: 8px;
-
-              .time-icon {
-                color: hsl(var(--primary));
-                font-size: 16px;
-              }
-
-              .changelog-time {
-                font-size: 14px;
-                font-weight: 500;
-                color: hsl(var(--foreground));
-              }
-            }
-          }
-
-          .changelog-changes {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-
-            .change-item {
-              display: flex;
-              flex-direction: column;
-              gap: 12px;
-              padding: 12px;
-              background: hsl(var(--muted) / 0.3);
-              border-radius: 6px;
-
-              .change-field-name {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-
-                .field-icon {
-                  color: hsl(var(--primary));
-                  font-size: 16px;
-                }
-
-                .field-label {
-                  font-weight: 600;
-                  color: hsl(var(--foreground));
-                  font-size: 14px;
-                }
-              }
-
-              .change-values {
-                display: flex;
-                align-items: center;
-                gap: 16px;
-
-                .change-value-box {
-                  flex: 1;
-                  padding: 12px;
-                  border-radius: 6px;
-                  border: 1px solid hsl(var(--border));
-
-                  .value-label {
-                    font-size: 12px;
-                    color: hsl(var(--muted-foreground));
-                    margin-bottom: 6px;
-                    font-weight: 500;
-                  }
-
-                  .value-content {
-                    font-size: 13px;
-                    word-break: break-all;
-                    line-height: 1.5;
-                  }
-
-                  &.old-value {
-                    background: hsl(var(--destructive) / 0.05);
-
-                    .value-content {
-                      color: hsl(var(--muted-foreground));
-                      text-decoration: line-through;
-                    }
-                  }
-
-                  &.new-value {
-                    background: hsl(var(--primary) / 0.05);
-
-                    .value-content {
-                      color: hsl(var(--primary));
-                      font-weight: 500;
-                    }
-                  }
-                }
-
-                .change-arrow {
-                  color: hsl(var(--muted-foreground));
-                  font-size: 20px;
-                  flex-shrink: 0;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      .empty-state {
-        text-align: center;
-        padding: 48px 0;
-        color: hsl(var(--muted-foreground));
-        font-style: italic;
-      }
-
-      // 目录扫描结果样式
-      .dir-scan-list {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-
-        .dir-scan-item {
-          padding: 12px;
-          background: hsl(var(--muted) / 0.3);
-          border-radius: 6px;
-          border: 1px solid hsl(var(--border));
-
-          .dir-scan-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-
-            .dir-url {
-              font-size: 14px;
-              font-weight: 500;
-              color: hsl(var(--primary));
-              text-decoration: none;
-
-              &:hover {
-                text-decoration: underline;
-              }
-            }
-          }
-
-          .dir-scan-meta {
-            display: flex;
-            gap: 16px;
-            font-size: 12px;
-            color: hsl(var(--muted-foreground));
-
-            .meta-item {
-              display: flex;
-              align-items: center;
-              gap: 4px;
-
-              .el-icon {
-                font-size: 14px;
-              }
-            }
-          }
-        }
-      }
-
-      // 漏洞扫描结果样式
-      .vuln-scan-list {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-
-        .vuln-scan-item {
-          padding: 16px;
-          background: hsl(var(--muted) / 0.3);
-          border-radius: 6px;
-          border: 1px solid hsl(var(--border));
-
-          .vuln-scan-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 12px;
-
-            .vuln-title-row {
-              display: flex;
-              align-items: center;
-              gap: 8px;
-              flex: 1;
-
-              .severity-tag {
-                font-weight: 600;
-              }
-
-              .vuln-name {
-                font-size: 15px;
-                font-weight: 500;
-                color: hsl(var(--foreground));
-              }
-            }
-
-            .vuln-id {
-              font-size: 12px;
-              color: hsl(var(--muted-foreground));
-              font-family: monospace;
-            }
-          }
-
-          .vuln-description {
-            font-size: 13px;
-            color: hsl(var(--muted-foreground));
-            line-height: 1.6;
-            margin-bottom: 12px;
-          }
-
-          .vuln-meta {
-            display: flex;
-            gap: 16px;
-            font-size: 12px;
-            color: hsl(var(--muted-foreground));
-            margin-bottom: 8px;
-
-            .meta-item {
-              display: flex;
-              align-items: center;
-              gap: 4px;
-
-              .el-icon {
-                font-size: 14px;
-              }
-            }
-          }
-
-          .vuln-matched-url {
-            font-size: 12px;
-            padding-top: 8px;
-            border-top: 1px solid hsl(var(--border));
-
-            .matched-label {
-              color: hsl(var(--muted-foreground));
-              margin-right: 8px;
-            }
-
-            .matched-url {
-              color: hsl(var(--primary));
-              text-decoration: none;
-              word-break: break-all;
-
-              &:hover {
-                text-decoration: underline;
-              }
-            }
-          }
-        }
-      }
-
-      .count-badge {
-        margin-left: 8px;
-
-        :deep(.el-badge__content) {
-          background-color: hsl(var(--primary));
-        }
-      }
+      background-color: var(--el-fill-color-light);
     }
   }
 }
 
-// 图片预览样式
-.screenshot-preview-overlay {
-  position: fixed;
-  z-index: 9999;
-  pointer-events: none;
-  max-width: 90vw;
+.target-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 
-  .preview-container {
-    background: hsl(var(--card));
-    border: 2px solid hsl(var(--primary));
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  .target-value {
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--el-text-color-primary);
     overflow: hidden;
-    width: 100%;
-    height: 100%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-    .preview-image {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      display: block;
+  .source-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--el-text-color-secondary);
+    font-size: 14px;
+    cursor: help;
+    flex-shrink: 0;
+
+    // 深色模式下图标本身用前景色，保证可见
+    html.dark &,
+    :global(html.dark) & {
+      color: var(--el-text-color-primary);
     }
+  }
+
+  .internal-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 16px;
+    background: var(--el-fill-color);
+    color: var(--el-text-color-regular);
+    border: 1px solid var(--el-border-color);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 }
 
-// 预览动画
-.preview-fade-enter-active,
-.preview-fade-leave-active {
-  transition: opacity 0.2s ease;
+.services-count {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
-.preview-fade-enter-from,
-.preview-fade-leave-to {
-  opacity: 0;
+.muted-text {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.empty-wrap {
+  padding: 32px 0;
+  color: var(--el-text-color-secondary);
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
 }
 </style>

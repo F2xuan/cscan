@@ -48,8 +48,8 @@
         <el-table-column prop="taskCount" :label="$t('worker.executedTasks')" width="95" />
         <el-table-column prop="runningCount" :label="$t('worker.runningTasks')" width="90">
           <template #default="{ row }">
-            <el-tag v-if="(row.subCommandRunning || row.runningCount) > 0" type="warning">
-              {{ row.subCommandRunning || row.runningCount }}
+            <el-tag v-if="row.runningCount > 0" type="warning">
+              {{ row.runningCount }}
             </el-tag>
             <span v-else>0</span>
           </template>

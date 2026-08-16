@@ -224,7 +224,7 @@
             <template #default="{ row }">
               <div class="app-tags">
                 <el-tooltip v-for="app in (row.app || [])" :key="app" :content="getAppSource(app)" placement="top">
-                  <el-tag size="small" :type="getAppTagType(app)" class="app-tag">{{ getAppName(app) }}</el-tag>
+                  <TechTag :tech="app" :type="getAppTagType(app)" class="app-tag" />
                 </el-tooltip>
               </div>
             </template>
@@ -343,6 +343,7 @@ import { ElMessage } from 'element-plus'
 import { Download, Back, Loading, Picture } from '@element-plus/icons-vue'
 import { getReportDetail, exportReport, getPeriodicReport, exportPeriodicReport } from '@/api/report'
 import { formatScreenshotUrl } from '@/utils/screenshot'
+import TechTag from '@/components/common/TechTag.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -555,12 +556,6 @@ function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / 1024 / 1024).toFixed(1) + ' MB'
-}
-
-function getAppName(app) {
-  if (!app) return ''
-  const idx = app.indexOf('[')
-  return idx > 0 ? app.substring(0, idx) : app
 }
 
 function getAppSource(app) {

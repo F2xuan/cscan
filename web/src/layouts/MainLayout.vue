@@ -129,8 +129,8 @@ import { shouldShowOnboarding } from '@/utils/onboarding'
 import {
   Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection,
   Fold, Expand, Key, OfficeBuilding, Bell, User, UserFilled, Document,
-  CircleClose, Warning, Timer, DataAnalysis, View, Picture, MagicStick,
-  Operation
+  CircleClose, Warning, Timer, Picture, MagicStick, Operation,
+  Folder, Files, Lock
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -152,24 +152,12 @@ const isAdmin = computed(() => userStore.role === 'admin' || userStore.role === 
 const menuData = computed(() => [
   { type: 'item', index: '/dashboard', icon: Odometer, label: t('navigation.dashboard') },
   { type: 'submenu', index: 'asset-menu', icon: Monitor, label: t('navigation.assetManagement'), items: [
-    { index: '/asset-management', icon: DataAnalysis, label: t('navigation.assetOverview') },
     { index: '/asset-management/space-search', icon: Search, label: t('navigation.assetSpaceSearch') },
-  ]},
-  { type: 'submenu', index: 'exposure-menu', icon: View, label: t('navigation.exposure'), items: [
-    { index: '/asset-management/exposure/subdomain', label: t('navigation.exposureSubdomain') },
-    { index: '/asset-management/exposure/ip', label: t('navigation.exposureIp') },
-    { index: '/asset-management/exposure/port', label: t('navigation.exposurePort') },
-    { index: '/asset-management/exposure/site', label: t('navigation.exposureSite') },
-    { index: '/asset-management/exposure/icon', label: t('navigation.exposureIcon') },
-    { index: '/asset-management/exposure/app', label: t('navigation.exposureApp') },
-    { index: '/asset-management/exposure/screenshot', label: t('navigation.exposureScreenshot') },
-    { index: '/asset-management/exposure/dir', label: t('navigation.exposureDir') },
-    { index: '/asset-management/exposure/js', label: t('navigation.exposureJs') },
-  ]},
-  { type: 'submenu', index: 'risk-menu', icon: Warning, label: t('navigation.risk'), items: [
-    { index: '/asset-management/fingerprint/cert', label: t('navigation.certAsset') },
-    { index: '/asset-management/risk/sensitive-info', label: t('navigation.riskSensitiveInfo') },
-    { index: '/asset-management/risk/vuln', label: t('navigation.riskVuln') },
+    // 子域名/IP/端口/站点/Icon/应用/截图/证书 已合并进资产空间搜索的目标详情 Tab
+    { index: '/asset-management/exposure/dir', icon: Folder, label: t('navigation.exposureDir') },
+    { index: '/asset-management/exposure/js', icon: Files, label: t('navigation.exposureJs') },
+    { index: '/asset-management/risk/sensitive-info', icon: Lock, label: t('navigation.riskSensitiveInfo') },
+    { index: '/asset-management/risk/vuln', icon: Warning, label: t('navigation.riskVuln') },
   ]},
   { type: 'divider' },
   { type: 'item', index: '/task', icon: List, label: t('navigation.taskManagement') },

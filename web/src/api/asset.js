@@ -137,6 +137,15 @@ export function getAssetFilterOptions(data) {
   })
 }
 
+// 获取子域名列表（目标详情的子域名 Tab 使用，支持 rootDomain 预过滤）
+export function getDomainList(data) {
+  return request({
+    url: '/asset/domain/list',
+    method: 'post',
+    data
+  })
+}
+
 // 获取资产暴露面（目录扫描和漏洞扫描结果）
 export function getAssetExposures(data) {
   return request({
@@ -164,6 +173,51 @@ export function updateVulStatus(data) {
 export function getAssetTargetList(data) {
   return request({
     url: '/asset/target/list',
+    method: 'post',
+    data
+  })
+}
+
+// 获取顶层资产详情（meta + exposure + risk 统计）
+export function getAssetTargetDetail(data) {
+  return request({
+    url: '/asset/target/detail',
+    method: 'post',
+    data
+  })
+}
+
+// 获取目标下的资产列表（服务级明细）
+export function getAssetTargetAssets(data) {
+  return request({
+    url: '/asset/target/assets',
+    method: 'post',
+    data
+  })
+}
+
+// 目标资产按维度聚合（host/port/ip/app/status）
+export function getAssetTargetGroups(data) {
+  return request({
+    url: '/asset/target/groups',
+    method: 'post',
+    data
+  })
+}
+
+// 目标关联的 TLS 证书列表
+export function getAssetTargetCerts(data) {
+  return request({
+    url: '/asset/target/certs',
+    method: 'post',
+    data
+  })
+}
+
+// 更新顶层资产用户字段（labels/memo/colorTag）
+export function updateAssetTarget(data) {
+  return request({
+    url: '/asset/target/update',
     method: 'post',
     data
   })

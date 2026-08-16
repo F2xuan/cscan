@@ -52,93 +52,44 @@ const routes = [
       },
 
       // ===== 资产管理 =====
+      // 重复的暴露面子页已合并进资产空间搜索的目标详情 Tab：
+      // 子域名/IP/端口/站点/应用/截图/Icon/证书 → Inventory 子 Tab；目录/JS/敏感信息保留独立页
       {
         path: 'asset-management',
-        name: 'AssetManagement',
-        component: lazyLoad(() => import('@/views/AssetManagement.vue')),
-        meta: { title: 'menu.AssetManagement', icon: 'DataAnalysis' }
-      },
-      {
-        path: 'asset-management/space-search',
-        name: 'AssetSpaceSearch',
-        component: lazyLoad(() => import('@/views/AssetSpaceSearch.vue')),
-        meta: { title: 'menu.AssetSpaceSearch', icon: 'Search' }
-      },
-
-      // ===== 暴露面 =====
-      {
-        path: 'asset-management/exposure/subdomain',
-        name: 'ExposureSubdomain',
-        component: lazyLoad(() => import('@/views/Domain.vue')),
-        meta: { title: 'menu.ExposureSubdomain', icon: 'Link' }
-      },
-      {
-        path: 'asset-management/exposure/ip',
-        name: 'ExposureIp',
-        component: lazyLoad(() => import('@/views/IP.vue')),
-        meta: { title: 'menu.ExposureIp', icon: 'Position' }
-      },
-      {
-        path: 'asset-management/exposure/port',
-        name: 'ExposurePort',
-        component: lazyLoad(() => import('@/views/AssetManagement/PortPage.vue')),
-        meta: { title: 'menu.ExposurePort', icon: 'Connection' }
-      },
-      {
-        path: 'asset-management/exposure/site',
-        name: 'ExposureSite',
-        component: lazyLoad(() => import('@/views/Site.vue')),
-        meta: { title: 'menu.ExposureSite', icon: 'Monitor' }
-      },
-      {
-        path: 'asset-management/exposure/icon',
-        name: 'ExposureIcon',
-        component: lazyLoad(() => import('@/views/AssetManagement/IconPage.vue')),
-        meta: { title: 'menu.ExposureIcon', icon: 'Picture' }
-      },
-      {
-        path: 'asset-management/exposure/app',
-        name: 'ExposureApp',
-        component: lazyLoad(() => import('@/views/AssetManagement/AppPage.vue')),
-        meta: { title: 'menu.ExposureApp', icon: 'Grid' }
-      },
-      {
-        path: 'asset-management/exposure/screenshot',
-        name: 'ExposureScreenshot',
-        component: lazyLoad(() => import('@/views/Screenshots.vue')),
-        meta: { title: 'menu.ExposureScreenshot', icon: 'Picture' }
-      },
-      {
-        path: 'asset-management/exposure/dir',
-        name: 'ExposureDir',
-        component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
-        meta: { title: 'menu.ExposureDir', icon: 'Folder' }
-      },
-      {
-        path: 'asset-management/exposure/js',
-        name: 'ExposureJs',
-        component: lazyLoad(() => import('@/views/AssetManagement/JSFinderPage.vue')),
-        meta: { title: 'menu.ExposureJs', icon: 'Document' }
-      },
-
-      // ===== 风险 =====
-      {
-        path: 'asset-management/fingerprint/cert',
-        name: 'CertAsset',
-        component: lazyLoad(() => import('@/views/CertAsset.vue')),
-        meta: { title: 'menu.CertAsset', icon: 'Lock' }
-      },
-      {
-        path: 'asset-management/risk/sensitive-info',
-        name: 'RiskSensitiveInfo',
-        component: lazyLoad(() => import('@/views/AssetManagement/SensitiveInfoPage.vue')),
-        meta: { title: 'menu.RiskSensitiveInfo', icon: 'Warning' }
-      },
-      {
-        path: 'asset-management/risk/vuln',
-        name: 'RiskVuln',
-        component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
-        meta: { title: 'menu.RiskVuln', icon: 'Warning' }
+        redirect: 'asset-management/space-search',
+        children: [
+          // 子页面：资产空间搜索（目标列表 + 详情 + inventory/vuln）
+          {
+            path: 'space-search',
+            name: 'AssetSpaceSearch',
+            component: lazyLoad(() => import('@/views/AssetSpaceSearch.vue')),
+            meta: { title: 'menu.AssetSpaceSearch', icon: 'Search' }
+          },
+          {
+            path: 'exposure/dir',
+            name: 'ExposureDir',
+            component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
+            meta: { title: 'menu.ExposureDir', icon: 'Folder' }
+          },
+          {
+            path: 'exposure/js',
+            name: 'ExposureJs',
+            component: lazyLoad(() => import('@/views/AssetManagement/JSFinderPage.vue')),
+            meta: { title: 'menu.ExposureJs', icon: 'Files' }
+          },
+          {
+            path: 'risk/sensitive-info',
+            name: 'RiskSensitiveInfo',
+            component: lazyLoad(() => import('@/views/AssetManagement/SensitiveInfoPage.vue')),
+            meta: { title: 'menu.RiskSensitiveInfo', icon: 'Lock' }
+          },
+          {
+            path: 'risk/vuln',
+            name: 'RiskVuln',
+            component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
+            meta: { title: 'menu.RiskVuln', icon: 'Warning' }
+          },
+        ]
       },
 
       // ===== 任务管理 =====

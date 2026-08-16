@@ -1573,6 +1573,8 @@ function handleAssetSelectionChange(selection) {
 
   selectedAssetRows.value = [...otherPageItems, ...currentPageSelected]
   form.assetIds = [...otherPageIds, ...Array.from(currentPageSelectedIds)]
+  // assetIds 由程序赋值，不触发原生 change 事件，手动校验以同步错误态
+  if (formRef.value) formRef.value.validateField('assetIds')
 }
 
 // 全选资产（当前筛选条件下的全部资产）
@@ -1629,6 +1631,8 @@ function clearAssetSelection() {
   form.assetIds = []
   selectedAssetRows.value = []
   if (assetTargetTableRef.value) assetTargetTableRef.value.clearSelection()
+  // 同步校验态：清空后应显示"未选择资产"错误
+  if (formRef.value) formRef.value.validateField('assetIds')
 }
 
 // 加载扫描模板列表

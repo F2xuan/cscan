@@ -51,7 +51,7 @@ func (r *WeakPassReverifier) Run(ctx context.Context) error {
 	}
 
 	for _, cfg := range configs {
-		r.dispatchWorkspace(ctx, cfg)
+		r.dispatchReverify(ctx, cfg)
 	}
 	return nil
 }
@@ -71,17 +71,17 @@ func (r *WeakPassReverifier) RunDue(ctx context.Context) {
 			continue
 		}
 		logx.Infof("[WeakPassReverifier] reverify config due (next_run=%v), dispatching", cfg.NextRunTime)
-		r.dispatchWorkspace(ctx, cfg)
+		r.dispatchReverify(ctx, cfg)
 	}
 }
 
-// RunWorkspace 立即下发复验（供 runNow 端点调用）
+// RunNow 立即下发复验（供 runNow 端点调用），忽略 NextRunTime
 func (r *WeakPassReverifier) RunNow(ctx context.Context) error {
 	return r.Run(ctx)
 }
 
-// dispatchWorkspace 查询待复验弱口令并构造复验任务入队（探测由 Worker 执行）
-func (r *WeakPassReverifier) dispatchWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
+// dispatchReverify 查询待复验弱口令并构造复验任务入队（探测由 Worker 执行）
+func (r *WeakPassReverifier) dispatchReverify(ctx context.Context, cfg model.ReverifyConfig) {
 	now := time.Now()
 	vulModel := model.NewVulModel(r.db)
 

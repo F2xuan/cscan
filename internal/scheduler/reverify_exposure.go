@@ -45,7 +45,7 @@ func (r *ExposureReverifier) Run(ctx context.Context) error {
 		return nil
 	}
 	for _, cfg := range configs {
-		r.dispatchWorkspace(ctx, cfg)
+		r.dispatchReverify(ctx, cfg)
 	}
 	return nil
 }
@@ -64,17 +64,17 @@ func (r *ExposureReverifier) RunDue(ctx context.Context) {
 			continue
 		}
 		logx.Infof("[ExposureReverifier] reverify config due (next_run=%v), dispatching", cfg.NextRunTime)
-		r.dispatchWorkspace(ctx, cfg)
+		r.dispatchReverify(ctx, cfg)
 	}
 }
 
-// RunWorkspace 立即下发复验（供 runNow 端点调用）
+// RunNow 立即下发复验（供 runNow 端点调用），忽略 NextRunTime
 func (r *ExposureReverifier) RunNow(ctx context.Context) error {
 	return r.Run(ctx)
 }
 
-// dispatchWorkspace 收集待复验敏感信息并构造复验任务入队（探测由 Worker 执行）
-func (r *ExposureReverifier) dispatchWorkspace(ctx context.Context, cfg model.ReverifyConfig) {
+// dispatchReverify 收集待复验敏感信息并构造复验任务入队（探测由 Worker 执行）
+func (r *ExposureReverifier) dispatchReverify(ctx context.Context, cfg model.ReverifyConfig) {
 	now := time.Now()
 
 	maxTargets := cfg.MaxTargetsPerRun
@@ -86,10 +86,6 @@ func (r *ExposureReverifier) dispatchWorkspace(ctx context.Context, cfg model.Re
 		logx.Infof("[ExposureReverifier] 无待复验敏感信息，skip")
 		_ = model.NewReverifyConfigModel(r.db).UpdateRunState(ctx, "default", now, "success", 0, "", NextReverifyRunTime(cfg.CronSpec, now))
 		return
-	}
-
-	if len(targets) > maxTargets {
-		targets = targets[:maxTargets]
 	}
 
 	cfgBytes, mErr := json.Marshal(map[string]interface{}{

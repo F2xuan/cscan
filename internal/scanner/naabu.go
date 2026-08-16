@@ -113,13 +113,15 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	}
 
 	opts := &NaabuOptions{
-		Ports:             "80,443,8080",
-		Rate:              3000,
-		Timeout:           120,
-		ScanType:          "c",
-		PortThreshold:     0,
-		Retries:           2,
-		WarmUpTime:        1,
+		Ports:         "80,443,8080",
+		Rate:          3000,
+		Timeout:       120,
+		ScanType:      "c",
+		PortThreshold: 0,
+		Retries:       2,
+		WarmUpTime:    1,
+		// 单目标 naabu 内部并发探测线程数。提升至 50 可显著加快单 host 的全端口探测吞吐；
+		// 可经 PortScanOptions.Workers（或前端扫描配置）覆盖，带宽受限/低资源主机应适当下调以避免丢包与 IDS 限流。
 		Workers:           50,
 		Verify:            false,
 		SkipHostDiscovery: true, // 默认跳过 ICMP 主机发现（域名/CDN 目标 ICMP 几乎总被丢弃）

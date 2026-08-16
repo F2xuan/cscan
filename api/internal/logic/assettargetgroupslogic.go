@@ -47,7 +47,7 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 	}
 
 	match := bson.M{"host": hostFilterForTarget(tType, tValue)}
-	if err := applyAssetTargetFilters(match, req.Query, req.Ports, req.StatusCodes, req.Technologies); err != nil {
+	if err := applyAssetTargetFilters(match, req.Query, req.Ports, req.StatusCodes, req.Technologies, req.Labels); err != nil {
 		return nil, err
 	}
 
@@ -68,7 +68,7 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 		if key == "" || key == "<nil>" {
 			continue
 		}
-		item := types.AssetTargetGroupItem{Key: key, Count: row.Count, Location: row.Location, Extras: row.Extras}
+		item := types.AssetTargetGroupItem{Key: key, Count: row.Count, Location: row.Location, Extras: row.Extras, Labels: row.Labels}
 		list = append(list, item)
 	}
 	return &types.AssetTargetGroupsResp{Code: 0, Msg: "success", List: list}, nil
@@ -80,6 +80,9 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 //   - ip:     unwind ip.ipv4 后 group by ip，location = 归属地
 //   - app:    unwind app 后 group by 技术名
 //   - status: group by HTTP 状态码
+//
+// 所有分组统一收集组内资产标签并集（labels），供子 Tab 标签列展示；
+// 用 $push + $setUnion 归并，避免 $unwind labels 拉高 count。
 func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 	var group bson.M
 	pipeline := []bson.M{{"$match": match}}
@@ -136,8 +139,16 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 		return nil, xerr.NewParamError(fmt.Sprintf("invalid groupBy %q", groupBy))
 	}
 
+	group["allLabels"] = bson.M{"$push": bson.M{"$ifNull": bson.A{"$labels", bson.A{}}}}
+
 	pipeline = append(pipeline,
 		bson.M{"$group": group},
+		// allLabels 是数组的数组，逐层 $setUnion 归并为去重标签并集
+		bson.M{"$addFields": bson.M{"labels": bson.M{"$reduce": bson.M{
+			"input":        "$allLabels",
+			"initialValue": bson.A{},
+			"in":           bson.M{"$setUnion": bson.A{"$$value", "$$this"}},
+		}}}},
 		bson.M{"$sort": bson.M{"count": -1, "_id": 1}},
 		bson.M{"$limit": assetTargetGroupsLimit},
 	)

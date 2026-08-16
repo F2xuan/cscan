@@ -437,6 +437,7 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq) (resp
 		ProfileId:   req.ProfileId,
 		ProfileName: profileName,
 		OrgId:       req.OrgId,
+		Tags:        req.Tags,
 		Config:      string(configBytes),
 		Status:      model.TaskStatusCreated,
 		CreatedBy:   middleware.GetUserId(l.ctx),
@@ -723,6 +724,7 @@ func (l *MainTaskRetryLogic) MainTaskRetry(req *types.MainTaskRetryReq) (resp *t
 		ProfileId:   oldTask.ProfileId,
 		ProfileName: oldTask.ProfileName,
 		OrgId:       oldTask.OrgId,
+		Tags:        oldTask.Tags,
 		Config:      string(configBytes),
 		Status:      model.TaskStatusCreated, // 设置初始状态
 		CreatedBy:   middleware.GetUserId(l.ctx),
@@ -1218,6 +1220,10 @@ func (l *MainTaskUpdateLogic) MainTaskUpdate(req *types.MainTaskUpdateReq) (resp
 
 	if req.Target != "" {
 		update["target"] = req.Target
+	}
+
+	if req.Tags != nil {
+		update["tags"] = req.Tags
 	}
 
 	if req.ProfileId != "" {

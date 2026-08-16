@@ -5,6 +5,7 @@ import (
 	"net"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"cscan/api/internal/logic/common"
@@ -36,6 +37,28 @@ func extractDomainFromAsset(asset *model.Asset) string {
 		return ""
 	}
 	return domain
+}
+
+// mergeDomainLabels 归并标签切片（去重、保持顺序），供域名行聚合多资产标签。
+func mergeDomainLabels(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	for _, v := range base {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	for _, v := range extra {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 type DomainLogic struct {
@@ -94,13 +117,27 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 		// 根域名搜索：匹配根域名自身（example.com）及其子域名（www.example.com）。
 		// 用 (^|\.) 前缀 + QuoteMeta 转义，避免根域自身的点被当作任意字符、子域漏配
 		escapedRoot := regexp.QuoteMeta(req.RootDomain)
-		filter["$and"] = []bson.M{
+		conditions := []bson.M{
 			{"$or": baseCondition},
 			{"$or": []bson.M{
 				{"domain": bson.M{"$regex": "(^|\\.)" + escapedRoot + "$", "$options": "i"}},
 				{"host": bson.M{"$regex": "(^|\\.)" + escapedRoot + "$", "$options": "i"}},
 			}},
 		}
+		// 目标详情子域名 Tab：rootDomain 预过滤之上再叠加过滤值（query）与标签条件
+		if q := strings.TrimSpace(req.Query); q != "" {
+			qm := regexp.QuoteMeta(q)
+			conditions = append(conditions, bson.M{"$or": []bson.M{
+				{"domain": bson.M{"$regex": qm, "$options": "i"}},
+				{"host": bson.M{"$regex": qm, "$options": "i"}},
+				{"cname": bson.M{"$regex": qm, "$options": "i"}},
+				{"ip.ipv4.ip": bson.M{"$regex": qm, "$options": "i"}},
+			}})
+		}
+		if len(req.Labels) > 0 {
+			conditions = append(conditions, bson.M{"labels": bson.M{"$in": req.Labels}})
+		}
+		filter["$and"] = conditions
 	} else if req.IP != "" {
 		// IP搜索 - 搜索解析到该IP的域名
 		filter["$and"] = []bson.M{
@@ -146,6 +183,8 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 					existing.IPs = append(existing.IPs, ipv4.IPName)
 				}
 			}
+			// 标签取并集（同域名多条资产各自携带的任务/手工标签）
+			existing.Labels = mergeDomainLabels(existing.Labels, asset.Labels)
 			// 更新时间取最新
 			if assetUpdate := asset.UpdateTime.Local().Format("2006-01-02 15:04:05"); assetUpdate > existing.UpdateTime {
 				existing.UpdateTime = assetUpdate
@@ -180,6 +219,7 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 				IPs:        ips,
 				CName:      asset.CName,
 				Source:     source,
+				Labels:     mergeDomainLabels(nil, asset.Labels),
 				OrgId:      asset.OrgId,
 				OrgName:    orgMap[asset.OrgId],
 				IsNew:      asset.IsNewAsset,

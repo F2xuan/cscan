@@ -63,6 +63,7 @@ type AssetWriteService struct {
 	historyModel    *AssetHistoryModel
 	diffModel       *ScanDiffModel
 	targetMetaModel *AssetTargetMetaModel
+	mainTaskModel   *MainTaskModel
 }
 
 // NewAssetWriteService 创建资产写入服务
@@ -73,6 +74,7 @@ func NewAssetWriteService(db *mongo.Database) *AssetWriteService {
 		historyModel:    NewAssetHistoryModel(db),
 		diffModel:       NewScanDiffModel(db),
 		targetMetaModel: NewAssetTargetMetaModel(db),
+		mainTaskModel:   NewMainTaskModel(db),
 	}
 }
 
@@ -90,8 +92,15 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 	var attemptedWrites int32
 	now := time.Now()
 
+	// 任务标签传播：扫描任务配置的 tags 打到本任务发现的资产与顶层目标上，
+	// 让"任务标签 → 资产标签筛选"链路生效（$addToSet 合并，不覆盖用户手工标签）
+	taskTags := s.loadTaskTags(ctx, mainTaskID)
+
 	for _, pbAsset := range assets {
 		asset := s.mapScannerAssetToModel(pbAsset, mainTaskID, orgID)
+		if len(taskTags) > 0 {
+			asset.Labels = mergeUnique(asset.Labels, taskTags)
+		}
 
 		// 如果Source为空，设置默认值
 		if asset.Source == "" {
@@ -230,6 +239,11 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 		tType, tValue := ResolveAssetTarget(asset.Host, asset.Domain)
 		if tType != "" && tValue != "" {
 			targetId := EncodeTargetID(tType, tValue)
+			if len(taskTags) > 0 {
+				if err := s.targetMetaModel.AddLabelsToTarget(ctx, targetId, taskTags); err != nil {
+					logx.Errorf("[AssetWriteService] merge target labels id=%s fail: %v", targetId, err)
+				}
+			}
 			if err := s.targetMetaModel.UpdateLastScanTime(ctx, targetId, now); err != nil {
 				logx.Errorf("[AssetWriteService] update last_scan_time id=%s fail: %v", targetId, err)
 			}
@@ -261,6 +275,43 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 		FailedWrites:    failedWrites,
 		FirstWriteErr:   firstWriteErr,
 	}, nil
+}
+
+// loadTaskTags 按主任务 ID 读取任务标签。mainTaskID 非法（手动导入等场景）
+// 或任务不存在时返回 nil，不阻断资产写入。
+func (s *AssetWriteService) loadTaskTags(ctx context.Context, mainTaskID string) []string {
+	if mainTaskID == "" {
+		return nil
+	}
+	task, err := s.mainTaskModel.FindById(ctx, mainTaskID)
+	if err != nil || task == nil || len(task.Tags) == 0 {
+		return nil
+	}
+	return task.Tags
+}
+
+// mergeUnique 合并两个标签切片并去重（保持出现顺序）。
+func mergeUnique(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	for _, v := range base {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	for _, v := range extra {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 // mapScannerAssetToModel 将 ScannerAsset 映射为 model.Asset

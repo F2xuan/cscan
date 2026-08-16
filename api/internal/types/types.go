@@ -537,13 +537,14 @@ type SiteBatchDeleteReq struct {
 
 // ==================== 域名管理 ====================
 type DomainListReq struct {
-	Page       int    `json:"page,default=1"`
-	PageSize   int    `json:"pageSize,default=20"`
-	Query      string `json:"query,optional"`
-	Domain     string `json:"domain,optional"`
-	RootDomain string `json:"rootDomain,optional"`
-	IP         string `json:"ip,optional"`
-	OrgId      string `json:"orgId,optional"`
+	Page       int      `json:"page,default=1"`
+	PageSize   int      `json:"pageSize,default=20"`
+	Query      string   `json:"query,optional"`
+	Domain     string   `json:"domain,optional"`
+	RootDomain string   `json:"rootDomain,optional"`
+	IP         string   `json:"ip,optional"`
+	OrgId      string   `json:"orgId,optional"`
+	Labels     []string `json:"labels,optional"` // 标签过滤（目标详情子域名 Tab）
 }
 
 type Domain struct {
@@ -553,6 +554,7 @@ type Domain struct {
 	IPs        []string `json:"ips"`
 	CName      string   `json:"cname"`
 	Source     string   `json:"source"`
+	Labels     []string `json:"labels,omitempty"`
 	OrgId      string   `json:"orgId,omitempty"`
 	OrgName    string   `json:"orgName,omitempty"`
 	IsNew      bool     `json:"isNew"`
@@ -916,10 +918,11 @@ type MainTaskControlReq struct {
 
 // MainTaskUpdateReq 更新任务请求
 type MainTaskUpdateReq struct {
-	Id        string `json:"id"`                 // 任务ID
-	Name      string `json:"name,optional"`      // 任务名称
-	Target    string `json:"target,optional"`    // 扫描目标
-	ProfileId string `json:"profileId,optional"` // 配置ID
+	Id        string   `json:"id"`                 // 任务ID
+	Name      string   `json:"name,optional"`      // 任务名称
+	Target    string   `json:"target,optional"`    // 扫描目标
+	ProfileId string   `json:"profileId,optional"` // 配置ID
+	Tags      []string `json:"tags,optional"`      // 任务标签（nil 不更新，空数组清空）
 }
 
 // GetTaskLogsReq 获取任务日志请求
@@ -4000,6 +4003,7 @@ type AssetTargetAssetsReq struct {
 	Ports        []int    `json:"ports,optional"`        // 端口过滤
 	StatusCodes  []string `json:"statusCodes,optional"`  // HTTP 状态码过滤
 	Technologies []string `json:"technologies,optional"` // 技术栈过滤（app 子串）
+	Labels       []string `json:"labels,optional"`       // 标签过滤（任务标签/手工标签）
 }
 
 // AssetTargetAssetsData 目标资产分页数据
@@ -4018,6 +4022,7 @@ type AssetTargetAssetItem struct {
 	Title      string   `json:"title"`
 	Screenshot string   `json:"screenshot,omitempty"`
 	Tech       []string `json:"tech,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
 	IsHTTP     bool     `json:"isHttp"`
 	Ips        []string `json:"ips,omitempty"`
 	Server     string   `json:"server,omitempty"`
@@ -4044,6 +4049,7 @@ type AssetTargetGroupsReq struct {
 	Ports        []int    `json:"ports,optional"`
 	StatusCodes  []string `json:"statusCodes,optional"`
 	Technologies []string `json:"technologies,optional"`
+	Labels       []string `json:"labels,optional"` // 标签过滤
 }
 
 // AssetTargetGroupItem 聚合行：Key 为分组值，Extras 为附加信息（端口 Tab 的 services 等）
@@ -4052,6 +4058,7 @@ type AssetTargetGroupItem struct {
 	Count    int      `json:"count"`
 	Location string   `json:"location,omitempty"` // 仅 ip 分组
 	Extras   []string `json:"extras,omitempty"`   // port→services
+	Labels   []string `json:"labels,omitempty"`   // 组内资产标签并集
 }
 
 type AssetTargetGroupsResp struct {

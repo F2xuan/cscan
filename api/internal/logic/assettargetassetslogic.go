@@ -45,8 +45,12 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 		return nil, xerr.NewServerError("asset model not available")
 	}
 
-	filter := bson.M{"host": hostFilterForTarget(tType, tValue)}
-	if err := applyAssetTargetFilters(filter, req.Query, req.Ports, req.StatusCodes, req.Technologies); err != nil {
+	filter := bson.M{
+		"host": hostFilterForTarget(tType, tValue),
+		// 端口 0 是无端口资产（子域名发现阶段的占位记录），服务列表只展示有真实端口的服务
+		"port": bson.M{"$gt": 0},
+	}
+	if err := applyAssetTargetFilters(filter, req.Query, req.Ports, req.StatusCodes, req.Technologies, req.Labels); err != nil {
 		return nil, err
 	}
 
@@ -82,6 +86,7 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 			Title:      a.Title,
 			Screenshot: a.Screenshot,
 			Tech:       a.App,
+			Labels:     a.Labels,
 			IsHTTP:     a.IsHTTP,
 			Ips:        ipv4List(a),
 			Server:     a.Server,
@@ -124,9 +129,9 @@ func ipv4List(a model.Asset) []string {
 	return ips
 }
 
-// applyAssetTargetFilters 把目标资产子页的过滤条件（query/ports/statusCodes/technologies）
+// applyAssetTargetFilters 把目标资产子页的过滤条件（query/ports/statusCodes/technologies/labels）
 // 合并进 filter（原地修改），供 services 列表与 groups 聚合共用。
-func applyAssetTargetFilters(filter bson.M, query string, ports []int, statusCodes []string, technologies []string) error {
+func applyAssetTargetFilters(filter bson.M, query string, ports []int, statusCodes []string, technologies []string, labels []string) error {
 	query = strings.TrimSpace(query)
 	if query != "" {
 		pattern := ".*" + regexpEscape(query) + ".*"
@@ -136,7 +141,16 @@ func applyAssetTargetFilters(filter bson.M, query string, ports []int, statusCod
 		}
 	}
 	if len(ports) > 0 {
-		filter["port"] = bson.M{"$in": ports}
+		positive := make([]int, 0, len(ports))
+		for _, p := range ports {
+			if p > 0 {
+				positive = append(positive, p)
+			}
+		}
+		// 全部是非正端口时不设置 $in，保留调用方已有的 port 过滤（如服务列表的 port>0）
+		if len(positive) > 0 {
+			filter["port"] = bson.M{"$in": positive}
+		}
 	}
 	if len(statusCodes) > 0 {
 		filter["status"] = bson.M{"$in": statusCodes}
@@ -153,6 +167,10 @@ func applyAssetTargetFilters(filter bson.M, query string, ports []int, statusCod
 		if len(and) > 0 {
 			filter["$and"] = and
 		}
+	}
+	if len(labels) > 0 {
+		// 与 /asset/inventory 的标签过滤口径一致：命中任一标签即匹配
+		filter["labels"] = bson.M{"$in": labels}
 	}
 	return nil
 }

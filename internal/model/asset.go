@@ -369,6 +369,7 @@ type AssetTargetGroupResult struct {
 	Count    int         `bson:"count"`
 	Location string      `bson:"location"`
 	Extras   []string    `bson:"extras"`
+	Labels   []string    `bson:"labels"`
 }
 
 // AggregateTargetGroups 执行目标维度聚合 pipeline，返回 {key, count, location, extras} 行。

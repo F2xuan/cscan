@@ -54,6 +54,19 @@
         <el-option v-for="tech in filterOptions.technologies" :key="tech" :value="tech" :label="tech" />
       </el-select>
 
+      <el-select
+        v-model="filters.labels"
+        multiple
+        collapse-tags
+        clearable
+        filterable
+        :placeholder="$t('asset.targetView.labels')"
+        class="filter-select"
+        @change="handleFilterChange"
+      >
+        <el-option v-for="label in filterOptions.labels" :key="label" :value="label" :label="label" />
+      </el-select>
+
       <el-button link @click="handleReset">{{ $t('asset.targetView.filterReset') }}</el-button>
     </div>
 
@@ -84,6 +97,15 @@
             <el-table-column :label="$t('asset.targetView.colCname')" min-width="160">
               <template #default="{ row }">
                 <span class="muted">{{ row.cname || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+              <template #default="{ row }">
+                <div v-if="row.labels && row.labels.length" class="tech-list">
+                  <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                  <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+                </div>
+                <span v-else class="muted">-</span>
               </template>
             </el-table-column>
             <el-table-column :label="$t('asset.targetView.colSource')" width="110">
@@ -178,6 +200,16 @@
             </template>
           </el-table-column>
 
+          <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+            <template #default="{ row }">
+              <div v-if="row.labels && row.labels.length" class="tech-list">
+                <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+              </div>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
+
           <el-table-column :label="$t('asset.targetView.colCertificate')" min-width="200">
             <template #default="{ row }">
               <div v-if="certByHost[row.host]" class="cert-cell">
@@ -227,6 +259,15 @@
               <span class="mono-value">{{ row.key }}</span>
             </template>
           </el-table-column>
+          <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+            <template #default="{ row }">
+              <div v-if="row.labels && row.labels.length" class="tech-list">
+                <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+              </div>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="$t('asset.targetView.numOfServices')" width="200">
             <template #default="{ row }">
               <span class="muted">{{ row.count }} {{ $t('asset.targetView.services') }}</span>
@@ -254,6 +295,15 @@
               </div>
             </template>
           </el-table-column>
+          <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+            <template #default="{ row }">
+              <div v-if="row.labels && row.labels.length" class="tech-list">
+                <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+              </div>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="$t('asset.targetView.numOfServices')" width="200">
             <template #default="{ row }">
               <span class="muted">{{ row.count }} {{ $t('asset.targetView.services') }}</span>
@@ -277,6 +327,15 @@
               <span class="muted">{{ row.location || '-' }}</span>
             </template>
           </el-table-column>
+          <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+            <template #default="{ row }">
+              <div v-if="row.labels && row.labels.length" class="tech-list">
+                <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+              </div>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="$t('asset.targetView.numOfServices')" width="200">
             <template #default="{ row }">
               <span class="muted">{{ row.count }} {{ $t('asset.targetView.services') }}</span>
@@ -295,6 +354,15 @@
               <TechTag :tech="row.key" />
             </template>
           </el-table-column>
+          <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+            <template #default="{ row }">
+              <div v-if="row.labels && row.labels.length" class="tech-list">
+                <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+              </div>
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="$t('asset.targetView.numOfServices')" width="200">
             <template #default="{ row }">
               <span class="muted">{{ row.count }} {{ $t('asset.targetView.services') }}</span>
@@ -311,6 +379,15 @@
           <el-table-column :label="$t('asset.targetView.subStatusCode')" width="160">
             <template #default="{ row }">
               <span class="status-badge" :class="getStatusCodeClass(row.key)">{{ row.key }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+            <template #default="{ row }">
+              <div v-if="row.labels && row.labels.length" class="tech-list">
+                <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
+                <span v-if="row.labels.length > 4" class="tech-more">+{{ row.labels.length - 4 }}</span>
+              </div>
+              <span v-else class="muted">-</span>
             </template>
           </el-table-column>
           <el-table-column :label="$t('asset.targetView.numOfServices')" width="200">
@@ -380,7 +457,7 @@ const props = defineProps({
 const emit = defineEmits(['view-asset'])
 
 const activeTab = ref('services')
-const filters = reactive({ query: '', ports: [], statusCodes: [], technologies: [] })
+const filters = reactive({ query: '', ports: [], statusCodes: [], technologies: [], labels: [] })
 const filterOptions = ref({ ports: [], statusCodes: [], technologies: [], labels: [] })
 
 const services = ref([])
@@ -451,6 +528,7 @@ async function fetchServices() {
       ports: filters.ports.length ? filters.ports : undefined,
       statusCodes: filters.statusCodes.length ? filters.statusCodes : undefined,
       technologies: filters.technologies.length ? filters.technologies : undefined,
+      labels: filters.labels.length ? filters.labels : undefined,
     })
     if (res?.data) {
       services.value = res.data.list || []
@@ -474,6 +552,7 @@ async function fetchGroups() {
       ports: filters.ports.length ? filters.ports : undefined,
       statusCodes: filters.statusCodes.length ? filters.statusCodes : undefined,
       technologies: filters.technologies.length ? filters.technologies : undefined,
+      labels: filters.labels.length ? filters.labels : undefined,
     })
     groups.value = res?.data?.list || res?.list || []
   } catch (err) {
@@ -508,9 +587,11 @@ async function fetchFilterOptions() {
 
 function handleFilterChange() {
   servicesPage.value = 1
+  subdomainsPage.value = 1
   fetchServices()
   fetchGroups()
   fetchCerts()
+  fetchSubdomains()
 }
 
 function handleReset() {
@@ -518,6 +599,7 @@ function handleReset() {
   filters.ports = []
   filters.statusCodes = []
   filters.technologies = []
+  filters.labels = []
   handleFilterChange()
 }
 
@@ -529,6 +611,8 @@ async function fetchSubdomains() {
       rootDomain: targetValue.value,
       page: subdomainsPage.value,
       pageSize: subdomainsPageSize,
+      query: filters.query || undefined,
+      labels: filters.labels.length ? filters.labels : undefined,
     })
     const payload = res?.data ?? res
     subdomains.value = payload?.list || []
@@ -754,6 +838,12 @@ onUnmounted(() => {
     font-size: 11px;
     color: var(--el-text-color-secondary);
   }
+}
+
+.label-tag {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cert-cell {

@@ -1858,6 +1858,7 @@ async function handleSubmit() {
       target: form.target,
       orgId: form.orgId,
       workers: form.workers,
+      tags: form.tags,
       config: JSON.stringify(config)
     }
 

@@ -214,10 +214,19 @@ export function getAssetTargetCerts(data) {
   })
 }
 
-// 更新顶层资产用户字段（labels/memo/colorTag）
+// 更新顶层资产用户字段（labels/memo/colorTag；memo/colorTag 传空串即清空）
 export function updateAssetTarget(data) {
   return request({
     url: '/asset/target/update',
+    method: 'post',
+    data
+  })
+}
+
+// 重新发现目标：重放该目标最近一次扫描任务
+export function rediscoverAssetTarget(data) {
+  return request({
+    url: '/asset/target/rediscover',
     method: 'post',
     data
   })

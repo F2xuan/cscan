@@ -7,10 +7,24 @@
           <el-icon><ArrowLeft /></el-icon>
         </el-button>
         <TargetSwitcher :target-id="targetId" @select="handleSwitchTarget" />
+        <span
+          v-if="meta?.colorTag"
+          class="color-dot"
+          :style="{ background: meta.colorTag }"
+          :title="$t('asset.targetView.colorTag')"
+        />
         <span v-if="meta?.internalNetworkId" class="internal-badge">
           {{ $t('asset.targetView.internalBadge') }}
         </span>
         <TargetStatusBadge :status="meta?.scanStatus || 'pending'" />
+        <div v-if="meta?.labels && meta.labels.length" class="header-labels">
+          <el-tag v-for="label in meta.labels.slice(0, 5)" :key="label" size="small" class="header-label-tag">
+            {{ label }}
+          </el-tag>
+          <el-tooltip v-if="meta.labels.length > 5" :content="meta.labels.join(', ')" placement="top">
+            <span class="labels-more">+{{ meta.labels.length - 5 }}</span>
+          </el-tooltip>
+        </div>
       </div>
       <div class="header-right">
         <span v-if="lastScanTime" class="last-scan-time">
@@ -23,6 +37,14 @@
         </el-tooltip>
       </div>
     </div>
+
+    <!-- 备注（目标设置维护，单行省略 + 悬浮全文） -->
+    <el-tooltip v-if="meta?.memo" :content="meta.memo" placement="top" :disabled="meta.memo.length <= 80">
+      <div class="memo-bar">
+        <el-icon><EditPen /></el-icon>
+        <span class="memo-text">{{ meta.memo }}</span>
+      </div>
+    </el-tooltip>
 
     <!-- Exposure / Risk 气泡：页内下钻到 Inventory 子 Tab（目录/JS/敏感信息跳独立页） -->
     <div v-if="hasAnyStats" class="bubble-bar">
@@ -114,6 +136,7 @@
       v-model="settingsOpen"
       :meta="meta"
       @saved="fetchMeta"
+      @rediscovered="fetchMeta"
       @deleted="handleBack"
     />
 
@@ -129,7 +152,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Setting } from '@element-plus/icons-vue'
+import { ArrowLeft, Setting, EditPen } from '@element-plus/icons-vue'
 import TargetStatusBadge from './TargetStatusBadge.vue'
 import TargetSwitcher from './TargetSwitcher.vue'
 import TargetSettingsDrawer from './TargetSettingsDrawer.vue'
@@ -140,6 +163,7 @@ import { formatRelativeTime } from './targetViewUtils'
 
 const props = defineProps({
   targetId: { type: String, required: true },
+  autoOpenSettings: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['back', 'view-asset'])
@@ -280,6 +304,11 @@ watch(() => props.targetId, () => {
   fetchMeta()
 })
 
+// 列表页画笔入口：进入详情即打开目标设置抽屉
+watch(() => props.autoOpenSettings, (open) => {
+  if (open) settingsOpen.value = true
+}, { immediate: true })
+
 onMounted(() => {
   fetchMeta()
   startPolling()
@@ -308,10 +337,19 @@ onUnmounted(stopPolling)
     display: flex;
     align-items: center;
     gap: 12px;
+    min-width: 0;
 
     .back-button {
       font-size: 18px;
       color: var(--el-text-color-primary);
+    }
+
+    .color-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      border: 1px solid var(--el-border-color);
     }
 
     .internal-badge {
@@ -325,6 +363,28 @@ onUnmounted(stopPolling)
       color: #409eff;
       border: 1px solid rgba(64, 158, 255, 0.2);
     }
+
+    .header-labels {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      overflow: hidden;
+
+      .header-label-tag {
+        flex-shrink: 0;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .labels-more {
+        font-size: 12px;
+        color: var(--el-text-color-secondary);
+        flex-shrink: 0;
+        cursor: default;
+      }
+    }
   }
 
   .header-right {
@@ -336,6 +396,24 @@ onUnmounted(stopPolling)
       font-size: 13px;
       color: var(--el-text-color-secondary);
     }
+  }
+}
+
+.memo-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--el-bg-color);
+  border-radius: 8px;
+  border: 1px dashed var(--el-border-color-light);
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+
+  .memo-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

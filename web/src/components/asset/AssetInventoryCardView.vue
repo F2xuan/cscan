@@ -74,24 +74,58 @@
       >
         <template #default="{ row }">
           <div class="target-cell">
-            <span class="target-value">{{ row.targetValue }}</span>
+            <div class="target-main">
+              <span
+                v-if="row.colorTag"
+                class="color-dot"
+                :style="{ background: row.colorTag }"
+                :title="$t('asset.targetView.colorTag')"
+              />
+              <span class="target-value">{{ row.targetValue }}</span>
 
-            <el-tooltip
-              v-if="row.source"
-              :content="`${$t('asset.targetView.sourceSync')}: ${row.source}`"
-              placement="top"
-              effect="dark"
-              :show-arrow="false"
-              popper-class="source-sync-tip"
-            >
-              <span class="source-icon">
-                <el-icon><Link /></el-icon>
+              <el-tooltip
+                v-if="row.source"
+                :content="`${$t('asset.targetView.sourceSync')}: ${row.source}`"
+                placement="top"
+                effect="dark"
+                :show-arrow="false"
+                popper-class="source-sync-tip"
+              >
+                <span class="source-icon">
+                  <el-icon><Link /></el-icon>
+                </span>
+              </el-tooltip>
+
+              <span v-if="row.internalNetworkId" class="internal-badge">
+                {{ $t('asset.targetView.internalBadge') }}
               </span>
-            </el-tooltip>
 
-            <span v-if="row.internalNetworkId" class="internal-badge">
-              {{ $t('asset.targetView.internalBadge') }}
-            </span>
+              <el-tag
+                v-for="label in (row.labels || []).slice(0, 3)"
+                :key="label"
+                size="small"
+                class="row-label-tag"
+              >
+                {{ label }}
+              </el-tag>
+              <el-tooltip
+                v-if="row.labels && row.labels.length > 3"
+                :content="row.labels.join(', ')"
+                placement="top"
+              >
+                <span class="labels-more">+{{ row.labels.length - 3 }}</span>
+              </el-tooltip>
+
+              <el-tooltip :content="$t('asset.targetView.editTarget')" placement="top">
+                <span class="edit-icon" @click.stop="emit('edit-target', row.id)">
+                  <el-icon><EditPen /></el-icon>
+                </span>
+              </el-tooltip>
+            </div>
+            <div v-if="row.memo" class="target-memo" :title="row.memo">
+              <el-icon><EditPen /></el-icon>
+              <span class="memo-text">{{ row.memo }}</span>
+            </div>
           </div>
         </template>
       </el-table-column>
@@ -149,7 +183,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Search, Plus, Link, Delete } from '@element-plus/icons-vue'
+import { Search, Plus, Link, Delete, EditPen } from '@element-plus/icons-vue'
 import TargetTypeFilter from './TargetTypeFilter.vue'
 import ScanStatusFilter from './ScanStatusFilter.vue'
 import ScopeFilter from './ScopeFilter.vue'
@@ -161,7 +195,7 @@ const props = defineProps({
   workspaceId: { type: String, default: '' },
 })
 
-const emit = defineEmits(['create-target', 'start-scan', 'view-target'])
+const emit = defineEmits(['create-target', 'start-scan', 'view-target', 'edit-target'])
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -376,9 +410,24 @@ onUnmounted(() => {
 
 .target-cell {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+
+  .target-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid var(--el-border-color);
+  }
 
   .target-value {
     font-weight: 500;
@@ -387,6 +436,54 @@ onUnmounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .row-label-tag {
+    flex-shrink: 0;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .labels-more {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    flex-shrink: 0;
+    cursor: default;
+  }
+
+  .edit-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--el-text-color-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.15s ease;
+
+    &:hover {
+      color: var(--el-color-primary);
+    }
+  }
+
+  .target-memo {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+
+    .el-icon {
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .memo-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   .source-icon {

@@ -12,6 +12,7 @@
         @create-target="openAddDialog"
         @start-scan="handleStartScan"
         @view-target="handleViewTarget"
+        @edit-target="handleEditTarget"
       />
     </template>
 
@@ -19,6 +20,7 @@
     <template v-else>
       <TargetDetailView
         :target-id="selectedTargetId"
+        :auto-open-settings="detailAutoSettings"
         @back="handleBack"
         @view-asset="handleViewAsset"
       />
@@ -77,17 +79,27 @@ const router = useRouter()
 const { t } = useI18n()
 
 const selectedTargetId = ref('')
+const detailAutoSettings = ref(false)
 
 function handleViewTarget(targetId) {
+  detailAutoSettings.value = false
+  selectedTargetId.value = targetId
+}
+
+// 目标行画笔：进入详情并直接打开目标设置抽屉（标签/备注/颜色/重发现）
+function handleEditTarget(targetId) {
+  detailAutoSettings.value = true
   selectedTargetId.value = targetId
 }
 
 function handleBack(newTargetId) {
   if (newTargetId && newTargetId !== selectedTargetId.value) {
+    detailAutoSettings.value = false
     selectedTargetId.value = newTargetId
   } else {
     selectedTargetId.value = ''
   }
+  detailAutoSettings.value = false
 }
 
 function handleViewAsset(asset) {

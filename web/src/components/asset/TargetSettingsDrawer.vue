@@ -21,7 +21,9 @@
             :reserve-keyword="false"
             class="form-input"
             :placeholder="$t('asset.targetView.labels')"
-          />
+          >
+            <el-option v-for="label in labelOptions" :key="label" :value="label" :label="label" />
+          </el-select>
         </div>
 
         <div class="form-row">
@@ -49,7 +51,7 @@
         </el-button>
       </div>
 
-      <!-- Re-discover（布局对齐 open-asm；当前无目标级重扫接口，按钮禁用） -->
+      <!-- Re-discover：重放该目标最近一次扫描任务（复用其扫描配置） -->
       <div class="settings-section">
         <div class="rediscover-row">
           <div class="rediscover-info">
@@ -57,11 +59,11 @@
             <div class="rediscover-sub">{{ $t('asset.targetView.rediscoverHint') }}</div>
           </div>
           <el-tooltip
-            :content="$t('asset.targetView.rediscoverDisabled')"
+            :content="$t('asset.targetView.rediscoverTip')"
             placement="top"
           >
             <span>
-              <el-button disabled>
+              <el-button :loading="rediscovering" @click="handleRediscover">
                 <el-icon><Refresh /></el-icon>
               </el-button>
             </span>
@@ -102,7 +104,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { updateAssetTarget, deleteAssetTarget } from '@/api/asset'
+import { updateAssetTarget, deleteAssetTarget, rediscoverAssetTarget, getAssetFilterOptions } from '@/api/asset'
 
 const { t } = useI18n()
 
@@ -111,7 +113,7 @@ const props = defineProps({
   meta: { type: Object, default: null },
 })
 
-const emit = defineEmits(['update:modelValue', 'saved', 'deleted'])
+const emit = defineEmits(['update:modelValue', 'saved', 'deleted', 'rediscovered'])
 
 const visible = computed({
   get: () => props.modelValue,
@@ -121,8 +123,12 @@ const visible = computed({
 const form = reactive({ labels: [], memo: '', colorTag: '' })
 const saving = ref(false)
 const deleting = ref(false)
+const rediscovering = ref(false)
 const deleteText = ref('')
 const deleteWithAssets = ref(false)
+// 标签候选：资产过滤选项（任务标签传播/手工标签）∪ 当前目标已有标签，对齐新建任务的标签建议体验
+const labelOptions = ref([])
+let labelOptionsLoaded = false
 
 const deleteConfirmed = computed(() =>
   deleteText.value.trim() !== '' &&
@@ -136,8 +142,23 @@ watch(() => props.modelValue, (open) => {
     form.colorTag = props.meta?.colorTag || ''
     deleteText.value = ''
     deleteWithAssets.value = false
+    loadLabelOptions()
   }
 })
+
+async function loadLabelOptions() {
+  const current = new Set([...(props.meta?.labels || []), ...(form.labels || [])])
+  if (!labelOptionsLoaded) {
+    try {
+      const res = await getAssetFilterOptions({})
+      for (const label of (res?.data?.labels || res?.labels || [])) current.add(label)
+      labelOptionsLoaded = true
+    } catch (err) {
+      console.error('[TargetSettingsDrawer] loadLabelOptions error:', err)
+    }
+  }
+  labelOptions.value = [...current].sort()
+}
 
 async function handleSave() {
   saving.value = true
@@ -155,6 +176,34 @@ async function handleSave() {
     ElMessage.error(String(err?.message || err))
   } finally {
     saving.value = false
+  }
+}
+
+// 重新发现目标：重放该目标最近一次扫描任务（复用原扫描配置，生成新任务并入队）
+async function handleRediscover() {
+  try {
+    await ElMessageBox.confirm(
+      t('asset.targetView.rediscoverConfirm', { name: props.meta?.targetValue || '' }),
+      t('asset.targetView.rediscover'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
+    )
+  } catch {
+    return
+  }
+  rediscovering.value = true
+  try {
+    const res = await rediscoverAssetTarget({ targetId: props.meta?.id })
+    if (res?.code === 0) {
+      ElMessage.success(t('asset.targetView.rediscoverStarted'))
+      emit('rediscovered')
+    } else {
+      ElMessage.error(res?.msg || t('asset.targetView.rediscoverFailed'))
+    }
+  } catch (err) {
+    console.error('[TargetSettingsDrawer] rediscover error:', err)
+    ElMessage.error(String(err?.msg || err?.message || err))
+  } finally {
+    rediscovering.value = false
   }
 }
 

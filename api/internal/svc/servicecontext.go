@@ -46,6 +46,10 @@ type ServiceContext struct {
 	CronTaskModel           *model.CronTaskModel
 	WeakpassDictModel       *model.WeakpassDictModel
 	SubfinderProviderModel  *model.SubfinderProviderModel
+	TechIconModel           *model.TechIconModel
+
+	// 技术栈图标元数据（wappalyzergo 内嵌指纹解析出的 名称→图标文件名 映射）
+	TechIconMeta *TechIconMeta
 
 	// 调度器
 	Scheduler *scheduler.Scheduler
@@ -159,6 +163,8 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		CronTaskModel:           model.NewCronTaskModel(mongoDB),
 		WeakpassDictModel:       model.NewWeakpassDictModel(mongoDB),
 		SubfinderProviderModel:  model.NewSubfinderProviderModel(mongoDB),
+		TechIconModel:           model.NewTechIconModel(mongoDB),
+		TechIconMeta:            NewTechIconMeta(),
 		Scheduler:               scheduler.NewScheduler(rdb),
 		ScanResultService:       NewScanResultService(mongoDB),
 		HistoryService:          NewHistoryService(mongoDB),
@@ -207,6 +213,9 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 
 	// 初始化内置扫描模板
 	svcsync.InitBuiltinTemplates(svcCtx.ScanTemplateModel)
+
+	// 解析技术栈图标元数据（内嵌指纹数据，失败仅降级图标功能，不影响启动）
+	svcCtx.TechIconMeta.Load()
 
 	// 初始化 JSFinder 全局配置（不存在则写入内置默认值）
 	svcsync.InitJSFinderConfig(model.NewJSFinderConfigModel(svcCtx.MongoDB))

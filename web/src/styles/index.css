@@ -1872,7 +1872,7 @@ html[class*='style-'] .el-alert {
 html[class*='style-'] .el-progress-bar__outer {
   border-radius: var(--style-radius-progress) !important;
 }
-html[class*='style-'] .el-tooltip__popper {
+html[class*='style-'] .el-popper.is-dark {
   border-radius: var(--style-radius-tooltip) !important;
 }
 
@@ -2622,11 +2622,7 @@ html.dark .el-divider__text {
   color: hsl(var(--muted-foreground));
 }
 
-/* 暗黑模式下的弹出框样式 */
-html.dark .el-popover.el-popper {
-  background-color: hsl(var(--popover));
-  border-color: hsl(var(--border));
-}
+/* 暗黑模式下的弹出框样式：tooltip/popover 统一见「深色主题 Tooltip/Popover 可读性全局兜底」 */
 
 /* 暗黑模式下的消息提示样式 */
 html.dark .el-message {
@@ -3053,46 +3049,29 @@ html.dark .el-button--default {
   --el-button-hover-text-color: hsl(var(--foreground));
 }
 
-/* 暗黑模式下的工具提示样式 */
-html.dark .el-tooltip__popper {
+/* ═══ 深色主题 Tooltip/Popover 可读性全局兜底 ═══
+   Element Plus 2.3+ 已移除 .el-tooltip__popper 类：tooltip 弹层实际类名为
+   .el-popper.is-dark（默认 effect），el-popover 为 .el-popover.el-popper。
+   深色模式下风格主题会经 html.dark / html[class*='style-'].dark 把 popper
+   背景强制为主题 popover 色，而 EP 文字变量（--el-bg-color）仍是深色，
+   出现深字深底。此处用主题变量统一兜底背景/边框/文字/箭头；
+   每个风格主题的 .dark 变量块均定义深色 popover + 浅色 foreground，全主题生效。
+   注意：.el-popper.is-light 是 select/dropdown 菜单弹层，各有独立深色规则，勿并入。 */
+html.dark .el-popper.is-dark,
+html.dark .el-popover.el-popper,
+html[class*='style-'].dark .el-popper.is-dark,
+html[class*='style-'].dark .el-popover.el-popper {
   background-color: hsl(var(--popover)) !important;
   border-color: hsl(var(--border)) !important;
   color: hsl(var(--foreground)) !important;
+  --el-popover-bg-color: hsl(var(--popover)) !important;
+  --el-popover-border-color: hsl(var(--border)) !important;
 }
 
-/* 扫描引导按钮专用 tooltip：暗色模式下强制白色文字 */
-.scan-guide-tooltip.el-tooltip__popper,
-.scan-guide-tooltip.el-popper {
-  color: #ffffff !important;
-}
-.scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::before,
-.scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::after {
-  border-color: hsl(var(--popover)) !important;
-  background-color: hsl(var(--popover)) !important;
-}
-
-html.dark .scan-guide-tooltip.el-tooltip__popper,
-html.dark .scan-guide-tooltip.el-popper {
-  color: #ffffff !important;
-}
-html.dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::before,
-html.dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::after {
-  background-color: hsl(var(--popover)) !important;
-  border-color: hsl(var(--border)) !important;
-}
-
-html[class*='style-'].dark .scan-guide-tooltip.el-tooltip__popper,
-html[class*='style-'].dark .scan-guide-tooltip.el-popper {
-  color: #ffffff !important;
-}
-html[class*='style-'].dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::before,
-html[class*='style-'].dark .scan-guide-tooltip.el-tooltip__popper .el-popper__arrow::after {
-  background-color: hsl(var(--popover)) !important;
-  border-color: hsl(var(--border)) !important;
-}
-
-html.dark .el-tooltip__popper .el-popper__arrow::before,
-html.dark .el-tooltip__popper .el-popper__arrow::after {
+html.dark .el-popper.is-dark .el-popper__arrow::before,
+html.dark .el-popover.el-popper .el-popper__arrow::before,
+html[class*='style-'].dark .el-popper.is-dark .el-popper__arrow::before,
+html[class*='style-'].dark .el-popover.el-popper .el-popper__arrow::before {
   background-color: hsl(var(--popover)) !important;
   border-color: hsl(var(--border)) !important;
 }
@@ -4280,17 +4259,7 @@ html[class*='style-'].dark .el-step__description {
   color: hsl(var(--muted-foreground)) !important;
 }
 
-/* 提示框 */
-html[class*='style-'].dark .el-tooltip__popper {
-  background-color: hsl(var(--popover)) !important;
-  color: hsl(var(--foreground)) !important;
-  border-color: hsl(var(--border)) !important;
-}
-html[class*='style-'].dark .el-tooltip__popper .el-popper__arrow::before,
-html[class*='style-'].dark .el-tooltip__popper .el-popper__arrow::after {
-  background-color: hsl(var(--popover)) !important;
-  border-color: hsl(var(--border)) !important;
-}
+/* 提示框：见「深色主题 Tooltip/Popover 可读性全局兜底」，此处不再重复覆盖 */
 
 /* 图片占位 */
 html[class*='style-'].dark .el-image__placeholder {

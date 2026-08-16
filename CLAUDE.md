@@ -4,7 +4,7 @@
 
 ### 1.1 项目概述
 
-**cscan** — 企业级分布式网络资产扫描平台（V5.0）
+**cscan** — 企业级分布式网络资产扫描平台（V5.3）
 
 ### 1.2 技术栈
 
@@ -139,7 +139,7 @@ cscan/
 │   │   ├── naabu.go / masscan.go / nmap.go / portscan.go
 │   │   ├── fingerprint.go / fingerprintx.go / customfinger.go / httpx_lib.go
 │   │   ├── nuclei.go / brutescan.go / brute/
-│   │   ├── ffuf.go / dirscan.go / jsfinder.go / urlfinder.go
+│   │   ├── ffuf.go / dirscan.go / jsfinder.go
 │   │   ├── certcheck.go / charsetutil.go / utils.go
 │   ├── scheduler/                # 任务调度器
 │   │   ├── scheduler.go          # Redis Sorted Set 优先级队列（Lua 原子弹入弹、死信）
